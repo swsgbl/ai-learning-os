@@ -10,10 +10,12 @@ from pydantic import BaseModel
 
 from app.domain.license import allows_full_text_storage
 from app.domain.resource import ResourceRecord
+from app.parsing.base import ParserError, ParserUnavailable
 
 router = APIRouter(prefix="/api/v1/resources", tags=["resources"])
 
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
+_CHUNK_SIZE = 1024 * 1024
 MEDIA_TYPES = {
     ".pdf": "pdf",
     ".docx": "docx",
@@ -40,10 +42,16 @@ def _repo(request: Request):
     return repo
 
 
-async def _enforce_license(request: Request, source_id: str | None) -> None:
-    """M1-02 联动：来源不允许存正文（UNKNOWN/ACCESS_CONTROLLED/R 级/PROHIBITED）时拒绝上传。"""
+async def _resolve_source(
+    request: Request, source_id: str | None
+) -> tuple[str, str | None]:
+    """M1-02 联动：返回 (access_state, license_state) 快照。
+
+    无 source_id = 用户私有文档（access_state=unknown，不经公共池）；
+    有 source 时校验 allows_full_text_storage，并把来源 license 快照到资源上。
+    """
     if not source_id:
-        return
+        return "unknown", None
     sources = getattr(request.app.state, "sources", None)
     if sources is None:
         raise HTTPException(status_code=503, detail="Source registry requires a database")
@@ -55,6 +63,7 @@ async def _enforce_license(request: Request, source_id: str | None) -> None:
             status_code=403,
             detail=f"来源 {source_id} license={source.license_state.value} 不允许保存正文",
         )
+    return "public", source.license_state.value
 
 
 class ResourceOut(BaseModel):
@@ -67,16 +76,21 @@ class ResourceOut(BaseModel):
     content_type: str | None
     license_state: str
     parse_status: str
+    parser_name: str | None = None
+    parse_error: str | None = None
     deduplicated: bool = False
 
 
 async def _read_upload(file: UploadFile) -> bytes:
-    data = await file.read()
-    if len(data) > MAX_UPLOAD_BYTES:
-        raise HTTPException(status_code=413, detail="文件超过 50MB 上限")
-    if not data:
+    """分块读入并增量限额，避免超大请求体整体进内存。"""
+    buf = bytearray()
+    while chunk := await file.read(_CHUNK_SIZE):
+        buf.extend(chunk)
+        if len(buf) > MAX_UPLOAD_BYTES:
+            raise HTTPException(status_code=413, detail="文件超过 50MB 上限")
+    if not buf:
         raise HTTPException(status_code=422, detail="空文件")
-    return data
+    return bytes(buf)
 
 
 def _media_type(filename: str | None, declared: str | None) -> str:
@@ -99,7 +113,7 @@ async def upload_resource(
     source_id: str | None = Form(None),
 ) -> ResourceOut:
     """上传学习资源；同内容（SHA-256）重复上传幂等返回既有记录。"""
-    await _enforce_license(request, source_id)
+    access_state, license_state = await _resolve_source(request, source_id)
     data = await _read_upload(file)
     kind = _media_type(file.filename, media_type)
     content_hash = hashlib.sha256(data).hexdigest()
@@ -108,6 +122,8 @@ async def upload_resource(
     store = _store(request)
     if not store.exists(storage_key):
         store.put(storage_key, data, content_type=file.content_type)
+
+    from app.domain.license import LicenseState
 
     record = ResourceRecord(
         id=f"res_{uuid.uuid4().hex}",
@@ -119,6 +135,8 @@ async def upload_resource(
         size_bytes=len(data),
         fetched_at=datetime.now(UTC),
         content_type=file.content_type,
+        access_state=access_state,
+        license_state=LicenseState(license_state) if license_state else LicenseState.UNKNOWN,
     )
     saved, deduplicated = await _repo(request).create(record)
     return ResourceOut(
@@ -131,6 +149,8 @@ async def upload_resource(
         content_type=saved.content_type,
         license_state=saved.license_state.value,
         parse_status=saved.parse_status,
+        parser_name=saved.parser_name,
+        parse_error=saved.parse_error,
         deduplicated=deduplicated,
     )
 
@@ -150,4 +170,56 @@ async def get_resource(resource_id: str, request: Request) -> ResourceOut:
         content_type=record.content_type,
         license_state=record.license_state.value,
         parse_status=record.parse_status,
+        parser_name=record.parser_name,
+        parse_error=record.parse_error,
+    )
+
+
+class ParseOut(BaseModel):
+    resource_id: str
+    status: str
+    parser_name: str | None
+    block_count: int
+    page_count: int
+    table_count: int
+    formula_count: int
+
+
+@router.post("/{resource_id}/parse", response_model=ParseOut)
+async def parse_resource(
+    resource_id: str, request: Request, parser: str | None = None
+) -> ParseOut:
+    """同步解析（M1-07 前的桥接）；失败保留错误并允许 ?parser= 换一个重跑。"""
+    repo = _repo(request)
+    store = _store(request)
+    registry = getattr(request.app.state, "parsers", None)
+    if registry is None:
+        raise HTTPException(status_code=503, detail="Parser registry unavailable")
+    record = await repo.get(resource_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="资源不存在")
+    data = store.get(record.storage_key)
+    try:
+        chosen = registry.select(record.media_type, prefer=parser)
+        doc = chosen.parse(data, record.media_type)
+    except ParserError as cause:
+        await repo.set_parse_status(resource_id, "failed", error=str(cause), parser_name=parser)
+        raise HTTPException(status_code=422, detail=f"解析失败: {cause}") from cause
+    except ParserUnavailable as cause:
+        await repo.set_parse_status(resource_id, "failed", error=str(cause), parser_name=parser)
+        raise HTTPException(status_code=503, detail=f"无可用 parser: {cause}") from cause
+    metrics = {
+        "block_count": len(doc.blocks),
+        "page_count": doc.page_count,
+        "table_count": doc.table_count,
+        "formula_count": doc.formula_count,
+    }
+    await repo.set_parse_status(
+        resource_id, "parsed", parser_name=doc.parser_name, metrics=metrics
+    )
+    return ParseOut(
+        resource_id=resource_id,
+        status="parsed",
+        parser_name=doc.parser_name,
+        **metrics,
     )

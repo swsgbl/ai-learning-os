@@ -70,7 +70,8 @@ def test_license_guard_allows_open_license():
         client.post("/api/v1/sources/src_open/license", json={"state": "OPEN_LICENSE"})
         resp = _upload(client, b"open-content", source_id="src_open")
         assert resp.status_code == 201
-        assert resp.json()["license_state"] == "UNKNOWN"
+        # 来源 license 在上传时点快照到资源上（安全审查修复）
+        assert resp.json()["license_state"] == "OPEN_LICENSE"
 
 
 def test_rejects_bad_type_and_empty_file():
@@ -91,3 +92,28 @@ def test_upload_requires_database():
     app = create_app(None)
     with TestClient(app) as client:
         assert _upload(client, b"x").status_code == 503
+
+
+def test_private_upload_defaults_to_unknown_access():
+    """无 source 上传 = 用户私有文档（access_state=unknown），不经公共池。"""
+    with _client() as client:
+        body = _upload(client, b"my-private-notes").json()
+        assert body["license_state"] == "UNKNOWN"
+
+
+def test_dedup_hit_rebinds_missing_source():
+    """同内容重传补绑来源并快照 license（安全审查 logic-data-integrity 修复）。"""
+    with _client() as client:
+        first = _upload(client, b"shared-bytes").json()  # 先匿名上传
+        client.post("/api/v1/sources", json={
+            "id": "src_bind", "name": "Bind", "source_type": "oer",
+            "homepage": "https://example.org",
+        })
+        client.post("/api/v1/sources/src_bind/license", json={"state": "OPEN_LICENSE"})
+        second = _upload(client, b"shared-bytes", source_id="src_bind")
+        assert second.status_code == 201
+        assert second.json()["deduplicated"] is True
+        # 既有行被补绑来源 + license 快照
+        detail = client.get(f"/api/v1/resources/{second.json()['id']}").json()
+        assert detail["id"] == first["id"]
+        assert detail["license_state"] == "OPEN_LICENSE"
