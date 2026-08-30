@@ -35,17 +35,16 @@ def create_app(database_url: str | None = None) -> FastAPI:
             engine = create_engine(resolved_url)
             app.state.engine = engine
             await prepare_database(engine, resolved_url)
-            repository: PostgresRepository | MemoryRepository = PostgresRepository(
-                make_sessionmaker(engine)
-            )
+            sessionmaker = make_sessionmaker(engine)
+            repository: PostgresRepository | MemoryRepository = PostgresRepository(sessionmaker)
             await repository.seed_papers_if_empty()
-            sources = SourceRepository(make_sessionmaker(engine))
+            sources = SourceRepository(sessionmaker)
             await sources.seed_if_empty()
-            resources = ResourceRepository(make_sessionmaker(engine))
+            resources = ResourceRepository(sessionmaker)
             objects = make_object_store(settings)
             parsers = make_default_registry()
-            chunks = ChunkRepository(make_sessionmaker(engine))
-            parse_jobs = ParseJobRepository(make_sessionmaker(engine))
+            chunks = ChunkRepository(sessionmaker)
+            parse_jobs = ParseJobRepository(sessionmaker)
             worker = ParseWorker(parse_jobs, resources, chunks, objects, parsers)
             # M1-07 可恢复：重启时把 running 任务重置 pending，再启动消费循环
             await parse_jobs.recover_stale_running()
@@ -53,6 +52,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         else:
             repository = MemoryRepository()
         app.state.repository = repository
+        app.state.sessionmaker = sessionmaker if resolved_url else None
         app.state.sources = sources if resolved_url else None
         app.state.resources = resources if resolved_url else None
         app.state.objects = objects if resolved_url else None

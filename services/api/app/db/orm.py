@@ -14,6 +14,7 @@ from sqlalchemy import (
     JSON,
     BigInteger,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     String,
@@ -55,6 +56,7 @@ class QuestionRow(Base):
     explanation: Mapped[str] = mapped_column(String(4096))
     angles: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     knowledge: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    score: Mapped[float] = mapped_column(Float, default=1.0)
     sort_order: Mapped[int] = mapped_column(Integer)
 
 
