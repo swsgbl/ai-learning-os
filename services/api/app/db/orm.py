@@ -17,6 +17,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column
@@ -110,6 +111,8 @@ class SubmissionRow(Base):
 
 __all__ = [
     "AnswerEventRow",
+    "ChunkRow",
+    "EvidenceRow",
     "ExamSessionRow",
     "PaperRow",
     "QuestionRow",
@@ -161,3 +164,43 @@ class ResourceRow(Base):
     parse_metrics: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     parse_error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ChunkRow(Base):
+    """M1-06 chunk：可回到页码/slide 的文本片段。"""
+
+    __tablename__ = "chunks"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    resource_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("resources.id"), index=True
+    )
+    chunk_index: Mapped[int] = mapped_column(Integer)
+    text: Mapped[str] = mapped_column(Text)
+    chunk_hash: Mapped[str] = mapped_column(String(64))
+    page_start: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    page_end: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    slide: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    block_types: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    embedding_status: Mapped[str] = mapped_column(String(32), default="pending")
+
+
+class EvidenceRow(Base):
+    """M1-06 Evidence（04 号文档 §2.15）：parser、hash、locator、license 快照。"""
+
+    __tablename__ = "evidence"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    chunk_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("chunks.id"), index=True
+    )
+    resource_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("resources.id"), index=True
+    )
+    source_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    parser_name: Mapped[str] = mapped_column(String(64))
+    locator: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    snippet_hash: Mapped[str] = mapped_column(String(64))
+    license_state: Mapped[str] = mapped_column(String(32))
+    retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
