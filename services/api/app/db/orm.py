@@ -107,3 +107,22 @@ __all__ = [
     "QuestionRow",
     "SubmissionRow",
 ]
+
+
+class SourceRow(Base):
+    """M1-01 Source Registry：S/A/B/C/U 分层 + robots + rate limit + license state。"""
+
+    __tablename__ = "sources"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    name: Mapped[str] = mapped_column(String(256), unique=True)
+    source_type: Mapped[str] = mapped_column(String(32))
+    authority_score: Mapped[int] = mapped_column(Integer, default=50)
+    homepage: Mapped[str] = mapped_column(String(1024))
+    terms_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    robots_policy_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    rate_limit: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    trust_tier: Mapped[str] = mapped_column(String(4), default="U")
+    license_state: Mapped[str] = mapped_column(String(32), default="UNKNOWN")
+    last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notes: Mapped[str | None] = mapped_column(String(1024), nullable=True)
