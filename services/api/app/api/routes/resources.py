@@ -270,3 +270,38 @@ async def get_evidence(resource_id: str, request: Request) -> list[dict]:
     if not await repo.get(resource_id):
         raise HTTPException(status_code=404, detail="资源不存在")
     return await chunk_repo.list_evidence(resource_id)
+
+
+class ParseJobOut(BaseModel):
+    id: str
+    resource_id: str
+    parser_name: str | None
+    status: str
+    attempts: int
+    max_attempts: int
+    last_error: str | None
+
+
+def _job_repo(request: Request):
+    repo = getattr(request.app.state, "parse_jobs", None)
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Job queue unavailable")
+    return repo
+
+
+@router.post("/{resource_id}/jobs", response_model=ParseJobOut, status_code=202)
+async def enqueue_parse(
+    resource_id: str, request: Request, parser: str | None = None
+) -> ParseJobOut:
+    """异步解析入队（幂等）；同资源同 parser 重复入队返回既有任务。"""
+    if not await _repo(request).get(resource_id):
+        raise HTTPException(status_code=404, detail="资源不存在")
+    job, _created = await _job_repo(request).enqueue(resource_id, parser)
+    return ParseJobOut(**{**job, "last_error": job["last_error"]})
+
+
+@router.get("/{resource_id}/jobs", response_model=list[ParseJobOut])
+async def list_parse_jobs(resource_id: str, request: Request) -> list[ParseJobOut]:
+    if not await _repo(request).get(resource_id):
+        raise HTTPException(status_code=404, detail="资源不存在")
+    return [ParseJobOut(**job) for job in await _job_repo(request).list_for_resource(resource_id)]
