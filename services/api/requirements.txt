@@ -6,3 +6,5 @@ sqlalchemy[asyncio]>=2.0.43,<3
 asyncpg>=0.30,<0.32
 alembic>=1.16,<2
 aiosqlite>=0.21,<1
+python-multipart>=0.0.20,<0.1
+boto3>=1.35,<2
