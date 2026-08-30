@@ -11,6 +11,7 @@ from app.api.routes.papers import router as papers_router
 from app.api.routes.resources import router as resources_router
 from app.api.routes.sources import router as sources_router
 from app.api.routes.system import router as system_router
+from app.api.routes.validate import router as validate_router
 from app.core.config import get_settings
 from app.db.session import create_engine, make_sessionmaker, prepare_database
 from app.parsing.registry import make_default_registry
@@ -83,6 +84,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(sources_router)
     app.include_router(resources_router)
     app.include_router(system_router)
+    app.include_router(validate_router)
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, str]:

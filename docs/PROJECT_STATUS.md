@@ -5,11 +5,11 @@
 
 ## 当前里程碑
 
-M0 Foundation（已完成）→ **M1 Content 基础层（✅ 全部完成）**
+M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（进行中）
 
 ## 当前任务
 
-M2-01 Question/Paper schema（M2 题库起点；M2-04 Redis timeout worker 视依赖穿插）
+M2-02 试卷导入（backlog：paper import；M2-04 Redis timeout worker 视依赖穿插）
 
 ## 已完成任务
 
@@ -31,12 +31,13 @@ M2-01 Question/Paper schema（M2 题库起点；M2-04 Redis timeout worker 视�
 | M1-05 Layout normalize | 2be8187, merge 6d8555c | pytest 55 passed（含真实 PG）：to_latex 符号+定界符 2 测；normalize_blocks 类型归一/页码继承/公式 LaTeX/表格结构化/slide 传递 3 测；parse 端点 normalize 集成 1 测；前端门禁绿 | 2026-08-31 |
 | M1-06 Chunk 与 Evidence | 4aeefaf, merge 4634205 | pytest 59 passed（含真实 PG）：chunk locator/evidence 字段（parser/hash/locator/license）2 测；重解析幂等替换 1 测；长文切分页码保留 1 测；migration 0005 roundtrip；前端门禁绿 | 2026-08-31 |
 | M1-07 解析任务队列 | 5b9afbc, merge 4f92095 | pytest 64 passed（含真实 PG）：入队幂等 1 测；worker 成功产 chunk 1 测；重试 3 次耗尽转 failed（attempts/last_error 断言）1 测；重启恢复 running→pending + 换 parser 独立任务 1 测；API 2 测；migration 0006；前端门禁绿 | 2026-08-31 |
-| M1-08 解析质量报告 | 本分支 | pytest 68 passed（含真实 PG）：报告聚合字段全断言（页数/块数/公式/表格/OCR/异常页）1 测；无 OCR/无页数缺省 1 测；端到端端点 1 测；OCR 置信度管线透传 1 测；前端门禁绿 | 2026-08-31 |
+| M1-08 解析质量报告 | f10b709, merge 3ae24f8 | pytest 68 passed（含真实 PG）：报告聚合字段全断言（页数/块数/公式/表格/OCR/异常页）1 测；无 OCR/无页数缺省 1 测；端到端端点 1 测；OCR 置信度管线透传 1 测；前端门禁绿 | 2026-08-31 |
+| M2-01 Question/Paper schema | 本分支 | pytest 80 passed（含真实 PG）：八题型参数化校验 8 测；错误 answer 形状/选项越界/缺选项拒绝 3 测；PaperSpec 总分一致性（含 422）1 测；validate 端点端到端 1 测；前端门禁绿 | 2026-08-31 |
 
 ## 待办任务（按 backlog 顺序）
 
-- [ ] M2-01 Question/Paper schema（进行中）
-- [ ] M2-02~11（试卷导入、FSM、计时、答案事件、断线恢复、幂等提交、grader、报告）
+- [ ] M2-02 试卷导入（进行中）
+- [ ] M2-03/05~11（FSM、计时、答案事件、断线恢复、幂等提交、grader、报告）
 - [ ] M2-04 Redis timeout worker
 - [ ] M2-04 Redis timeout worker（Redis 延迟队列 + DB 事务兜底）
 - [ ] M1-03~08 Content Ingestion（上传、parser adapter、chunk/Evidence、队列、质量报告）
@@ -77,6 +78,7 @@ M2-01 Question/Paper schema（M2 题库起点；M2-04 Redis timeout worker 视�
 | 15 | Chunk/Evidence 采用整资源替换语义（重解析 delete+insert 同事务），chunk 哈希可回溯页码/slide；evidence 携带 parser 名与上传时点 license 快照 | backlog M1-06 + prompt pack C 幂等要求 | 2026-08-31 |
 | 16 | 解析队列用 DB 表 + asyncio worker（不引 Redis/Celery）：幂等键 (resource_id, parser_name)、claim 乐观推进、失败 attempts<max 回 pending 重试、重启重置 running 恢复；换 parser 重跑 = 不同 parser_name 独立任务 | backlog M1-07 验收 + 「最轻量路径」原则；M2-04 才引 Redis | 2026-08-31 |
 | 17 | 质量报告自 parse_metrics + chunks 实时统计聚合；异常页 = 已声明页数减去有内容页；ocr_confidence 由 parser metrics 透传（无 OCR 管线时为 None，不虚构） | backlog M1-08 验收 | 2026-08-31 |
+| 18 | 题型 schema 为独立校验层（QuestionSpec 判别联合 + PaperSpec 总分校验），不绑现有考试 ORM；validate 端点纯校验不落库，供 M2-02 导入与 M5-06 抽题复用 | backlog M2-01 验收 + YAGNI | 2026-08-31 |
 
 ## 下一任务
 
