@@ -10,7 +10,15 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import JSON, DateTime, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    BigInteger,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -105,6 +113,7 @@ __all__ = [
     "ExamSessionRow",
     "PaperRow",
     "QuestionRow",
+    "ResourceRow",
     "SubmissionRow",
 ]
 
@@ -126,3 +135,26 @@ class SourceRow(Base):
     license_state: Mapped[str] = mapped_column(String(32), default="UNKNOWN")
     last_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     notes: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+
+
+class ResourceRow(Base):
+    """M1-03 上传资源：SHA-256 内容寻址去重 + license 快照（04 号文档 §2.4）。"""
+
+    __tablename__ = "resources"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    source_id: Mapped[str | None] = mapped_column(
+        String(64), ForeignKey("sources.id"), nullable=True
+    )
+    url: Mapped[str | None] = mapped_column(String(2048), nullable=True)
+    media_type: Mapped[str] = mapped_column(String(32))
+    title: Mapped[str] = mapped_column(String(512))
+    language: Mapped[str | None] = mapped_column(String(16), nullable=True)
+    access_state: Mapped[str] = mapped_column(String(16), default="unknown")
+    license_state: Mapped[str] = mapped_column(String(32), default="UNKNOWN")
+    content_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    storage_key: Mapped[str] = mapped_column(String(512))
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    content_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    parse_status: Mapped[str] = mapped_column(String(32), default="pending")
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

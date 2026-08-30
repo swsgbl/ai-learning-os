@@ -1,0 +1,3 @@
+# FastAPI 依赖注入（File(...)/Form(...)/Depends(...)）是官方惯例，B008 不适用。
+[lint.per-file-ignores]
+"app/api/routes/*" = ["B008"]
