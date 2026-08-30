@@ -32,8 +32,8 @@ M2-02 试卷导入（backlog：paper import；M2-04 Redis timeout worker 视依�
 | M1-06 Chunk 与 Evidence | 4aeefaf, merge 4634205 | pytest 59 passed（含真实 PG）：chunk locator/evidence 字段（parser/hash/locator/license）2 测；重解析幂等替换 1 测；长文切分页码保留 1 测；migration 0005 roundtrip；前端门禁绿 | 2026-08-31 |
 | M1-07 解析任务队列 | 5b9afbc, merge 4f92095 | pytest 64 passed（含真实 PG）：入队幂等 1 测；worker 成功产 chunk 1 测；重试 3 次耗尽转 failed（attempts/last_error 断言）1 测；重启恢复 running→pending + 换 parser 独立任务 1 测；API 2 测；migration 0006；前端门禁绿 | 2026-08-31 |
 | M1-08 解析质量报告 | f10b709, merge 3ae24f8 | pytest 68 passed（含真实 PG）：报告聚合字段全断言（页数/块数/公式/表格/OCR/异常页）1 测；无 OCR/无页数缺省 1 测；端到端端点 1 测；OCR 置信度管线透传 1 测；前端门禁绿 | 2026-08-31 |
-| M2-01 Question/Paper schema | 本分支 | pytest 80 passed（含真实 PG）：八题型参数化校验 8 测；错误 answer QuestionSpec 判别联合校验 3 测；PaperSpec 总分一致性 1 测；validate 端点端到端 1 测；前端门禁绿 | 2026-08-31 |
-| M2-02 试卷 JSON 导入 | 本分支 | pytest 82 passed（含真实 PG）：成功导入不变性（列表/时长取整/考试流顺序/选项/交卷后 expected+explanation 逐字保留/DB 分值+sort_order）1 测；非法行逐行报错（index+loc/msg）+ 全或无不落库 1 测；前端门禁绿 | 2026-08-31 |
+| M2-01 Question/Paper schema | 49efd33, merge 47b65a3 | pytest 80 passed（含真实 PG）：八题型参数化校验 8 测；错误 answer QuestionSpec 判别联合校验 3 测；PaperSpec 总分一致性 1 测；validate 端点端到端 1 测；前端门禁绿 | 2026-08-31 |
+| M2-02 试卷 JSON 导入 | 6f1a874, merge 2c50382 | pytest 82 passed（含真实 PG）：成功导入不变性（列表/时长取整/考试流顺序/选项/交卷后 expected+explanation 逐字保留/DB 分值+sort_order）1 测；非法行逐行报错（index+loc/msg）+ 全或无不落库 1 测；前端门禁绿 | 2026-08-31 |
 
 ## 待办任务（按 backlog 顺序）
 
