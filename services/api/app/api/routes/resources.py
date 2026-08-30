@@ -10,7 +10,8 @@ from pydantic import BaseModel
 
 from app.domain.license import allows_full_text_storage
 from app.domain.resource import ResourceRecord
-from app.parsing.base import ParserError, ParserUnavailable
+from app.parsing.base import ParsedDocument, ParserError, ParserUnavailable
+from app.parsing.normalize import normalize_blocks
 
 router = APIRouter(prefix="/api/v1/resources", tags=["resources"])
 
@@ -175,6 +176,12 @@ async def get_resource(resource_id: str, request: Request) -> ResourceOut:
     )
 
 
+def _normalized(doc: ParsedDocument) -> ParsedDocument:
+    """M1-05：parser 输出统一过 layout normalize（类型归一/公式 LaTeX/页码继承/表格结构化）。"""
+    doc.blocks = normalize_blocks(doc.blocks)
+    return doc
+
+
 class ParseOut(BaseModel):
     resource_id: str
     status: str
@@ -202,6 +209,7 @@ async def parse_resource(
     try:
         chosen = registry.select(record.media_type, prefer=parser)
         doc = chosen.parse(data, record.media_type)
+        doc = _normalized(doc)
     except ParserError as cause:
         await repo.set_parse_status(resource_id, "failed", error=str(cause), parser_name=parser)
         raise HTTPException(status_code=422, detail=f"解析失败: {cause}") from cause
@@ -210,6 +218,7 @@ async def parse_resource(
         raise HTTPException(status_code=503, detail=f"无可用 parser: {cause}") from cause
     metrics = {
         "block_count": len(doc.blocks),
+        "normalized": True,
         "page_count": doc.page_count,
         "table_count": doc.table_count,
         "formula_count": doc.formula_count,
