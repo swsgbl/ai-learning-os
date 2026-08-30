@@ -32,15 +32,23 @@ def test_migration_up_down_roundtrip(tmp_path: Path) -> None:
 
     command.upgrade(config, "head")
     tables = _tables(db_path)
-    assert {"papers", "questions", "exam_sessions", "answer_events", "submissions"} <= tables
+    assert {
+        "papers",
+        "questions",
+        "exam_sessions",
+        "answer_events",
+        "submissions",
+        "sources",
+    } <= tables
     assert "alembic_version" in tables
 
     with sqlite3.connect(db_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
-    assert version == ("0001_initial",)
+    assert version == ("0002_sources",)
 
     command.downgrade(config, "base")
-    assert not ({"papers", "questions", "exam_sessions", "answer_events", "submissions"} & _tables(db_path))
+    leftover = _tables(db_path)
+    assert not ({"papers", "questions", "exam_sessions", "answer_events", "submissions", "sources"} & leftover)
 
 
 def test_migration_upgrade_is_idempotent(tmp_path: Path) -> None:

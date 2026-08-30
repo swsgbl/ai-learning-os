@@ -8,11 +8,13 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.exams import router as exams_router
 from app.api.routes.papers import router as papers_router
+from app.api.routes.sources import router as sources_router
 from app.api.routes.system import router as system_router
 from app.core.config import get_settings
 from app.db.session import create_engine, make_sessionmaker, prepare_database
 from app.repositories.memory import MemoryRepository
 from app.repositories.postgres import PostgresRepository
+from app.repositories.sources import SourceRepository
 
 
 def create_app(database_url: str | None = None) -> FastAPI:
@@ -29,9 +31,12 @@ def create_app(database_url: str | None = None) -> FastAPI:
                 make_sessionmaker(engine)
             )
             await repository.seed_papers_if_empty()
+            sources = SourceRepository(make_sessionmaker(engine))
+            await sources.seed_if_empty()
         else:
             repository = MemoryRepository()
         app.state.repository = repository
+        app.state.sources = sources if resolved_url else None
         yield
         if resolved_url:
             await engine.dispose()
@@ -52,6 +57,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     )
     app.include_router(papers_router)
     app.include_router(exams_router)
+    app.include_router(sources_router)
     app.include_router(system_router)
 
     @app.get("/health", tags=["system"])
