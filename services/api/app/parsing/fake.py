@@ -14,7 +14,9 @@ class FakeParser:
         blocks: list[ParsedBlock] | None = None,
         error: Exception | None = None,
         unavailable: bool = False,
+        ocr_confidence: float | None = None,
     ) -> None:
+        self._ocr_confidence = ocr_confidence
         self.name = name
         self._blocks = blocks or [ParsedBlock(type="paragraph", text="fake body", page=1)]
         self._error = error
@@ -27,9 +29,11 @@ class FakeParser:
             raise ParserUnavailable("fake marked unavailable")
         if self._error:
             raise self._error
+        metrics = {"ocr_confidence": self._ocr_confidence} if self._ocr_confidence else {}
         return ParsedDocument(
             blocks=list(self._blocks),
             parser_name=self.name,
             media_type=media_type,
             page_count=1,
+            metrics=metrics,
         )

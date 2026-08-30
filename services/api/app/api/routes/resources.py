@@ -237,6 +237,8 @@ async def parse_resource(
         "table_count": doc.table_count,
         "formula_count": doc.formula_count,
     }
+    if "ocr_confidence" in doc.metrics:
+        metrics["ocr_confidence"] = doc.metrics["ocr_confidence"]
     await repo.set_parse_status(
         resource_id, "parsed", parser_name=doc.parser_name, metrics=metrics
     )
@@ -305,3 +307,24 @@ async def list_parse_jobs(resource_id: str, request: Request) -> list[ParseJobOu
     if not await _repo(request).get(resource_id):
         raise HTTPException(status_code=404, detail="资源不存在")
     return [ParseJobOut(**job) for job in await _job_repo(request).list_for_resource(resource_id)]
+
+
+@router.get("/{resource_id}/quality")
+async def get_quality(resource_id: str, request: Request) -> dict:
+    """解析质量报告：页数/块数/公式/表格/OCR 置信度/异常页（M1-08）。"""
+    repo = _repo(request)
+    chunk_repo = getattr(request.app.state, "chunks", None)
+    if chunk_repo is None:
+        raise HTTPException(status_code=503, detail="Chunk store unavailable")
+    record = await repo.get(resource_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="资源不存在")
+    from app.parsing.quality import build_quality_report
+
+    chunks = await chunk_repo.list_chunks(resource_id)
+    return build_quality_report(
+        record.parse_metrics,
+        chunks,
+        parser_name=record.parser_name,
+        parse_status=record.parse_status,
+    )
