@@ -5,11 +5,11 @@
 
 ## 当前里程碑
 
-M0 Foundation（收尾中）
+M0 Foundation（已完成）
 
 ## 当前任务
 
-M0-07 密钥与隐私配置 —— 进行中
+M1-01 Source Registry —— 下一个任务
 
 ## 已完成任务
 
@@ -62,3 +62,10 @@ M0-07 密钥与隐私配置 —— 进行中
 ## 下一任务
 
 M0-07 完成后：compose 全栈运维验证（M0 收尾），随后进入 M1-01 Source Registry。
+
+## 追加：M0 收尾验证（compose 全栈）
+
+- infra/docker-compose.yml：MinIO 增加 healthcheck（mc ready local）
+- 实测：postgres / redis / minio 三服务全部 healthy；API 镜像 docker build 成功
+- 持久化验收：创建考试与提交 -> docker compose restart postgres -> 数据仍在（exams=8 / submissions=2 可读）
+- M0 至此全部完成，进入 M1 Content Ingestion
