@@ -23,6 +23,8 @@ cd "D:\AI Learning OS\ai-learning-os"
 copy .env.example .env
 npm install
 
+docker compose -f infra/docker-compose.yml up -d postgres
+
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r services\api\requirements.txt -r services\api\requirements-dev.txt
@@ -30,6 +32,9 @@ uvicorn app.main:app --app-dir services/api --reload
 
 npm run dev
 ```
+
+API 启动时读取 `.env` 的 `DATABASE_URL`：已配置则自动执行 Alembic migration 并使用 PostgreSQL
+仓储；未配置时回退内存仓储（仅用于契约调试）。数据随 Docker 卷持久化。
 
 默认地址：
 
@@ -41,5 +46,5 @@ npm run dev
 - 考试开始和结束时间由 API 服务器写入，客户端只根据 `server_end_at` 显示倒计时。
 - 正确答案、解析和评分规则只存在于 API 侧，交卷后才返回。
 - 答案以事件序号写入仓储接口，重复事件幂等处理。
-- 当前仓储是内存实现，用于跑通 API 与前端契约；PostgreSQL 仓储将在 M0 后接入。
+- 当前仓储已提供 PostgreSQL（SQLAlchemy async + Alembic）实现；无 `DATABASE_URL` 时回退内存实现。
 - 语音先保留浏览器本地听写/朗读能力，LiveKit 与 FunASR/CosyVoice adapter 是后续里程碑。

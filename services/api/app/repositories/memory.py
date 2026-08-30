@@ -75,8 +75,9 @@ class MemoryRepository:
                 if existing.question_id == question_id and existing.answer == answer:
                     return record
                 raise ValueError("同一事件序号不能承载不同答案")
-            if record.events and sequence <= record.events[-1].sequence:
-                raise ValueError("事件序号必须递增")
+            expected = record.events[-1].sequence + 1 if record.events else 1
+            if sequence != expected:
+                raise ValueError("事件序号必须从 1 开始并递增")
             paper = self._papers[record.paper_id]
             if question_id not in {question.id for question in paper.questions}:
                 raise KeyError("题目不存在")
