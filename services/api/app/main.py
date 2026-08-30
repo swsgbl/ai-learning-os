@@ -14,6 +14,7 @@ from app.api.routes.system import router as system_router
 from app.core.config import get_settings
 from app.db.session import create_engine, make_sessionmaker, prepare_database
 from app.parsing.registry import make_default_registry
+from app.repositories.chunks import ChunkRepository
 from app.repositories.memory import MemoryRepository
 from app.repositories.postgres import PostgresRepository
 from app.repositories.resources import ResourceRepository
@@ -40,6 +41,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
             resources = ResourceRepository(make_sessionmaker(engine))
             objects = make_object_store(settings)
             parsers = make_default_registry()
+            chunks = ChunkRepository(make_sessionmaker(engine))
         else:
             repository = MemoryRepository()
         app.state.repository = repository
@@ -47,6 +49,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         app.state.resources = resources if resolved_url else None
         app.state.objects = objects if resolved_url else None
         app.state.parsers = parsers if resolved_url else None
+        app.state.chunks = chunks if resolved_url else None
         yield
         if resolved_url:
             await engine.dispose()

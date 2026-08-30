@@ -9,7 +9,7 @@ M0 Foundation（已完成）→ M1 Content 基础层（进行中）
 
 ## 当前任务
 
-M1-06 Chunk 与 Evidence
+M1-07 解析任务队列
 
 ## 已完成任务
 
@@ -28,12 +28,13 @@ M1-06 Chunk 与 Evidence
 | M1-02 License State Machine | 5c3abb6, merge 6740b4c | pytest 33 passed（含真实 PG）：迁移矩阵 5 测（UNKNOWN 任意/PROHIBITED 吸收/回审/封禁/改判）；准入+存储策略 4 测（UNKNOWN 不进池、ACCESS_CONTROLLED 不存正文）；API 3 测（认定入池、吸收态 409、404）；前端门禁绿 | 2026-08-31 |
 | M1-03 文件上传与 hash 去重 | ccbd320, merge 945fb9c | pytest 40 passed（含真实 PG）：同内容重传同 id + deduplicated；license 守卫（UNKNOWN 403、OPEN_LICENSE 放行）；类型白名单 422、空文件 422；404/503；真实 MinIO boto3 读写 + uvicorn 全链路冒烟（201→重传 dedup true→mc cat 内容一致）；migration 0003 roundtrip | 2026-08-31 |
 | M1-04 Parser adapter 框架 + 安全修复 | 58abe1a, merge ef7009f | pytest 50 passed（含真实 PG）：registry 降级/指定重跑 4 测；API 解析成功/失败持久化/换 parser 重跑/fake 注入 5 测；migration 0004 动态 head；安全审查 3 项修复（license 快照、分块上传、dedup 补绑 source）+2 测；前端门禁绿 | 2026-08-31 |
-| M1-05 Layout normalize | 本分支 | pytest 55 passed（含真实 PG）：to_latex 符号+定界符 2 测；normalize_blocks 类型归一/页码继承/公式 LaTeX/表格结构化/slide 传递 3 测；parse 端点 normalize 集成 1 测；前端门禁绿 | 2026-08-31 |
+| M1-05 Layout normalize | 2be8187, merge 6d8555c | pytest 55 passed（含真实 PG）：to_latex 符号+定界符 2 测；normalize_blocks 类型归一/页码继承/公式 LaTeX/表格结构化/slide 传递 3 测；parse 端点 normalize 集成 1 测；前端门禁绿 | 2026-08-31 |
+| M1-06 Chunk 与 Evidence | 本分支 | pytest 58 passed（含真实 PG）：chunk locator/evidence 字段（parser/hash/locator/license）2 测；重解析幂等替换 1 测；长文切分页码保留 1 测；migration 0005 roundtrip；前端门禁绿 | 2026-08-31 |
 
 ## 待办任务（按 backlog 顺序）
 
-- [ ] M1-06 Chunk 与 Evidence（进行中）
-- [ ] M1-07~08 Content Ingestion（队列、质量报告）
+- [ ] M1-07 解析任务队列（进行中）
+- [ ] M1-08 解析质量报告
 - [ ] M2-04 Redis timeout worker（Redis 延迟队列 + DB 事务兜底）
 - [ ] M1-03~08 Content Ingestion（上传、parser adapter、chunk/Evidence、队列、质量报告）
 - [ ] M2-01~11 题库 schema、试卷导入、grader、报告
@@ -70,6 +71,7 @@ M1-06 Chunk 与 Evidence
 | 12 | 上传时把来源 license_state 快照到资源行；无 source = 用户私有文档（access_state=unknown）；dedup 命中补绑来源并快照；上传分块读入增量限额 | push 安全审查 3 项（authorization-bypass/logic-data-integrity/resource-bound-placement） | 2026-08-31 |
 | 13 | Parser 框架：Protocol + registry 惰性实例化（ParserUnavailable 自动跳过）+ prefer 指定重跑；Docling 延迟导入按部署安装，json-dataset 为零依赖真实实现 | prompt pack C 要求真实+fake 双实现 | 2026-08-31 |
 | 14 | normalize 管线为 parse 内置步骤（parser 输出必过 normalize_blocks）；表格块保留换行结构先于空白折叠；符号表存裸 LaTeX 名运行时拼反斜杠（规避源码转义坑） | M1-05 实测；backlog M1-05 验收 | 2026-08-31 |
+| 15 | Chunk/Evidence 采用整资源替换语义（重解析 delete+insert 同事务），chunk 哈希可回溯页码/slide；evidence 携带 parser 名与上传时点 license 快照 | backlog M1-06 + prompt pack C 幂等要求 | 2026-08-31 |
 
 ## 下一任务
 

@@ -216,9 +216,23 @@ async def parse_resource(
     except ParserUnavailable as cause:
         await repo.set_parse_status(resource_id, "failed", error=str(cause), parser_name=parser)
         raise HTTPException(status_code=503, detail=f"无可用 parser: {cause}") from cause
+    from app.parsing.chunking import chunk_blocks
+
+    chunks = chunk_blocks(doc.blocks)
+    chunk_repo = getattr(request.app.state, "chunks", None)
+    if chunk_repo is not None:
+        await chunk_repo.replace_chunks(
+            resource_id,
+            chunks,
+            parser_name=doc.parser_name,
+            license_state=record.license_state.value,
+            source_id=record.source_id,
+            url=record.url,
+        )
     metrics = {
         "block_count": len(doc.blocks),
         "normalized": True,
+        "chunk_count": len(chunks),
         "page_count": doc.page_count,
         "table_count": doc.table_count,
         "formula_count": doc.formula_count,
@@ -232,3 +246,27 @@ async def parse_resource(
         parser_name=doc.parser_name,
         **metrics,
     )
+
+
+@router.get("/{resource_id}/chunks")
+async def get_chunks(resource_id: str, request: Request) -> list[dict]:
+    """每个 chunk 带页码/slide locator（M1-06 验收）。"""
+    repo = _repo(request)
+    chunk_repo = getattr(request.app.state, "chunks", None)
+    if chunk_repo is None:
+        raise HTTPException(status_code=503, detail="Chunk store unavailable")
+    if not await repo.get(resource_id):
+        raise HTTPException(status_code=404, detail="资源不存在")
+    return await chunk_repo.list_chunks(resource_id)
+
+
+@router.get("/{resource_id}/evidence")
+async def get_evidence(resource_id: str, request: Request) -> list[dict]:
+    """Evidence 记录 parser、hash、locator 与 license 快照（M1-06 验收）。"""
+    repo = _repo(request)
+    chunk_repo = getattr(request.app.state, "chunks", None)
+    if chunk_repo is None:
+        raise HTTPException(status_code=503, detail="Chunk store unavailable")
+    if not await repo.get(resource_id):
+        raise HTTPException(status_code=404, detail="资源不存在")
+    return await chunk_repo.list_evidence(resource_id)
