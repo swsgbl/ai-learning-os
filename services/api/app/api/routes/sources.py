@@ -50,8 +50,9 @@ def _repo(request: Request):
 
 
 @router.get("", response_model=list[SourceOut])
-async def list_sources(request: Request) -> list[SourceOut]:
-    records = await _repo(request).list()
+async def list_sources(request: Request, reuse_pool: bool = False) -> list[SourceOut]:
+    """reuse_pool=true 时只返回可进入公共复用池的来源（M1-02）。"""
+    records = await _repo(request).list(reuse_pool_only=reuse_pool)
     return [_source_out(record) for record in records]
 
 
@@ -90,6 +91,22 @@ async def get_source(source_id: str, request: Request) -> SourceOut:
 @router.post("/{source_id}/verify", response_model=SourceOut)
 async def verify_source(source_id: str, request: Request) -> SourceOut:
     record = await _repo(request).mark_verified(source_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="来源不存在")
+    return _source_out(record)
+
+
+class LicenseStateUpdate(BaseModel):
+    state: LicenseState
+
+
+@router.post("/{source_id}/license", response_model=SourceOut)
+async def set_license_state(payload: LicenseStateUpdate, source_id: str, request: Request) -> SourceOut:
+    """人工认定/改判 license 状态；非法迁移返回 409（M1-02 状态机）。"""
+    try:
+        record = await _repo(request).set_license_state(source_id, payload.state)
+    except ValueError as cause:
+        raise HTTPException(status_code=409, detail=str(cause)) from cause
     if not record:
         raise HTTPException(status_code=404, detail="来源不存在")
     return _source_out(record)

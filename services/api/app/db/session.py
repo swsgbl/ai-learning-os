@@ -40,8 +40,9 @@ def is_sqlite(database_url: str) -> bool:
 
 async def run_migrations(database_url: str) -> None:
     """Bring the schema to head via Alembic (programmatically, no CLI needed)."""
-    from alembic import command
     from alembic.config import Config
+
+    from alembic import command
 
     alembic_cfg = Config(str(_API_DIR / "alembic.ini"))
     alembic_cfg.set_main_option("script_location", str(_API_DIR / "alembic"))

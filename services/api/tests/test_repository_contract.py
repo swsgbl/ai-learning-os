@@ -12,6 +12,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
+
 from app.db.orm import AnswerEventRow
 from app.db.session import create_engine, make_sessionmaker, prepare_database
 from app.domain.models import ExamStatus
