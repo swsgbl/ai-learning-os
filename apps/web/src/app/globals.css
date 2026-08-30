@@ -1,0 +1,71 @@
+@import "tailwindcss";
+
+@theme {
+  --color-bg: #f2eee6;
+  --color-paper: #f2eee6;
+  --color-surface: #faf7f2;
+  --color-surface-2: #ebe4d8;
+  --color-ink: #1c1914;
+  --color-muted: #6e675e;
+  --color-subtle: #9a9288;
+  --color-accent: #2d4a44;
+  --color-accent-fg: #f7f4ee;
+  --color-good: #2f5d45;
+  --color-good-soft: #dce8e0;
+  --color-bad: #8a3b36;
+  --color-bad-soft: #f0ddd9;
+  --color-warn: #7a5c2e;
+  --color-ring: #2d4a44;
+  --color-border: #e4ddd2;
+
+  --font-display: var(--font-newsreader), "Songti SC", "Noto Serif SC", serif;
+  --font-sans: var(--font-figtree), "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  --radius-xs: 4px;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+
+  --shadow-border: 0 0 0 1px rgba(28, 25, 20, 0.08), 0 1px 2px -1px rgba(28, 25, 20, 0.06), 0 2px 6px 0 rgba(28, 25, 20, 0.04);
+  --shadow-border-hover: 0 0 0 1px rgba(28, 25, 20, 0.12), 0 4px 14px -4px rgba(28, 25, 20, 0.1);
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --motion-quick: 150ms;
+}
+
+@layer base {
+  html {
+    -webkit-font-smoothing: antialiased;
+  }
+
+  body {
+    background: var(--color-bg);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+  }
+
+  h1,
+  h2,
+  h3 {
+    font-family: var(--font-display);
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  button:not(:disabled) {
+    cursor: pointer;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}

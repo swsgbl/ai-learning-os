@@ -1,0 +1,119 @@
+from __future__ import annotations
+
+from fastapi import APIRouter, HTTPException, Request
+
+from app.api.routes.papers import exam_out
+from app.api.schemas import (
+    AnglesOut,
+    ExamSessionOut,
+    GradedItemOut,
+    ReviewQuestionOut,
+    SaveAnswerRequest,
+    SubmissionOut,
+    SubmitRequest,
+)
+from app.domain.models import SubmissionRecord
+
+router = APIRouter(prefix="/api/v1/exams", tags=["exams"])
+
+
+async def require_exam(request: Request, exam_id: str):
+    record = await request.app.state.repository.get_exam(exam_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="考试不存在")
+    paper = await request.app.state.repository.get_paper(record.paper_id)
+    if not paper:
+        raise HTTPException(status_code=500, detail="试卷数据缺失")
+    return record, paper
+
+
+@router.get("/{exam_id}", response_model=ExamSessionOut)
+async def get_exam(exam_id: str, request: Request) -> ExamSessionOut:
+    record, paper = await require_exam(request, exam_id)
+    return exam_out(record, paper)
+
+
+@router.put("/{exam_id}/answers", response_model=ExamSessionOut)
+async def save_answer(exam_id: str, payload: SaveAnswerRequest, request: Request) -> ExamSessionOut:
+    try:
+        record = await request.app.state.repository.save_answer(
+            exam_id,
+            payload.sequence,
+            payload.question_id,
+            payload.answer,
+        )
+    except KeyError as cause:
+        raise HTTPException(status_code=404, detail=str(cause)) from cause
+    except ValueError as cause:
+        raise HTTPException(status_code=409, detail=str(cause)) from cause
+    except PermissionError as cause:
+        raise HTTPException(status_code=409, detail=str(cause)) from cause
+    _, paper = await require_exam(request, exam_id)
+    return exam_out(record, paper)
+
+
+@router.post("/{exam_id}/submit", response_model=SubmissionOut)
+async def submit_exam(exam_id: str, _payload: SubmitRequest, request: Request) -> SubmissionOut:
+    try:
+        submission = await request.app.state.repository.submit(exam_id)
+    except KeyError as cause:
+        raise HTTPException(status_code=404, detail=str(cause)) from cause
+    return await submission_out(submission, request)
+
+
+@router.get("/{exam_id}/submission", response_model=SubmissionOut)
+async def get_submission(exam_id: str, request: Request) -> SubmissionOut:
+    submission = await request.app.state.repository.get_submission(exam_id)
+    if not submission:
+        raise HTTPException(status_code=404, detail="审阅报告尚未生成")
+    return await submission_out(submission, request)
+
+
+async def submission_out(submission: SubmissionRecord, request: Request) -> SubmissionOut:
+    questions: list[ReviewQuestionOut] = []
+    if paper := await request.app.state.repository.get_paper(submission.paper_id):
+        questions = [
+            ReviewQuestionOut(
+                id=item.id,
+                type=item.type,
+                stem=item.stem,
+                options=[{"key": option.key, "text": option.text} for option in item.options],
+                answer=item.answer,
+                explanation=item.explanation,
+                angles=angles_out(item.angles),
+                knowledge=list(item.knowledge),
+            )
+            for item in paper.questions
+        ]
+    return SubmissionOut(
+        exam_id=submission.exam_id,
+        paper_id=submission.paper_id,
+        paper_title=submission.paper_title,
+        mode=submission.mode,
+        status=submission.status.value,
+        score=submission.score,
+        correct_count=submission.correct_count,
+        total_count=submission.total_count,
+        duration_seconds=submission.duration_seconds,
+        items=[
+            GradedItemOut(
+                question_id=item.question_id,
+                given=item.given,
+                correct=item.correct,
+                expected=item.expected,
+                explanation=item.explanation,
+                angles=angles_out(item.angles),
+            )
+            for item in submission.items
+        ],
+        questions=questions,
+    )
+
+
+def angles_out(angles) -> AnglesOut:
+    return AnglesOut(
+        concept=angles.concept,
+        method=angles.method,
+        mistake=angles.mistake,
+        variant=angles.variant,
+    )
