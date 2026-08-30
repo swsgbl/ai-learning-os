@@ -115,6 +115,7 @@ __all__ = [
     "EvidenceRow",
     "ExamSessionRow",
     "PaperRow",
+    "ParseJobRow",
     "QuestionRow",
     "ResourceRow",
     "SubmissionRow",
@@ -204,3 +205,25 @@ class EvidenceRow(Base):
     snippet_hash: Mapped[str] = mapped_column(String(64))
     license_state: Mapped[str] = mapped_column(String(32))
     retrieved_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ParseJobRow(Base):
+    """M1-07 解析任务：幂等键 (resource_id, parser_name)；可重试可恢复。"""
+
+    __tablename__ = "parse_jobs"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    resource_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("resources.id"), index=True
+    )
+    parser_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    attempts: Mapped[int] = mapped_column(Integer, default=0)
+    max_attempts: Mapped[int] = mapped_column(Integer, default=3)
+    last_error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint("resource_id", "parser_name", name="uq_parse_jobs_resource_parser"),
+    )
