@@ -25,7 +25,7 @@ M1-03 文件上传与 hash 去重
 | M0-06 CI 门禁（GitHub Actions） | 1eb3436, merge 83bf7ea | Actions run 33329866289：Web 1m10s 绿 / API 34s 绿（真实 PG service container + migration roundtrip） | 2026-08-31 |
 | M0-07 密钥与隐私配置 + 运维验证 | 622246e | Settings 隐私路由 4 测试、.env.example 按 runbook §3、MinIO healthcheck、compose 全栈 healthy + 重启数据保持 | 2026-08-31 |
 | M1-01 Source Registry | 68599ef, merge 24e0193 | pytest 21 passed（含真实 PG）：seed 6 来源分层正确；CRUD+verify；重复 409；非法 id 422；无 DB 503；migration 0002 up/down roundtrip；ruff+前端门禁绿 | 2026-08-31 |
-| M1-02 License State Machine | 本分支 | pytest 33 passed（含真实 PG）：迁移矩阵 5 测（UNKNOWN 任意/PROHIBITED 吸收/回审/封禁/改判）；准入+存储策略 4 测（UNKNOWN 不进池、ACCESS_CONTROLLED 不存正文）；API 3 测（认定入池、吸收态 409、404）；前端门禁绿 | 2026-08-31 |
+| M1-02 License State Machine | 5c3abb6, merge 6740b4c | pytest 33 passed（含真实 PG）：迁移矩阵 5 测（UNKNOWN 任意/PROHIBITED 吸收/回审/封禁/改判）；准入+存储策略 4 测（UNKNOWN 不进池、ACCESS_CONTROLLED 不存正文）；API 3 测（认定入池、吸收态 409、404）；前端门禁绿 | 2026-08-31 |
 
 ## 待办任务（按 backlog 顺序）
 
