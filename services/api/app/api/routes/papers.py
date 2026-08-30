@@ -66,3 +66,46 @@ async def start_exam(paper_id: str, payload: StartExamRequest, request: Request)
         raise HTTPException(status_code=404, detail="试卷不存在")
     record = await request.app.state.repository.create_exam(paper, payload.mode)
     return exam_out(record, paper)
+
+
+# ---------- M2-02 试卷 JSON 导入（逐行报错 + 落库不变） ----------
+from fastapi import Body
+from pydantic import BaseModel, ValidationError
+
+from app.domain.questions import PaperSpec as PaperSpecModel
+from app.repositories.paper_importer import import_papers as _run_import
+
+
+class ImportResult(BaseModel):
+    imported: list[str]
+
+
+class LineError(BaseModel):
+    index: int
+    errors: list[dict]
+
+
+@router.post("/papers/import", response_model=ImportResult, status_code=201)
+async def import_papers_endpoint(request: Request, payload: list[dict] = Body(...)) -> ImportResult:
+    """批量导入试卷 JSON：全部合法才落库；任一行失败则逐行报错且不写入。"""
+    sessionmaker = getattr(request.app.state, "sessionmaker", None)
+    if sessionmaker is None:
+        raise HTTPException(status_code=503, detail="Paper import requires a database")
+    specs: list[PaperSpecModel] = []
+    line_errors: list[LineError] = []
+    for index, raw in enumerate(payload):
+        try:
+            specs.append(PaperSpecModel.model_validate(raw))
+        except ValidationError as cause:
+            line_errors.append(
+                LineError(
+                    index=index,
+                    errors=cause.errors(include_url=False, include_context=False),
+                )
+            )
+    if line_errors:
+        raise HTTPException(
+            status_code=422,
+            detail={"imported": [], "errors": [error.model_dump() for error in line_errors]},
+        )
+    return ImportResult(imported=await _run_import(sessionmaker, specs))
