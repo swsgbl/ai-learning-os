@@ -9,8 +9,9 @@ from __future__ import annotations
 import os
 
 import pytest
-from app.main import create_app
 from fastapi.testclient import TestClient
+
+from app.main import create_app
 
 PG_URL = os.environ.get("AIOS_PG_TEST_URL")
 

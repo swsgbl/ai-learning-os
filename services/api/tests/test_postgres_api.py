@@ -8,8 +8,9 @@
 """
 from __future__ import annotations
 
-from app.main import create_app
 from fastapi.testclient import TestClient
+
+from app.main import create_app
 
 SQLITE_URL = "sqlite+aiosqlite:///:memory:"
 

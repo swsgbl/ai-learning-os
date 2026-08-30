@@ -9,7 +9,7 @@ M0 Foundation（已完成）→ M1 Content 基础层（进行中）
 
 ## 当前任务
 
-M1-02 License State Machine
+M1-03 文件上传与 hash 去重
 
 ## 已完成任务
 
@@ -25,12 +25,13 @@ M1-02 License State Machine
 | M0-06 CI 门禁（GitHub Actions） | 1eb3436, merge 83bf7ea | Actions run 33329866289：Web 1m10s 绿 / API 34s 绿（真实 PG service container + migration roundtrip） | 2026-08-31 |
 | M0-07 密钥与隐私配置 + 运维验证 | 622246e | Settings 隐私路由 4 测试、.env.example 按 runbook §3、MinIO healthcheck、compose 全栈 healthy + 重启数据保持 | 2026-08-31 |
 | M1-01 Source Registry | 68599ef, merge 24e0193 | pytest 21 passed（含真实 PG）：seed 6 来源分层正确；CRUD+verify；重复 409；非法 id 422；无 DB 503；migration 0002 up/down roundtrip；ruff+前端门禁绿 | 2026-08-31 |
+| M1-02 License State Machine | 本分支 | pytest 33 passed（含真实 PG）：迁移矩阵 5 测（UNKNOWN 任意/PROHIBITED 吸收/回审/封禁/改判）；准入+存储策略 4 测（UNKNOWN 不进池、ACCESS_CONTROLLED 不存正文）；API 3 测（认定入池、吸收态 409、404）；前端门禁绿 | 2026-08-31 |
 
 ## 待办任务（按 backlog 顺序）
 
-- [ ] M1-02 License State Machine（进行中）
+- [ ] M1-03 文件上传与 hash 去重（进行中）
+- [ ] M1-04~08 Content Ingestion（parser adapter、layout、chunk/Evidence、队列、质量报告）
 - [ ] M2-04 Redis timeout worker（Redis 延迟队列 + DB 事务兜底）
-- [ ] M1-03~08 Content Ingestion（上传、parser adapter、chunk/Evidence、队列、质量报告）
 - [ ] M1-03~08 Content Ingestion（上传、parser adapter、chunk/Evidence、队列、质量报告）
 - [ ] M2-01~11 题库 schema、试卷导入、grader、报告
 - [ ] M3-01~07 Student Model
@@ -61,6 +62,7 @@ M1-02 License State Machine
 | 7 | CI api job 挂真实 PG service container，migration check 显式三步 | M0-06 验收 | 2026-08-31 |
 | 8 | Source 元数据与内容抓取分离：registry 只存元数据（robots 快照、rate limit、license/trust 分层），不抓正文 | docs/delivery/03 §3.1；抓正文属 M1-03+ | 2026-08-31 |
 | 9 | 种子来源全部 license_state=UNKNOWN，进入公共复用池前必须显式 verify | backlog M1-01/M1-02 验收语义 | 2026-08-31 |
+| 10 | License 状态机：UNKNOWN 可认定任意状态；PROHIBITED 吸收态不可迁出；已认定可回 UNKNOWN 重审或改判；准入仅 PUBLIC_ACCESS/OPEN_LICENSE/RESTRICTED_NON_COMMERCIAL；ACCESS_CONTROLLED/UNKNOWN/R 级只存元数据 | 10 号文档 §6.3/§6.4 + 08 号 License Registry | 2026-08-31 |
 
 ## 下一任务
 

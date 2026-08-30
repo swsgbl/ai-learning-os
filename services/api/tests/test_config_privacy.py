@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import pytest
-from app.core.config import Settings
-from app.main import create_app
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
+
+from app.core.config import Settings
+from app.main import create_app
 
 
 def test_privacy_modes_default_to_runbook_values() -> None:

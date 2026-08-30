@@ -8,7 +8,13 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.orm import SourceRow
-from app.domain.license import LicenseState, TrustTier
+from app.domain.license import (
+    REUSE_ADMISSION,
+    LicenseState,
+    ReuseAdmission,
+    TrustTier,
+    assert_transition,
+)
 from app.domain.source import SourceRecord
 from app.repositories.memory import utc_now
 from app.repositories.seed_sources import seed_sources
@@ -49,9 +55,17 @@ class SourceRepository:
             row = await session.get(SourceRow, source_id)
             return self._record(row) if row else None
 
-    async def list(self) -> list[SourceRecord]:
+    async def list(self, *, reuse_pool_only: bool = False) -> list[SourceRecord]:
         async with self._sessionmaker() as session:
-            rows = (await session.execute(select(SourceRow).order_by(SourceRow.id))).scalars().all()
+            query = select(SourceRow).order_by(SourceRow.id)
+            if reuse_pool_only:
+                admissible = tuple(
+                    state.value
+                    for state, admission in REUSE_ADMISSION.items()
+                    if admission != ReuseAdmission.NOT_ADMISSIBLE
+                )
+                query = query.where(SourceRow.license_state.in_(admissible))
+            rows = (await session.execute(query)).scalars().all()
             return [self._record(row) for row in rows]
 
     async def mark_verified(self, source_id: str) -> SourceRecord | None:
@@ -59,6 +73,18 @@ class SourceRepository:
             row = await session.get(SourceRow, source_id)
             if not row:
                 return None
+            row.last_verified_at = _to_db(self._clock())
+            return self._record(row)
+
+    async def set_license_state(self, source_id: str, target: LicenseState) -> SourceRecord | None:
+        """带状态机校验的 license 认定；非法迁移抛 ValueError。"""
+        async with self._sessionmaker() as session, session.begin():
+            row = await session.get(SourceRow, source_id)
+            if not row:
+                return None
+            current = LicenseState(row.license_state)
+            assert_transition(current, target)
+            row.license_state = target.value
             row.last_verified_at = _to_db(self._clock())
             return self._record(row)
 
