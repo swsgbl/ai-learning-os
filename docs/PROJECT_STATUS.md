@@ -24,7 +24,7 @@ M1-02 License State Machine
 | M0-05 + M0-持久化（PostgreSQL repository + Alembic） | a6bd316, merge 2fa1a8c | pytest 12 passed（含真实 PG）；migration up/down/dry-run；全部门禁绿 | 2026-08-31 |
 | M0-06 CI 门禁（GitHub Actions） | 1eb3436, merge 83bf7ea | Actions run 33329866289：Web 1m10s 绿 / API 34s 绿（真实 PG service container + migration roundtrip） | 2026-08-31 |
 | M0-07 密钥与隐私配置 + 运维验证 | 622246e | Settings 隐私路由 4 测试、.env.example 按 runbook §3、MinIO healthcheck、compose 全栈 healthy + 重启数据保持 | 2026-08-31 |
-| M1-01 Source Registry | 本分支 | pytest 21 passed（含真实 PG）：seed 6 来源分层正确；CRUD+verify；重复 409；非法 id 422；无 DB 503；migration 0002 up/down roundtrip；ruff+前端门禁绿 | 2026-08-31 |
+| M1-01 Source Registry | 68599ef, merge 24e0193 | pytest 21 passed（含真实 PG）：seed 6 来源分层正确；CRUD+verify；重复 409；非法 id 422；无 DB 503；migration 0002 up/down roundtrip；ruff+前端门禁绿 | 2026-08-31 |
 
 ## 待办任务（按 backlog 顺序）
 
