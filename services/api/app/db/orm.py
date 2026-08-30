@@ -157,4 +157,7 @@ class ResourceRow(Base):
     size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     content_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
     parse_status: Mapped[str] = mapped_column(String(32), default="pending")
+    parser_name: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    parse_metrics: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    parse_error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

@@ -13,6 +13,7 @@ from app.api.routes.sources import router as sources_router
 from app.api.routes.system import router as system_router
 from app.core.config import get_settings
 from app.db.session import create_engine, make_sessionmaker, prepare_database
+from app.parsing.registry import make_default_registry
 from app.repositories.memory import MemoryRepository
 from app.repositories.postgres import PostgresRepository
 from app.repositories.resources import ResourceRepository
@@ -38,12 +39,14 @@ def create_app(database_url: str | None = None) -> FastAPI:
             await sources.seed_if_empty()
             resources = ResourceRepository(make_sessionmaker(engine))
             objects = make_object_store(settings)
+            parsers = make_default_registry()
         else:
             repository = MemoryRepository()
         app.state.repository = repository
         app.state.sources = sources if resolved_url else None
         app.state.resources = resources if resolved_url else None
         app.state.objects = objects if resolved_url else None
+        app.state.parsers = parsers if resolved_url else None
         yield
         if resolved_url:
             await engine.dispose()

@@ -23,3 +23,6 @@ class ResourceRecord:
     license_state: LicenseState = LicenseState.UNKNOWN
     content_type: str | None = None
     parse_status: str = "pending"
+    parser_name: str | None = None
+    parse_metrics: dict | None = None
+    parse_error: str | None = None

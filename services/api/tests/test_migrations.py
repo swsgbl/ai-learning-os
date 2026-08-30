@@ -46,7 +46,10 @@ def test_migration_up_down_roundtrip(tmp_path: Path) -> None:
 
     with sqlite3.connect(db_path) as connection:
         version = connection.execute("SELECT version_num FROM alembic_version").fetchone()
-    assert version == ("0003_resources",)
+    from alembic.script import ScriptDirectory as _SD
+
+    head = _SD.from_config(_config("sqlite://")).get_heads()[0]
+    assert version == (head,)
 
     command.downgrade(config, "base")
     leftover = _tables(db_path)

@@ -44,9 +44,35 @@ class ResourceRepository:
                 )
             ).scalar_one_or_none()
             if existing:
+                if record.source_id and not existing.source_id:
+                    # 同内容重传补绑来源，并快照上传时点的 license
+                    existing.source_id = record.source_id
+                    existing.access_state = record.access_state
+                    existing.license_state = record.license_state.value
                 return self._record(existing), True
             session.add(self._row(record))
         return record, False
+
+    async def set_parse_status(
+        self,
+        resource_id: str,
+        status: str,
+        *,
+        parser_name: str | None = None,
+        metrics: dict | None = None,
+        error: str | None = None,
+    ) -> ResourceRecord | None:
+        """M1-04：记录解析阶段状态（prompt pack C 要求 status/error/metrics）。"""
+        async with self._sessionmaker() as session, session.begin():
+            row = await session.get(ResourceRow, resource_id)
+            if not row:
+                return None
+            row.parse_status = status
+            if parser_name is not None:
+                row.parser_name = parser_name
+            row.parse_metrics = metrics
+            row.parse_error = error
+            return self._record(row)
 
     @staticmethod
     def _row(record: ResourceRecord) -> ResourceRow:
@@ -64,6 +90,9 @@ class ResourceRepository:
             size_bytes=record.size_bytes,
             content_type=record.content_type,
             parse_status=record.parse_status,
+            parser_name=record.parser_name,
+            parse_metrics=record.parse_metrics,
+            parse_error=record.parse_error,
             fetched_at=_to_db(record.fetched_at),
         )
 
@@ -85,6 +114,9 @@ class ResourceRepository:
             size_bytes=row.size_bytes,
             content_type=row.content_type,
             parse_status=row.parse_status,
+            parser_name=row.parser_name,
+            parse_metrics=row.parse_metrics,
+            parse_error=row.parse_error,
             fetched_at=_from_db(row.fetched_at),
         )
 
