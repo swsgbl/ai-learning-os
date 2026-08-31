@@ -416,6 +416,76 @@ def test_review_queue_projection_against_real_postgres() -> None:
         assert again == first  # 实时投影重放幂等
 
 
+def test_daily_plan_against_real_postgres() -> None:
+    """M3-06：真实 PG 下今日计划聚合三投影——结构完整、每任务带 reason、重放幂等、now 非法 422。
+
+    共享主库存在大量历史错题（overdue_ratio 远高于本次运行新错题），
+    quota 内任务几乎必然被历史题占据，故本测试验证端到端结构与幂等，
+    「错题进入次日复习」的语义由干净库的 SQLite 端到端用例覆盖。
+    """
+    from uuid import uuid4
+
+    suffix = uuid4().hex[:8]
+    concept = f"pg_plan_{suffix}"
+    paper = {
+        "title": "PG 今日计划验证卷",
+        "duration_seconds": 1800,
+        "questions": [
+            {
+                "question": {
+                    "question_type": "mcq",
+                    "stem": f"计划题{i}",
+                    "options": ["A", "B"],
+                    "answer": {"option_index": 1},
+                    "explanation": "B 对",
+                    "concept_ids": [concept],
+                    "difficulty": 3,
+                },
+                "score": 1.0,
+            }
+            for i in (1, 2)
+        ],
+    }
+    fixed_now = "2030-01-01T00:00:00+00:00"
+    with TestClient(create_app(PG_URL)) as client:  # type: ignore[arg-type]
+        (paper_id,) = client.post("/api/v1/papers/import", json=[paper]).json()["imported"]
+        started = client.post(f"/api/v1/papers/{paper_id}/exams", json={"mode": "exam"})
+        exam_id = started.json()["exam_id"]
+        questions = started.json()["questions"]
+        client.put(
+            f"/api/v1/exams/{exam_id}/answers",
+            json={"sequence": 1, "question_id": questions[0]["id"], "answer": "A"},  # 错
+        )
+        assert client.post(f"/api/v1/exams/{exam_id}/submit", json={}).status_code == 200
+
+        plan = client.get("/api/v1/student/daily-plan", params={"now": fixed_now}).json()
+        kinds = [task["kind"] for task in plan["tasks"]]
+        assert set(kinds) <= {"review", "mistake_retry", "new_learning"}
+        assert plan["task_count"] == len(plan["tasks"])
+        assert plan["task_count"] == (
+            plan["review_count"] + plan["mistake_retry_count"] + plan["new_learning_count"]
+        )
+        assert kinds.count("review") == plan["review_count"]
+        question_ids = [task["question_id"] for task in plan["tasks"]]
+        assert len(question_ids) == len(set(question_ids))  # 同一题不重复入选
+        for task in plan["tasks"]:
+            assert task["reason"].strip()  # 解释为什么被选中
+            assert task["concept_ids"] or task["kind"] == "new_learning"
+
+        # 本次运行的错题（唯一后缀概念）若被配额选中，必须以 review 形态出现且概念正确
+        by_id = {task["question_id"]: task for task in plan["tasks"]}
+        if questions[0]["id"] in by_id:
+            assert by_id[questions[0]["id"]]["kind"] == "review"
+            assert by_id[questions[0]["id"]]["concept_ids"] == [concept]
+
+        again = client.get("/api/v1/student/daily-plan", params={"now": fixed_now}).json()
+        assert again == plan  # 实时投影重放幂等
+
+        assert (
+            client.get("/api/v1/student/daily-plan", params={"now": "bad"}).status_code == 422
+        )
+
+
 def test_concurrent_answer_writers_get_explicit_outcome() -> None:
     """M2-05 并发同 sequence 写入：一个成功一个明确拒绝，绝无未处理 IntegrityError。"""
     import asyncio

@@ -246,6 +246,27 @@ class ReviewQueueOut(BaseModel):
     items: list[ReviewItemOut]
 
 
+class PlanTaskOut(BaseModel):
+    """M3-06 今日任务：kind + 选题 + reason（为什么被选中，验收要求）。"""
+
+    kind: str
+    question_id: str
+    concept_ids: list[str]
+    title: str
+    reason: str
+    priority: float
+
+
+class DailyPlanOut(BaseModel):
+    generated_at: str
+    plan_date: str
+    task_count: int
+    review_count: int
+    mistake_retry_count: int
+    new_learning_count: int
+    tasks: list[PlanTaskOut]
+
+
 class SubmissionOut(BaseModel):
     exam_id: str
     paper_id: str
