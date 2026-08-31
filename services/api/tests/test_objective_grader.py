@@ -24,6 +24,9 @@ GOLDEN_SET = [
     ("mcq-wrong", "mcq", "A", "B", False),
     ("mcq-empty", "mcq", "A", "", False),
     ("mcq-seed-alias", "choice", "A", "A", True),
+    ("mcq-json-index", "mcq", json.dumps({"option_index": 1}), "B", True),
+    ("mcq-json-index-lower", "mcq", json.dumps({"option_index": 1}), "b", True),
+    ("mcq-json-index-wrong", "mcq", json.dumps({"option_index": 1}), "A", False),
     # --- multiple_select：集合等价 ---
     ("ms-exact", "multiple_select", "ABD", "ABD", True),
     ("ms-permuted", "multiple_select", "ABD", "ADB", True),
@@ -43,6 +46,9 @@ GOLDEN_SET = [
     ("tf-f-chinese", "true_false", "F", "错误", True),
     ("tf-t-mismatch", "true_false", "F", "T", False),
     ("tf-seed-alias", "tf", "T", "对", True),
+    ("tf-json-true", "true_false", json.dumps({"value": True}), "对", True),
+    ("tf-json-false-answered-f", "true_false", json.dumps({"value": False}), "F", True),
+    ("tf-json-false-answered-t", "true_false", json.dumps({"value": False}), "T", False),
     # --- short_answer：JSON accepted + legacy 备选 ---
     ("sa-json-exact", "short_answer", json.dumps({"accepted": ["O(n log n)"]}), "O(n log n)", True),
     ("sa-json-nospace", "short_answer", json.dumps({"accepted": ["O(n log n)"]}), "O(nlogn)", True),

@@ -405,6 +405,8 @@ class PostgresRepository:
                 "variant": question.angles.variant,
             },
             knowledge=list(question.knowledge),
+            score=question.score,
+            difficulty=question.difficulty,
             sort_order=sort_order,
         )
 
@@ -464,6 +466,7 @@ class PostgresRepository:
                     angles=Angles(**question.angles),
                     knowledge=tuple(question.knowledge),
                     score=question.score,
+                    difficulty=question.difficulty,
                 )
                 for question in questions
             ),

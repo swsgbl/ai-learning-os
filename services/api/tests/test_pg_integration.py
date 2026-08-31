@@ -139,6 +139,54 @@ def test_exam_report_flow_against_real_postgres() -> None:
         assert report["remediation_tasks"][task_id]["detail"] == "geometry"
 
 
+def test_learning_events_flow_against_real_postgres() -> None:
+    """M3-01：真实 PG 下标准化学习事件端到端——事件源重放、attempt、判分一致。"""
+    paper = {
+        "title": "PG 学习事件验证卷",
+        "duration_seconds": 600,
+        "questions": [
+            {
+                "question": {
+                    "question_type": "mcq",
+                    "stem": "1+1=?",
+                    "options": ["1", "2"],
+                    "answer": {"option_index": 1},
+                    "explanation": "加法",
+                    "concept_ids": ["arithmetic"],
+                    "difficulty": 5,
+                },
+                "score": 1.0,
+            },
+        ],
+    }
+    with TestClient(create_app(PG_URL)) as client:  # type: ignore[arg-type]
+        (paper_id,) = client.post("/api/v1/papers/import", json=[paper]).json()["imported"]
+        started = client.post(f"/api/v1/papers/{paper_id}/exams", json={"mode": "exam"})
+        exam_id = started.json()["exam_id"]
+        (question,) = started.json()["questions"]
+        client.put(
+            f"/api/v1/exams/{exam_id}/answers",
+            json={"sequence": 1, "question_id": question["id"], "answer": "A"},
+        )
+        client.put(
+            f"/api/v1/exams/{exam_id}/answers",
+            json={"sequence": 2, "question_id": question["id"], "answer": "B"},
+        )
+
+        stream = client.get(f"/api/v1/exams/{exam_id}/learning-events").json()
+        (first, second) = stream["events"]
+        assert (first["attempt_number"], first["correctness"]) == (1, False)
+        assert (second["attempt_number"], second["correctness"]) == (2, True)
+        assert first["concept_ids"] == ["arithmetic"]
+        assert first["difficulty"] == 5  # QuestionSpec.difficulty 落库并透传到学习事件
+        assert first["event_type"] == "answer"
+        assert first["hint_used"] is False
+        assert second["latency_ms"] >= 0
+
+        replay = client.get(f"/api/v1/exams/{exam_id}/learning-events").json()
+        assert replay == stream
+
+
 def test_concurrent_answer_writers_get_explicit_outcome() -> None:
     """M2-05 并发同 sequence 写入：一个成功一个明确拒绝，绝无未处理 IntegrityError。"""
     import asyncio

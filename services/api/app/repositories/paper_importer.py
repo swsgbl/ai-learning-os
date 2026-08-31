@@ -65,6 +65,7 @@ async def import_papers(
                     angles=dict(_EMPTY_ANGLES),
                     knowledge=list(ref.question.concept_ids),
                     score=ref.score,
+                    difficulty=ref.question.difficulty,
                     sort_order=order,
                 ))
     return ids

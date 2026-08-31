@@ -52,6 +52,16 @@ def _expected_candidates(question_type: str, expected: str) -> list[str]:
             data = json.loads(expected)
         except json.JSONDecodeError:
             return [expected]
+        if question_type == "mcq" and isinstance(data, dict):
+            index = data.get("option_index")
+            if isinstance(index, int) and 0 <= index < len(_MCQ_KEYS):
+                return [_MCQ_KEYS[index]]
+            return [expected]
+        if question_type == "true_false" and isinstance(data, dict):
+            value = data.get("value")
+            if isinstance(value, bool):
+                return ["T" if value else "F"]
+            return [expected]
         if question_type == "multiple_select" and isinstance(data, dict):
             indices = data.get("option_indices", [])
             return ["".join(_MCQ_KEYS[i] for i in sorted(indices))]
@@ -74,7 +84,8 @@ def grade_answer(question_type: str, expected: str, given: str) -> bool | None:
         return grade_math(expected, given)
 
     if kind == "mcq":
-        return _normalize_text(given) == _normalize_text(expected)
+        candidates = _expected_candidates(kind, expected)
+        return any(_normalize_text(given) == _normalize_text(c) for c in candidates)
 
     if kind == "multiple_select":
         expected_letters = _expected_candidates(kind, expected)
@@ -87,7 +98,8 @@ def grade_answer(question_type: str, expected: str, given: str) -> bool | None:
         )
 
     if kind == "true_false":
-        return _normalize_tf(given) == _normalize_tf(expected)
+        (expected_letter,) = _expected_candidates(kind, expected)
+        return _normalize_tf(given) == _normalize_tf(expected_letter)
 
     if kind == "short_answer":
         normalized_given = _normalize_text(given).lower()

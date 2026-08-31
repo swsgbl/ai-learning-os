@@ -38,6 +38,7 @@ class Question:
     angles: Angles
     knowledge: tuple[str, ...]
     score: float = 1.0  # M2-11 题分：导入卷为 PaperQuestionRef.score，seed 卷默认 1 分
+    difficulty: int = 3  # 题目级难度 1-5（QuestionSpec 语义）；M3-01 学习事件重放透传
 
 
 @dataclass(frozen=True, slots=True)
