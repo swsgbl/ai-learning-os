@@ -12,7 +12,6 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from app.db.session import create_engine, make_sessionmaker, prepare_database
-from app.domain.models import ExamStatus
 from app.repositories.memory import MemoryRepository
 from app.repositories.postgres import PostgresRepository
 from app.repositories.seed import seed_papers
