@@ -185,6 +185,27 @@ class LearningEventStreamOut(BaseModel):
     events: list[LearningEventOut]
 
 
+class ConceptStateOut(BaseModel):
+    """M3-03 学生-概念状态：可解释 BKT-like 重算输出（pack F）。"""
+
+    concept_id: str
+    mastery: float
+    confidence: float
+    forgetting_risk: float
+    evidence_count: int
+    correct_count: int
+    wrong_count: int
+    first_event_at: str
+    last_event_at: str
+    updated_at: str
+
+
+class StudentStatesOut(BaseModel):
+    concept_count: int
+    states: list[ConceptStateOut]
+    weak_concepts: list[str]
+
+
 class SubmissionOut(BaseModel):
     exam_id: str
     paper_id: str

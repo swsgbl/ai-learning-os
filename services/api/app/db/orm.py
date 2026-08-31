@@ -121,6 +121,7 @@ __all__ = [
     "ParseJobRow",
     "QuestionRow",
     "ResourceRow",
+    "StudentConceptStateRow",
     "SubmissionRow",
 ]
 
@@ -282,3 +283,23 @@ class ConceptEdgeRow(Base):
     __table_args__ = (
         UniqueConstraint("version_id", "prerequisite_id", "concept_id", name="uq_concept_edges_triple"),
     )
+
+
+class StudentConceptStateRow(Base):
+    """M3-03 学生-概念状态：从学习事件全量重算的物化状态（事件源不变，可随时整体重建）。
+
+    MVP 单用户无 user_id 列；认证引入后再加复合主键 (user_id, concept_id)。
+    """
+
+    __tablename__ = "student_concept_states"
+
+    concept_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    mastery: Mapped[float] = mapped_column(Float)
+    confidence: Mapped[float] = mapped_column(Float)
+    forgetting_risk: Mapped[float] = mapped_column(Float)
+    evidence_count: Mapped[int] = mapped_column(Integer, default=0)
+    correct_count: Mapped[int] = mapped_column(Integer, default=0)
+    wrong_count: Mapped[int] = mapped_column(Integer, default=0)
+    first_event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
