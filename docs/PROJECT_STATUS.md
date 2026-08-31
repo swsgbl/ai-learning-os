@@ -38,12 +38,13 @@ M2-02 试卷导入（backlog：paper import；M2-04 Redis timeout worker 视依�
 | M2-04 服务端权威计时 | 9b72d19, merge 610af91 | pytest 113 passed（含真实 PG）：start/end 服务器写入 + 伪造客户端时间字段被忽略 1 测；3 次刷新/重连 end_at 不变 + 时钟推进缩短剩余 1 测；超时翻转 EXPIRED + 禁止作答 + 用时按 min(now,end_at) 结算 1 测；答案/提交伪造时间不影响结算 1 测；前端门禁绿 | 2026-08-31 |
 | M2-05 答案 append-only event | c55e222, merge eed9b48 | pytest 119 passed（含真实 PG）：乱序 409、同内容幂等、同序号不同答案拒绝且原事件不变（API+事件流双断言）、拒绝后事件流原样 [1,2,3]、交卷后禁止追加 5 测；真实 PG 并发同序号 gather → 一成功一明确 ValueError（flush 撞 uq 转 409，无 500）1 测；grep 确认无 update/delete 事件路径；前端门禁绿 | 2026-08-31 |
 | M2-06 自动保存与断线恢复 | 676aae1, merge 2edb513 | pytest 122 passed（含真实 PG）：刷新恢复（answers+remaining+next_sequence=3）1 测；恢复后按服务端 next_sequence 续答 200 1 测；未知考试 404 1 测；浏览器实测：答 B→刷新→exam_id 不变/答案保留/倒计时走服务端时间→续答第 2 题成功（修复前乐观序号跳号会永久 409）；ExamSessionOut 新增 next_sequence 字段；前端 localStorage 恢复 + 序号权威管理 + 过期自动结算跳审阅 | 2026-08-31 |
-| M2-07 幂等提交与超时提交 | 本分支 | pytest 126 passed（含真实 PG）：超时结算只触发一次（memory/postgres 双仓库参数化：重复结算+时钟推进均同一报告、结算后答案永久拒绝）2 测；API 三路幂等（两次 submit + GET submission 全等）1 测；真实 PG 并发结算收敛同一 submission 1 测；ADR 19 记录不引 Redis 决策 | 2026-08-31 |
+| M2-07 幂等提交与超时提交 | c39d142, merge c374811 | pytest 126 passed（含真实 PG）：超时结算只触发一次（memory/postgres 双仓库参数化：重复结算+时钟推进均同一报告、结算后答案永久拒绝）2 测；API 三路幂等（两次 submit + GET submission 全等）1 测；真实 PG 并发结算收敛同一 submission 1 测；ADR 19 记录不引 Redis 决策 | 2026-08-31 |
+| M2-08 Objective grader | 本分支 | pytest 161 passed（含真实 PG）：golden set 33 用例参数化 100%（mcq 归一 6、多选集合等价 8、判断中英文归一 9、简答 JSON accepted+legacy 备选 7、题型别名 3）；非 objective 题型不判 1 测；rule_version+输入事件留痕 1 测；导入卷 short_answer/multiple_select 判分回归 1 测；ADR 20 | 2026-08-31 |
 
 ## 待办任务（按 backlog 顺序）
 
-- [ ] M2-08 Objective grader（golden set 100%）；M2-09 Numeric/math grader；M2-10 Subjective rubric grader；M2-11 考试报告
-- [ ] M2-08 Objective grader（golden set 100%）；M2-09 Numeric/math grader；M2-10 Subjective rubric grader；M2-11 考试报告
+- [ ] M2-09 Numeric/math grader（单位、容差、等价表达式）；M2-10 Subjective rubric grader；M2-11 考试报告
+- [ ] M2-09 Numeric/math grader（单位、容差、等价表达式）；M2-10 Subjective rubric grader；M2-11 考试报告
 - [ ] M3-01~07 Student Model
 - [ ] M4-01~09 Voice
 - [ ] M5-01~08 Search + 治理
@@ -82,6 +83,7 @@ M2-02 试卷导入（backlog：paper import；M2-04 Redis timeout worker 视依�
 | 17 | 质量报告自 parse_metrics + chunks 实时统计聚合；异常页 = 已声明页数减去有内容页；ocr_confidence 由 parser metrics 透传（无 OCR 管线时为 None，不虚构） | backlog M1-08 验收 | 2026-08-31 |
 | 18 | 题型 schema 为独立校验层（QuestionSpec 判别联合 + PaperSpec 总分校验），不绑现有考试 ORM；validate 端点纯校验不落库，供 M2-02 导入与 M5-06 抽题复用 | backlog M2-01 验收 + YAGNI | 2026-08-31 |
 | 19 | 超时提交为惰性结算：get_exam 懒翻转 EXPIRED + submit 按 min(now, end_at) 结算 + submissions.exam_session_id 唯一约束幂等收敛；不引 Redis timeout worker（验收只要求行为语义，无主动推送需求） | 04 号文档 §7 EXAM_EXPIRED「触发/等待 timeout submit」+ YAGNI；未来出现主动推送需求再引 Redis | 2026-08-31 |
+| 20 | Objective grader v2：题型名兼容 seed（mcq/tf/short）与 QuestionSpec（true_false/short_answer）两套命名；expected 兼容 legacy 字符串与导入 JSON；given 服务端归一（大小写/空白/中英文布尔词）；multiple_select 集合等价；规则版本 objective-v2 随 submission 留痕 | M2-02 导入卷判分打通实测（short_answer JSON 形态原永判错）+ 04 号文档「判分记录规则版本和输入事件」验收 | 2026-08-31 |
 
 ## 下一任务
 

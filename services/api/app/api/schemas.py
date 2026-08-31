@@ -92,5 +92,6 @@ class SubmissionOut(BaseModel):
     correct_count: int
     total_count: int
     duration_seconds: int
+    rule_version: str
     items: list[GradedItemOut]
     questions: list[ReviewQuestionOut]
