@@ -290,6 +290,79 @@ def test_student_state_recompute_idempotent_against_real_postgres() -> None:
         assert client.get("/api/v1/student/states").json() == first
 
 
+def test_misconception_candidate_lifecycle_against_real_postgres() -> None:
+    """M3-04：真实 PG 下误解候选——单次错误 candidate，独立题证据 ×3 升 confirmed，重算幂等。
+
+    PG 主库跨运行持久，概念/答案带运行级唯一后缀做绝对断言（错误答案后缀保证 pattern 唯一）。
+    """
+    from uuid import uuid4
+
+    suffix = uuid4().hex[:8]
+    concept = f"pg_mis_{suffix}"
+    wrong = f"W{suffix}"  # 错误答案签名（mcq 无此选项，必判错）
+    paper = {
+        "title": "PG 误解候选验证卷",
+        "duration_seconds": 1800,
+        "questions": [
+            {
+                "question": {
+                    "question_type": "mcq",
+                    "stem": f"题{i}",
+                    "options": ["A", "B"],
+                    "answer": {"option_index": 1},
+                    "explanation": "B 对",
+                    "concept_ids": [concept],
+                    "difficulty": 2,
+                },
+                "score": 1.0,
+            }
+            for i in (1, 2, 3)
+        ],
+    }
+    fixed_now = "2030-01-01T00:00:00+00:00"
+    with TestClient(create_app(PG_URL)) as client:  # type: ignore[arg-type]
+        (paper_id,) = client.post("/api/v1/papers/import", json=[paper]).json()["imported"]
+
+        started = client.post(f"/api/v1/papers/{paper_id}/exams", json={"mode": "exam"})
+        exam_id, questions = started.json()["exam_id"], started.json()["questions"]
+        client.put(
+            f"/api/v1/exams/{exam_id}/answers",
+            json={"sequence": 1, "question_id": questions[0]["id"], "answer": wrong},
+        )
+        assert client.post(f"/api/v1/exams/{exam_id}/submit", json={}).status_code == 200
+
+        first = client.post(
+            "/api/v1/student/misconceptions/recompute", params={"now": fixed_now}
+        ).json()
+        (item,) = [c for c in first["candidates"] if c["concept_id"] == concept]
+        assert item["pattern"] == wrong.lower()
+        assert item["status"] == "candidate" and item["independent_count"] == 1
+
+        for question in questions[1:]:
+            started = client.post(f"/api/v1/papers/{paper_id}/exams", json={"mode": "exam"})
+            exam_id = started.json()["exam_id"]
+            client.put(
+                f"/api/v1/exams/{exam_id}/answers",
+                json={"sequence": 1, "question_id": question["id"], "answer": wrong},
+            )
+            assert client.post(f"/api/v1/exams/{exam_id}/submit", json={}).status_code == 200
+
+        second = client.post(
+            "/api/v1/student/misconceptions/recompute", params={"now": fixed_now}
+        ).json()
+        (item,) = [c for c in second["candidates"] if c["concept_id"] == concept]
+        assert item["status"] == "confirmed" and item["independent_count"] == 3
+        again = client.post(
+            "/api/v1/student/misconceptions/recompute", params={"now": fixed_now}
+        ).json()
+        assert again == second  # 更新幂等
+        concept_only = {
+            "candidate_count": 1,
+            "candidates": [c for c in second["candidates"] if c["concept_id"] == concept],
+        }
+        assert client.get(f"/api/v1/student/misconceptions/{concept}").json() == concept_only
+
+
 def test_concurrent_answer_writers_get_explicit_outcome() -> None:
     """M2-05 并发同 sequence 写入：一个成功一个明确拒绝，绝无未处理 IntegrityError。"""
     import asyncio

@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.concepts import router as concepts_router
 from app.api.routes.exams import router as exams_router
+from app.api.routes.misconceptions import router as misconceptions_router
 from app.api.routes.papers import router as papers_router
 from app.api.routes.resources import router as resources_router
 from app.api.routes.sources import router as sources_router
@@ -22,6 +23,7 @@ from app.parsing.worker import ParseWorker
 from app.repositories.chunks import ChunkRepository
 from app.repositories.concept_dag import ConceptDagRepository
 from app.repositories.memory import MemoryRepository
+from app.repositories.misconceptions import MisconceptionRepository
 from app.repositories.parsejobs import ParseJobRepository
 from app.repositories.postgres import PostgresRepository
 from app.repositories.resources import ResourceRepository
@@ -50,6 +52,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
             await sources.seed_if_empty()
             concept_dag = ConceptDagRepository(sessionmaker)
             student_state = StudentStateRepository(sessionmaker)
+            misconceptions = MisconceptionRepository(sessionmaker)
             resources = ResourceRepository(sessionmaker)
             objects = make_object_store(settings)
             parsers = make_default_registry()
@@ -67,6 +70,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         app.state.sources = sources if resolved_url else None
         app.state.concept_dag = concept_dag if resolved_url else None
         app.state.student_state = student_state if resolved_url else None
+        app.state.misconceptions = misconceptions if resolved_url else None
         app.state.resources = resources if resolved_url else None
         app.state.objects = objects if resolved_url else None
         app.state.parsers = parsers if resolved_url else None
@@ -96,6 +100,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(exams_router)
     app.include_router(concepts_router)
     app.include_router(student_router)
+    app.include_router(misconceptions_router)
     app.include_router(sources_router)
     app.include_router(resources_router)
     app.include_router(system_router)

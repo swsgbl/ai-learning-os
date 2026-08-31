@@ -206,6 +206,26 @@ class StudentStatesOut(BaseModel):
     weak_concepts: list[str]
 
 
+class MisconceptionOut(BaseModel):
+    """M3-04 误解候选：单次错误仅 candidate，多独立题证据才 confirmed（pack F 要求 2/3）。"""
+
+    concept_id: str
+    pattern: str
+    status: str
+    confidence: float
+    independent_count: int
+    occurrence_count: int
+    question_ids: list[str]
+    first_seen_at: str
+    last_seen_at: str
+    updated_at: str
+
+
+class MisconceptionsOut(BaseModel):
+    candidate_count: int
+    candidates: list[MisconceptionOut]
+
+
 class SubmissionOut(BaseModel):
     exam_id: str
     paper_id: str
