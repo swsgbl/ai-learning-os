@@ -125,6 +125,7 @@ __all__ = [
     "ResourceRow",
     "StudentConceptStateRow",
     "SubmissionRow",
+    "VoiceSessionRow",
     "VoiceTranscriptRow",
 ]
 
@@ -345,3 +346,21 @@ class VoiceTranscriptRow(Base):
     exam_id: Mapped[str | None] = mapped_column(String(64), nullable=True)  # M4-03 FSM 绑定
     question_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class VoiceSessionRow(Base):
+    """M4-03 语音会话 FSM 持久化：status 由 voice_session_fsm 迁移矩阵校验。
+
+    revision 乐观并发计数：每次事件应用 +1，客户端带 revision 可检测并发冲突。
+    question_index 为当前交互题在试卷题目列表中的 0-based 序号。
+    """
+
+    __tablename__ = "voice_sessions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    exam_id: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(32))
+    question_index: Mapped[int] = mapped_column(Integer, default=0)
+    revision: Mapped[int] = mapped_column(Integer, default=1)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

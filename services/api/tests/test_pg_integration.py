@@ -608,3 +608,52 @@ def test_voice_transcript_persists_against_real_postgres(monkeypatch) -> None:
         assert recent["item_count"] >= 1
         assert any(item["id"] == body["id"] for item in recent["items"])
     get_settings.cache_clear()
+
+
+def test_voice_session_lifecycle_against_real_postgres(monkeypatch) -> None:
+    """M4-03：真实 PG 下语音会话生命周期——FSM 迁移落库、答案确定性提交、覆盖生效。"""
+    with TestClient(create_app(PG_URL)) as client:  # type: ignore[arg-type]
+        exam_id = client.post(
+            "/api/v1/papers/functions-basics/exams", json={"mode": "exam"}
+        ).json()["exam_id"]
+        created = client.post("/api/v1/voice/sessions", json={"exam_id": exam_id})
+        assert created.status_code == 201
+        session_id = created.json()["session_id"]
+        url = f"/api/v1/voice/sessions/{session_id}/commands"
+
+        for command in ("start_reading", "question_read", "options_read"):
+            assert client.post(url, json={"type": command}).status_code == 200
+
+        exam_view = client.get(f"/api/v1/exams/{exam_id}").json()
+        question_id = exam_view["questions"][0]["id"]
+
+        committed = client.post(
+            url, json={"type": "answer_proposed", "question_id": question_id, "answer": "B"}
+        )
+        assert committed.status_code == 200
+        assert committed.json()["session"]["status"] == "ANSWER_COMMITTED"
+
+        # 播报期打断拒绝且不落库（另开一个会话验证）
+        other = client.post("/api/v1/voice/sessions", json={"exam_id": exam_id}).json()["session_id"]
+        assert (
+            client.post(
+                f"/api/v1/voice/sessions/{other}/commands",
+                json={"type": "answer_proposed", "question_id": question_id, "answer": "C"},
+            ).status_code
+            == 409
+        )
+
+        # 覆盖提交：追加事件后答案更新
+        overwritten = client.post(
+            url, json={"type": "answer_proposed", "question_id": question_id, "answer": "C"}
+        )
+        assert overwritten.status_code == 200
+
+        final = client.get(f"/api/v1/exams/{exam_id}").json()
+        assert final["answers"].get(question_id) == "C"
+        assert final["next_sequence"] >= 3
+
+        # 结束会话进终态
+        ended = client.post(url, json={"type": "end"})
+        assert ended.status_code == 200
+        assert ended.json()["session"]["status"] == "REPORT_READY"
