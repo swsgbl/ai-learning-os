@@ -106,3 +106,64 @@ export type Submission = {
   items: GradedItem[];
   questions: ReviewQuestion[];
 };
+
+// M2-11 考试报告：题分/概念分/错题/补救任务/证据链接
+export type ReportItem = {
+  question_id: string;
+  sequence: number;
+  question_type: string;
+  stem: string;
+  given: string;
+  expected: string;
+  correct: boolean | null;
+  score: number | null;
+  max_score: number;
+  explanation: string;
+  knowledge: string[];
+  evidence_ids: string[];
+  score_ratio?: number | null;
+};
+
+export type ConceptScore = {
+  concept: string;
+  correct: number;
+  total: number;
+  reviewed: number;
+  ratio: number | null;
+};
+
+export type RemediationTask = {
+  kind: "review_concept" | "variant_practice";
+  title: string;
+  detail: string;
+  question_id: string;
+};
+
+export type MistakeEntry = {
+  question_id: string;
+  stem: string;
+  given: string;
+  expected: string;
+  explanation: string;
+  diagnosis: string;
+  knowledge: string[];
+  evidence_ids: string[];
+  remediation_task_ids: number[];
+};
+
+export type ExamReport = {
+  exam_id: string;
+  paper_title: string;
+  mode: ExamMode;
+  score: number;
+  score_earned: number;
+  score_max: number;
+  correct_count: number;
+  total_count: number;
+  reviewed_count: number;
+  items: ReportItem[];
+  concepts: ConceptScore[];
+  mistakes: MistakeEntry[];
+  remediation_tasks: RemediationTask[];
+  evidence_ids: string[];
+};

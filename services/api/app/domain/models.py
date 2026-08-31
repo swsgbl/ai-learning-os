@@ -37,6 +37,7 @@ class Question:
     explanation: str
     angles: Angles
     knowledge: tuple[str, ...]
+    score: float = 1.0  # M2-11 题分：导入卷为 PaperQuestionRef.score，seed 卷默认 1 分
 
 
 @dataclass(frozen=True, slots=True)

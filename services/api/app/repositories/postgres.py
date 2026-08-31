@@ -463,6 +463,7 @@ class PostgresRepository:
                     explanation=question.explanation,
                     angles=Angles(**question.angles),
                     knowledge=tuple(question.knowledge),
+                    score=question.score,
                 )
                 for question in questions
             ),

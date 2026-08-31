@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Check, ChevronDown, X } from "lucide-react";
 import { answerLabel, optionLabel } from "@/lib/parse-answer";
-import type { Submission } from "@/lib/types";
+import type { ExamReport, Submission } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Badge } from "./ui/badge";
 import { Card } from "./ui/card";
@@ -16,9 +16,10 @@ const TABS = [
   { id: "variant", label: "变式" },
 ] as const;
 
-export function ReviewView({ submission }: { submission: Submission }) {
+export function ReviewView({ submission, report }: { submission: Submission; report?: ExamReport | null }) {
   const wrong = submission.items.filter((item) => item.correct === false);
   const reviewing = submission.items.filter((item) => item.correct === null);
+  const reportItems = report ? new Map(report.items.map((item) => [item.question_id, item])) : null;
 
   return (
     <div className="space-y-6">
@@ -34,6 +35,11 @@ export function ReviewView({ submission }: { submission: Submission }) {
               {submission.paper_title} · {submission.correct_count}/{submission.total_count} 题正确 ·{" "}
               {Math.floor(submission.duration_seconds / 60)} 分 {submission.duration_seconds % 60} 秒
             </p>
+            {report && (
+              <p className="mt-1 text-xs text-muted tabular-nums">
+                原始分 {report.score_earned}/{report.score_max} 分
+              </p>
+            )}
           </div>
           <Badge tone={submission.score >= 80 ? "good" : submission.score >= 60 ? "accent" : "bad"}>
             {submission.score >= 80 ? "掌握良好" : submission.score >= 60 ? "尚可巩固" : "需要回炉"}
@@ -42,12 +48,59 @@ export function ReviewView({ submission }: { submission: Submission }) {
         <Progress className="mt-5" value={submission.score} />
       </Card>
 
+      {report && report.concepts.length > 0 && (
+        <section>
+          <h2 className="font-display text-xl">概念掌握</h2>
+          <p className="mt-1 text-xs text-muted">按题目关联概念聚合正确率；待复核的题不计入正确率分母。</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {report.concepts.map((concept) => (
+              <Card key={concept.concept} className="p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="truncate text-sm">{concept.concept}</p>
+                  <span className="shrink-0 text-xs tabular-nums text-muted">
+                    {concept.ratio === null ? "待复核" : `${Math.round(concept.ratio * 100)}%`}
+                  </span>
+                </div>
+                <Progress className="mt-3" value={(concept.ratio ?? 0) * 100} />
+                <p className="mt-2 text-xs text-muted tabular-nums">
+                  {concept.correct}/{concept.total} 题正确
+                  {concept.reviewed > 0 && <span className="ml-2">{concept.reviewed} 题待复核</span>}
+                </p>
+              </Card>
+            ))}
+          </div>
+        </section>
+      )}
+
       {wrong.length > 0 && (
         <section>
           <h2 className="font-display text-xl">错题 {wrong.length}</h2>
           <div className="mt-4 space-y-3">
             {wrong.map((item) => (
               <WrongCard key={item.question_id} submission={submission} questionId={item.question_id} />
+            ))}
+          </div>
+        </section>
+      )}
+
+      {report && report.remediation_tasks.length > 0 && (
+        <section>
+          <h2 className="font-display text-xl">补救任务 {report.remediation_tasks.length}</h2>
+          <div className="mt-4 space-y-2">
+            {report.remediation_tasks.map((task, index) => (
+              <Card key={`${task.question_id}-${task.kind}-${index}`} className="p-4">
+                <div className="flex items-start gap-3">
+                  <Badge tone={task.kind === "review_concept" ? "accent" : "good"}>
+                    {task.kind === "review_concept" ? "复习概念" : "变式练习"}
+                  </Badge>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm">{task.title}</p>
+                    {task.kind === "variant_practice" && (
+                      <p className="mt-1 text-xs leading-relaxed text-muted">{task.detail}</p>
+                    )}
+                  </div>
+                </div>
+              </Card>
             ))}
           </div>
         </section>
@@ -112,6 +165,9 @@ export function ReviewView({ submission }: { submission: Submission }) {
                     </p>
                     {item.rubric && <RubricDetailList rubric={item.rubric} />}
                   </div>
+                  {reportItems && (
+                    <ScoreBadge reportItem={reportItems.get(item.question_id)} />
+                  )}
                 </div>
               </Card>
             );
@@ -145,6 +201,26 @@ function RubricDetailList({ rubric }: { rubric: NonNullable<Submission["items"][
         {rubric.judge_model}
       </span>
     </div>
+  );
+}
+
+function ScoreBadge({ reportItem }: { reportItem: ExamReport["items"][number] | undefined }) {
+  if (!reportItem) return null;
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded-full px-2 py-0.5 text-xs tabular-nums",
+        reportItem.score === null
+          ? "bg-surface-2 text-muted"
+          : reportItem.score >= reportItem.max_score
+            ? "bg-good-soft text-good"
+            : reportItem.score > 0
+              ? "bg-surface-2 text-warn"
+              : "bg-bad-soft text-bad",
+      )}
+    >
+      {reportItem.score === null ? "待复核" : `${reportItem.score}/${reportItem.max_score} 分`}
+    </span>
   );
 }
 
