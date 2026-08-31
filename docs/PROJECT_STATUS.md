@@ -35,10 +35,10 @@ M2-02 试卷导入（backlog：paper import；M2-04 Redis timeout worker 视依�
 | M2-01 Question/Paper schema | 49efd33, merge 47b65a3 | pytest 80 passed（含真实 PG）：八题型参数化校验 8 测；错误 answer QuestionSpec 判别联合校验 3 测；PaperSpec 总分一致性 1 测；validate 端点端到端 1 测；前端门禁绿 | 2026-08-31 |
 | M2-02 试卷 JSON 导入 | 6f1a874, merge 2c50382 | pytest 82 passed（含真实 PG）：成功导入不变性（列表/时长取整/考试流顺序/选项/交卷后 expected+explanation 逐字保留/DB 分值+sort_order）1 测；非法行逐行报错（index+loc/msg）+ 全或无不落库 1 测；前端门禁绿 | 2026-08-31 |
 | M2-03 ExamSession FSM | 47e9f65, merge 1c0c955 | pytest 109 passed（含真实 PG）：迁移矩阵与声明边一致 1 测；6 合法边参数化 6 测；19 非法边全拒绝（含状态名断言）19 测；CREATED 考试 submit→409 API 接线 1 测；postgres/memory 双仓库 create_exam、get_exam 超时翻转、submit 全部接线 assert_transition；前端门禁绿 | 2026-08-31 |
+| M2-04 服务端权威计时 | 本分支 | pytest 113 passed（含真实 PG）：start/end 服务器写入 + 伪造客户端时间字段被忽略 1 测；3 次刷新/重连 end_at 不变 + 时钟推进缩短剩余 1 测；超时翻转 EXPIRED + 禁止作答 + 用时按 min(now,end_at) 结算 1 测；答案/提交伪造时间不影响结算 1 测；前端门禁绿 | 2026-08-31 |
 
 ## 待办任务（按 backlog 顺序）
 
-- [ ] M2-04 服务端权威计时（start/end 服务器写入；改时间/刷新/重连不能延长）
 - [ ] M2-05 答案 append-only event；M2-06 自动保存与断线恢复；M2-07 幂等提交与超时提交
 - [ ] M2-08 Objective grader（golden set 100%）；M2-09 Numeric/math grader；M2-10 Subjective rubric grader；M2-11 考试报告
 - [ ] M3-01~07 Student Model
