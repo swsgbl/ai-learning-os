@@ -162,6 +162,29 @@ class ReportOut(BaseModel):
     evidence_ids: list[str]
 
 
+class LearningEventOut(BaseModel):
+    """M3-01 标准化学习事件：answer_events 的确定性投影（04 号文档 §2.14）。"""
+
+    sequence: int
+    event_type: str
+    question_id: str
+    concept_ids: list[str]
+    difficulty: int
+    answer: str
+    correctness: bool | None
+    latency_ms: int
+    attempt_number: int
+    hint_used: bool
+    occurred_at: str
+    user_id: str | None = None
+
+
+class LearningEventStreamOut(BaseModel):
+    exam_id: str
+    paper_id: str
+    events: list[LearningEventOut]
+
+
 class SubmissionOut(BaseModel):
     exam_id: str
     paper_id: str

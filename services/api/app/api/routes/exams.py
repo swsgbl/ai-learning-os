@@ -10,6 +10,8 @@ from app.api.schemas import (
     ConceptScoreOut,
     ExamSessionOut,
     GradedItemOut,
+    LearningEventOut,
+    LearningEventStreamOut,
     MistakeEntryOut,
     RemediationTaskOut,
     ReportItemOut,
@@ -21,6 +23,7 @@ from app.api.schemas import (
     SubmissionOut,
     SubmitRequest,
 )
+from app.domain.learning_events import derive_learning_events
 from app.domain.models import SubmissionRecord
 from app.domain.report import build_report
 
@@ -156,6 +159,39 @@ def _report_out(report) -> ReportOut:
             for task in report.remediation_tasks
         ],
         evidence_ids=list(report.evidence_ids),
+    )
+
+
+@router.get("/{exam_id}/learning-events", response_model=LearningEventStreamOut)
+async def get_learning_events(exam_id: str, request: Request) -> LearningEventStreamOut:
+    """M3-01 标准化学习事件流：答案/耗时/提示/难度/概念映射/attempt 可重放。
+
+    active 考试同样可查（事件流为已发生部分）；每次请求从事件源重算，幂等。
+    """
+    record, paper = await require_exam(request, exam_id)
+    stream = derive_learning_events(
+        record, paper, rubric_judge=getattr(request.app.state, "rubric_judge", None)
+    )
+    return LearningEventStreamOut(
+        exam_id=stream.exam_id,
+        paper_id=stream.paper_id,
+        events=[
+            LearningEventOut(
+                sequence=event.sequence,
+                event_type=event.event_type,
+                question_id=event.question_id,
+                concept_ids=list(event.concept_ids),
+                difficulty=event.difficulty,
+                answer=event.answer,
+                correctness=event.correctness,
+                latency_ms=event.latency_ms,
+                attempt_number=event.attempt_number,
+                hint_used=event.hint_used,
+                occurred_at=event.occurred_at.isoformat(),
+                user_id=event.user_id,
+            )
+            for event in stream.events
+        ],
     )
 
 

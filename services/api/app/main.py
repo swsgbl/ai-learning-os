@@ -56,6 +56,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         else:
             repository = MemoryRepository(rubric_judge=rubric_judge)
         app.state.repository = repository
+        app.state.rubric_judge = rubric_judge
         app.state.sessionmaker = sessionmaker if resolved_url else None
         app.state.sources = sources if resolved_url else None
         app.state.resources = resources if resolved_url else None

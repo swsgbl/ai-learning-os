@@ -57,6 +57,7 @@ class QuestionRow(Base):
     angles: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     knowledge: Mapped[list[Any]] = mapped_column(JSON, default=list)
     score: Mapped[float] = mapped_column(Float, default=1.0)
+    difficulty: Mapped[int] = mapped_column(Integer, default=3)
     sort_order: Mapped[int] = mapped_column(Integer)
 
 
