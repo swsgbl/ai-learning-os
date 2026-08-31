@@ -226,6 +226,26 @@ class MisconceptionsOut(BaseModel):
     candidates: list[MisconceptionOut]
 
 
+class ReviewItemOut(BaseModel):
+    """M3-05 复习任务：FSRS-lite 间隔演化投影（错题生成 next_review_at）。"""
+
+    question_id: str
+    concept_ids: list[str]
+    difficulty: int
+    status: str
+    interval_days: float
+    last_correctness: bool
+    last_seen_at: str
+    next_review_at: str
+    overdue_ratio: float
+
+
+class ReviewQueueOut(BaseModel):
+    generated_at: str
+    item_count: int
+    items: list[ReviewItemOut]
+
+
 class SubmissionOut(BaseModel):
     exam_id: str
     paper_id: str

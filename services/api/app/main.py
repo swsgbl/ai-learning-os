@@ -11,6 +11,7 @@ from app.api.routes.exams import router as exams_router
 from app.api.routes.misconceptions import router as misconceptions_router
 from app.api.routes.papers import router as papers_router
 from app.api.routes.resources import router as resources_router
+from app.api.routes.review import router as review_router
 from app.api.routes.sources import router as sources_router
 from app.api.routes.student import router as student_router
 from app.api.routes.system import router as system_router
@@ -101,6 +102,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(concepts_router)
     app.include_router(student_router)
     app.include_router(misconceptions_router)
+    app.include_router(review_router)
     app.include_router(sources_router)
     app.include_router(resources_router)
     app.include_router(system_router)
