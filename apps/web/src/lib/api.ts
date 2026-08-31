@@ -31,6 +31,7 @@ export const api = {
       method: "PUT",
       body: JSON.stringify({ sequence, question_id: questionId, answer }),
     }),
+  getExam: (examId: string) => request<ExamSession>(`/api/v1/exams/${examId}`),
   submitExam: (examId: string) =>
     request<Submission>(`/api/v1/exams/${examId}/submit`, {
       method: "POST",

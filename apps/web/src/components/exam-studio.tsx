@@ -22,7 +22,8 @@ export function ExamStudio({ paperId }: { paperId: string }) {
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const started = useRef(false);
-  const sequence = useRef(0);
+  // M2-06：下一个答案的服务端序号；以服务端 next_sequence 为权威，断线后由 getExam 恢复
+  const nextSequence = useRef(1);
   const submitted = useRef(false);
 
   const submit = useCallback(
@@ -31,27 +32,55 @@ export function ExamStudio({ paperId }: { paperId: string }) {
       submitted.current = true;
       try {
         await api.submitExam(examId);
+        window.localStorage.removeItem(`aios.exam.${paperId}`);
         router.push(`/review/${examId}`);
       } catch (cause) {
         submitted.current = false;
         setError(cause instanceof Error ? cause.message : "提交失败");
       }
     },
-    [router],
+    [router, paperId],
   );
+
+  const adopt = useCallback((result: ExamSession) => {
+    setSession(result);
+    setAnswers(result.answers);
+    setRemaining(result.server_remaining_seconds);
+    nextSequence.current = result.next_sequence;
+    window.localStorage.setItem(`aios.exam.${paperId}`, result.exam_id);
+  }, [paperId]);
 
   useEffect(() => {
     if (started.current) return;
     started.current = true;
-    api
-      .startExam(paperId, "exam")
+    const resumeExamId = window.localStorage.getItem(`aios.exam.${paperId}`);
+    // M2-06 断线恢复：有进行中的考试先从服务端恢复（答案 + 剩余时间 + 序号），
+    // 恢复失败或已结束才开新考试。
+    const resume = resumeExamId
+      ? api
+          .getExam(resumeExamId)
+          .then((result) =>
+            result.status === "active" && result.paper_id === paperId
+              ? result
+              : api.startExam(paperId, "exam"),
+          )
+          .catch(() => api.startExam(paperId, "exam"))
+      : api.startExam(paperId, "exam");
+    resume
       .then((result) => {
-        setSession(result);
-        setAnswers(result.answers);
-        setRemaining(result.server_remaining_seconds);
+        if (result.status === "submitted") {
+          void router.push(`/review/${result.exam_id}`);
+          return;
+        }
+        // 已过期但未出报告：服务端结算（EXPIRED→SUBMITTED）后进审阅
+        if (result.status === "expired") {
+          void submit(result.exam_id);
+          return;
+        }
+        adopt(result);
       })
       .catch((cause: Error) => setError(cause.message));
-  }, [paperId, submit]);
+  }, [paperId, submit, adopt, router]);
 
   useEffect(() => {
     if (!session || session.status !== "active") return;
@@ -72,13 +101,26 @@ export function ExamStudio({ paperId }: { paperId: string }) {
     if (!session || !question || submitted.current) return;
     const nextAnswers = { ...answers, [question.id]: key };
     setAnswers(nextAnswers);
-    sequence.current += 1;
     try {
-      const saved = await api.saveAnswer(session.exam_id, sequence.current, question.id, key);
+      // 序号由服务端权威管理：失败不消耗序号，重连后 getExam 重新对齐
+      const saved = await api.saveAnswer(
+        session.exam_id,
+        nextSequence.current,
+        question.id,
+        key,
+      );
       setSession(saved);
       setAnswers(saved.answers);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "答案同步失败");
+      nextSequence.current = saved.next_sequence;
+      setError(null);
+    } catch {
+      // 断线：重新从服务端对齐状态；本地乐观答案保留，待网络恢复后重选或自动对齐
+      try {
+        const fresh = await api.getExam(session.exam_id);
+        adopt(fresh);
+      } catch (cause) {
+        setError(cause instanceof Error ? cause.message : "答案同步失败，请检查网络后重试");
+      }
     }
   }
 

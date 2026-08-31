@@ -70,6 +70,7 @@ class ExamSessionOut(BaseModel):
     server_remaining_seconds: int
     questions: list[PublicQuestionOut]
     answers: dict[str, str]
+    next_sequence: int
 
 
 class GradedItemOut(BaseModel):
