@@ -1,4 +1,16 @@
-export type QuestionType = "mcq" | "tf" | "short";
+// seed 命名（mcq/tf/short）与 QuestionSpec 命名（mcq/true_false/short_answer/...）并存，
+// 后端透传原始题型名；前端按「有无 options」决定渲染形态
+export type QuestionType =
+  | "mcq"
+  | "tf"
+  | "short"
+  | "multiple_select"
+  | "true_false"
+  | "short_answer"
+  | "numeric"
+  | "math"
+  | "coding"
+  | "essay";
 export type Difficulty = "intro" | "core" | "advanced";
 export type ExamMode = "voice" | "exam";
 export type ExamStatus = "active" | "submitted" | "expired";
@@ -58,7 +70,7 @@ export type ExamSession = {
 export type GradedItem = {
   question_id: string;
   given: string;
-  correct: boolean;
+  correct: boolean | null;
   expected: string;
   explanation: string;
   angles: ReviewQuestion["angles"];

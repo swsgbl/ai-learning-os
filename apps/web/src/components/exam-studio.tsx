@@ -13,6 +13,45 @@ function remainingSeconds(endAt: string) {
   return Math.max(0, Math.floor((new Date(endAt).getTime() - Date.now()) / 1000));
 }
 
+const TYPE_LABELS: Record<string, string> = {
+  mcq: "选择",
+  multiple_select: "多选",
+  tf: "判断",
+  true_false: "判断",
+  short: "简答",
+  short_answer: "简答",
+  numeric: "数值",
+  math: "数学",
+  coding: "编程",
+  essay: "写作",
+};
+
+// 非选项题（数值/数学/简答）：文本输入，走同一 append-only 保存链路
+function AnswerInput({ value, onSave }: { value: string; onSave: (text: string) => void }) {
+  const [draft, setDraft] = useState(value);
+
+  useEffect(() => {
+    setDraft(value);
+  }, [value]);
+
+  return (
+    <div className="mt-5 flex gap-2">
+      <input
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" && draft.trim()) onSave(draft.trim());
+        }}
+        placeholder="输入答案，如 3.14 或 2x"
+        className="w-full rounded-lg bg-surface px-4 py-3 text-sm shadow-border outline-none placeholder:text-subtle focus:bg-surface-2"
+      />
+      <Button disabled={!draft.trim() || draft === value} onClick={() => onSave(draft.trim())}>
+        保存
+      </Button>
+    </div>
+  );
+}
+
 export function ExamStudio({ paperId }: { paperId: string }) {
   const router = useRouter();
   const [session, setSession] = useState<ExamSession | null>(null);
@@ -161,10 +200,11 @@ export function ExamStudio({ paperId }: { paperId: string }) {
 
       <Card className="p-5 sm:p-6">
         <p className="text-xs text-muted">
-          第 {index + 1} 题 · {question.type === "tf" ? "判断" : "选择"}
+          第 {index + 1} 题 · {TYPE_LABELS[question.type] ?? "作答"}
         </p>
         <p className="mt-3 font-display text-xl leading-snug">{question.stem}</p>
-        <ul className="mt-5 space-y-2">
+        {question.options?.length ? (
+          <ul className="mt-5 space-y-2">
           {question.options?.map((option) => {
             const active = answers[question.id] === option.key;
             return (
@@ -183,7 +223,10 @@ export function ExamStudio({ paperId }: { paperId: string }) {
               </li>
             );
           })}
-        </ul>
+          </ul>
+        ) : (
+          <AnswerInput value={answers[question.id] ?? ""} onSave={(text) => void choose(text)} />
+        )}
       </Card>
 
       <div className="h-2 overflow-hidden rounded-full bg-surface-2">

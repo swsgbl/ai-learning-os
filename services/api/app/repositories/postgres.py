@@ -279,7 +279,9 @@ class PostgresRepository:
             )
             for question in questions
         )
-        correct_count = sum(item.correct for item in items)
+        # 三态判分：None（待复核）不计入分子分母；total_count 仍为全量题数
+        decided = [item for item in items if item.correct is not None]
+        correct_count = sum(item.correct for item in decided)
         effective_end = min(now, _from_db(exam.end_at))
         return SubmissionRow(
             exam_session_id=exam.exam_id,
@@ -287,7 +289,7 @@ class PostgresRepository:
             paper_title=exam.paper_title,
             mode=exam.mode,
             status=ExamStatus.SUBMITTED.value,
-            score=round(correct_count / len(items) * 100) if items else 0,
+            score=round(correct_count / len(decided) * 100) if decided else 0,
             correct_count=correct_count,
             total_count=len(items),
             duration_seconds=max(

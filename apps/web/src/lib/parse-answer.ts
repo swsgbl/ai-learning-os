@@ -68,6 +68,28 @@ export function optionLabel(question: PublicQuestion | { type?: string; options?
   return `${option.key}. ${option.text}`;
 }
 
+// 导入卷答案为 JSON 形态（numeric/math/short_answer），审阅页转可读文本
+export function answerLabel(question: PublicQuestion | { type?: string; options?: { key: string; text: string }[] }, key: string) {
+  const text = key.trim();
+  if (text.startsWith("{")) {
+    try {
+      const data = JSON.parse(text) as Record<string, unknown>;
+      if (typeof data.latex === "string") return data.latex;
+      if ("value" in data) {
+        const value = `${data.value}${data.unit ? ` ${String(data.unit)}` : ""}`;
+        return "tolerance" in data ? `${value} ±${String(data.tolerance)}` : value;
+      }
+      if (Array.isArray(data.accepted)) return data.accepted.map(String).join(" / ");
+      if (Array.isArray(data.option_indices)) {
+        return data.option_indices.map((index) => "ABCDEFGH"[Number(index)] ?? "?").join("");
+      }
+    } catch {
+      // 非 JSON 原样返回
+    }
+  }
+  return optionLabel(question, key);
+}
+
 export function speakableQuestion(question: PublicQuestion, index: number, total: number) {
   const head = `第 ${index + 1} 题，共 ${total} 题。${question.stem}`;
   if (!question.options?.length) return `${head}请直接作答。`;

@@ -114,14 +114,16 @@ class MemoryRepository:
                         angles=question.angles,
                     )
                 )
-            correct_count = sum(item.correct for item in items)
+            # 三态判分：None（待复核）不计入分子分母；total_count 仍为全量题数
+            decided = [item for item in items if item.correct is not None]
+            correct_count = sum(item.correct for item in decided)
             submission = SubmissionRecord(
                 exam_id=record.exam_id,
                 paper_id=record.paper_id,
                 paper_title=record.paper_title,
                 mode=record.mode,
                 status=record.status,
-                score=round(correct_count / len(items) * 100) if items else 0,
+                score=round(correct_count / len(decided) * 100) if decided else 0,
                 correct_count=correct_count,
                 total_count=len(items),
                 duration_seconds=max(0, math.floor((effective_end - record.started_at).total_seconds())),

@@ -82,7 +82,7 @@ class ExamSessionRecord:
 class GradedItem:
     question_id: str
     given: str
-    correct: bool
+    correct: bool | None  # None = 不确定，进入人工复核（M2-09）
     expected: str
     explanation: str
     angles: Angles

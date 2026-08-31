@@ -76,7 +76,7 @@ class ExamSessionOut(BaseModel):
 class GradedItemOut(BaseModel):
     question_id: str
     given: str
-    correct: bool
+    correct: bool | None
     expected: str
     explanation: str
     angles: AnglesOut
