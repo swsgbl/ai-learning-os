@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, HTTPException, Request
 
 from app.api.schemas import ConceptStateOut, StudentStatesOut
-from app.domain.learning_events import derive_learning_events
+from app.domain.learning_events import LearningEventStream, derive_learning_events
 from app.domain.student_state import ConceptState, derive_concept_states, weak_concepts
 from app.repositories.student_state import StudentStateRepository
 
@@ -58,9 +58,9 @@ def _states_out(states: list[ConceptState]) -> StudentStatesOut:
     )
 
 
-async def _recompute(request: Request, now: datetime) -> StudentStatesOut:
-    """从全部考试的学习事件流重算并物化（routes 层编排：事件源读取复用既有 repository）。"""
-    student_repo = _repo(request)
+async def all_learning_streams(request: Request) -> list[LearningEventStream]:
+    """全部考试的学习事件流（M3-03/04 重算共享编排：事件源读取复用既有 repository）。"""
+    student_repo: StudentStateRepository = request.app.state.student_state
     rubric_judge = getattr(request.app.state, "rubric_judge", None)
     streams = []
     for exam_id in await student_repo.list_exam_ids():
@@ -71,7 +71,13 @@ async def _recompute(request: Request, now: datetime) -> StudentStatesOut:
         if paper is None:
             continue
         streams.append(derive_learning_events(record, paper, rubric_judge=rubric_judge))
-    states = derive_concept_states(streams, now=now)
+    return streams
+
+
+async def _recompute(request: Request, now: datetime) -> StudentStatesOut:
+    """从全部考试的学习事件流重算并物化（routes 层编排：事件源读取复用既有 repository）。"""
+    student_repo = _repo(request)
+    states = derive_concept_states(await all_learning_streams(request), now=now)
     await student_repo.recompute(states.values())
     return _states_out(await student_repo.list_states())
 

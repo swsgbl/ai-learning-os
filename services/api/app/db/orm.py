@@ -117,6 +117,7 @@ __all__ = [
     "ChunkRow",
     "EvidenceRow",
     "ExamSessionRow",
+    "MisconceptionCandidateRow",
     "PaperRow",
     "ParseJobRow",
     "QuestionRow",
@@ -302,4 +303,24 @@ class StudentConceptStateRow(Base):
     wrong_count: Mapped[int] = mapped_column(Integer, default=0)
     first_event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_event_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class MisconceptionCandidateRow(Base):
+    """M3-04 误解候选：(concept_id, pattern) 唯一，从学习事件全量重算的物化状态。
+
+    单次错误即 candidate（低置信度），独立题数达到阈值才 confirmed（长期画像）。
+    """
+
+    __tablename__ = "misconception_candidates"
+
+    concept_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    pattern: Mapped[str] = mapped_column(String(64), primary_key=True)
+    status: Mapped[str] = mapped_column(String(16))
+    confidence: Mapped[float] = mapped_column(Float)
+    independent_count: Mapped[int] = mapped_column(Integer, default=0)
+    occurrence_count: Mapped[int] = mapped_column(Integer, default=0)
+    question_ids: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
