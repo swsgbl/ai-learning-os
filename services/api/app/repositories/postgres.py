@@ -194,6 +194,11 @@ class PostgresRepository:
                     occurred_at=_to_db(self._clock()),
                 )
             )
+            try:
+                await session.flush()
+            except IntegrityError as cause:
+                # 并发写入撞 uq_answer_events_exam_sequence：明确拒绝而非 500。
+                raise ValueError("答案事件并发写入冲突，请刷新后重试") from cause
             record = _exam_record(exam, events, _answers_from(events))
             record.events.append(
                 AnswerEvent(sequence, question_id, answer, self._clock())
