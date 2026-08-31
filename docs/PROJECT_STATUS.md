@@ -34,11 +34,11 @@ M2-02 试卷导入（backlog：paper import；M2-04 Redis timeout worker 视依�
 | M1-08 解析质量报告 | f10b709, merge 3ae24f8 | pytest 68 passed（含真实 PG）：报告聚合字段全断言（页数/块数/公式/表格/OCR/异常页）1 测；无 OCR/无页数缺省 1 测；端到端端点 1 测；OCR 置信度管线透传 1 测；前端门禁绿 | 2026-08-31 |
 | M2-01 Question/Paper schema | 49efd33, merge 47b65a3 | pytest 80 passed（含真实 PG）：八题型参数化校验 8 测；错误 answer QuestionSpec 判别联合校验 3 测；PaperSpec 总分一致性 1 测；validate 端点端到端 1 测；前端门禁绿 | 2026-08-31 |
 | M2-02 试卷 JSON 导入 | 6f1a874, merge 2c50382 | pytest 82 passed（含真实 PG）：成功导入不变性（列表/时长取整/考试流顺序/选项/交卷后 expected+explanation 逐字保留/DB 分值+sort_order）1 测；非法行逐行报错（index+loc/msg）+ 全或无不落库 1 测；前端门禁绿 | 2026-08-31 |
+| M2-03 ExamSession FSM | 本分支 | pytest 109 passed（含真实 PG）：迁移矩阵与声明边一致 1 测；6 合法边参数化 6 测；19 非法边全拒绝（含状态名断言）19 测；CREATED 考试 submit→409 API 接线 1 测；postgres/memory 双仓库 create_exam、get_exam 超时翻转、submit 全部接线 assert_transition；前端门禁绿 | 2026-08-31 |
 
 ## 待办任务（按 backlog 顺序）
 
-- [ ] M2-03 ExamSession FSM（CREATED→REPORT_READY 全迁移单测）
-- [ ] M2-04 服务端权威计时（Redis 延迟队列 + DB 事务兜底）
+- [ ] M2-04 服务端权威计时（start/end 服务器写入；改时间/刷新/重连不能延长）
 - [ ] M2-05 答案 append-only event；M2-06 自动保存与断线恢复；M2-07 幂等提交与超时提交
 - [ ] M2-08 Objective grader（golden set 100%）；M2-09 Numeric/math grader；M2-10 Subjective rubric grader；M2-11 考试报告
 - [ ] M3-01~07 Student Model
