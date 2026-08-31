@@ -97,6 +97,7 @@ async def submission_out(submission: SubmissionRecord, request: Request) -> Subm
         correct_count=submission.correct_count,
         total_count=submission.total_count,
         duration_seconds=submission.duration_seconds,
+        rule_version=submission.rule_version,
         items=[
             GradedItemOut(
                 question_id=item.question_id,

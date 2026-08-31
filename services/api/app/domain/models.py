@@ -100,3 +100,4 @@ class SubmissionRecord:
     total_count: int
     duration_seconds: int
     items: tuple[GradedItem, ...]
+    rule_version: str = "objective-v2"

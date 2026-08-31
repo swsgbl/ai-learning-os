@@ -26,7 +26,7 @@ from app.db.orm import (
     SubmissionRow,
 )
 from app.domain.exam_fsm import assert_transition
-from app.domain.grading import grade_answer
+from app.domain.grading import OBJECTIVE_RULE_VERSION, grade_answer
 from app.domain.models import (
     Angles,
     AnswerEvent,
@@ -41,7 +41,7 @@ from app.domain.models import (
 from app.repositories.memory import remaining_seconds, utc_now
 from app.repositories.seed import seed_papers
 
-RULE_VERSION = "objective-v1"
+RULE_VERSION = OBJECTIVE_RULE_VERSION
 
 
 def _to_db(value: datetime) -> datetime:
@@ -338,6 +338,7 @@ class PostgresRepository:
             total_count=row.total_count,
             duration_seconds=row.duration_seconds,
             items=items,
+            rule_version=row.rule_version,
         )
 
     @staticmethod

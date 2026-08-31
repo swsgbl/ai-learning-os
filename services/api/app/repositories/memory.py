@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from app.domain.exam_fsm import assert_transition
-from app.domain.grading import grade_answer
+from app.domain.grading import OBJECTIVE_RULE_VERSION, grade_answer
 from app.domain.models import (
     AnswerEvent,
     ExamSessionRecord,
@@ -126,6 +126,7 @@ class MemoryRepository:
                 total_count=len(items),
                 duration_seconds=max(0, math.floor((effective_end - record.started_at).total_seconds())),
                 items=tuple(items),
+                rule_version=OBJECTIVE_RULE_VERSION,
             )
             self._submissions[exam_id] = submission
             return submission
