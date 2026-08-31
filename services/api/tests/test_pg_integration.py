@@ -657,3 +657,39 @@ def test_voice_session_lifecycle_against_real_postgres(monkeypatch) -> None:
         ended = client.post(url, json={"type": "end"})
         assert ended.status_code == 200
         assert ended.json()["session"]["status"] == "REPORT_READY"
+
+
+def test_voice_intent_flow_against_real_postgres() -> None:
+    """M4-04：真实 PG 下 intent 解析一体化——「选 B」提交落库、「我改成 C」覆盖。"""
+    with TestClient(create_app(PG_URL)) as client:  # type: ignore[arg-type]
+        exam_id = client.post(
+            "/api/v1/papers/functions-basics/exams", json={"mode": "exam"}
+        ).json()["exam_id"]
+        session_id = client.post(
+            "/api/v1/voice/sessions", json={"exam_id": exam_id}
+        ).json()["session_id"]
+        url = f"/api/v1/voice/sessions/{session_id}/intents"
+
+        for command in ("start_reading", "question_read", "options_read"):
+            assert client.post(
+                f"/api/v1/voice/sessions/{session_id}/commands", json={"type": command}
+            ).status_code == 200
+
+        # G 提示词示例：选 B → 提交；我改成 C → 覆盖
+        first = client.post(url, json={"transcript": "选 B"})
+        assert first.status_code == 200
+        assert first.json()["session"]["status"] == "ANSWER_COMMITTED"
+        second = client.post(url, json={"transcript": "我改成 C"})
+        assert second.status_code == 200
+        assert second.json()["intent"] == "change_answer"
+
+        exam_view = client.get(f"/api/v1/exams/{exam_id}").json()
+        question_id = exam_view["questions"][0]["id"]
+        assert exam_view["answers"].get(question_id) == "C"
+        assert exam_view["next_sequence"] >= 3
+
+        # 未识别语句不改状态
+        unknown = client.post(url, json={"transcript": "今天天气不错"})
+        assert unknown.json()["fsm_applied"] is False
+        after = client.get(f"/api/v1/voice/sessions/{session_id}").json()
+        assert after["status"] == "ANSWER_COMMITTED"

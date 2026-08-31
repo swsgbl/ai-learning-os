@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
 from app.domain import voice_session_fsm as fsm
+from app.domain.intent_parser import INTENT_UNKNOWN, ordinal_to_letter, parse
 from app.domain.models import ExamStatus
 from app.domain.voice_tokens import (
     DEFAULT_TTL_SECONDS,
@@ -437,4 +438,108 @@ async def apply_voice_command(
         session=VoiceSessionOut(**updated),
         clarified_question=clarified_question,
         question_total=question_total,
+    )
+
+
+# ---------- M4-04 Intent parser：transcript → FSM 命令一体化应用 ----------
+
+
+class VoiceIntentRequest(BaseModel):
+    transcript: str = Field(min_length=1, max_length=500)
+    expected_revision: int | None = None
+
+
+class VoiceIntentOut(BaseModel):
+    transcript: str
+    intent: str
+    letter: str | None
+    ordinal: int | None
+    ambiguous: bool
+    fsm_command: str | None
+    fsm_applied: bool  # unknown/pause/resume 不应用 FSM——不虚报理解
+    applied_event: str | None = None
+    session: VoiceSessionOut | None = None
+    clarified_question: str | None = None
+
+
+@router.post("/sessions/{session_id}/intents", response_model=VoiceIntentOut)
+async def apply_voice_intent(
+    session_id: str, payload: VoiceIntentRequest, request: Request
+) -> VoiceIntentOut:
+    """解析语音转写并直接应用到语音会话 FSM（M4-04）。
+
+    - choose/change：槽位规范化（序号→字母需当前题选项数），自动绑定 FSM 当前题；
+    - 槽位含糊或序号超界 → answer_clarify（服务端澄清，不落库半成品）；
+    - unknown 不改状态——解析失败≠澄清答案；pause/resume 待 M4-06 接入。
+    """
+    sessions = request.app.state.voice_sessions
+    if sessions is None:
+        raise HTTPException(status_code=503, detail="Voice sessions require a database")
+    view = await sessions.get(session_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="语音会话不存在")
+
+    parsed = parse(payload.transcript)
+    command = parsed.fsm_command
+    if parsed.intent == INTENT_UNKNOWN or command is None:
+        return VoiceIntentOut(
+            transcript=payload.transcript,
+            intent=parsed.intent,
+            letter=parsed.letter,
+            ordinal=parsed.ordinal,
+            ambiguous=parsed.ambiguous,
+            fsm_command=command,
+            fsm_applied=False,
+        )
+
+    question_id: str | None = None
+    answer: str | None = None
+    ambiguous = parsed.ambiguous
+    clarified_question: str | None = None
+
+    if command == "answer_proposed":
+        _, paper = await _load_paper(request, view["exam_id"])
+        questions = list(paper.questions)
+        index = view["question_index"]
+        if index >= len(questions):
+            raise HTTPException(status_code=409, detail="当前题索引越界")
+        question_id = questions[index].id
+        letter = parsed.letter
+        if letter is None and parsed.ordinal is not None:
+            option_count = len(getattr(questions[index], "options", []) or [])
+            letter = ordinal_to_letter(parsed.ordinal, option_count) if option_count else None
+            if letter is None:
+                ambiguous = True  # 序号超界 → 澄清，不猜答案
+        if letter is not None:
+            answer = letter
+        else:
+            # 无法从槽位得到明确选项 → 澄清（含糊答案不落库）
+            ambiguous = True
+        if ambiguous:
+            command = fsm.EV_ANSWER_CLARIFY
+            answer = payload.transcript  # 满足命令校验；澄清分支不落库答案
+            clarified_question = "没有听清，请再说一遍具体选项。"
+
+    command_out = await apply_voice_command(
+        session_id,
+        VoiceCommandRequest(
+            type=command,
+            question_id=question_id,
+            answer=answer,
+            ambiguous=ambiguous,
+            expected_revision=payload.expected_revision,
+        ),
+        request,
+    )
+    return VoiceIntentOut(
+        transcript=payload.transcript,
+        intent=parsed.intent,
+        letter=parsed.letter,
+        ordinal=parsed.ordinal,
+        ambiguous=ambiguous,
+        fsm_command=parsed.fsm_command,
+        fsm_applied=True,
+        applied_event=command_out.applied_event,
+        session=command_out.session,
+        clarified_question=clarified_question or command_out.clarified_question,
     )
