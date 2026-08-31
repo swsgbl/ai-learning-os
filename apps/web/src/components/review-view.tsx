@@ -110,6 +110,7 @@ export function ReviewView({ submission }: { submission: Submission }) {
                       <span className="mx-2">·</span>
                       答案 {answerLabel(question, item.expected)}
                     </p>
+                    {item.rubric && <RubricDetailList rubric={item.rubric} />}
                   </div>
                 </div>
               </Card>
@@ -117,6 +118,32 @@ export function ReviewView({ submission }: { submission: Submission }) {
           })}
         </div>
       </section>
+    </div>
+  );
+}
+
+function RubricDetailList({ rubric }: { rubric: NonNullable<Submission["items"][number]["rubric"]> }) {
+  return (
+    <div className="mt-2 flex flex-wrap gap-1.5">
+      {rubric.criteria.map((criterion) => (
+        <span
+          key={criterion.point}
+          className={cn(
+            "rounded px-1.5 py-0.5 text-xs",
+            criterion.achieved === null
+              ? "bg-surface-2 text-muted"
+              : criterion.achieved
+                ? "bg-good-soft text-good"
+                : "bg-bad-soft text-bad",
+          )}
+        >
+          {criterion.achieved === null ? "?" : criterion.achieved ? "✓" : "✗"} {criterion.point}
+        </span>
+      ))}
+      <span className="rounded bg-surface-2 px-1.5 py-0.5 text-xs text-muted">
+        评分点 {rubric.criteria.filter((c) => c.achieved).length}/{rubric.criteria.length} ·{" "}
+        {rubric.judge_model}
+      </span>
     </div>
   );
 }

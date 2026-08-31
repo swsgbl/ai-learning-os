@@ -67,6 +67,22 @@ export type ExamSession = {
   next_sequence: number;
 };
 
+export type RubricCriterion = {
+  point: string;
+  achieved: boolean | null;
+  evidence_id?: string | null;
+};
+
+// M2-10 essay 结构化判分明细（prompt pack E schema）
+export type RubricDetail = {
+  rule_version: string;
+  criteria: RubricCriterion[];
+  score_ratio?: number | null;
+  confidence: number;
+  judge_model: string;
+  prompt_hash?: string;
+};
+
 export type GradedItem = {
   question_id: string;
   given: string;
@@ -74,6 +90,7 @@ export type GradedItem = {
   expected: string;
   explanation: string;
   angles: ReviewQuestion["angles"];
+  rubric?: RubricDetail | null;
 };
 
 export type Submission = {

@@ -8,7 +8,7 @@ from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from app.domain.exam_fsm import assert_transition
-from app.domain.grading import OBJECTIVE_RULE_VERSION, grade_answer
+from app.domain.grading import OBJECTIVE_RULE_VERSION
 from app.domain.models import (
     AnswerEvent,
     ExamSessionRecord,
@@ -17,6 +17,7 @@ from app.domain.models import (
     Paper,
     SubmissionRecord,
 )
+from app.domain.rubric_grader import RubricJudge, judge_question
 from app.repositories.seed import seed_papers
 
 
@@ -32,11 +33,14 @@ def remaining_seconds(record: ExamSessionRecord, now: datetime | None = None) ->
 class MemoryRepository:
     """API contract-first repository. PostgreSQL will replace this without route changes."""
 
-    def __init__(self, clock: Callable[[], datetime] = utc_now) -> None:
+    def __init__(
+        self, clock: Callable[[], datetime] = utc_now, rubric_judge: RubricJudge | None = None
+    ) -> None:
         self._papers = {paper.id: paper for paper in seed_papers()}
         self._exams: dict[str, ExamSessionRecord] = {}
         self._submissions: dict[str, SubmissionRecord] = {}
         self._clock = clock
+        self._rubric_judge = rubric_judge
         self._lock = asyncio.Lock()
 
     async def list_papers(self) -> list[Paper]:
@@ -102,16 +106,27 @@ class MemoryRepository:
             record.submitted_at = now
             paper = self._papers[record.paper_id]
             items: list[GradedItem] = []
+            rule_versions: set[str] = set()
             for question in paper.questions:
                 given = record.answers.get(question.id, "")
+                correct, rubric = judge_question(
+                    question.type,
+                    question.stem,
+                    question.answer,
+                    given,
+                    rubric_judge=self._rubric_judge,
+                    valid_evidence_ids=frozenset(),  # memory 无 evidence 基础设施
+                )
+                rule_versions.add(rubric.rule_version if rubric else OBJECTIVE_RULE_VERSION)
                 items.append(
                     GradedItem(
                         question_id=question.id,
                         given=given,
-                        correct=grade_answer(question.type, question.answer, given),
+                        correct=correct,
                         expected=question.answer,
                         explanation=question.explanation,
                         angles=question.angles,
+                        rubric_json=rubric.criteria_json if rubric else None,
                     )
                 )
             # 三态判分：None（待复核）不计入分子分母；total_count 仍为全量题数
@@ -128,7 +143,7 @@ class MemoryRepository:
                 total_count=len(items),
                 duration_seconds=max(0, math.floor((effective_end - record.started_at).total_seconds())),
                 items=tuple(items),
-                rule_version=OBJECTIVE_RULE_VERSION,
+                rule_version="+".join(sorted(rule_versions)),
             )
             self._submissions[exam_id] = submission
             return submission

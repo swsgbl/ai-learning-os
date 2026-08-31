@@ -86,6 +86,7 @@ class GradedItem:
     expected: str
     explanation: str
     angles: Angles
+    rubric_json: str | None = None  # M2-10：essay 题结构化判分明细（criteria/evidence/judge 留痕）
 
 
 @dataclass(frozen=True, slots=True)

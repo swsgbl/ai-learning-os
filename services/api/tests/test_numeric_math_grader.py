@@ -71,6 +71,20 @@ def test_math_json_expected_form() -> None:
     assert grade_math(json.dumps({"latex": "x+y"}), "y+x") is True
 
 
+def test_math_never_evals_untrusted_characters() -> None:
+    """sympify 前字符白名单：注入面文本一律进复核，绝不 eval（M2-09 安全回归）。"""
+    for evil in (
+        "__import__('os').system('id')",
+        "().__class__.__mro__[1]",
+        "x' or '1'='1",
+        "x{}",
+        "x; import os",
+    ):
+        assert grade_math("2*x", evil) is None, evil
+    # 白名单内表达式判分不受影响
+    assert grade_math("2*x", "x+x") is True
+
+
 def test_review_flow_excluded_from_score() -> None:
     """待复核题（None）不计入 score 分子分母；逐题 correct 留痕为 null。"""
     paper = {
