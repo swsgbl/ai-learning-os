@@ -363,6 +363,59 @@ def test_misconception_candidate_lifecycle_against_real_postgres() -> None:
         assert client.get(f"/api/v1/student/misconceptions/{concept}").json() == concept_only
 
 
+def test_review_queue_projection_against_real_postgres() -> None:
+    """M3-05：真实 PG 下复习队列为事件实时投影——错题生成 next_review_at，重放幂等。"""
+    from uuid import uuid4
+
+    suffix = uuid4().hex[:8]
+    concept = f"pg_rev_{suffix}"
+    paper = {
+        "title": "PG 复习调度验证卷",
+        "duration_seconds": 1800,
+        "questions": [
+            {
+                "question": {
+                    "question_type": "mcq",
+                    "stem": f"题{i}",
+                    "options": ["A", "B"],
+                    "answer": {"option_index": 1},
+                    "explanation": "B 对",
+                    "concept_ids": [concept],
+                    "difficulty": 2,
+                },
+                "score": 1.0,
+            }
+            for i in (1, 2)
+        ],
+    }
+    fixed_now = "2030-01-01T00:00:00+00:00"
+    with TestClient(create_app(PG_URL)) as client:  # type: ignore[arg-type]
+        (paper_id,) = client.post("/api/v1/papers/import", json=[paper]).json()["imported"]
+        started = client.post(f"/api/v1/papers/{paper_id}/exams", json={"mode": "exam"})
+        exam_id = started.json()["exam_id"]
+        questions = started.json()["questions"]
+        client.put(
+            f"/api/v1/exams/{exam_id}/answers",
+            json={"sequence": 1, "question_id": questions[0]["id"], "answer": "A"},  # 错
+        )
+        client.put(
+            f"/api/v1/exams/{exam_id}/answers",
+            json={"sequence": 2, "question_id": questions[1]["id"], "answer": "B"},  # 对
+        )
+        assert client.post(f"/api/v1/exams/{exam_id}/submit", json={}).status_code == 200
+
+        first = client.get("/api/v1/student/review-queue", params={"now": fixed_now}).json()
+        target = [item for item in first["items"] if item["concept_ids"] == [concept]]
+        assert len(target) == 1  # 只有答错题入队（历史运行同概念已被唯一后缀隔离）
+        (item,) = target
+        assert item["status"] == "retry"
+        assert item["question_id"] == questions[0]["id"]
+        assert item["next_review_at"] > item["last_seen_at"]
+
+        again = client.get("/api/v1/student/review-queue", params={"now": fixed_now}).json()
+        assert again == first  # 实时投影重放幂等
+
+
 def test_concurrent_answer_writers_get_explicit_outcome() -> None:
     """M2-05 并发同 sequence 写入：一个成功一个明确拒绝，绝无未处理 IntegrityError。"""
     import asyncio
