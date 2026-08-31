@@ -223,6 +223,73 @@ def test_concept_dag_versioning_against_real_postgres() -> None:
         assert latest["version"] == version + 1
 
 
+def test_student_state_recompute_idempotent_against_real_postgres() -> None:
+    """M3-03：真实 PG 下概念状态全量重算——同事件同 now 两次重算结果逐字段全等。
+
+    PG 主库跨运行持久（历史考试事件累积），概念 ID 带运行级唯一后缀做绝对断言。
+    """
+    from uuid import uuid4
+
+    suffix = uuid4().hex[:8]
+    arith, geo = f"pg_arith_{suffix}", f"pg_geo_{suffix}"
+    paper = {
+        "title": "PG 学生状态验证卷",
+        "duration_seconds": 600,
+        "questions": [
+            {
+                "question": {
+                    "question_type": "mcq",
+                    "stem": "1+1=?",
+                    "options": ["1", "2"],
+                    "answer": {"option_index": 1},
+                    "explanation": "加法",
+                    "concept_ids": [arith],
+                    "difficulty": 2,
+                },
+                "score": 1.0,
+            },
+            {
+                "question": {
+                    "question_type": "numeric",
+                    "stem": "圆周率保留两位",
+                    "answer": {"value": 3.14, "tolerance": 0.01},
+                    "explanation": "pi",
+                    "concept_ids": [geo],
+                    "difficulty": 4,
+                },
+                "score": 1.0,
+            },
+        ],
+    }
+    fixed_now = "2030-01-01T00:00:00+00:00"
+    with TestClient(create_app(PG_URL)) as client:  # type: ignore[arg-type]
+        (paper_id,) = client.post("/api/v1/papers/import", json=[paper]).json()["imported"]
+        started = client.post(f"/api/v1/papers/{paper_id}/exams", json={"mode": "exam"})
+        exam_id = started.json()["exam_id"]
+        questions = started.json()["questions"]
+        client.put(
+            f"/api/v1/exams/{exam_id}/answers",
+            json={"sequence": 1, "question_id": questions[0]["id"], "answer": "B"},
+        )
+        client.put(
+            f"/api/v1/exams/{exam_id}/answers",
+            json={"sequence": 2, "question_id": questions[1]["id"], "answer": "9.9"},
+        )
+        assert client.post(f"/api/v1/exams/{exam_id}/submit", json={}).status_code == 200
+
+        first = client.post("/api/v1/student/states/recompute", params={"now": fixed_now}).json()
+        assert first["concept_count"] >= 2
+        by_concept = {state["concept_id"]: state for state in first["states"]}
+        assert by_concept[arith]["correct_count"] == 1
+        assert by_concept[geo]["wrong_count"] == 1
+        assert by_concept[arith]["mastery"] > by_concept[geo]["mastery"]
+        assert geo in first["weak_concepts"]  # 零掌握进薄弱列表
+
+        second = client.post("/api/v1/student/states/recompute", params={"now": fixed_now}).json()
+        assert second == first  # 更新幂等
+        assert client.get("/api/v1/student/states").json() == first
+
+
 def test_concurrent_answer_writers_get_explicit_outcome() -> None:
     """M2-05 并发同 sequence 写入：一个成功一个明确拒绝，绝无未处理 IntegrityError。"""
     import asyncio

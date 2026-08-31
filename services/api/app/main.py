@@ -11,6 +11,7 @@ from app.api.routes.exams import router as exams_router
 from app.api.routes.papers import router as papers_router
 from app.api.routes.resources import router as resources_router
 from app.api.routes.sources import router as sources_router
+from app.api.routes.student import router as student_router
 from app.api.routes.system import router as system_router
 from app.api.routes.validate import router as validate_router
 from app.core.config import get_settings
@@ -25,6 +26,7 @@ from app.repositories.parsejobs import ParseJobRepository
 from app.repositories.postgres import PostgresRepository
 from app.repositories.resources import ResourceRepository
 from app.repositories.sources import SourceRepository
+from app.repositories.student_state import StudentStateRepository
 from app.storage.objectstore import make_object_store
 
 
@@ -47,6 +49,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
             sources = SourceRepository(sessionmaker)
             await sources.seed_if_empty()
             concept_dag = ConceptDagRepository(sessionmaker)
+            student_state = StudentStateRepository(sessionmaker)
             resources = ResourceRepository(sessionmaker)
             objects = make_object_store(settings)
             parsers = make_default_registry()
@@ -63,6 +66,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         app.state.sessionmaker = sessionmaker if resolved_url else None
         app.state.sources = sources if resolved_url else None
         app.state.concept_dag = concept_dag if resolved_url else None
+        app.state.student_state = student_state if resolved_url else None
         app.state.resources = resources if resolved_url else None
         app.state.objects = objects if resolved_url else None
         app.state.parsers = parsers if resolved_url else None
@@ -91,6 +95,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(papers_router)
     app.include_router(exams_router)
     app.include_router(concepts_router)
+    app.include_router(student_router)
     app.include_router(sources_router)
     app.include_router(resources_router)
     app.include_router(system_router)
