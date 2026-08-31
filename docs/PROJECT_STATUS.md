@@ -40,7 +40,7 @@ M2-10 Subjective rubric grader（结构化 JSON 输出；低置信度双审）
 | M2-06 自动保存与断线恢复 | 676aae1, merge 2edb513 | pytest 122 passed（含真实 PG）：刷新恢复（answers+remaining+next_sequence=3）1 测；恢复后按服务端 next_sequence 续答 200 1 测；未知考试 404 1 测；浏览器实测：答 B→刷新→exam_id 不变/答案保留/倒计时走服务端时间→续答第 2 题成功（修复前乐观序号跳号会永久 409）；ExamSessionOut 新增 next_sequence 字段；前端 localStorage 恢复 + 序号权威管理 + 过期自动结算跳审阅 | 2026-08-31 |
 | M2-07 幂等提交与超时提交 | c39d142, merge c374811 | pytest 126 passed（含真实 PG）：超时结算只触发一次（memory/postgres 双仓库参数化：重复结算+时钟推进均同一报告、结算后答案永久拒绝）2 测；API 三路幂等（两次 submit + GET submission 全等）1 测；真实 PG 并发结算收敛同一 submission 1 测；ADR 19 记录不引 Redis 决策 | 2026-08-31 |
 | M2-08 Objective grader | 9482684, merge 2902d4a | pytest 161 passed（含真实 PG）：golden set 33 用例参数化 100%（mcq 归一 6、多选集合等价 8、判断中英文归一 9、简答 JSON accepted+legacy 备选 7、题型别名 3）；非 objective 题型不判 1 测；rule_version+输入事件留痕 1 测；导入卷 short_answer/multiple_select 判分回归 1 测；ADR 20 | 2026-08-31 |
-| M2-09 Numeric/math grader | 本分支 | pytest 189 passed（含真实 PG）：numeric golden 15（容差 5、同纲单位换算 5、跨纲判错 1、缺单位/未知单位/非数值/无法解析进复核 4）；math golden 11（字面归一 2、sympy 恒等 5、不等价 2、超范围/非法 LaTeX 进复核 2）；JSON expected 形态 1 测；三态复核不计分（correct=None 逐题留痕、score 只算已判定）1 测；前端 AnswerInput 文本输入题型 + 审阅页 answerLabel（JSON 答案可读化）；浏览器实测三态全流程 | 2026-08-31 |
+| M2-09 Numeric/math grader | b0cd569, merge 5259662 | pytest 189 passed（含真实 PG）：numeric golden 15（容差 5、同纲单位换算 5、跨纲判错 1、缺单位/未知单位/非数值/无法解析进复核 4）；math golden 11（字面归一 2、sympy 恒等 5、不等价 2、超范围/非法 LaTeX 进复核 2）；JSON expected 形态 1 测；三态复核不计分（correct=None 逐题留痕、score 只算已判定）1 测；前端 AnswerInput 文本输入题型 + 审阅页 answerLabel（JSON 答案可读化）；浏览器实测三态全流程 | 2026-08-31 |
 
 ## 待办任务（按 backlog 顺序）
 
