@@ -5,11 +5,11 @@
 
 ## 当前里程碑
 
-M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/11）→ M3 Student Model（进行中 5/7）
+M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/11）→ M3 Student Model（进行中 6/7）
 
 ## 当前任务
 
-M3-06 Daily planner
+M3-07 选题策略
 
 ## 已完成任务
 
@@ -48,10 +48,11 @@ M3-06 Daily planner
 | M3-03 StudentConceptState | f24ee62, merge b07bf03 | pytest 262 passed（含真实 PG）：domain 纯函数 10 测（答对增益单调升有界、答错拉低不越下界、难度调制正证据、重答证据减半、confidence=n/(n+K) 精确断言、forgetting_risk 随时间升随掌握降、复核事件不计证据、跨考试时间序合并与输入流顺序无关且 BKT 顺序敏感锁定、同输入同输出纯性、薄弱概念升序）；API 5 测（recompute 同事件同 now 逐字段全等幂等验收、mastery 排序+weak 首位最薄弱、active 未交卷作答计入、未知概念 404、无 DB 503、非法 now 422）；PG 集成 1 测（唯一后缀概念 ID 适配共享主库累积，重算幂等全等）；migration 0010（student_concept_states 全量 replace 重算语义）；真实 PG 冒烟：重算×2 幂等全等、mastery 0.35 vs 0、weak 含错题概念、GET 与重算一致 | 2026-08-31 |
 | M3-04 Misconception candidate | ea7ce22, merge eb0fd58 | pytest 273 passed（含真实 PG）：domain 9 测（单次错误仅 candidate 低置信、同题重试只增 occurrence 不增独立证据、三独立题升 confirmed 且 confidence 单调 n/(n+2) 精确断言、不同 pattern 各自独立、跨考试证据合并与输入流顺序无关、答对/复核/空答案/无概念不产生候选、pattern 归一化合并等价作答、纯性、阈值常量）；API 端到端 1 测（单次错→candidate→三独立题→confirmed→重算幂等全等→GET 一致→404/503/非法 now 422）；PG 集成 1 测（唯一后缀概念+错误答案适配共享主库，candidate→confirmed 生命周期+幂等）；migration 0011 roundtrip（misconception_candidates 复合主键 concept_id+pattern）；真实 PG 冒烟：candidate(0.333)→confirmed(0.6)→幂等→GET 单概念→404 全过 | 2026-08-31 |
 | M3-05 FSRS-like scheduler | 378c032, merge ae2ea37 | pytest 284 passed（含真实 PG）：domain 9 测（错题生成 next_review_at=last_seen+初始间隔、难度调制初始间隔 diff5→0.6d、never-wrong/复核不入队、错过已恢复→reinforce 间隔×2、提前复习增长打折 0.6 阈值、延迟复习增长加成 2.0 阈值、再错重置回初始、队列 overdue 降序同 ratio retry 优先、跨考试合并按时间序纯性）；API 端到端 1 测（错题入队+全对题不入队+重放幂等+422/503）；PG 集成 1 测（唯一后缀概念隔离共享主库，retry 入队+next_review_at+投影重放幂等）；无新表：复习队列=学习事件实时投影（ADR 29 YAGNI）；真实 PG 冒烟：retry 项 interval=1.2（难度调制正确）+next_review_at 生成+重放幂等+422 全过 | 2026-08-31 |
+| M3-06 Daily planner | c7224ab, merge PENDING | pytest 293 passed（含真实 PG）：domain 7 测（昨日错题次日进复习+reason、薄弱概念优先于全新概念新学+reason 文案、confirmed 误解→重测任务+引用模式与置信度、未到期复习排除、跨类同题去重、配额上限、同输入同输出纯性）；API 端到端 1 测（错题进复习任务+concept_ids+重放幂等+非法 now 422+无 DB 503）；PG 集成 1 测（结构完整+三分类计数一致+跨类去重+每任务 reason+重放幂等+422；共享主库历史题占满配额，错题入选语义由干净库 SQLite 端到端覆盖）；无新表无 migration（实时投影聚合三投影+题库池，ADR 29 同款）；设计修正：新学排序 unknown 概念 weakness=2.0 恒排已知概念之后（保「薄弱优先」语义）；真实 PG 冒烟：默认 now 12 任务（mistake_retry 5 满配额且 reason 引用真实证据「错误答案『3.2』在 19 道独立题中重复出现（置信度 90%）」、review 0=队列 99 题无一到期的数据状态）、now=2030 确定性重算 review 满 10 证明到期语义、422 全过 | 2026-08-31 |
 
 ## 待办任务（按 backlog 顺序）
 
-- [ ] M3-06~07 Student Model（M3-01~05 ✅）
+- [ ] M3-07 选题策略（M3 收尾，M3-01~06 ✅）
 - [ ] M4-01~09 Voice
 - [ ] M5-01~08 Search + 治理
 - [ ] M6-01~07 评测/安全/备份
@@ -100,10 +101,11 @@ M3-06 Daily planner
 | 27 | StudentConceptState 为事件源全量重算的物化状态（student_concept_states 表，重算=事务内全量 replace）：可解释 BKT-like 常数（答对 ALPHA·w·(1-m) 向 1 逼近/答错 BETA·w·m 向 0 逼近，w=attempt 折减×提示折减×难度系数；confidence=n/(n+4)；forgetting_risk=1-exp(-Δh/τ)，τ=24h·(1+4·mastery)）；幂等语义=「同一 (事件集, now) 恒等输出」——forgetting_risk 以重算时刻为锚随时间自然演化是期望行为，now 作 API 显式参数支持确定性重算；复核事件（correctness=None）不计证据；跨考试事件按时间序应用（BKT 顺序敏感），与输入流顺序无关 | M3-03 验收「可从事件重算且更新幂等」+ 00 号文档「可解释 heuristic/BKT-like 不训练深度模型」 | 2026-08-31 |
 | 28 | 误解候选判定：模式签名 pattern=规范化错误答案（空白折叠/小写/截断 64），(concept_id, pattern) 唯一；独立证据单位=不同题目（distinct question_id），同题重试只增 occurrence 不增独立证据；单次错误即 candidate（低置信 n/(n+2)），独立题数达 3 升 confirmed（05 号文档「重复误解升级长期画像」）；答对/复核/空答案（留空占位）/无概念归属不产生候选；物化表全量 replace 重算（与 ADR 27 同款幂等语义） | M3-04 验收「单次错误只生成 candidate；多次独立证据才提升置信度」+ pack F 要求 2/3 | 2026-08-31 |
 | 29 | 复习队列为学习事件实时投影（不落库）：GET 时从全部学习事件按题重放推导 FSRS-lite 间隔——答错重置初始间隔（难度调制 1.0+0.2×(3-difficulty) 天）、答对 ×2、提前复习（<0.6×计划间隔）增长打折 0.5、延迟复习（>2×）加成 1.25、间隔封顶 180 天；never-wrong 题与复核事件不入队；now 为查询锚点（显式传参可确定性投影）；免物化表（YAGNI：M3-06 planner 实时读即可），幂等=同 (事件集, now) 恒等输出（与 ADR 27/28 同款语义） | M3-05 验收「错题生成 next_review_at；提前/延迟复习策略可测试」+ pack F 要求 4 | 2026-08-31 |
+| 30 | Daily planner 为三投影+题库池的实时聚合投影（不落库）：review=到期复习（overdue 降序）/mistake_retry=confirmed 误解涉及题目（置信度降序）/new_learning=从未作答的题（薄弱已知概念 weakness=2.0−mastery > 全新概念恒为上限 2.0 > 同分难度升序从易到难）；同一题跨类不重复入选（review > 误解重测 > 新学）；配额 10/5/10；每任务强制带 reason 引用可解释证据（逾期比例与上次判定/误解模式+独立题数+置信度/概念掌握度），不虚构模型推断；now 为查询锚点（ADR 27/29 同款幂等语义） | M3-06 验收「今日任务包含新学、复习和错题重测；解释为什么被选中」+ pack F 可解释性要求 | 2026-08-31 |
 
 ## 下一任务
 
-M3-05 完成后：进入 M3-06 Daily planner（今日任务包含新学、复习和错题重测；解释为什么被选中——聚合 M3-03 概念状态/M3-04 误解候选/M3-05 复习队列）。
+M3-06 完成后：进入 M3-07 选题策略（第二次任务受弱概念、难度和历史错题影响——M3 最后一项，完成后 M3 7/7 ✅ 进入 M4 Voice）。
 
 ## 追加：M0 收尾验证（compose 全栈）
 
