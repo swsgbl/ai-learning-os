@@ -267,6 +267,25 @@ class DailyPlanOut(BaseModel):
     tasks: list[PlanTaskOut]
 
 
+class SelectionItemOut(BaseModel):
+    """M3-07 选题：历史错题/弱概念/难度三因素，每项带 reason（为什么被选中）。"""
+
+    kind: str
+    question_id: str
+    concept_ids: list[str]
+    reason: str
+    priority: float
+
+
+class SelectionOut(BaseModel):
+    generated_at: str
+    item_count: int
+    retry_count: int
+    weak_concept_count: int
+    advanced_count: int
+    items: list[SelectionItemOut]
+
+
 class SubmissionOut(BaseModel):
     exam_id: str
     paper_id: str

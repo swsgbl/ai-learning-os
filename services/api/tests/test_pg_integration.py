@@ -486,6 +486,74 @@ def test_daily_plan_against_real_postgres() -> None:
         )
 
 
+def test_selection_against_real_postgres() -> None:
+    """M3-07：真实 PG 下选题聚合三因素——结构完整、每项 reason、重放幂等、now 非法 422。
+
+    共享主库历史 retry/weak 题占满配额，本次运行新错题的入选语义由
+    干净库的 SQLite 端到端用例覆盖；此处验证真实 PG 端到端结构与幂等。
+    """
+    from uuid import uuid4
+
+    suffix = uuid4().hex[:8]
+    concept = f"pg_sel_{suffix}"
+    paper = {
+        "title": "PG 选题验证卷",
+        "duration_seconds": 1800,
+        "questions": [
+            {
+                "question": {
+                    "question_type": "mcq",
+                    "stem": f"选题题{i}",
+                    "options": ["A", "B"],
+                    "answer": {"option_index": 1},
+                    "explanation": "B 对",
+                    "concept_ids": [concept],
+                    "difficulty": 2,
+                },
+                "score": 1.0,
+            }
+            for i in (1, 2)
+        ],
+    }
+    fixed_now = "2030-01-01T00:00:00+00:00"
+    with TestClient(create_app(PG_URL)) as client:  # type: ignore[arg-type]
+        (paper_id,) = client.post("/api/v1/papers/import", json=[paper]).json()["imported"]
+        started = client.post(f"/api/v1/papers/{paper_id}/exams", json={"mode": "exam"})
+        exam_id = started.json()["exam_id"]
+        questions = started.json()["questions"]
+        client.put(
+            f"/api/v1/exams/{exam_id}/answers",
+            json={"sequence": 1, "question_id": questions[0]["id"], "answer": "A"},  # 错
+        )
+        assert client.post(f"/api/v1/exams/{exam_id}/submit", json={}).status_code == 200
+
+        selection = client.get("/api/v1/student/selection", params={"now": fixed_now}).json()
+        kinds = [item["kind"] for item in selection["items"]]
+        assert set(kinds) <= {"retry", "weak", "advanced"}
+        assert selection["item_count"] == len(selection["items"]) == (
+            selection["retry_count"] + selection["weak_concept_count"] + selection["advanced_count"]
+        )
+        assert kinds == sorted(
+            kinds, key=lambda k: ["retry", "weak", "advanced"].index(k)
+        )  # 分组有序
+        question_ids = [item["question_id"] for item in selection["items"]]
+        assert len(question_ids) == len(set(question_ids))  # 同一题不重复入选
+        for item in selection["items"]:
+            assert item["reason"].strip()
+
+        # 本次运行错题（唯一后缀概念）若被配额选中，必须以 retry 形态出现
+        by_id = {item["question_id"]: item for item in selection["items"]}
+        if questions[0]["id"] in by_id:
+            assert by_id[questions[0]["id"]]["kind"] == "retry"
+
+        again = client.get("/api/v1/student/selection", params={"now": fixed_now}).json()
+        assert again == selection  # 实时投影重放幂等
+
+        assert (
+            client.get("/api/v1/student/selection", params={"now": "bad"}).status_code == 422
+        )
+
+
 def test_concurrent_answer_writers_get_explicit_outcome() -> None:
     """M2-05 并发同 sequence 写入：一个成功一个明确拒绝，绝无未处理 IntegrityError。"""
     import asyncio
