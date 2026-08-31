@@ -13,6 +13,7 @@ from typing import Any
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     DateTime,
     Float,
     ForeignKey,
@@ -124,6 +125,7 @@ __all__ = [
     "ResourceRow",
     "StudentConceptStateRow",
     "SubmissionRow",
+    "VoiceTranscriptRow",
 ]
 
 
@@ -324,3 +326,22 @@ class MisconceptionCandidateRow(Base):
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class VoiceTranscriptRow(Base):
+    """M4-02 语音转写落盘：transcript 恒存（runbook「只保留转写、意图和必要事件」）；
+    原始音频仅 PRIVACY_STORE_AUDIO=true 时写对象存储，否则显式丢弃并留 audio_stored=false。"""
+
+    __tablename__ = "voice_transcripts"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    provider: Mapped[str] = mapped_column(String(64))
+    text: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float] = mapped_column(Float)
+    latency_ms: Mapped[int] = mapped_column(Integer, default=0)
+    audio_bytes: Mapped[int] = mapped_column(Integer, default=0)
+    audio_object_key: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    audio_stored: Mapped[bool] = mapped_column(Boolean, default=False)
+    exam_id: Mapped[str | None] = mapped_column(String(64), nullable=True)  # M4-03 FSM 绑定
+    question_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

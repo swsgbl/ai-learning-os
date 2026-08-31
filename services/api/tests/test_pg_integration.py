@@ -582,3 +582,29 @@ def test_concurrent_answer_writers_get_explicit_outcome() -> None:
         await engine.dispose()
 
     asyncio.run(_flow())
+
+
+def test_voice_transcript_persists_against_real_postgres(monkeypatch) -> None:
+    """M4-02：真实 PG 下转写端到端——transcript 落库可回查，默认不存原始音频。"""
+    from app.voice.providers import _sine_wav
+
+    monkeypatch.setenv("VOICE_MODE", "local")
+    monkeypatch.setenv("PRIVACY_STORE_AUDIO", "false")
+    from app.core.config import get_settings
+
+    get_settings.cache_clear()
+    with TestClient(create_app(PG_URL)) as client:  # type: ignore[arg-type]
+        response = client.post(
+            "/api/v1/voice/transcribe",
+            files={"audio": ("clip.wav", _sine_wav(0.4), "audio/wav")},
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["provider"] == "fake"
+        assert body["text"].startswith("[fake]")
+        assert body["audio_stored"] is False
+
+        recent = client.get("/api/v1/voice/transcripts?limit=5").json()
+        assert recent["item_count"] >= 1
+        assert any(item["id"] == body["id"] for item in recent["items"])
+    get_settings.cache_clear()

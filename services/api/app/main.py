@@ -33,6 +33,7 @@ from app.repositories.postgres import PostgresRepository
 from app.repositories.resources import ResourceRepository
 from app.repositories.sources import SourceRepository
 from app.repositories.student_state import StudentStateRepository
+from app.repositories.voice_transcripts import VoiceTranscriptRepository
 from app.storage.objectstore import make_object_store
 
 
@@ -57,6 +58,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
             concept_dag = ConceptDagRepository(sessionmaker)
             student_state = StudentStateRepository(sessionmaker)
             misconceptions = MisconceptionRepository(sessionmaker)
+            voice_transcripts = VoiceTranscriptRepository(sessionmaker)
             resources = ResourceRepository(sessionmaker)
             objects = make_object_store(settings)
             parsers = make_default_registry()
@@ -75,6 +77,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         app.state.concept_dag = concept_dag if resolved_url else None
         app.state.student_state = student_state if resolved_url else None
         app.state.misconceptions = misconceptions if resolved_url else None
+        app.state.voice_transcripts = voice_transcripts if resolved_url else None
         app.state.resources = resources if resolved_url else None
         app.state.objects = objects if resolved_url else None
         app.state.parsers = parsers if resolved_url else None

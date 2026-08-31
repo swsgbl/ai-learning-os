@@ -29,6 +29,13 @@ class Settings(BaseSettings):
     livekit_api_secret: str | None = None
     asr_provider: str | None = None
     tts_provider: str | None = None
+    # M4-02 云端语音槽位：OpenAI 兼容端点；key 只放部署 secret/.env，不入库不入码
+    asr_cloud_endpoint: str | None = None
+    asr_cloud_api_key: str | None = None
+    asr_cloud_model: str = "whisper-1"
+    tts_cloud_endpoint: str | None = None
+    tts_cloud_api_key: str | None = None
+    tts_cloud_model: str = "tts-1"
     llm_provider: str | None = None
     embedding_provider: str | None = None
     search_provider: str | None = None
