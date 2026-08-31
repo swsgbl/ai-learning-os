@@ -9,3 +9,4 @@ aiosqlite>=0.21,<1
 python-multipart>=0.0.20,<0.1
 boto3>=1.35,<2
 sympy>=1.13,<2
+livekit-api>=1.0,<2
