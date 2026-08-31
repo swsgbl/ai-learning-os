@@ -8,7 +8,7 @@ services:
       POSTGRES_PASSWORD: aios
       POSTGRES_DB: ai_learning_os
     ports:
-      - "5432:5432"
+      - "5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -53,6 +53,9 @@ services:
       CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
       DATABASE_URL: postgresql+asyncpg://aios:aios@postgres:5432/ai_learning_os
       REDIS_URL: redis://redis:6379/0
+      LIVEKIT_URL: ws://livekit:7880
+      LIVEKIT_API_KEY: devkey
+      LIVEKIT_API_SECRET: ailos-local-dev-secret-0f4c9a1e7b2d
     ports:
       - "8000:8000"
     depends_on:
@@ -60,6 +63,21 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+
+  livekit:
+    image: livekit/livekit-server:latest
+    command: --config /etc/livekit/livekit.yaml
+    volumes:
+      - ./livekit/livekit.yaml:/etc/livekit/livekit.yaml:ro
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882-7892:7882-7892/udp"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:7880/ || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
 
 volumes:
   postgres-data:

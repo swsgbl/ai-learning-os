@@ -1,0 +1,15 @@
+# M4-01 自托管 LiveKit（本地开发配置）。
+# key/secret 为本地开发占位值（与 compose/MinIO 同款先例），生产部署必须替换并经 secret 注入。
+port: 7880
+bind_addresses:
+  - "0.0.0.0"
+rtc:
+  tcp_port: 7881
+  port_range_start: 7882
+  port_range_end: 7892
+  use_external_ip: false
+  enable_loopback_candidate: true
+keys:
+  devkey: "ailos-local-dev-secret-0f4c9a1e7b2d"
+turn:
+  enabled: false

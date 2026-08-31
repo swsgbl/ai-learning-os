@@ -18,6 +18,7 @@ from app.api.routes.sources import router as sources_router
 from app.api.routes.student import router as student_router
 from app.api.routes.system import router as system_router
 from app.api.routes.validate import router as validate_router
+from app.api.routes.voice import router as voice_router
 from app.core.config import get_settings
 from app.db.session import create_engine, make_sessionmaker, prepare_database
 from app.domain.rubric_grader import make_rubric_judge
@@ -111,6 +112,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(resources_router)
     app.include_router(system_router)
     app.include_router(validate_router)
+    app.include_router(voice_router)
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, str]:
