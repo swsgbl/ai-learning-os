@@ -31,6 +31,8 @@ def paper_out(paper: Paper) -> PaperOut:
 
 
 def exam_out(record: ExamSessionRecord, paper: Paper) -> ExamSessionOut:
+    # M2-06：next_sequence 为服务端权威序号，断线恢复后客户端由此继续，不再自行计数
+    next_sequence = record.events[-1].sequence + 1 if record.events else 1
     return ExamSessionOut(
         exam_id=record.exam_id,
         paper_id=record.paper_id,
@@ -50,6 +52,7 @@ def exam_out(record: ExamSessionRecord, paper: Paper) -> ExamSessionOut:
             for item in paper.questions
         ],
         answers=record.answers,
+        next_sequence=next_sequence,
     )
 
 

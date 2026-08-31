@@ -52,6 +52,7 @@ export type ExamSession = {
   server_remaining_seconds: number;
   questions: PublicQuestion[];
   answers: Record<string, string>;
+  next_sequence: number;
 };
 
 export type GradedItem = {
