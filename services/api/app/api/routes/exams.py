@@ -7,8 +7,13 @@ from fastapi import APIRouter, HTTPException, Request
 from app.api.routes.papers import exam_out
 from app.api.schemas import (
     AnglesOut,
+    ConceptScoreOut,
     ExamSessionOut,
     GradedItemOut,
+    MistakeEntryOut,
+    RemediationTaskOut,
+    ReportItemOut,
+    ReportOut,
     ReviewQuestionOut,
     RubricCriterionOut,
     RubricOut,
@@ -17,6 +22,7 @@ from app.api.schemas import (
     SubmitRequest,
 )
 from app.domain.models import SubmissionRecord
+from app.domain.report import build_report
 
 router = APIRouter(prefix="/api/v1/exams", tags=["exams"])
 
@@ -73,6 +79,84 @@ async def get_submission(exam_id: str, request: Request) -> SubmissionOut:
     if not submission:
         raise HTTPException(status_code=404, detail="审阅报告尚未生成")
     return await submission_out(submission, request)
+
+
+@router.get("/{exam_id}/report", response_model=ReportOut)
+async def get_report(exam_id: str, request: Request) -> ReportOut:
+    """M2-11 考试报告：总分、题分、概念分、错题、解析、补救任务和证据链接。"""
+    submission = await request.app.state.repository.get_submission(exam_id)
+    if not submission:
+        raise HTTPException(status_code=404, detail="审阅报告尚未生成")
+    paper = await request.app.state.repository.get_paper(submission.paper_id)
+    if not paper:
+        raise HTTPException(status_code=500, detail="试卷数据缺失")
+    return _report_out(build_report(submission, paper))
+
+
+def _report_out(report) -> ReportOut:
+    return ReportOut(
+        exam_id=report.exam_id,
+        paper_title=report.paper_title,
+        mode=report.mode,
+        score=report.score,
+        score_earned=report.score_earned,
+        score_max=report.score_max,
+        correct_count=report.correct_count,
+        total_count=report.total_count,
+        reviewed_count=report.reviewed_count,
+        items=[
+            ReportItemOut(
+                question_id=item.question_id,
+                sequence=item.sequence,
+                question_type=item.question_type,
+                stem=item.stem,
+                given=item.given,
+                expected=item.expected,
+                correct=item.correct,
+                score=item.score,
+                max_score=item.max_score,
+                explanation=item.explanation,
+                knowledge=list(item.knowledge),
+                evidence_ids=list(item.evidence_ids),
+                score_ratio=item.score_ratio,
+            )
+            for item in report.items
+        ],
+        concepts=[
+            ConceptScoreOut(
+                concept=concept.concept,
+                correct=concept.correct,
+                total=concept.total,
+                reviewed=concept.reviewed,
+                ratio=concept.ratio,
+            )
+            for concept in report.concepts
+        ],
+        mistakes=[
+            MistakeEntryOut(
+                question_id=mistake.question_id,
+                stem=mistake.stem,
+                given=mistake.given,
+                expected=mistake.expected,
+                explanation=mistake.explanation,
+                diagnosis=mistake.diagnosis,
+                knowledge=list(mistake.knowledge),
+                evidence_ids=list(mistake.evidence_ids),
+                remediation_task_ids=list(mistake.remediation_task_ids),
+            )
+            for mistake in report.mistakes
+        ],
+        remediation_tasks=[
+            RemediationTaskOut(
+                kind=task.kind,
+                title=task.title,
+                detail=task.detail,
+                question_id=task.question_id,
+            )
+            for task in report.remediation_tasks
+        ],
+        evidence_ids=list(report.evidence_ids),
+    )
 
 
 async def submission_out(submission: SubmissionRecord, request: Request) -> SubmissionOut:

@@ -1,4 +1,4 @@
-import type { ExamSession, PaperSummary, Submission } from "./types";
+import type { ExamReport, ExamSession, PaperSummary, Submission } from "./types";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
@@ -38,4 +38,5 @@ export const api = {
       body: JSON.stringify({}),
     }),
   submission: (examId: string) => request<Submission>(`/api/v1/exams/${examId}/submission`),
+  report: (examId: string) => request<ExamReport>(`/api/v1/exams/${examId}/report`),
 };

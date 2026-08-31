@@ -83,6 +83,62 @@ def test_essay_rubric_flow_against_real_postgres() -> None:
         assert {c["point"] for c in item["rubric"]["criteria"]} == {"分治", "合并"}
 
 
+def test_exam_report_flow_against_real_postgres() -> None:
+    """M2-11：真实 PG 下报告聚合端到端——题分/概念分/错题/补救任务从落库数据构建。"""
+    paper = {
+        "title": "PG 报告验证卷",
+        "duration_seconds": 600,
+        "questions": [
+            {
+                "question": {
+                    "question_type": "mcq",
+                    "stem": "1+1=?",
+                    "options": ["1", "2"],
+                    "answer": {"option_index": 1},
+                    "explanation": "加法",
+                    "concept_ids": ["arithmetic"],
+                },
+                "score": 2.0,
+            },
+            {
+                "question": {
+                    "question_type": "numeric",
+                    "stem": "圆周率保留两位",
+                    "answer": {"value": 3.14, "tolerance": 0.01},
+                    "explanation": "pi",
+                    "concept_ids": ["geometry"],
+                },
+                "score": 3.0,
+            },
+        ],
+    }
+    with TestClient(create_app(PG_URL)) as client:  # type: ignore[arg-type]
+        (paper_id,) = client.post("/api/v1/papers/import", json=[paper]).json()["imported"]
+        started = client.post(f"/api/v1/papers/{paper_id}/exams", json={"mode": "exam"})
+        exam_id = started.json()["exam_id"]
+        questions = started.json()["questions"]
+        client.put(
+            f"/api/v1/exams/{exam_id}/answers",
+            json={"sequence": 1, "question_id": questions[0]["id"], "answer": "B"},
+        )
+        client.put(
+            f"/api/v1/exams/{exam_id}/answers",
+            json={"sequence": 2, "question_id": questions[1]["id"], "answer": "3.2"},
+        )
+        client.post(f"/api/v1/exams/{exam_id}/submit", json={})
+
+        report = client.get(f"/api/v1/exams/{exam_id}/report").json()
+        assert report["score_max"] == 5.0
+        assert report["score_earned"] == 2.0
+        concepts = {c["concept"]: c for c in report["concepts"]}
+        assert concepts["arithmetic"]["ratio"] == 1.0
+        assert concepts["geometry"]["ratio"] == 0.0
+        (mistake,) = report["mistakes"]
+        assert mistake["question_id"] == questions[1]["id"]
+        (task_id,) = mistake["remediation_task_ids"]
+        assert report["remediation_tasks"][task_id]["detail"] == "geometry"
+
+
 def test_concurrent_answer_writers_get_explicit_outcome() -> None:
     """M2-05 并发同 sequence 写入：一个成功一个明确拒绝，绝无未处理 IntegrityError。"""
     import asyncio

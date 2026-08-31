@@ -100,6 +100,68 @@ class GradedItemOut(BaseModel):
     rubric: RubricOut | None = None
 
 
+class ReportItemOut(BaseModel):
+    question_id: str
+    sequence: int
+    question_type: str
+    stem: str
+    given: str
+    expected: str
+    correct: bool | None
+    score: float | None
+    max_score: float
+    explanation: str
+    knowledge: list[str]
+    evidence_ids: list[str]
+    score_ratio: float | None = None
+
+
+class ConceptScoreOut(BaseModel):
+    concept: str
+    correct: int
+    total: int
+    reviewed: int
+    ratio: float | None = None
+
+
+class RemediationTaskOut(BaseModel):
+    kind: str
+    title: str
+    detail: str
+    question_id: str
+
+
+class MistakeEntryOut(BaseModel):
+    question_id: str
+    stem: str
+    given: str
+    expected: str
+    explanation: str
+    diagnosis: str
+    knowledge: list[str]
+    evidence_ids: list[str]
+    remediation_task_ids: list[int]
+
+
+class ReportOut(BaseModel):
+    """M2-11 考试报告：总分/题分/概念分/错题/解析/补救任务/证据链接。"""
+
+    exam_id: str
+    paper_title: str
+    mode: str
+    score: int
+    score_earned: float
+    score_max: float
+    correct_count: int
+    total_count: int
+    reviewed_count: int
+    items: list[ReportItemOut]
+    concepts: list[ConceptScoreOut]
+    mistakes: list[MistakeEntryOut]
+    remediation_tasks: list[RemediationTaskOut]
+    evidence_ids: list[str]
+
+
 class SubmissionOut(BaseModel):
     exam_id: str
     paper_id: str
