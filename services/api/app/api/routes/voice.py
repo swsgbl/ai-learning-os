@@ -15,6 +15,8 @@ from fastapi import APIRouter, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
+from app.domain import voice_session_fsm as fsm
+from app.domain.models import ExamStatus
 from app.domain.voice_tokens import (
     DEFAULT_TTL_SECONDS,
     MAX_TTL_SECONDS,
@@ -274,4 +276,165 @@ async def synthesize(payload: SynthesizeRequest) -> Response:
             "X-Voice-Provider": result.provider,
             "X-Voice-Fallback": "1" if choice.fallback else "0",
         },
+    )
+
+
+# ---------- M4-03 VoiceSession FSM ----------
+
+
+class VoiceSessionCreateRequest(BaseModel):
+    exam_id: str
+
+
+class VoiceCommandRequest(BaseModel):
+    type: str
+    question_id: str | None = None
+    answer: str | None = None
+    ambiguous: bool = False
+    expected_revision: int | None = None
+
+
+class VoiceSessionOut(BaseModel):
+    session_id: str
+    exam_id: str
+    status: str
+    question_index: int
+    revision: int
+    created_at: str
+    updated_at: str
+
+
+class VoiceCommandOut(BaseModel):
+    applied_event: str
+    from_status: str
+    session: VoiceSessionOut
+    clarified_question: str | None = None  # 进入 CLARIFYING 时供 TTS 播报的追问
+    question_total: int | None = None  # 全卷完成时透出，供播报收尾
+
+
+@router.post("/sessions", response_model=VoiceSessionOut, status_code=201)
+async def create_voice_session(payload: VoiceSessionCreateRequest, request: Request) -> VoiceSessionOut:
+    """为进行中的考试创建语音会话（SESSION_READY）。"""
+    sessions = request.app.state.voice_sessions
+    if sessions is None:
+        raise HTTPException(status_code=503, detail="Voice sessions require a database")
+    exam = await request.app.state.repository.get_exam(payload.exam_id)
+    if exam is None:
+        raise HTTPException(status_code=404, detail="考试不存在")
+    if exam.status != ExamStatus.ACTIVE:
+        raise HTTPException(status_code=409, detail=f"考试状态 {exam.status.value} 不允许语音作答")
+    view = await sessions.create(payload.exam_id)
+    return VoiceSessionOut(**view)
+
+
+@router.get("/sessions/{session_id}", response_model=VoiceSessionOut)
+async def get_voice_session(session_id: str, request: Request) -> VoiceSessionOut:
+    sessions = request.app.state.voice_sessions
+    if sessions is None:
+        raise HTTPException(status_code=503, detail="Voice sessions require a database")
+    view = await sessions.get(session_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="语音会话不存在")
+    return VoiceSessionOut(**view)
+
+
+async def _load_paper(request: Request, exam_id: str):
+    exam = await request.app.state.repository.get_exam(exam_id)
+    if exam is None:
+        raise HTTPException(status_code=404, detail="考试不存在")
+    paper = await request.app.state.repository.get_paper(exam.paper_id)
+    if paper is None:
+        raise HTTPException(status_code=404, detail="试卷不存在")
+    return exam, paper
+
+
+def _event_for(payload: VoiceCommandRequest) -> str:
+    if payload.type == "answer_proposed":
+        return fsm.EV_ANSWER_CLARIFY if payload.ambiguous else fsm.EV_ANSWER_PROPOSED
+    return payload.type
+
+
+@router.post("/sessions/{session_id}/commands", response_model=VoiceCommandOut)
+async def apply_voice_command(
+    session_id: str, payload: VoiceCommandRequest, request: Request
+) -> VoiceCommandOut:
+    """应用语音命令：FSM 校验迁移 + answer_proposed 服务端确定性落库。
+
+    - 读题/读选项播报期收到 answer_proposed → 409 拒绝（打断不提交半成品答案）；
+    - ANSWER_COMMITTED 后 answer_proposed = 覆盖提交（追加覆盖事件）；
+    - 响应不含对错判定（考试模式不泄露答案）。
+    """
+    sessions = request.app.state.voice_sessions
+    if sessions is None:
+        raise HTTPException(status_code=503, detail="Voice sessions require a database")
+    view = await sessions.get(session_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="语音会话不存在")
+
+    event = _event_for(payload)
+    if event not in fsm.EVENTS:
+        raise HTTPException(status_code=422, detail=f"未知语音命令: {payload.type}")
+    if event in (fsm.EV_ANSWER_PROPOSED, fsm.EV_ANSWER_CLARIFY) and not (payload.question_id and payload.answer):
+        raise HTTPException(status_code=422, detail="answer_proposed 需要 question_id 与 answer")
+
+    try:
+        target = fsm.transition(view["status"], event)
+    except ValueError as cause:
+        raise HTTPException(status_code=409, detail=str(cause)) from cause
+
+    clarified_question: str | None = None
+    question_index: int | None = None
+    question_total: int | None = None
+
+    if event in (fsm.EV_ANSWER_PROPOSED, fsm.EV_ANSWER_CLARIFY):
+        _, paper = await _load_paper(request, view["exam_id"])
+        question_ids = [q.id for q in paper.questions]
+        if payload.question_id not in question_ids:
+            raise HTTPException(status_code=422, detail="题目不属于该试卷")
+        if event == fsm.EV_ANSWER_PROPOSED:
+            record = await request.app.state.repository.get_exam(view["exam_id"])
+            assert record is not None
+            sequence = record.events[-1].sequence + 1 if record.events else 1
+            try:
+                await request.app.state.repository.save_answer(
+                    view["exam_id"], sequence, payload.question_id, payload.answer
+                )
+            except PermissionError as cause:
+                raise HTTPException(status_code=409, detail="考试已结束，不能再修改答案") from cause
+            except ValueError as cause:
+                raise HTTPException(status_code=409, detail=str(cause)) from cause
+        else:
+            clarified_question = "没有听清，请再说一遍具体选项。"
+
+    if event == fsm.EV_START_READING and view["status"] == fsm.NEXT_QUESTION:
+        _, paper = await _load_paper(request, view["exam_id"])
+        question_index = view["question_index"] + 1
+        if question_index >= len(paper.questions):
+            raise HTTPException(
+                status_code=409,
+                detail="已是最后一题，请用 report_ready 结束",
+            )
+
+    if event == fsm.EV_REPORT_READY:
+        _, paper = await _load_paper(request, view["exam_id"])
+        question_total = len(paper.questions)
+
+    try:
+        updated = await sessions.apply(
+            session_id,
+            new_status=target,
+            question_index=question_index,
+            expected_revision=payload.expected_revision,
+        )
+    except KeyError as cause:
+        raise HTTPException(status_code=404, detail=str(cause)) from cause
+    except ValueError as cause:
+        raise HTTPException(status_code=409, detail=str(cause)) from cause
+
+    return VoiceCommandOut(
+        applied_event=event,
+        from_status=view["status"],
+        session=VoiceSessionOut(**updated),
+        clarified_question=clarified_question,
+        question_total=question_total,
     )
