@@ -5,11 +5,11 @@
 
 ## 当前里程碑
 
-M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/11）→ M3 Student Model（进行中 1/7）
+M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/11）→ M3 Student Model（进行中 2/7）
 
 ## 当前任务
 
-M3-02 Concept DAG
+M3-03 StudentConceptState
 
 ## 已完成任务
 
@@ -44,10 +44,11 @@ M3-02 Concept DAG
 | M2-10 Subjective rubric grader | 50577a8, merge 21255f2 | pytest 212 passed（含真实 PG）：judge 输出解析校验 9 测（非法 JSON/空 criteria/置信度越界/achieved 非布尔/缺 point）；双审 4 测（低置信度触发、逐点一致收敛、不一致复核）；评分点覆盖校验（缺点/幻觉点→复核）2 测；evidence gate 2 测（无效引用降不确定、有效引用留痕 evidence_ids）；objective 分流 1 测；keyword judge 端到端 2 测；API 集成 2 测（essay 结构化透出、无 judge 复核不计分）；PG 集成 1 测；安全修复（M2-09 回归）：sympify 前字符白名单防 eval 注入，5 恶意样本测试；前端 rubric 徽章 + answerLabel；浏览器实测 essay rubric 全流程 | 2026-08-31 |
 | M2-11 考试报告 | c4bf858, merge 8b22356 | pytest 219 passed（含真实 PG）：报告聚合 6 测（混合卷全区块断言：score_earned/score_max/百分制、题分四分支——对=满分/objective 错=0/rubric 比例/复核 None、概念分聚合含 ratio 与 reviewed 分母语义、错题+补救任务+remediation_task_ids 下标对应、未交卷 404、全对卷满分无错题、rubric JSON 损坏降级不崩溃、复核题不给分且概念 ratio 分母不含复核）；PG 集成 report 端到端 1 测；前端 review 页新增「概念掌握」「补救任务」区块 + 每题得分徽章 + 原始分，report 失败静默降级；浏览器实测混合卷全区块渲染（原始分 7/10、排序 0/2、2/4 分徽章、keyword-v1 评分点明细） | 2026-08-31 |
 | M3-01 LearningEvent 标准化 | 959fedf, merge cc60cf7 | pytest 235 passed（含真实 PG）：投影纯函数 9 测（重放确定性全等、attempt 按题计数且覆盖作答独立判分、耗时=事件间隔/首题自开始起算、概念映射+题目级难度缺省 3、correctness 三态含 rubric、未知题不虚构判定、空流、API 端点重放增长+幂等、404）；objective grader 补 mcq/true_false JSON 形态 golden 7 测（修复：mcq/tf 判分不展开 JSON expected 的形态缺口，导入管线预转换字母掩盖已久）；题目难度链路打通：QuestionSpec.difficulty(1-5) 落库（QuestionRow 新列 + migration 0008 roundtrip）→ Question domain → LearningEvent 透传，PG 集成 difficulty=5 端到端断言；真实 PG 冒烟重放 M2-11 会话 3 事件字段全对 | 2026-08-31 |
+| M3-02 Concept DAG | <commit>, merge <merge> | pytest 246 passed（含真实 PG）：domain 校验 6 测（先修环 Kahn、parent 环、悬空边、自引用、重复 id、空名/难度粒度）+ direct_prerequisites 快照查询；API 8 测（发布→最新读取幂等、v2 发布后 v1 不可变回溯（可版本化核心）、版本列表、环/悬空/难度越界 422、未知版本/未发布 404）；PG 集成版本化端到端 1 测 + migration 0009 roundtrip（concepts/concept_dag_versions/concept_edges 三表，定版「关系表表达图不引图数据库」）；设计 ADR：版本行存完整节点 JSON 快照（概念本体 upsert 可演进，历史回读必须见当时属性）+ edges 版本隔离；真实 PG 冒烟发布 v3/v1 回溯/环 422 全过 | 2026-08-31 |
 
 ## 待办任务（按 backlog 顺序）
 
-- [ ] M3-02~07 Student Model（M3-01 ✅）
+- [ ] M3-03~07 Student Model（M3-01 ✅ M3-02 ✅）
 - [ ] M4-01~09 Voice
 - [ ] M5-01~08 Search + 治理
 - [ ] M6-01~07 评测/安全/备份
@@ -92,10 +93,11 @@ M3-02 Concept DAG
 | 23 | 考试报告为纯函数聚合（build_report：submission 判定 × 试卷元数据），不落库不冗余存储；题分四分支（对=满分/objective 错=0/rubric=max×score_ratio/复核=None），概念分按题目 knowledge 聚合（无概念归「未分类」，复核题计入 total 不计入 ratio 分母）；补救任务 = 复习关联概念 + 变式练习（angles.variant），remediation_task_ids 指向任务下标；前端 report 拉取失败静默降级（review 主体不依赖） | 04 号文档 §2.13 Mistake 语义 + ADR 21 三态延续 + M2-11 验收「报告区块完整」 | 2026-08-31 |
 | 24 | LearningEvent 为 answer_events 的确定性投影（derive_learning_events 纯函数 + GET /exams/{id}/learning-events），不建新表：事实源保持 append-only 单一（ADR 3），投影可随时重算即满足 pack F「更新幂等、可从事件重算」；耗时=事件间隔、attempt=同题第 N 次作答（覆盖作答=新 attempt）、hint_used 预留恒 False、correctness 复用 judge_question 保证与交卷判分一致 | pack F 输入字段 + 04 号文档 §2.14 + Event Sourcing（03 号文档 §6）+ YAGNI | 2026-08-31 |
 | 25 | 题目难度为题目级 int 1-5（QuestionSpec.difficulty），经导入器落库（migration 0008）→ Question domain → LearningEvent 透传；不采用试卷级字符串 difficulty 作为事件难度（BKT/FSRS 调度需要数值粒度） | pack F difficulty 输入语义 + M2-01 QuestionSpec 既有字段 | 2026-08-31 |
+| 26 | Concept DAG 版本化为不可变快照：版本行存完整节点 JSON 快照（概念本体表 upsert 演进当前态，历史回读必须见当时属性）+ concept_edges 按版本隔离，发布即 version 递增单事务落库；图用关系表表达不引图数据库（定版 §2.3）；发布校验（引用完整/自引用/Kahn 无环/难度 1-5）为纯函数，API 422 透出 | M3-02 验收「可版本化」+ 04 号文档 §2.3 + pack I CONCEPT_DAG 阶段 | 2026-08-31 |
 
 ## 下一任务
 
-M3-01 完成后：进入 M3-02 Concept DAG（课程概念、先修关系和能力要求可版本化；独立于 M3-03 链路，可与 StudentConceptState 并行开发）。
+M3-02 完成后：进入 M3-03 StudentConceptState（mastery/confidence/forgetting_risk 从 M3-01 学习事件流重算且更新幂等；概念先修关系可从 M3-02 版本快照查询）。
 
 ## 追加：M0 收尾验证（compose 全栈）
 

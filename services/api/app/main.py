@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes.concepts import router as concepts_router
 from app.api.routes.exams import router as exams_router
 from app.api.routes.papers import router as papers_router
 from app.api.routes.resources import router as resources_router
@@ -18,6 +19,7 @@ from app.domain.rubric_grader import make_rubric_judge
 from app.parsing.registry import make_default_registry
 from app.parsing.worker import ParseWorker
 from app.repositories.chunks import ChunkRepository
+from app.repositories.concept_dag import ConceptDagRepository
 from app.repositories.memory import MemoryRepository
 from app.repositories.parsejobs import ParseJobRepository
 from app.repositories.postgres import PostgresRepository
@@ -44,6 +46,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
             await repository.seed_papers_if_empty()
             sources = SourceRepository(sessionmaker)
             await sources.seed_if_empty()
+            concept_dag = ConceptDagRepository(sessionmaker)
             resources = ResourceRepository(sessionmaker)
             objects = make_object_store(settings)
             parsers = make_default_registry()
@@ -59,6 +62,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         app.state.rubric_judge = rubric_judge
         app.state.sessionmaker = sessionmaker if resolved_url else None
         app.state.sources = sources if resolved_url else None
+        app.state.concept_dag = concept_dag if resolved_url else None
         app.state.resources = resources if resolved_url else None
         app.state.objects = objects if resolved_url else None
         app.state.parsers = parsers if resolved_url else None
@@ -86,6 +90,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     )
     app.include_router(papers_router)
     app.include_router(exams_router)
+    app.include_router(concepts_router)
     app.include_router(sources_router)
     app.include_router(resources_router)
     app.include_router(system_router)

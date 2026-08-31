@@ -230,3 +230,55 @@ class ParseJobRow(Base):
     __table_args__ = (
         UniqueConstraint("resource_id", "parser_name", name="uq_parse_jobs_resource_parser"),
     )
+
+
+class ConceptRow(Base):
+    """M3-02 概念本体（04 号文档 §2.3）：canonical 数据，跨版本 upsert 不删除。"""
+
+    __tablename__ = "concepts"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    canonical_name: Mapped[str] = mapped_column(String(256))
+    aliases: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    subject: Mapped[str] = mapped_column(String(64))
+    description: Mapped[str] = mapped_column(String(2048), default="")
+    difficulty: Mapped[int] = mapped_column(Integer, default=3)
+    parent_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    evidence_ids: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ConceptDagVersionRow(Base):
+    """M3-02 概念图版本：每次发布生成不可变新版本，历史可回溯。"""
+
+    __tablename__ = "concept_dag_versions"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    version: Mapped[int] = mapped_column(Integer)
+    note: Mapped[str] = mapped_column(String(512), default="")
+    # 完整节点快照：概念本体可演进（upsert），历史版本回读必须看到当时的属性
+    nodes: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (UniqueConstraint("version", name="uq_concept_dag_versions_version"),)
+
+
+class ConceptEdgeRow(Base):
+    """M3-02 先修关系边（04 号文档 §2.3 concept_edges）：随版本存储，先修 -> 概念。"""
+
+    __tablename__ = "concept_edges"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    version_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("concept_dag_versions.id"), index=True
+    )
+    prerequisite_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("concepts.id"), index=True
+    )
+    concept_id: Mapped[str] = mapped_column(
+        String(64), ForeignKey("concepts.id"), index=True
+    )
+
+    __table_args__ = (
+        UniqueConstraint("version_id", "prerequisite_id", "concept_id", name="uq_concept_edges_triple"),
+    )

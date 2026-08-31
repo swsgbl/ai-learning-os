@@ -187,6 +187,42 @@ def test_learning_events_flow_against_real_postgres() -> None:
         assert replay == stream
 
 
+def test_concept_dag_versioning_against_real_postgres() -> None:
+    """M3-02：真实 PG 下概念图版本化——新版本发布、历史版本不可变回溯。"""
+    with TestClient(create_app(PG_URL)) as client:  # type: ignore[arg-type]
+        v1 = client.post(
+            "/api/v1/concept-dag/versions",
+            json={
+                "nodes": [
+                    {"id": "pg_loop", "canonical_name": "循环", "subject": "cs", "difficulty": 2},
+                    {"id": "pg_recur", "canonical_name": "递归", "subject": "cs", "difficulty": 3},
+                ],
+                "edges": [{"prerequisite_id": "pg_loop", "concept_id": "pg_recur"}],
+                "note": "PG v1",
+            },
+        )
+        assert v1.status_code == 201
+        version = v1.json()["version"]
+
+        v2 = client.post(
+            "/api/v1/concept-dag/versions",
+            json={
+                "nodes": [
+                    {"id": "pg_loop", "canonical_name": "循环", "subject": "cs", "difficulty": 2},
+                    {"id": "pg_recur", "canonical_name": "递归", "subject": "cs", "difficulty": 3, "parent_id": "pg_loop"},
+                ],
+                "note": "PG v2",
+            },
+        )
+        assert v2.status_code == 201
+        assert v2.json()["version"] == version + 1
+
+        reread = client.get(f"/api/v1/concept-dag/versions/{version}").json()
+        assert reread == v1.json()  # 历史版本不可变
+        latest = client.get("/api/v1/concept-dag").json()
+        assert latest["version"] == version + 1
+
+
 def test_concurrent_answer_writers_get_explicit_outcome() -> None:
     """M2-05 并发同 sequence 写入：一个成功一个明确拒绝，绝无未处理 IntegrityError。"""
     import asyncio
