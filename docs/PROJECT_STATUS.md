@@ -9,7 +9,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-M4-01 LiveKit server/token
+M4-02 ASR/TTS adapter
 
 ## 已完成任务
 
@@ -50,6 +50,7 @@ M4-01 LiveKit server/token
 | M3-05 FSRS-like scheduler | 378c032, merge ae2ea37 | pytest 284 passed（含真实 PG）：domain 9 测（错题生成 next_review_at=last_seen+初始间隔、难度调制初始间隔 diff5→0.6d、never-wrong/复核不入队、错过已恢复→reinforce 间隔×2、提前复习增长打折 0.6 阈值、延迟复习增长加成 2.0 阈值、再错重置回初始、队列 overdue 降序同 ratio retry 优先、跨考试合并按时间序纯性）；API 端到端 1 测（错题入队+全对题不入队+重放幂等+422/503）；PG 集成 1 测（唯一后缀概念隔离共享主库，retry 入队+next_review_at+投影重放幂等）；无新表：复习队列=学习事件实时投影（ADR 29 YAGNI）；真实 PG 冒烟：retry 项 interval=1.2（难度调制正确）+next_review_at 生成+重放幂等+422 全过 | 2026-08-31 |
 | M3-06 Daily planner | c7224ab, merge 41fe581 | pytest 293 passed（含真实 PG）：domain 7 测（昨日错题次日进复习+reason、薄弱概念优先于全新概念新学+reason 文案、confirmed 误解→重测任务+引用模式与置信度、未到期复习排除、跨类同题去重、配额上限、同输入同输出纯性）；API 端到端 1 测（错题进复习任务+concept_ids+重放幂等+非法 now 422+无 DB 503）；PG 集成 1 测（结构完整+三分类计数一致+跨类去重+每任务 reason+重放幂等+422；共享主库历史题占满配额，错题入选语义由干净库 SQLite 端到端覆盖）；无新表无 migration（实时投影聚合三投影+题库池，ADR 29 同款）；设计修正：新学排序 unknown 概念 weakness=2.0 恒排已知概念之后（保「薄弱优先」语义）；真实 PG 冒烟：默认 now 12 任务（mistake_retry 5 满配额且 reason 引用真实证据「错误答案『3.2』在 19 道独立题中重复出现（置信度 90%）」、review 0=队列 99 题无一到期的数据状态）、now=2030 确定性重算 review 满 10 证明到期语义、422 全过 | 2026-08-31 |
 | M3-07 选题策略 | 39e22ed, merge fea6695 | pytest 301 passed（含真实 PG）：domain 6 测（答错探针题进 retry+reason 引用「错误」、弱概念未答题入选且易题先于难题——难度影响、强概念只选难题 difficulty>=3 且易题不入选——难度反向影响、与历史无关的新概念题不选、分组有序+跨类去重+reason 非空、同输入同输出纯性）；API 端到端 1 测（错题进 retry+同概念新题进 weak+固定锚点重放幂等+非法 now 422+无 DB 503）；PG 集成 1 测（结构完整+三分类计数一致+分组有序+去重+每项 reason+重放幂等+422；共享主库历史题占满配额，入选语义由干净库 SQLite 端到端覆盖）；无新表无 migration（实时投影，ADR 29/30 同款）；真实 PG 冒烟：8 项选题（retry 4 满配额引用真实历史错题「上次作答判定为错误，计划间隔 1.0 天」、weak 4 真实薄弱概念、advanced 0=共享库无已掌握概念难题的数据状态）、now=2030 确定性重算、422 全过 | 2026-08-31 |
+| M4-01 LiveKit server/token | 9fee76f, merge PENDING | pytest 311 passed（含真实 PG 5433）：domain 10 测（exp-nbf=TTL 精确断言——过期可测、student grants 边界全枚举四项授予+管理类全空——权限边界可测、过期 token 拒绝（超 verify leeway 60s）、错 secret 签名拒绝、垃圾 token 拒绝、未知角色拒签、端点签发→domain 验证往返+identity 缺省生成、422×5（room 格式/ttl 上下界/未知角色）、无配置 503、无 exp 手工伪造 token 被拒——过期语义不可绕过）；infra：compose livekit 服务（livekit.yaml 显式配置+healthcheck / 端点）+ postgres 主机端口 5432→5433（主机端口被其他项目容器占用冲突，容器内网不变）；requirements 加 livekit-api；真实容器冒烟：签发验证→RoomService create/list room→rtc.Room.connect 客户端真实加入 smoke-room→干净断开全过；浏览器加入的服务端等价路径已验证（token+RTC server+grants），浏览器端联调在 M4-03 前端任务完成 | 2026-08-31 |
 
 ## 待办任务（按 backlog 顺序）
 
@@ -66,7 +67,7 @@ M4-01 LiveKit server/token
 | 已修复 | asyncpg naive-datetime 时区 bug（曾致考试误判过期）；写库统一 aware UTC | 回归测试锁定 |
 | 已修复 | sequence 跳号契约漏洞；两实现同步收紧为连续递增 | 契约测试锁定 |
 | 已修复 | sympy.sympify eval 注入面（M2-09）：进 eval 前强制字符白名单，注入面文本一律复核；回归测试锁定 | 自动安全审查发现 + 5 恶意样本测试 | 2026-08-31 |
-| 环境 | postgres 容器运行中；push 偶发代理抖动，带 http_proxy=127.0.0.1:7892 重试即可 | 无阻塞 |
+| 环境 | 本机 compose 栈运行中（PG 主机端口已改 **5433**：主机 5432 被其他项目容器 buzz-prod-postgres-1 抢占冲突，本项目容器内网仍 5432；AIOS_PG_TEST_URL 与冒烟 DATABASE_URL 同步用 5433）；livekit 容器 healthy（7880）；push 偶发代理抖动，带 http_proxy=127.0.0.1:7892 重试即可 | 无阻塞 |
 | 观测 | Actions 提示 actions/checkout 等目标 Node20 弃用（cosmetic） | 后续 hardening 升级 |
 
 ## 架构决策记录
@@ -104,10 +105,11 @@ M4-01 LiveKit server/token
 | 29 | 复习队列为学习事件实时投影（不落库）：GET 时从全部学习事件按题重放推导 FSRS-lite 间隔——答错重置初始间隔（难度调制 1.0+0.2×(3-difficulty) 天）、答对 ×2、提前复习（<0.6×计划间隔）增长打折 0.5、延迟复习（>2×）加成 1.25、间隔封顶 180 天；never-wrong 题与复核事件不入队；now 为查询锚点（显式传参可确定性投影）；免物化表（YAGNI：M3-06 planner 实时读即可），幂等=同 (事件集, now) 恒等输出（与 ADR 27/28 同款语义） | M3-05 验收「错题生成 next_review_at；提前/延迟复习策略可测试」+ pack F 要求 4 | 2026-08-31 |
 | 30 | Daily planner 为三投影+题库池的实时聚合投影（不落库）：review=到期复习（overdue 降序）/mistake_retry=confirmed 误解涉及题目（置信度降序）/new_learning=从未作答的题（薄弱已知概念 weakness=2.0−mastery > 全新概念恒为上限 2.0 > 同分难度升序从易到难）；同一题跨类不重复入选（review > 误解重测 > 新学）；配额 10/5/10；每任务强制带 reason 引用可解释证据（逾期比例与上次判定/误解模式+独立题数+置信度/概念掌握度），不虚构模型推断；now 为查询锚点（ADR 27/29 同款幂等语义） | M3-06 验收「今日任务包含新学、复习和错题重测；解释为什么被选中」+ pack F 可解释性要求 | 2026-08-31 |
 | 31 | 选题策略三因素显式分层（不落库实时投影）：retry=复习队列中最后答错的题（overdue 降序；选题不受到期约束——第二次任务即重做刚错的题，区别于 M3-06 复习通道的到期过滤）/weak=mastery<0.6 概念的未作答新题（薄弱度 0.6−mastery 降序，同分难度升序——弱概念配易题）/advanced=mastery≥0.6 概念的未作答难题（difficulty≥3，掌握度降序+难度降序——高掌握配高难）；同一题不重复入选（retry > weak > advanced）；配额 4/4/3；每项带 reason 引用可解释证据；now 为查询锚点（ADR 27/29/30 同款幂等语义） | M3-07 验收「第二次任务受弱概念、难度和历史错题影响」+ pack F「错题会影响第二日学习任务和选题」 | 2026-08-31 |
+| 32 | LiveKit token 边界：签发为纯本地 JWT（不依赖 server 运行），student 角色 grants 显式固定（room_join/can_publish/can_subscribe/can_publish_data），管理类权限（admin/create/record/agent/recorder/hidden）一律不授予；验证强制 require exp（无 exp 手工 token 不可绕过过期语义）；过期/签名错误统一转领域异常 VoiceTokenError；TTL 显式传参（30-86400s）使过期窗口可精确断言；自托管 livekit-server 进 compose（显式 livekit.yaml，本地 dev key 占位值不入 secret） | M4-01 验收「token 过期和权限边界可测试」+ 最小权限原则 | 2026-08-31 |
 
 ## 下一任务
 
-M3 全部完成（7/7 ✅）。进入 M4 Voice：M4-01 LiveKit server/token（浏览器可加入房间；token 过期和权限边界可测试）。
+M4-01 完成后：进入 M4-02 ASR/TTS adapter（在线、本地、混合 provider 可配置切换；语音原文按隐私策略落盘）。
 
 ## 追加：M0 收尾验证（compose 全栈）
 
