@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, HTTPException, Request
 
 from app.api.routes.papers import exam_out
@@ -8,6 +10,8 @@ from app.api.schemas import (
     ExamSessionOut,
     GradedItemOut,
     ReviewQuestionOut,
+    RubricCriterionOut,
+    RubricOut,
     SaveAnswerRequest,
     SubmissionOut,
     SubmitRequest,
@@ -106,6 +110,7 @@ async def submission_out(submission: SubmissionRecord, request: Request) -> Subm
                 expected=item.expected,
                 explanation=item.explanation,
                 angles=angles_out(item.angles),
+                rubric=rubric_out(item.rubric_json),
             )
             for item in submission.items
         ],
@@ -119,4 +124,27 @@ def angles_out(angles) -> AnglesOut:
         method=angles.method,
         mistake=angles.mistake,
         variant=angles.variant,
+    )
+
+
+def rubric_out(rubric_json: str | None) -> RubricOut | None:
+    """rubric 留痕 JSON -> API 结构；解析失败按无明细处理（不阻塞报告）。"""
+    if not rubric_json:
+        return None
+    try:
+        data = json.loads(rubric_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    criteria = data.get("criteria")
+    if not isinstance(criteria, list):
+        return None
+    return RubricOut(
+        rule_version=str(data.get("rule_version", "")),
+        criteria=[RubricCriterionOut(**c) for c in criteria if isinstance(c, dict)],
+        score_ratio=data.get("score_ratio"),
+        confidence=float(data.get("confidence", 0.0)),
+        judge_model=str(data.get("judge_model", "")),
+        prompt_hash=str(data.get("prompt_hash", "")),
     )

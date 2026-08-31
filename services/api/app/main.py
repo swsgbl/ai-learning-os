@@ -14,6 +14,7 @@ from app.api.routes.system import router as system_router
 from app.api.routes.validate import router as validate_router
 from app.core.config import get_settings
 from app.db.session import create_engine, make_sessionmaker, prepare_database
+from app.domain.rubric_grader import make_rubric_judge
 from app.parsing.registry import make_default_registry
 from app.parsing.worker import ParseWorker
 from app.repositories.chunks import ChunkRepository
@@ -28,6 +29,7 @@ from app.storage.objectstore import make_object_store
 def create_app(database_url: str | None = None) -> FastAPI:
     settings = get_settings()
     resolved_url = database_url if database_url is not None else settings.database_url
+    rubric_judge = make_rubric_judge(settings.rubric_judge)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -36,7 +38,9 @@ def create_app(database_url: str | None = None) -> FastAPI:
             app.state.engine = engine
             await prepare_database(engine, resolved_url)
             sessionmaker = make_sessionmaker(engine)
-            repository: PostgresRepository | MemoryRepository = PostgresRepository(sessionmaker)
+            repository: PostgresRepository | MemoryRepository = PostgresRepository(
+                sessionmaker, rubric_judge=rubric_judge
+            )
             await repository.seed_papers_if_empty()
             sources = SourceRepository(sessionmaker)
             await sources.seed_if_empty()
@@ -50,7 +54,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
             await parse_jobs.recover_stale_running()
             worker.start()
         else:
-            repository = MemoryRepository()
+            repository = MemoryRepository(rubric_judge=rubric_judge)
         app.state.repository = repository
         app.state.sessionmaker = sessionmaker if resolved_url else None
         app.state.sources = sources if resolved_url else None

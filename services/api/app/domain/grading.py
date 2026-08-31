@@ -168,6 +168,10 @@ _LATEX_REPLACEMENTS = (
 )
 _FRAC_RE = re.compile(r"\\frac\{([^{}]+)\}\{([^{}]+)\}")
 
+# sympify 底层走 Python eval：进 eval 前强制字符白名单（数字/字母/四则/括号/逗号/空白），
+# 拒绝 dunder、下标、引号、花括号等注入面；不满足白名单 → 复核，绝不 eval 不可信文本
+_SAFE_EXPR_RE = re.compile(r"[0-9A-Za-z+\-*/().,\s]+")
+
 
 def _latex_to_expression(latex: str) -> str:
     """把判分所需的简单 LaTeX 子集转为 sympy 可解析表达式文本。"""
@@ -195,6 +199,8 @@ def grade_math(expected: str, given: str) -> bool | None:
 
     expected_expr = _latex_to_expression(expected_latex)
     given_expr = _latex_to_expression(given)
+    if not _SAFE_EXPR_RE.fullmatch(expected_expr) or not _SAFE_EXPR_RE.fullmatch(given_expr):
+        return None  # 白名单外字符（注入面）→ 复核，绝不进入 sympify/eval
     if expected_expr == given_expr:
         return True  # 归一后字面一致
 

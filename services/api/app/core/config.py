@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     embedding_provider: str | None = None
     search_provider: str | None = None
 
+    # M2-10 主观题判分：keyword=内置确定性 judge；空=无 judge（essay 全部进复核）
+    rubric_judge: str = "keyword"
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property

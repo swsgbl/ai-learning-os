@@ -73,6 +73,23 @@ class ExamSessionOut(BaseModel):
     next_sequence: int
 
 
+class RubricCriterionOut(BaseModel):
+    point: str
+    achieved: bool | None
+    evidence_id: str | None = None
+
+
+class RubricOut(BaseModel):
+    """M2-10 essay 结构化判分明细（prompt pack E schema）。"""
+
+    rule_version: str
+    criteria: list[RubricCriterionOut]
+    score_ratio: float | None = None
+    confidence: float
+    judge_model: str
+    prompt_hash: str = ""
+
+
 class GradedItemOut(BaseModel):
     question_id: str
     given: str
@@ -80,6 +97,7 @@ class GradedItemOut(BaseModel):
     expected: str
     explanation: str
     angles: AnglesOut
+    rubric: RubricOut | None = None
 
 
 class SubmissionOut(BaseModel):

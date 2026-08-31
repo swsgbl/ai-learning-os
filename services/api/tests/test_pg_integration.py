@@ -45,6 +45,44 @@ def test_exam_flow_against_real_postgres() -> None:
         assert client.get(f"/api/v1/exams/{exam_id}/submission").status_code == 200
 
 
+def test_essay_rubric_flow_against_real_postgres() -> None:
+    """M2-10：真实 PG 下 essay 走 rubric 管线（evidence 表为空时 keyword judge 不引用 evidence，可落分）。"""
+    paper = {
+        "title": "PG rubric 验证卷",
+        "duration_seconds": 600,
+        "questions": [
+            {
+                "question": {
+                    "question_type": "essay",
+                    "stem": "论述归并排序",
+                    "answer": {"rubric_points": ["分治", "合并"]},
+                    "explanation": "分治 + 合并",
+                },
+                "score": 1.0,
+            },
+        ],
+    }
+    with TestClient(create_app(PG_URL)) as client:  # type: ignore[arg-type]
+        (paper_id,) = client.post("/api/v1/papers/import", json=[paper]).json()["imported"]
+        started = client.post(f"/api/v1/papers/{paper_id}/exams", json={"mode": "exam"})
+        assert started.status_code == 201
+        exam_id = started.json()["exam_id"]
+        (question,) = started.json()["questions"]
+        assert (
+            client.put(
+                f"/api/v1/exams/{exam_id}/answers",
+                json={"sequence": 1, "question_id": question["id"], "answer": "归并排序是分治算法，逐层合并"},
+            ).status_code
+            == 200
+        )
+        report = client.post(f"/api/v1/exams/{exam_id}/submit", json={}).json()
+        (item,) = report["items"]
+        assert item["correct"] is True
+        assert item["rubric"]["rule_version"] == "rubric-v1"
+        assert item["rubric"]["score_ratio"] == 1.0
+        assert {c["point"] for c in item["rubric"]["criteria"]} == {"分治", "合并"}
+
+
 def test_concurrent_answer_writers_get_explicit_outcome() -> None:
     """M2-05 并发同 sequence 写入：一个成功一个明确拒绝，绝无未处理 IntegrityError。"""
     import asyncio

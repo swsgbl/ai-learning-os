@@ -80,6 +80,7 @@ export function answerLabel(question: PublicQuestion | { type?: string; options?
         return "tolerance" in data ? `${value} ±${String(data.tolerance)}` : value;
       }
       if (Array.isArray(data.accepted)) return data.accepted.map(String).join(" / ");
+      if (Array.isArray(data.rubric_points)) return data.rubric_points.map(String).join(" / ");
       if (Array.isArray(data.option_indices)) {
         return data.option_indices.map((index) => "ABCDEFGH"[Number(index)] ?? "?").join("");
       }

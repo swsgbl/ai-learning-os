@@ -20,13 +20,14 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.orm import (
     AnswerEventRow,
+    EvidenceRow,
     ExamSessionRow,
     PaperRow,
     QuestionRow,
     SubmissionRow,
 )
 from app.domain.exam_fsm import assert_transition
-from app.domain.grading import OBJECTIVE_RULE_VERSION, grade_answer
+from app.domain.grading import OBJECTIVE_RULE_VERSION
 from app.domain.models import (
     Angles,
     AnswerEvent,
@@ -38,10 +39,9 @@ from app.domain.models import (
     Question,
     SubmissionRecord,
 )
+from app.domain.rubric_grader import RubricJudge, judge_question
 from app.repositories.memory import remaining_seconds, utc_now
 from app.repositories.seed import seed_papers
-
-RULE_VERSION = OBJECTIVE_RULE_VERSION
 
 
 def _to_db(value: datetime) -> datetime:
@@ -97,9 +97,11 @@ class PostgresRepository:
         self,
         sessionmaker: async_sessionmaker[AsyncSession],
         clock: Callable[[], datetime] = utc_now,
+        rubric_judge: RubricJudge | None = None,
     ) -> None:
         self._sessionmaker = sessionmaker
         self._clock = clock
+        self._rubric_judge = rubric_judge
 
     async def seed_papers_if_empty(self) -> None:
         async with self._sessionmaker() as session, session.begin():
@@ -253,7 +255,12 @@ class PostgresRepository:
                 .all()
             )
             answers = _answers_from(await self._events(session, exam_id))
-            submission = self._build_submission(exam, questions, answers, now)
+            valid_evidence = frozenset(
+                (await session.execute(select(EvidenceRow.id))).scalars().all()
+            )
+            submission = self._build_submission(
+                exam, questions, answers, now, valid_evidence=valid_evidence
+            )
             exam.status = ExamStatus.SUBMITTED.value
             exam.submitted_at = _to_db(now)
             session.add(submission)
@@ -265,20 +272,33 @@ class PostgresRepository:
         questions: Sequence[QuestionRow],
         answers: dict[str, str],
         now: datetime,
+        *,
+        valid_evidence: frozenset[str] = frozenset(),
     ) -> SubmissionRow:
-        items = tuple(
-            GradedItem(
-                question_id=question.id,
-                given=answers.get(question.id, ""),
-                correct=grade_answer(
-                    question.question_type, question.answer, answers.get(question.id, "")
-                ),
-                expected=question.answer,
-                explanation=question.explanation,
-                angles=Angles(**question.angles),
+        items: list[GradedItem] = []
+        rule_versions: set[str] = set()
+        for question in questions:
+            given = answers.get(question.id, "")
+            correct, rubric = judge_question(
+                question.question_type,
+                question.stem,
+                question.answer,
+                given,
+                rubric_judge=self._rubric_judge,
+                valid_evidence_ids=valid_evidence,
             )
-            for question in questions
-        )
+            rule_versions.add(rubric.rule_version if rubric else OBJECTIVE_RULE_VERSION)
+            items.append(
+                GradedItem(
+                    question_id=question.id,
+                    given=given,
+                    correct=correct,
+                    expected=question.answer,
+                    explanation=question.explanation,
+                    angles=Angles(**question.angles),
+                    rubric_json=rubric.criteria_json if rubric else None,
+                )
+            )
         # 三态判分：None（待复核）不计入分子分母；total_count 仍为全量题数
         decided = [item for item in items if item.correct is not None]
         correct_count = sum(item.correct for item in decided)
@@ -297,7 +317,7 @@ class PostgresRepository:
             ),
             items=[self._item_json(item) for item in items],
             created_at=_to_db(now),
-            rule_version=RULE_VERSION,
+            rule_version="+".join(sorted(rule_versions)),
         )
 
     @staticmethod
@@ -314,6 +334,7 @@ class PostgresRepository:
                 "mistake": item.angles.mistake,
                 "variant": item.angles.variant,
             },
+            "rubric_json": item.rubric_json,
         }
 
     @staticmethod
@@ -326,6 +347,7 @@ class PostgresRepository:
                 expected=item["expected"],
                 explanation=item["explanation"],
                 angles=Angles(**item["angles"]),
+                rubric_json=item.get("rubric_json"),
             )
             for item in row.items
         )

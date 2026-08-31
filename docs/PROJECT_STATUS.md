@@ -9,7 +9,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（进行�
 
 ## 当前任务
 
-M2-10 Subjective rubric grader（结构化 JSON 输出；低置信度双审）
+M2-11 考试报告（总分、题分、概念分、错题、解析、补救任务和证据链接）
 
 ## 已完成任务
 
@@ -41,10 +41,11 @@ M2-10 Subjective rubric grader（结构化 JSON 输出；低置信度双审）
 | M2-07 幂等提交与超时提交 | c39d142, merge c374811 | pytest 126 passed（含真实 PG）：超时结算只触发一次（memory/postgres 双仓库参数化：重复结算+时钟推进均同一报告、结算后答案永久拒绝）2 测；API 三路幂等（两次 submit + GET submission 全等）1 测；真实 PG 并发结算收敛同一 submission 1 测；ADR 19 记录不引 Redis 决策 | 2026-08-31 |
 | M2-08 Objective grader | 9482684, merge 2902d4a | pytest 161 passed（含真实 PG）：golden set 33 用例参数化 100%（mcq 归一 6、多选集合等价 8、判断中英文归一 9、简答 JSON accepted+legacy 备选 7、题型别名 3）；非 objective 题型不判 1 测；rule_version+输入事件留痕 1 测；导入卷 short_answer/multiple_select 判分回归 1 测；ADR 20 | 2026-08-31 |
 | M2-09 Numeric/math grader | b0cd569, merge 5259662 | pytest 189 passed（含真实 PG）：numeric golden 15（容差 5、同纲单位换算 5、跨纲判错 1、缺单位/未知单位/非数值/无法解析进复核 4）；math golden 11（字面归一 2、sympy 恒等 5、不等价 2、超范围/非法 LaTeX 进复核 2）；JSON expected 形态 1 测；三态复核不计分（correct=None 逐题留痕、score 只算已判定）1 测；前端 AnswerInput 文本输入题型 + 审阅页 answerLabel（JSON 答案可读化）；浏览器实测三态全流程 | 2026-08-31 |
+| M2-10 Subjective rubric grader | 本分支 | pytest 212 passed（含真实 PG）：judge 输出解析校验 9 测（非法 JSON/空 criteria/置信度越界/achieved 非布尔/缺 point）；双审 4 测（低置信度触发、逐点一致收敛、不一致复核）；评分点覆盖校验（缺点/幻觉点→复核）2 测；evidence gate 2 测（无效引用降不确定、有效引用留痕 evidence_ids）；objective 分流 1 测；keyword judge 端到端 2 测；API 集成 2 测（essay 结构化透出、无 judge 复核不计分）；PG 集成 1 测；安全修复（M2-09 回归）：sympify 前字符白名单防 eval 注入，5 恶意样本测试；前端 rubric 徽章 + answerLabel；浏览器实测 essay rubric 全流程 | 2026-08-31 |
 
 ## 待办任务（按 backlog 顺序）
 
-- [ ] M2-10 Subjective rubric grader；M2-11 考试报告
+- [ ] M2-11 考试报告
 - [ ] M3-01~07 Student Model
 - [ ] M4-01~09 Voice
 - [ ] M5-01~08 Search + 治理
@@ -57,6 +58,7 @@ M2-10 Subjective rubric grader（结构化 JSON 输出；低置信度双审）
 |---|---|---|
 | 已修复 | asyncpg naive-datetime 时区 bug（曾致考试误判过期）；写库统一 aware UTC | 回归测试锁定 |
 | 已修复 | sequence 跳号契约漏洞；两实现同步收紧为连续递增 | 契约测试锁定 |
+| 已修复 | sympy.sympify eval 注入面（M2-09）：进 eval 前强制字符白名单，注入面文本一律复核；回归测试锁定 | 自动安全审查发现 + 5 恶意样本测试 | 2026-08-31 |
 | 环境 | postgres 容器运行中；push 偶发代理抖动，带 http_proxy=127.0.0.1:7892 重试即可 | 无阻塞 |
 | 观测 | Actions 提示 actions/checkout 等目标 Node20 弃用（cosmetic） | 后续 hardening 升级 |
 
@@ -85,10 +87,11 @@ M2-10 Subjective rubric grader（结构化 JSON 输出；低置信度双审）
 | 19 | 超时提交为惰性结算：get_exam 懒翻转 EXPIRED + submit 按 min(now, end_at) 结算 + submissions.exam_session_id 唯一约束幂等收敛；不引 Redis timeout worker（验收只要求行为语义，无主动推送需求） | 04 号文档 §7 EXAM_EXPIRED「触发/等待 timeout submit」+ YAGNI；未来出现主动推送需求再引 Redis | 2026-08-31 |
 | 20 | Objective grader v2：题型名兼容 seed（mcq/tf/short）与 QuestionSpec（true_false/short_answer）两套命名；expected 兼容 legacy 字符串与导入 JSON；given 服务端归一（大小写/空白/中英文布尔词）；multiple_select 集合等价；规则版本 objective-v2 随 submission 留痕 | M2-02 导入卷判分打通实测（short_answer JSON 形态原永判错）+ 04 号文档「判分记录规则版本和输入事件」验收 | 2026-08-31 |
 | 21 | Numeric/math 三态判分：grade_answer 返回 bool|None，None=不确定进复核；复核题不计入 score 分子分母（total_count 保持全量）；sympy 延迟导入，未部署/解析失败降级复核不阻塞判分管线；同纲量换基准单位比较，跨纲判错 | 04 号文档「不确定项进入复核」验收 + M2-10/M2-11 需沿用同一三态语义 | 2026-08-31 |
+| 22 | Subjective rubric 管线：judge 协议 + 内置 keyword-v1 确定性实现（LLM judge 部署后同协议替换，judge_model/prompt_hash 留痕）；judge 输出强制结构化 JSON（解析校验，非法→复核），分数只从 criteria 计算，不允许自由文本决定分数；低置信度(<0.7)触发双审，双审逐点不一致→复核；evidence gate——引用的 evidence_id 必须存在于 evidence 表，无效引用降为不确定，无 evidence 的课程事实不进报告；无 judge 部署时 essay 全部进复核 | prompt pack E 禁止条款 + ADR 21 三态语义延续 | 2026-08-31 |
 
 ## 下一任务
 
-M2-09 完成后：进入 M2-10 Subjective rubric grader，沿用 ADR 21 三态语义（不确定进复核）。
+M2-10 完成后：进入 M2-11 考试报告，rubric 明细与 evidence_ids 为报告数据源。
 
 ## 追加：M0 收尾验证（compose 全栈）
 
