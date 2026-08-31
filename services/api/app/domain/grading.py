@@ -13,6 +13,7 @@ golden set 语义（04 号文档 §2.6 + M2-01 QuestionSpec）：
 from __future__ import annotations
 
 import json
+import re
 from typing import Final
 
 OBJECTIVE_RULE_VERSION: Final = "objective-v2"
@@ -62,10 +63,15 @@ def _expected_candidates(question_type: str, expected: str) -> list[str]:
     return [expected]
 
 
-def grade_answer(question_type: str, expected: str, given: str) -> bool:
+def grade_answer(question_type: str, expected: str, given: str) -> bool | None:
+    """判分三态：True/False；None = 不确定，进入人工复核（M2-09 math 等价表达式）。"""
     kind = normalize_type(question_type)
     if not given.strip():
         return False
+    if kind == "numeric":
+        return grade_numeric(expected, given)
+    if kind == "math":
+        return grade_math(expected, given)
 
     if kind == "mcq":
         return _normalize_text(given) == _normalize_text(expected)
@@ -90,5 +96,115 @@ def grade_answer(question_type: str, expected: str, given: str) -> bool:
             for candidate in _expected_candidates(kind, expected)
         )
 
-    # math/coding/essay 等非 objective 题型：objective grader 不判，留给 M2-09/M2-10
+    # coding/essay 等非自动判分题型：objective grader 不判，留给 M2-10
     return False
+
+
+# ---------- M2-09 Numeric/math grader ----------
+
+# 常用纲量：单位 -> (纲量, 换算到基准的倍率)；同纲量可互换单位比较，跨纲量判错
+_UNIT_TABLE: dict[str, tuple[str, float]] = {
+    "mm": ("length", 0.001), "cm": ("length", 0.01), "dm": ("length", 0.1),
+    "m": ("length", 1.0), "km": ("length", 1000.0),
+    "mg": ("mass", 0.001), "g": ("mass", 1.0), "kg": ("mass", 1000.0), "t": ("mass", 1_000_000.0),
+    "ms": ("time", 0.001), "s": ("time", 1.0), "min": ("time", 60.0), "h": ("time", 3600.0),
+}
+
+_NUMBER_RE = re.compile(r"^(-?\d+(?:\.\d+)?)\s*([a-zA-Zμ°]+)?$")
+
+
+def _parse_quantity(text: str) -> tuple[float, str | None] | None:
+    """解析「数值 + 可选单位」；解析失败返回 None。"""
+    match = _NUMBER_RE.match(text.strip().replace("（", "(").replace("）", ")"))
+    if not match:
+        return None
+    return float(match.group(1)), match.group(2)
+
+
+def grade_numeric(expected: str, given: str) -> bool | None:
+    """数值判分：容差 + 单位换算。expected 为 JSON {"value","tolerance","unit"?} 或裸数值。"""
+    try:
+        data = json.loads(expected) if expected.strip().startswith("{") else {"value": float(expected)}
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict) or "value" not in data:
+        return None
+    tolerance = float(data.get("tolerance", 0.0))
+    expected_unit = data.get("unit")
+
+    parsed = _parse_quantity(given)
+    if parsed is None:
+        return None  # 数值/单位无法解析 -> 复核
+    given_value, given_unit = parsed
+
+    try:
+        target = float(data["value"])
+    except (TypeError, ValueError):
+        return None
+
+    if expected_unit and given_unit:
+        expected_meta = _UNIT_TABLE.get(expected_unit)
+        given_meta = _UNIT_TABLE.get(given_unit)
+        if expected_meta is None or given_meta is None:
+            return None  # 未知单位 -> 复核
+        if expected_meta[0] != given_meta[0]:
+            return False  # 跨纲量（如 m vs s）必然错
+        # 同纲量：两侧都换算到基准单位后按容差比较（容差作用于 expected 单位）
+        given_base = given_value * given_meta[1]
+        target_base = target * expected_meta[1]
+        return abs(given_base - target_base) <= tolerance * expected_meta[1]
+    if expected_unit and not given_unit:
+        return None  # 期望带单位而作答无单位：无法确认 -> 复核
+    if given_unit is not None and given_unit not in _UNIT_TABLE:
+        return None  # 无法识别的单位 -> 复核
+
+    return abs(given_value - target) <= tolerance
+
+
+_LATEX_REPLACEMENTS = (
+    ("\\left", ""), ("\\right", ""), ("\\,", ""), ("\\;", ""), ("\\!", ""),
+    ("\\cdot", "*"), ("\\times", "*"), ("\\div", "/"),
+    ("\\pi", "pi"), ("^", "**"),
+)
+_FRAC_RE = re.compile(r"\\frac\{([^{}]+)\}\{([^{}]+)\}")
+
+
+def _latex_to_expression(latex: str) -> str:
+    """把判分所需的简单 LaTeX 子集转为 sympy 可解析表达式文本。"""
+    result = latex.strip()
+    for old, new in _LATEX_REPLACEMENTS:
+        result = result.replace(old, new)
+    while True:
+        replaced = _FRAC_RE.sub(r"((\1)/(\2))", result)
+        if replaced == result:
+            break
+        result = replaced
+    return result
+
+
+def grade_math(expected: str, given: str) -> bool | None:
+    """数学等价表达式：sympy 可用时判定恒等（a-b 化简为 0）；否则不确定进复核。
+
+    expected 为 JSON {"latex": ...} 或裸 latex 串。
+    """
+    try:
+        data = json.loads(expected) if expected.strip().startswith("{") else {}
+    except json.JSONDecodeError:
+        data = {}
+    expected_latex = str(data.get("latex")) if isinstance(data, dict) and data.get("latex") else expected
+
+    expected_expr = _latex_to_expression(expected_latex)
+    given_expr = _latex_to_expression(given)
+    if expected_expr == given_expr:
+        return True  # 归一后字面一致
+
+    try:
+        import sympy  # 延迟导入：未部署时降级为复核，不阻塞判分管线
+    except ImportError:
+        return None
+
+    try:
+        difference = sympy.sympify(expected_expr) - sympy.sympify(given_expr)
+        return sympy.simplify(difference) == 0
+    except (sympy.SympifyError, TypeError, ValueError):
+        return None  # 解析失败 = 不确定，进入复核

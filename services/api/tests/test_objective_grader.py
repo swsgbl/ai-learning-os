@@ -61,8 +61,8 @@ def test_golden_set_grades_correctly(qtype: str, expected: str, given: str, corr
 
 
 def test_non_objective_types_left_for_later_graders() -> None:
-    """math/coding/essay 归 M2-09/M2-10：objective grader 一律不判。"""
-    for qtype in ("numeric", "math", "coding", "essay"):
+    """coding/essay 归 M2-10：objective grader 一律不判（numeric/math 自 M2-09 起接入三态）。"""
+    for qtype in ("coding", "essay"):
         assert grade_answer(qtype, "{}", "anything") is False
 
 

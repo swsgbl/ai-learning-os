@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { Check, ChevronDown, X } from "lucide-react";
-import { optionLabel } from "@/lib/parse-answer";
+import { answerLabel, optionLabel } from "@/lib/parse-answer";
 import type { Submission } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { Badge } from "./ui/badge";
@@ -17,7 +17,8 @@ const TABS = [
 ] as const;
 
 export function ReviewView({ submission }: { submission: Submission }) {
-  const wrong = submission.items.filter((item) => !item.correct);
+  const wrong = submission.items.filter((item) => item.correct === false);
+  const reviewing = submission.items.filter((item) => item.correct === null);
 
   return (
     <div className="space-y-6">
@@ -52,6 +53,32 @@ export function ReviewView({ submission }: { submission: Submission }) {
         </section>
       )}
 
+      {reviewing.length > 0 && (
+        <section>
+          <h2 className="font-display text-xl">待复核 {reviewing.length}</h2>
+          <p className="mt-1 text-xs text-muted">判分不确定（如数学等价表达式、无法解析的数值），已进入人工复核，暂不计入得分。</p>
+          <div className="mt-4 space-y-2">
+            {reviewing.map((item) => {
+              const question = submission.questions.find((candidate) => candidate.id === item.question_id);
+              if (!question) return null;
+              return (
+                <Card key={item.question_id} className="p-4">
+                  <p className="text-sm leading-relaxed">
+                    <span className="mr-2 rounded bg-surface-2 px-1.5 py-0.5 text-xs text-muted">复核中</span>
+                    {question.stem}
+                  </p>
+                  <p className="mt-2 text-xs text-muted">
+                    作答 {optionLabel(question, item.given || "（未作答）")}
+                    <span className="mx-2">·</span>
+                    答案 {answerLabel(question, item.expected)}
+                  </p>
+                </Card>
+              );
+            })}
+          </div>
+        </section>
+      )}
+
       <section>
         <h2 className="font-display text-xl">全部题目</h2>
         <div className="mt-4 space-y-2">
@@ -64,10 +91,14 @@ export function ReviewView({ submission }: { submission: Submission }) {
                   <span
                     className={cn(
                       "mt-0.5 flex size-6 shrink-0 items-center justify-center rounded-full",
-                      item.correct ? "bg-good-soft text-good" : "bg-bad-soft text-bad",
+                      item.correct === null
+                        ? "bg-surface-2 text-muted"
+                        : item.correct
+                          ? "bg-good-soft text-good"
+                          : "bg-bad-soft text-bad",
                     )}
                   >
-                    {item.correct ? <Check className="size-3.5" /> : <X className="size-3.5" />}
+                    {item.correct === null ? "?" : item.correct ? <Check className="size-3.5" /> : <X className="size-3.5" />}
                   </span>
                   <div className="min-w-0 flex-1">
                     <p className="text-sm leading-relaxed">
@@ -77,7 +108,7 @@ export function ReviewView({ submission }: { submission: Submission }) {
                     <p className="mt-2 text-xs text-muted">
                       作答 {optionLabel(question, item.given || "（未作答）")}
                       <span className="mx-2">·</span>
-                      答案 {optionLabel(question, item.expected)}
+                      答案 {answerLabel(question, item.expected)}
                     </p>
                   </div>
                 </div>
@@ -103,7 +134,7 @@ function WrongCard({ submission, questionId }: { submission: Submission; questio
         <div>
           <p className="text-sm leading-relaxed">{question.stem}</p>
           <p className="mt-2 text-xs text-muted">
-            你选了 {optionLabel(question, item.given || "（未作答）")} · 正确是 {optionLabel(question, item.expected)}
+            你选了 {optionLabel(question, item.given || "（未作答）")} · 正确是 {answerLabel(question, item.expected)}
           </p>
         </div>
         <ChevronDown className={cn("mt-1 size-4 shrink-0 text-muted transition-transform", open && "rotate-180")} />
