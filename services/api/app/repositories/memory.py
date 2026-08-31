@@ -3,9 +3,11 @@ from __future__ import annotations
 import asyncio
 import math
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+from app.domain.exam_fsm import assert_transition
 from app.domain.grading import grade_answer
 from app.domain.models import (
     AnswerEvent,
@@ -50,16 +52,19 @@ class MemoryRepository:
             paper_id=paper.id,
             paper_title=paper.title,
             mode=mode,
-            status=ExamStatus.ACTIVE,
+            status=ExamStatus.CREATED,
             started_at=now,
             end_at=now + timedelta(minutes=paper.duration_minutes),
         )
+        assert_transition(ExamStatus.CREATED, ExamStatus.ACTIVE)
+        record = replace(record, status=ExamStatus.ACTIVE)
         self._exams[record.exam_id] = record
         return record
 
     async def get_exam(self, exam_id: str) -> ExamSessionRecord | None:
         record = self._exams.get(exam_id)
         if record and record.status == ExamStatus.ACTIVE and remaining_seconds(record, self._clock()) == 0:
+            assert_transition(ExamStatus.ACTIVE, ExamStatus.EXPIRED)
             record.status = ExamStatus.EXPIRED
         return record
 
@@ -90,6 +95,7 @@ class MemoryRepository:
             record = await self._require_exam(exam_id)
             if existing := self._submissions.get(exam_id):
                 return existing
+            assert_transition(record.status, ExamStatus.SUBMITTED)
             now = self._clock()
             effective_end = min(now, record.end_at)
             record.status = ExamStatus.SUBMITTED

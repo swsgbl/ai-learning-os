@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Iterable, Sequence
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -24,6 +25,7 @@ from app.db.orm import (
     QuestionRow,
     SubmissionRow,
 )
+from app.domain.exam_fsm import assert_transition
 from app.domain.grading import grade_answer
 from app.domain.models import (
     Angles,
@@ -128,10 +130,12 @@ class PostgresRepository:
             paper_id=paper.id,
             paper_title=paper.title,
             mode=mode,
-            status=ExamStatus.ACTIVE,
+            status=ExamStatus.CREATED,
             started_at=now,
             end_at=now + timedelta(minutes=paper.duration_minutes),
         )
+        assert_transition(ExamStatus.CREATED, ExamStatus.ACTIVE)
+        record = replace(record, status=ExamStatus.ACTIVE)
         async with self._sessionmaker() as session, session.begin():
             session.add(
                 ExamSessionRow(
@@ -155,6 +159,7 @@ class PostgresRepository:
                 row.status == ExamStatus.ACTIVE.value
                 and remaining_seconds(_exam_record(row, [], {}), self._clock()) == 0
             ):
+                assert_transition(ExamStatus.ACTIVE, ExamStatus.EXPIRED)
                 row.status = ExamStatus.EXPIRED.value
             events = await self._events(session, exam_id)
             return _exam_record(row, events, _answers_from(events))
@@ -229,6 +234,7 @@ class PostgresRepository:
             exam = await session.get(ExamSessionRow, exam_id)
             if not exam:
                 raise KeyError("考试不存在")
+            assert_transition(ExamStatus(exam.status), ExamStatus.SUBMITTED)
             now = self._clock()
             questions = (
                 (

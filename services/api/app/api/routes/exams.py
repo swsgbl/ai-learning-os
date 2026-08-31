@@ -58,6 +58,8 @@ async def submit_exam(exam_id: str, _payload: SubmitRequest, request: Request) -
         submission = await request.app.state.repository.submit(exam_id)
     except KeyError as cause:
         raise HTTPException(status_code=404, detail=str(cause)) from cause
+    except ValueError as cause:
+        raise HTTPException(status_code=409, detail=str(cause)) from cause
     return await submission_out(submission, request)
 
 

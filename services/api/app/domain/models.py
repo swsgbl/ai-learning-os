@@ -6,9 +6,11 @@ from enum import StrEnum
 
 
 class ExamStatus(StrEnum):
+    CREATED = "created"
     ACTIVE = "active"
     SUBMITTED = "submitted"
     EXPIRED = "expired"
+    REPORT_READY = "report_ready"
 
 
 @dataclass(frozen=True, slots=True)
