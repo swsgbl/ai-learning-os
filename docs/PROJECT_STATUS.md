@@ -9,7 +9,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-M4-03 VoiceSession FSM
+M4-04 Intent parser
 
 ## 已完成任务
 
@@ -52,10 +52,11 @@ M4-03 VoiceSession FSM
 | M3-07 选题策略 | 39e22ed, merge fea6695 | pytest 301 passed（含真实 PG）：domain 6 测（答错探针题进 retry+reason 引用「错误」、弱概念未答题入选且易题先于难题——难度影响、强概念只选难题 difficulty>=3 且易题不入选——难度反向影响、与历史无关的新概念题不选、分组有序+跨类去重+reason 非空、同输入同输出纯性）；API 端到端 1 测（错题进 retry+同概念新题进 weak+固定锚点重放幂等+非法 now 422+无 DB 503）；PG 集成 1 测（结构完整+三分类计数一致+分组有序+去重+每项 reason+重放幂等+422；共享主库历史题占满配额，入选语义由干净库 SQLite 端到端覆盖）；无新表无 migration（实时投影，ADR 29/30 同款）；真实 PG 冒烟：8 项选题（retry 4 满配额引用真实历史错题「上次作答判定为错误，计划间隔 1.0 天」、weak 4 真实薄弱概念、advanced 0=共享库无已掌握概念难题的数据状态）、now=2030 确定性重算、422 全过 | 2026-08-31 |
 | M4-01 LiveKit server/token | 9fee76f, merge 72443f5 | pytest 311 passed（含真实 PG 5433）：domain 10 测（exp-nbf=TTL 精确断言——过期可测、student grants 边界全枚举四项授予+管理类全空——权限边界可测、过期 token 拒绝（超 verify leeway 60s）、错 secret 签名拒绝、垃圾 token 拒绝、未知角色拒签、端点签发→domain 验证往返+identity 缺省生成、422×5（room 格式/ttl 上下界/未知角色）、无配置 503、无 exp 手工伪造 token 被拒——过期语义不可绕过）；infra：compose livekit 服务（livekit.yaml 显式配置+healthcheck / 端点）+ postgres 主机端口 5432→5433（主机端口被其他项目容器占用冲突，容器内网不变）；requirements 加 livekit-api；真实容器冒烟：签发验证→RoomService create/list room→rtc.Room.connect 客户端真实加入 smoke-room→干净断开全过；浏览器加入的服务端等价路径已验证（token+RTC server+grants），浏览器端联调在 M4-03 前端任务完成 | 2026-08-31 |
 | M4-02 ASR/TTS adapter | 56764a4, merge 8c981a8 | pytest 329 passed（含真实 PG 5433）：domain 9 测（三模式路由矩阵 local→双本地/cloud→双云端+未配置降级 fallback=True/hybrid→ASR 本地+TTS 云端——语音不出本机仅文本出站、显式 provider 覆盖 VOICE_MODE、显式指定本地不算降级、非法模式 ValueError、fake-asr 确定性同输入同输出+[fake] 显式替身标记不冒充真实 ASR、tone-tts 合成合法 WAV（8kHz/mono 解析头）且时长∝文本长度、_sine_wav 确定性字节、cloud-asr MockTransport 解析 OpenAI 兼容响应+Bearer 头、cloud-tts 失败抛 ProviderUnavailable）；API 8 测（GET /providers 三模式切换视图+privacy 布尔透出、POST /transcribe transcript 恒落库+默认 audio_stored=false 显式丢弃留痕、PRIVACY_STORE_AUDIO=true→SHA-256 内容寻址对象存储 key=voice/{digest[:2]}/{digest} 可回读、无 DB 503、空音频 422、POST /synthesize 返回 audio/wav+X-Voice-Provider/X-Voice-Fallback 头、hybrid 云端未配置 fallback=1 透出、GET /transcripts 回查含 id）；PG 集成 1 测（真实 PG 端到端转写落库+回查）；新增 voice_transcripts 表（migration 0012）+ 追加式 repository；requirements 加 httpx；真实服务冒烟（uvicorn 8019+PG）：providers hybrid 视图（asr=fake 不降级/tts=fallback=1 诚实透出）→synthesize 合成 15404B 真实 WAV（RIFF 头+fallback 头）→ transcribe multipart 上传该 WAV 落 PG（id=2）→transcripts 回查命中 | 2026-08-31 |
+| M4-03 VoiceSession FSM | PENDING | pytest 350 passed（含真实 PG 5433）：domain 10 测（8 状态全迁移矩阵——happy path 可达全部状态、下题循环 NEXT_QUESTION→READING_QUESTION、播报期 propose 一律拒绝=打断不提交半成品、committed 后 propose=覆盖提交（「我改成 C」）、澄清环 WAITING→含糊→CLARIFYING 自环→明确→committed、repeat/slow_down 播报控制自环不破坏状态、skip→NEXT_QUESTION、end 从任意非终态直达 REPORT_READY、终态拒绝全部事件、未知状态/事件显式拒绝、全矩阵 (状态×事件) 确定性幂等）；API 9 测（POST /sessions 仅 ACTIVE 考试 409/404 边界、生命周期端到端 SESSION_READY→WAITING→committed 且 exam answers 落库、覆盖提交追加事件 next_sequence≥3、播报期 propose 409 且半成品绝不落库、ambiguous→CLARIFYING+追问文案、skip→report_ready 透出题数、未知命令 422、expected_revision 并发冲突 409、无 DB 503、响应不含 correct/explanation=考试模式不泄露答案）；PG 集成 1 测（真实 PG 全生命周期+覆盖+打断拒绝）；新增 voice_sessions 表（migration 0013）+ revision 乐观并发 repository；真实服务冒烟（uvicorn 8020+PG）：读题流→打断 409→澄清→提交→改成 C 覆盖（revision 7）→end 终态→exam answers={functions-1: C} 核验全过 | 2026-09-01 |
 
 ## 待办任务（按 backlog 顺序）
 
-- [ ] M4-01~09 Voice（M4 进行中 2/9：M4-01 ✅ M4-02 ✅）
+- [ ] M4-01~09 Voice（M4 进行中 3/9：M4-01~03 ✅）
 - [ ] M4-01~09 Voice
 - [ ] M5-01~08 Search + 治理
 - [ ] M6-01~07 评测/安全/备份
@@ -108,10 +109,11 @@ M4-03 VoiceSession FSM
 | 31 | 选题策略三因素显式分层（不落库实时投影）：retry=复习队列中最后答错的题（overdue 降序；选题不受到期约束——第二次任务即重做刚错的题，区别于 M3-06 复习通道的到期过滤）/weak=mastery<0.6 概念的未作答新题（薄弱度 0.6−mastery 降序，同分难度升序——弱概念配易题）/advanced=mastery≥0.6 概念的未作答难题（difficulty≥3，掌握度降序+难度降序——高掌握配高难）；同一题不重复入选（retry > weak > advanced）；配额 4/4/3；每项带 reason 引用可解释证据；now 为查询锚点（ADR 27/29/30 同款幂等语义） | M3-07 验收「第二次任务受弱概念、难度和历史错题影响」+ pack F「错题会影响第二日学习任务和选题」 | 2026-08-31 |
 | 32 | LiveKit token 边界：签发为纯本地 JWT（不依赖 server 运行），student 角色 grants 显式固定（room_join/can_publish/can_subscribe/can_publish_data），管理类权限（admin/create/record/agent/recorder/hidden）一律不授予；验证强制 require exp（无 exp 手工 token 不可绕过过期语义）；过期/签名错误统一转领域异常 VoiceTokenError；TTL 显式传参（30-86400s）使过期窗口可精确断言；自托管 livekit-server 进 compose（显式 livekit.yaml，本地 dev key 占位值不入 secret） | M4-01 验收「token 过期和权限边界可测试」+ 最小权限原则 | 2026-08-31 |
 | 33 | 语音隐私落盘与 provider 协议：ASR/TTS 经协议层（AsrProvider/TtsProvider）解耦，VOICE_MODE=local/hybrid/cloud 控制链路——hybrid 语义为 ASR 本地（语音原文不出本机）+TTS 可云端（仅文本出站）；云端未配置 endpoint 时降级本地并在 API 响应/对象透出 fallback，不虚报实际 provider；transcript 恒存 DB（voice_transcripts 追加式表）；原始音频仅 PRIVACY_STORE_AUDIO=true 时按 SHA-256 内容寻址写对象存储（key 存 audio_object_key），否则显式丢弃并留 audio_stored=false 审计痕迹；本地实现为零依赖真实代码（fake-asr 显式 [fake] 前缀不冒充真实 ASR、tone-tts stdlib wave 合成），部署级引擎（funasr/cosyvoice）按同协议注册 | M4-02 验收「在线、本地、混合 provider 可配置切换；语音原文按隐私策略落盘」+ 12 号 runbook §3 | 2026-08-31 |
+| 34 | VoiceSession FSM 边界：8 状态迁移矩阵为唯一领域规则源（repository 只落库不重复校验）；读题/读选项播报期收到答案一律拒绝——打断绝不提交半成品；ANSWER_COMMITTED 后 propose 语义为覆盖（复用 exam answer_events 追加式序号，「我改成 C」生成覆盖事件而非原地改写）；answer_proposed 由服务端确定性落库（exam repo save_answer），响应不含对错判定（考试模式不泄露答案）；revision 乐观并发计数，expected_revision 不匹配显式 409；repeat/slow_down 为播报控制自环（M4-06 前置语义）；end 与全卷完成（report_ready）均进 REPORT_READY 终态，报告内容由 M4-08 生成 | M4-03 验收「读题、读选项、等待答案、澄清、确认、下一题、报告状态完整」+ G 提示词 FSM 状态表 | 2026-09-01 |
 
 ## 下一任务
 
-M4-02 完成后：进入 M4-03 VoiceSession FSM（语音会话状态机：idle/listening/answering 等状态与迁移边界）。
+M4-03 完成后：进入 M4-04 Intent parser（「选 B/第二个/改成 C/重复一遍/跳过/暂停/结束」等语音意图解析，输出 FSM 命令与规范化答案槽位）。
 
 ## 追加：M0 收尾验证（compose 全栈）
 
