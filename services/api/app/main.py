@@ -35,6 +35,7 @@ from app.repositories.sources import SourceRepository
 from app.repositories.student_state import StudentStateRepository
 from app.repositories.voice_answer_events import VoiceAnswerEventRepository
 from app.repositories.voice_sessions import VoiceSessionRepository
+from app.repositories.voice_trace import VoiceTraceRepository
 from app.repositories.voice_transcripts import VoiceTranscriptRepository
 from app.storage.objectstore import make_object_store
 
@@ -63,6 +64,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
             voice_transcripts = VoiceTranscriptRepository(sessionmaker)
             voice_sessions = VoiceSessionRepository(sessionmaker)
             voice_answer_events = VoiceAnswerEventRepository(sessionmaker)
+            voice_trace = VoiceTraceRepository(sessionmaker)
             resources = ResourceRepository(sessionmaker)
             objects = make_object_store(settings)
             parsers = make_default_registry()
@@ -84,6 +86,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         app.state.voice_transcripts = voice_transcripts if resolved_url else None
         app.state.voice_sessions = voice_sessions if resolved_url else None
         app.state.voice_answer_events = voice_answer_events if resolved_url else None
+        app.state.voice_trace = voice_trace if resolved_url else None
         app.state.resources = resources if resolved_url else None
         app.state.objects = objects if resolved_url else None
         app.state.parsers = parsers if resolved_url else None
