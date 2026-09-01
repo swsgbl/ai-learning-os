@@ -41,6 +41,7 @@ class Settings(BaseSettings):
     search_provider: str | None = None
     search_cloud_endpoint: str | None = None  # M5-01 cloud-web 搜索源
     search_cloud_api_key: str | None = None  # 真实 key 不入库，env 注入
+    fetch_rate_limit_per_minute: int = 30  # M5-03 抓取预检频率上限（per-IP 固定窗口）
 
     # M2-10 主观题判分：keyword=内置确定性 judge；空=无 judge（essay 全部进复核）
     rubric_judge: str = "keyword"

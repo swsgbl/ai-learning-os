@@ -20,9 +20,11 @@ from app.api.routes.student import router as student_router
 from app.api.routes.system import router as system_router
 from app.api.routes.validate import router as validate_router
 from app.api.routes.voice import router as voice_router
+from app.api.routes.web import router as web_router
 from app.core.config import get_settings
 from app.db.session import create_engine, make_sessionmaker, prepare_database
 from app.domain.rubric_grader import make_rubric_judge
+from app.domain.web_gate import RateLimiter
 from app.parsing.registry import make_default_registry
 from app.parsing.worker import ParseWorker
 from app.repositories.chunks import ChunkRepository
@@ -134,6 +136,9 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(validate_router)
     app.include_router(voice_router)
     app.include_router(search_router)
+    app.include_router(web_router)
+    # M5-03 抓取预检频率限制（per-IP 固定窗口，内存实现，无 DB 也可用）
+    app.state.fetch_limiter = RateLimiter(settings.fetch_rate_limit_per_minute)
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, str]:
