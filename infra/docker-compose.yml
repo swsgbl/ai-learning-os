@@ -56,8 +56,16 @@ services:
       LIVEKIT_URL: ws://livekit:7880
       LIVEKIT_API_KEY: devkey
       LIVEKIT_API_SECRET: ailos-local-dev-secret-0f4c9a1e7b2d
+      # M7-01: profile 分离 local/hybrid/cloud —— AIOS_VOICE_MODE 插值注入语音隐私路由
+      VOICE_MODE: ${AIOS_VOICE_MODE:-local}
     ports:
       - "8000:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
     depends_on:
       postgres:
         condition: service_healthy
@@ -78,6 +86,29 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    # M7-01: 语音基础设施按 profile 启用 —— --profile local/hybrid/cloud 任一都含它
+    profiles: ["local", "hybrid", "cloud"]
+
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    environment:
+      NODE_ENV: production
+      # Next standalone server.js 读 HOSTNAME 作为绑定地址；容器默认 HOSTNAME=容器 ID
+      # 会绑到特定接口导致 healthcheck 127.0.0.1 拒连 —— 显式绑全接口
+      HOSTNAME: 0.0.0.0
+    ports:
+      - "${AIOS_WEB_PORT:-3000}:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    depends_on:
+      api:
+        condition: service_healthy
 
 volumes:
   postgres-data:
