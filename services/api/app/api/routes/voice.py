@@ -19,6 +19,8 @@ from app.domain import voice_session_fsm as fsm
 from app.domain.answer_normalizer import normalize_answer
 from app.domain.intent_parser import INTENT_UNKNOWN, ordinal_to_letter, parse
 from app.domain.models import ExamStatus
+from app.domain.report import build_report
+from app.domain.voice_report import build_voice_report
 from app.domain.voice_tokens import (
     DEFAULT_TTL_SECONDS,
     MAX_TTL_SECONDS,
@@ -399,6 +401,48 @@ async def resume_voice_session(session_id: str, request: Request) -> VoiceResume
         question=question,
         committed_answer=committed_answer,
         question_total=len(questions),
+    )
+
+
+# ---------- M4-08 Voice report：REPORT_READY 后的语音播报投影 ----------
+
+
+class VoiceReportOut(BaseModel):
+    session_id: str
+    exam_id: str
+    spoken_text: str  # 第一遍播报：短结论 + 总分 + 错题数（分层播报）
+    mistake_summary: list[dict]  # 错题摘要（题号/截断题干/你的答案/正确答案/概念/错因）
+    remediation_summary: list[dict]  # 补救建议（聚合到概念级）
+    written_report_url: str  # 书面报告入口（深入讲解走 GET /exams/{id}/report）
+
+
+@router.get("/sessions/{session_id}/report", response_model=VoiceReportOut)
+async def get_voice_report(session_id: str, request: Request) -> VoiceReportOut:
+    """语音报告：REPORT_READY 终态后从判分结果投影播报视图（M4-08）。
+
+    只投影不判定——分数/错题/补救全部来自 M2-11 build_report 判分结果；
+    幂等只读，同状态多次获取恒同输出。
+    """
+    sessions = request.app.state.voice_sessions
+    if sessions is None:
+        raise HTTPException(status_code=503, detail="Voice sessions require a database")
+    view = await sessions.get(session_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="语音会话不存在")
+    if not fsm.is_terminal(view["status"]):
+        raise HTTPException(status_code=409, detail="全卷完成后才可获取报告")
+
+    exam, paper = await _load_paper(request, view["exam_id"])
+    submission = await request.app.state.repository.get_submission(view["exam_id"])
+    if submission is None:
+        raise HTTPException(status_code=409, detail="考试尚未提交判分，先提交后获取报告")
+
+    report = build_report(submission, paper)
+    voice_view = build_voice_report(exam.exam_id, report)
+    return VoiceReportOut(
+        session_id=session_id,
+        exam_id=exam.exam_id,
+        **voice_view,
     )
 
 
