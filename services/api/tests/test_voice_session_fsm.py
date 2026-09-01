@@ -74,6 +74,40 @@ def test_announcement_controls_are_self_loops() -> None:
     assert fsm.transition(fsm.ANSWER_COMMITTED, fsm.EV_SLOW_DOWN) == fsm.ANSWER_COMMITTED
 
 
+def test_pause_resume_are_self_loops_from_any_non_terminal() -> None:
+    """M4-06：pause/resume 任意非终态自环——状态不变（TTS 暂停是客户端行为）。"""
+    for state in fsm.VOICE_SESSION_STATES[:-1]:
+        assert fsm.transition(state, fsm.EV_PAUSE) == state, state
+        assert fsm.transition(state, fsm.EV_RESUME) == state, state
+
+
+def test_barge_in_moves_announcement_to_listening() -> None:
+    """M4-06：打断=停止播报进倾听（保留当前题）；倾听期自环。"""
+    assert fsm.transition(fsm.READING_QUESTION, fsm.EV_BARGE_IN) == fsm.WAITING_ANSWER
+    assert fsm.transition(fsm.READING_OPTIONS, fsm.EV_BARGE_IN) == fsm.WAITING_ANSWER
+    assert fsm.transition(fsm.WAITING_ANSWER, fsm.EV_BARGE_IN) == fsm.WAITING_ANSWER
+    assert fsm.transition(fsm.CLARIFYING, fsm.EV_BARGE_IN) == fsm.CLARIFYING
+
+
+def test_barge_in_rejected_outside_announcement_and_listening() -> None:
+    """打断在初始/已提交确认/下题环节/终态拒绝——语义不明绝不乱迁移。"""
+    for state in (
+        fsm.SESSION_READY,
+        fsm.ANSWER_COMMITTED,
+        fsm.NEXT_QUESTION,
+        fsm.REPORT_READY,
+    ):
+        with pytest.raises(ValueError, match="barge_in"):
+            fsm.transition(state, fsm.EV_BARGE_IN)
+
+
+def test_terminal_rejects_new_control_events() -> None:
+    """终态拒绝 pause/resume/barge_in（复用全事件拒绝语义，显式断言新事件）。"""
+    for event in (fsm.EV_PAUSE, fsm.EV_RESUME, fsm.EV_BARGE_IN):
+        with pytest.raises(ValueError, match="REPORT_READY"):
+            fsm.transition(fsm.REPORT_READY, event)
+
+
 def test_skip_goes_next_and_end_reaches_terminal_from_all() -> None:
     """skip→NEXT_QUESTION；end 从任意非终态直达 REPORT_READY。"""
     assert fsm.transition(fsm.WAITING_ANSWER, fsm.EV_SKIP) == fsm.NEXT_QUESTION
@@ -295,3 +329,70 @@ def test_unknown_session_404() -> None:
             "/api/v1/voice/sessions/vs_missing/commands", json={"type": "skip"}
         )
         assert response.status_code == 404
+
+
+# ---------- M4-06 API：打断与播报控制 ----------
+
+
+def test_barge_in_during_reading_moves_to_waiting_keeps_question() -> None:
+    """读题播报中打断 → WAITING_ANSWER；当前题保留，提交落对题。"""
+    with TestClient(create_app(SQLITE_URL)) as client:
+        exam_id = _start_exam(client)
+        session_id = client.post(
+            "/api/v1/voice/sessions", json={"exam_id": exam_id}
+        ).json()["session_id"]
+        for command in ("start_reading", "question_read"):
+            assert client.post(
+                f"/api/v1/voice/sessions/{session_id}/commands", json={"type": command}
+            ).status_code == 200
+
+        response = client.post(
+            f"/api/v1/voice/sessions/{session_id}/commands", json={"type": "barge_in"}
+        )
+        assert response.status_code == 200
+        body = response.json()
+        assert body["applied_event"] == "barge_in"
+        assert body["session"]["status"] == "WAITING_ANSWER"
+        assert body["session"]["question_index"] == 0  # 当前题保留
+
+        # 打断后提交答案正常走 propose 路径落库
+        assert client.post(
+            f"/api/v1/voice/sessions/{session_id}/commands",
+            json={"type": "answer_proposed", "question_id": _first_question_id(client, exam_id), "answer": "B"},
+        ).status_code == 200
+        exam_view = client.get(f"/api/v1/exams/{exam_id}").json()
+        assert exam_view["answers"].get(_first_question_id(client, exam_id)) == "B"
+
+
+def test_announcement_controls_via_commands_do_not_change_state() -> None:
+    """pause/resume 命令：状态不变、revision 递增留审计痕迹。"""
+    with TestClient(create_app(SQLITE_URL)) as client:
+        exam_id = _start_exam(client)
+        reading = client.post("/api/v1/voice/sessions", json={"exam_id": exam_id}).json()
+        client.post(f"/api/v1/voice/sessions/{reading['session_id']}/commands", json={"type": "start_reading"})
+        session_id = reading["session_id"]
+
+        before = client.get(f"/api/v1/voice/sessions/{session_id}").json()
+        paused = client.post(
+            f"/api/v1/voice/sessions/{session_id}/commands", json={"type": "pause"}
+        ).json()
+        assert paused["session"]["status"] == "READING_QUESTION"  # 状态不变
+        assert paused["session"]["revision"] == before["revision"] + 1  # 审计痕迹
+
+        resumed = client.post(
+            f"/api/v1/voice/sessions/{session_id}/commands", json={"type": "resume"}
+        )
+        assert resumed.status_code == 200
+        assert resumed.json()["session"]["status"] == "READING_QUESTION"
+
+
+def test_barge_in_rejected_outside_announcement_via_api() -> None:
+    """SESSION_READY 打断 409（还没开始播报，打断语义不明）。"""
+    with TestClient(create_app(SQLITE_URL)) as client:
+        exam_id = _start_exam(client)
+        session_id = client.post("/api/v1/voice/sessions", json={"exam_id": exam_id}).json()["session_id"]
+        response = client.post(
+            f"/api/v1/voice/sessions/{session_id}/commands", json={"type": "barge_in"}
+        )
+        assert response.status_code == 409
+        assert "barge_in" in response.json()["detail"]

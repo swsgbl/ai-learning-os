@@ -79,12 +79,12 @@ def test_command_intents(transcript: str, intent: str) -> None:
     assert parsed.fsm_command == intent  # 命令类意图与 FSM 命令同名
 
 
-def test_pause_resume_have_no_fsm_command_yet() -> None:
-    """pause/resume 解析成功但暂无 FSM 迁移（M4-06 播报控制接入）。"""
+def test_pause_resume_map_to_commands() -> None:
+    """M4-06：pause/resume 解析后映射同名 FSM 命令（播报控制自环）。"""
     assert parse("暂停").intent == INTENT_PAUSE
-    assert parse("暂停").fsm_command is None
+    assert parse("暂停").fsm_command == "pause"
     assert parse("继续").intent == "resume"
-    assert parse("继续").fsm_command is None
+    assert parse("继续").fsm_command == "resume"
 
 
 def test_ambiguous_answer_goes_clarify() -> None:
@@ -245,21 +245,27 @@ def test_intent_commands_drive_session() -> None:
         assert ended.json()["session"]["status"] == "REPORT_READY"
 
 
-def test_intent_unknown_and_pause_do_not_change_state() -> None:
-    """unknown 与 pause 不应用 FSM——状态与 revision 不变。"""
+def test_intent_unknown_ignored_pause_applied_as_control_loop() -> None:
+    """unknown 不应用 FSM；pause（M4-06）作为播报控制自环应用——状态均不变。"""
     with TestClient(create_app(SQLITE_URL)) as client:
         exam_id = _start_exam(client)
         waiting = _waiting_session(client, exam_id)
         url = f"/api/v1/voice/sessions/{waiting['session_id']}/intents"
-        for transcript in ("今天天气不错", "暂停"):
-            response = client.post(url, json={"transcript": transcript})
-            assert response.status_code == 200
-            body = response.json()
-            assert body["fsm_applied"] is False
-            assert body["session"] is None
+
+        unknown = client.post(url, json={"transcript": "今天天气不错"}).json()
+        assert unknown["fsm_applied"] is False
+        assert unknown["session"] is None
+
+        paused = client.post(url, json={"transcript": "暂停"}).json()
+        assert paused["intent"] == "pause"
+        assert paused["fsm_applied"] is True  # M4-06 接入
+        assert paused["applied_event"] == "pause"
+        assert paused["session"]["status"] == "WAITING_ANSWER"  # 自环不破坏状态
+        assert paused["session"]["revision"] == waiting["revision"] + 1  # 审计痕迹
+
         after = client.get(f"/api/v1/voice/sessions/{waiting['session_id']}").json()
         assert after["status"] == "WAITING_ANSWER"
-        assert after["revision"] == waiting["revision"]  # 状态机未被扰动
+        assert after["revision"] == waiting["revision"] + 1
 
 
 def test_intent_on_unknown_session_404() -> None:

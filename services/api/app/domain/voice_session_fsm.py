@@ -11,6 +11,11 @@ CLARIFYING：答案含糊时进入（answer_clarify），学生回应后重新 p
 - ANSWER_COMMITTED 后 answer_proposed = 覆盖提交（「我改成 C」→ 追加覆盖事件，
   exam answer_events 的追加式序号天然支持覆盖）；
 - repeat_question / repeat_options / slow_down 为播报控制自环，不破坏状态；
+- pause / resume 为播报控制自环（M4-06）：任意非终态可暂停/恢复，状态不变
+  （TTS 停播是客户端行为，服务端只留 revision 审计痕迹）；
+- barge_in（M4-06）：显式打断事件——播报期（READING_QUESTION / READING_OPTIONS）
+  → WAITING_ANSWER（停止 TTS、保留当前题、进入倾听）；倾听期自环；其余拒绝。
+  提交必须走 propose 路径，打断信号本身绝不携带/提交答案；
 - end 命令与全卷完成（report_ready）均进 REPORT_READY——报告内容由 M4-08 生成。
 
 同 (状态, 事件) 恒同输出——与 ADR 27/29/30/31 同款幂等语义。
@@ -48,6 +53,9 @@ EV_REPEAT_QUESTION = "repeat_question"
 EV_REPEAT_OPTIONS = "repeat_options"
 EV_SLOW_DOWN = "slow_down"
 EV_END = "end"
+EV_PAUSE = "pause"  # M4-06 播报控制：任意非终态自环
+EV_RESUME = "resume"  # M4-06 播报控制：任意非终态自环
+EV_BARGE_IN = "barge_in"  # M4-06 显式打断：播报期 → 倾听期
 EV_REPORT_READY = "report_ready"  # 全卷完成（无下题）
 
 EVENTS = (
@@ -62,6 +70,9 @@ EVENTS = (
     EV_REPEAT_OPTIONS,
     EV_SLOW_DOWN,
     EV_END,
+    EV_PAUSE,
+    EV_RESUME,
+    EV_BARGE_IN,
     EV_REPORT_READY,
 )
 
@@ -70,17 +81,25 @@ _TRANSITIONS: dict[str, dict[str, str]] = {
     SESSION_READY: {
         EV_START_READING: READING_QUESTION,
         EV_END: REPORT_READY,
+        EV_PAUSE: SESSION_READY,
+        EV_RESUME: SESSION_READY,
     },
     READING_QUESTION: {
         EV_QUESTION_READ: READING_OPTIONS,
         EV_REPEAT_QUESTION: READING_QUESTION,
         EV_SLOW_DOWN: READING_QUESTION,
+        EV_BARGE_IN: WAITING_ANSWER,  # 打断：停止播报进倾听，当前题保留
+        EV_PAUSE: READING_QUESTION,
+        EV_RESUME: READING_QUESTION,
         EV_END: REPORT_READY,
     },
     READING_OPTIONS: {
         EV_OPTIONS_READ: WAITING_ANSWER,
         EV_REPEAT_OPTIONS: READING_OPTIONS,
         EV_SLOW_DOWN: READING_OPTIONS,
+        EV_BARGE_IN: WAITING_ANSWER,  # 打断：停止播报进倾听，当前题保留
+        EV_PAUSE: READING_OPTIONS,
+        EV_RESUME: READING_OPTIONS,
         EV_END: REPORT_READY,
     },
     WAITING_ANSWER: {
@@ -90,12 +109,18 @@ _TRANSITIONS: dict[str, dict[str, str]] = {
         EV_REPEAT_QUESTION: WAITING_ANSWER,
         EV_REPEAT_OPTIONS: WAITING_ANSWER,
         EV_SLOW_DOWN: WAITING_ANSWER,
+        EV_BARGE_IN: WAITING_ANSWER,  # 已在倾听：自环
+        EV_PAUSE: WAITING_ANSWER,
+        EV_RESUME: WAITING_ANSWER,
         EV_END: REPORT_READY,
     },
     CLARIFYING: {
         EV_ANSWER_PROPOSED: ANSWER_COMMITTED,  # 澄清回应明确 → 提交
         EV_ANSWER_CLARIFY: CLARIFYING,  # 仍含糊 → 继续澄清
         EV_SKIP: NEXT_QUESTION,
+        EV_BARGE_IN: CLARIFYING,  # 打断澄清播报：继续倾听
+        EV_PAUSE: CLARIFYING,
+        EV_RESUME: CLARIFYING,
         EV_END: REPORT_READY,
     },
     ANSWER_COMMITTED: {
@@ -106,12 +131,16 @@ _TRANSITIONS: dict[str, dict[str, str]] = {
         EV_REPEAT_QUESTION: ANSWER_COMMITTED,
         EV_REPEAT_OPTIONS: ANSWER_COMMITTED,
         EV_SLOW_DOWN: ANSWER_COMMITTED,
+        EV_PAUSE: ANSWER_COMMITTED,
+        EV_RESUME: ANSWER_COMMITTED,
         EV_END: REPORT_READY,
     },
     NEXT_QUESTION: {
         EV_START_READING: READING_QUESTION,
         EV_REPORT_READY: REPORT_READY,
         EV_END: REPORT_READY,
+        EV_PAUSE: NEXT_QUESTION,
+        EV_RESUME: NEXT_QUESTION,
     },
     REPORT_READY: {},  # 终态
 }

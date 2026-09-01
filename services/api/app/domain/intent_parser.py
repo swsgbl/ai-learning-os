@@ -4,10 +4,9 @@
 覆盖 G 提示词示例：「我选第二个」→ ordinal=2（M4-05 结合选项数映射字母）、
 「选 B」→ letter=B、「我改成 C」→ change_answer letter=C、「重复一遍」→ repeat_question。
 
-意图 → M4-03 FSM 命令映射（to_fsm_command）：
+意图 → M4-03 FSM 命令映射（to_fsm_command，M4-06 补齐 pause/resume 接入）：
 - choose_option / change_answer → answer_proposed（change 在 FSM 层即覆盖提交）；
-- repeat_question / repeat_options / slow_down / skip / end → 同名命令；
-- pause / resume 暂无 FSM 迁移（M4-06 播报控制接入），映射为 None；
+- repeat_question / repeat_options / slow_down / skip / pause / resume / end → 同名命令；
 - unknown（未识别）不应用 FSM——解析失败≠澄清答案，不虚报理解。
 
 槽位：letter（选项字母，恒大写）或 ordinal（选项序号，1-based）；
@@ -37,8 +36,8 @@ FSM_COMMANDS: dict[str, str | None] = {
     INTENT_SLOW_DOWN: "slow_down",
     INTENT_SKIP: "skip",
     INTENT_END: "end",
-    INTENT_PAUSE: None,  # M4-06 播报控制接入
-    INTENT_RESUME: None,
+    INTENT_PAUSE: "pause",  # M4-06：播报控制自环，任意非终态可暂停/恢复
+    INTENT_RESUME: "resume",
     INTENT_UNKNOWN: None,
 }
 
