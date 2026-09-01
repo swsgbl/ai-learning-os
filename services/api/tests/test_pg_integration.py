@@ -735,3 +735,42 @@ def test_voice_answer_normalizer_against_real_postgres() -> None:
         ).json()
         assert clarified["accepted"] is False
         assert clarified["session"]["status"] == "CLARIFYING"
+
+
+def test_barge_in_and_announcement_controls_against_real_postgres() -> None:
+    """M4-06：真实 PG 下读题播报期打断 → 倾听 → 提交落对题；pause/resume 自环。"""
+    with TestClient(create_app(PG_URL)) as client:  # type: ignore[arg-type]
+        exam_id = client.post(
+            "/api/v1/papers/functions-basics/exams", json={"mode": "exam"}
+        ).json()["exam_id"]
+        session_id = client.post(
+            "/api/v1/voice/sessions", json={"exam_id": exam_id}
+        ).json()["session_id"]
+        url = f"/api/v1/voice/sessions/{session_id}/commands"
+        for command in ("start_reading", "question_read"):
+            assert client.post(url, json={"type": command}).status_code == 200
+
+        # 读题播报期打断 → WAITING_ANSWER，当前题保留（question_index 不变）
+        barge = client.post(url, json={"type": "barge_in"}).json()
+        assert barge["applied_event"] == "barge_in"
+        assert barge["session"]["status"] == "WAITING_ANSWER"
+        assert barge["session"]["question_index"] == 0
+
+        # pause/resume 自环：状态不变、revision 递增
+        before = client.get(f"/api/v1/voice/sessions/{session_id}").json()
+        paused = client.post(url, json={"type": "pause"}).json()
+        assert paused["session"]["status"] == "WAITING_ANSWER"
+        assert paused["session"]["revision"] == before["revision"] + 1
+        resumed = client.post(url, json={"type": "resume"}).json()
+        assert resumed["session"]["status"] == "WAITING_ANSWER"
+
+        # 打断后提交答案：落库到保留的当前题
+        exam_view = client.get(f"/api/v1/exams/{exam_id}").json()
+        question_id = exam_view["questions"][0]["id"]
+        assert client.post(
+            url,
+            json={"type": "answer_proposed", "question_id": question_id, "answer": "B"},
+        ).status_code == 200
+        exam_view = client.get(f"/api/v1/exams/{exam_id}").json()
+        assert exam_view["answers"].get(question_id) == "B"
+        assert exam_view["next_sequence"] == 2  # 只落了一次
