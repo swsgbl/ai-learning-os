@@ -90,6 +90,41 @@ def _exam_record(
     )
 
 
+def _paper_from_rows(row: PaperRow, question_rows) -> Paper:
+    """行 -> Paper 域对象纯构造（list_papers 批量与 get_paper 单卷共用）。"""
+    return Paper(
+        id=row.id,
+        title=row.title,
+        subtitle=row.subtitle,
+        source=row.source,
+        university=row.university,
+        year=row.year,
+        subject=row.subject,
+        difficulty=row.difficulty,
+        duration_minutes=row.duration_minutes,
+        tags=tuple(row.tags),
+        origin_url=row.origin_url,
+        license=row.license,
+        questions=tuple(
+            Question(
+                id=question.id,
+                type=question.question_type,
+                stem=question.stem,
+                options=tuple(
+                    Option(key=option["key"], text=option["text"]) for option in question.options
+                ),
+                answer=question.answer,
+                explanation=question.explanation,
+                angles=Angles(**question.angles),
+                knowledge=tuple(question.knowledge),
+                score=question.score,
+                difficulty=question.difficulty,
+            )
+            for question in question_rows
+        ),
+    )
+
+
 class PostgresRepository:
     """SQLAlchemy async 实现。接口签名与 MemoryRepository 完全一致，API route 零改动。"""
 
@@ -114,9 +149,27 @@ class PostgresRepository:
                     session.add(self._question_row(paper.id, question, sort_order))
 
     async def list_papers(self) -> list[Paper]:
+        # M6-07：一次批量取全部题目（原逐卷查询为 N+1——每卷一次独立往返，
+        # 并发下往返延迟线性放大总延迟）。行为不变：按 id 排序、题目按 sort_order。
         async with self._sessionmaker() as session:
             rows = (await session.execute(select(PaperRow).order_by(PaperRow.id))).scalars().all()
-            return [await self._paper_record(session, row) for row in rows]
+            if not rows:
+                return []
+            question_rows = (
+                (
+                    await session.execute(
+                        select(QuestionRow)
+                        .where(QuestionRow.paper_id.in_([row.id for row in rows]))
+                        .order_by(QuestionRow.paper_id, QuestionRow.sort_order)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            grouped: dict[str, list] = {}
+            for question_row in question_rows:
+                grouped.setdefault(question_row.paper_id, []).append(question_row)
+            return [_paper_from_rows(row, grouped.get(row.id, ())) for row in rows]
 
     async def get_paper(self, paper_id: str) -> Paper | None:
         async with self._sessionmaker() as session:
@@ -440,34 +493,4 @@ class PostgresRepository:
             .scalars()
             .all()
         )
-        return Paper(
-            id=row.id,
-            title=row.title,
-            subtitle=row.subtitle,
-            source=row.source,
-            university=row.university,
-            year=row.year,
-            subject=row.subject,
-            difficulty=row.difficulty,
-            duration_minutes=row.duration_minutes,
-            tags=tuple(row.tags),
-            origin_url=row.origin_url,
-            license=row.license,
-            questions=tuple(
-                Question(
-                    id=question.id,
-                    type=question.question_type,
-                    stem=question.stem,
-                    options=tuple(
-                        Option(key=option["key"], text=option["text"]) for option in question.options
-                    ),
-                    answer=question.answer,
-                    explanation=question.explanation,
-                    angles=Angles(**question.angles),
-                    knowledge=tuple(question.knowledge),
-                    score=question.score,
-                    difficulty=question.difficulty,
-                )
-                for question in questions
-            ),
-        )
+        return _paper_from_rows(row, questions)
