@@ -25,6 +25,7 @@ from app.api.routes.system import router as system_router
 from app.api.routes.validate import router as validate_router
 from app.api.routes.variant_generator import router as variant_generator_router
 from app.api.routes.voice import router as voice_router
+from app.api.routes.voice_eval import router as voice_eval_router
 from app.api.routes.web import router as web_router
 from app.core.config import get_settings
 from app.db.session import create_engine, make_sessionmaker, prepare_database
@@ -149,6 +150,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(course_workflow_router)
     app.include_router(variant_generator_router)
     app.include_router(eval_router)
+    app.include_router(voice_eval_router)
     app.include_router(courses_router)
     app.include_router(student_router)
     app.include_router(misconceptions_router)
