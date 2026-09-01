@@ -16,6 +16,28 @@ docs            工程决策、开发路线和迁移边界
 docs/delivery   2026 定版调研、PRD、架构、开发计划和来源登记
 ```
 
+## 生产本地版（一条命令）
+
+```bash
+docker compose -f infra/docker-compose.yml --profile local up -d --build
+```
+
+等全部服务 healthy 后即可使用：API http://127.0.0.1:8000（/health、/docs）、Web http://127.0.0.1:3000。
+基础服务（postgres/redis/minio/api/web）不挂 profile 恒启动；livekit（语音基础设施）
+挂在 local/hybrid/cloud 三个命名 profile 下。
+
+语音隐私路由按 profile 切换（`AIOS_VOICE_MODE` 插值注入 VOICE_MODE）：
+
+```bash
+# hybrid：ASR 本地（语音原文不出本机）+ TTS 云端（仅文本出站）
+AIOS_VOICE_MODE=hybrid docker compose -f infra/docker-compose.yml --profile hybrid up -d
+# cloud：语音云端处理（需 .env 提供云端凭据）
+AIOS_VOICE_MODE=cloud docker compose -f infra/docker-compose.yml --profile cloud up -d
+```
+
+注意：hybrid/cloud 必须显式设置 `AIOS_VOICE_MODE`，未设置时 VOICE_MODE 回退 local
+（服务照常启动但语音走本地，不会虚报云端能力；provider 视图会透出实际路由）。
+
 ## 本地启动
 
 ```powershell
