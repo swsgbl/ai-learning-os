@@ -5,7 +5,7 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.orm import ChunkRow, EvidenceRow
@@ -86,6 +86,27 @@ class ChunkRepository:
                     "page_end": row.page_end,
                     "slide": row.slide,
                     "block_types": row.block_types,
+                }
+                for row in rows
+            ]
+
+    async def search_text(self, query: str, limit: int = 10) -> list[dict]:
+        """M5-01 本地语料检索：chunk 文本 contains 匹配（按资源+序号稳定排序）。"""
+        pattern = f"%{query.strip().lower()}%"
+        async with self._sessionmaker() as session:
+            rows = (
+                await session.execute(
+                    select(ChunkRow)
+                    .where(func.lower(ChunkRow.text).like(pattern))
+                    .order_by(ChunkRow.resource_id, ChunkRow.chunk_index)
+                    .limit(limit)
+                )
+            ).scalars().all()
+            return [
+                {
+                    "resource_id": row.resource_id,
+                    "chunk_index": row.chunk_index,
+                    "text": row.text,
                 }
                 for row in rows
             ]
