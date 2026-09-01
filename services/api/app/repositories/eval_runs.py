@@ -25,17 +25,19 @@ class EvalRunRepository:
         kind: str,
         report: dict,
         agreement: float | None = None,
+        case_count: int | None = None,
     ) -> dict:
-        """落库一条评测运行；agreement 缺省取 report 的头部指标。
+        """落库一条评测运行；agreement/case_count 缺省取 report 的头部指标。
 
-        grading 用 report["agreement"]；voice 评测头部分数是 accuracy，
-        显式传入 agreement 列（列语义 = 本次评测的头部分数）。
+        grading 用 report["agreement"]/report["case_count"]；voice 头部分数是
+        accuracy、citation 抽样数是 sampled_count——显式传入同名列
+        （列语义 = 头部分数 + 参与判定的样本数）。
         """
         async with self._sessionmaker() as session, session.begin():
             row = EvalRunRow(
                 kind=kind,
                 rule_version=report["rule_versions"]["eval"],
-                case_count=report["case_count"],
+                case_count=case_count if case_count is not None else report["case_count"],
                 agreement=agreement if agreement is not None else report["agreement"],
                 report=report,
                 created_at=self._clock(),
