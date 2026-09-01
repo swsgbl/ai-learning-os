@@ -586,9 +586,12 @@ async def submit_voice_answer(
     if view is None:
         raise HTTPException(status_code=404, detail="语音会话不存在")
 
-    # 幂等重放：同 event_id 直接返回既有结果（不改状态不重复提交）
+    # 幂等重放：同 event_id 直接返回既有结果（不改状态不重复提交）；
+    # event_id 按会话域隔离——他session的事件不返回（防跨会话读取与响应投毒）
     existing = await answer_events.get(payload.event_id)
     if existing is not None:
+        if existing["session_id"] != session_id:
+            raise HTTPException(status_code=409, detail="event_id 已被其他会话使用")
         session_out = await sessions.get(session_id)
         return VoiceAnswerOut(
             event_id=payload.event_id,
@@ -647,17 +650,20 @@ async def submit_voice_answer(
     updated = await sessions.apply(
         session_id, new_status=target, expected_revision=None
     )
-    await answer_events.record(
-        event_id=payload.event_id,
-        session_id=session_id,
-        exam_id=view["exam_id"],
-        question_id=question.id,
-        normalized_answer=normalized.answer if normalized.is_valid else None,
-        intent=parsed.intent,
-        transcript=payload.transcript,
-        confidence=payload.confidence,
-        accepted=normalized.is_valid,
-    )
+    try:
+        await answer_events.record(
+            event_id=payload.event_id,
+            session_id=session_id,
+            exam_id=view["exam_id"],
+            question_id=question.id,
+            normalized_answer=normalized.answer if normalized.is_valid else None,
+            intent=parsed.intent,
+            transcript=payload.transcript,
+            confidence=payload.confidence,
+            accepted=normalized.is_valid,
+        )
+    except ValueError as cause:  # 并发竞态兜底：event_id 被其他会话抢占
+        raise HTTPException(status_code=409, detail=str(cause)) from cause
     return VoiceAnswerOut(
         event_id=payload.event_id,
         idempotent=False,

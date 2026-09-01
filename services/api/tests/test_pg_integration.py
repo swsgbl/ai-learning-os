@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import os
+from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -710,15 +711,18 @@ def test_voice_answer_normalizer_against_real_postgres() -> None:
             ).status_code == 200
 
         url = f"/api/v1/voice/sessions/{session_id}/answers"
+        # event_id 每次运行唯一（PG 持久库跨运行会命中会话域隔离拒绝旧键）
+        evt1 = f"pg-evt-{uuid4().hex[:12]}"
+        evt2 = f"pg-evt-{uuid4().hex[:12]}"
         # 「选 b」→ 规范化 B 落库（客户端伪造 normalized_answer 不被信任）
         first = client.post(
             url,
-            json={"transcript": "选 b", "event_id": "pg-evt-001", "normalized_answer": "Z"},
+            json={"transcript": "选 b", "event_id": evt1, "normalized_answer": "Z"},
         ).json()
         assert first["accepted"] is True and first["normalized_answer"] == "B"
 
         # 同 event_id 重放：幂等返回，不重复落库
-        replay = client.post(url, json={"transcript": "选 b", "event_id": "pg-evt-001"}).json()
+        replay = client.post(url, json={"transcript": "选 b", "event_id": evt1}).json()
         assert replay["idempotent"] is True
         exam_view = client.get(f"/api/v1/exams/{exam_id}").json()
         question_id = exam_view["questions"][0]["id"]
@@ -726,6 +730,8 @@ def test_voice_answer_normalizer_against_real_postgres() -> None:
         assert exam_view["next_sequence"] == 2  # 幂等：只落了一次
 
         # 无效选项 → 澄清不落库
-        clarified = client.post(url, json={"transcript": "我选第九个", "event_id": "pg-evt-002"}).json()
+        clarified = client.post(
+            url, json={"transcript": "我选第九个", "event_id": evt2}
+        ).json()
         assert clarified["accepted"] is False
         assert clarified["session"]["status"] == "CLARIFYING"

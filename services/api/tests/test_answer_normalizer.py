@@ -7,6 +7,9 @@
 """
 from __future__ import annotations
 
+import asyncio
+
+import pytest
 from fastapi.testclient import TestClient
 
 from app.domain.answer_normalizer import normalize_answer
@@ -268,3 +271,66 @@ def test_answer_requires_database() -> None:
             json={"transcript": "选 B", "event_id": "evt-y"},
         )
         assert response.status_code == 503
+
+
+# ---------- 安全：event_id 按会话域隔离（防跨会话读取与响应投毒） ----------
+
+
+def test_answer_event_id_scoped_to_session() -> None:
+    """跨会话复用 event_id → 409：不读他人事件、状态不迁移、答案不投毒。"""
+    with TestClient(create_app(SQLITE_URL)) as client:
+        exam_id = _start_exam(client)
+        session_a = _waiting_session(client, exam_id)
+        first = client.post(
+            f"/api/v1/voice/sessions/{session_a}/answers",
+            json={"transcript": "选 B", "event_id": "evt-shared"},
+        ).json()
+        assert first["accepted"] is True
+
+        session_b = _waiting_session(client, exam_id)  # 同考试的第二个会话
+        response = client.post(
+            f"/api/v1/voice/sessions/{session_b}/answers",
+            json={"transcript": "选 C", "event_id": "evt-shared"},  # 复用 A 的 event_id
+        )
+        assert response.status_code == 409
+        assert "其他会话" in response.json()["detail"]
+
+        after = client.get(f"/api/v1/voice/sessions/{session_b}").json()
+        assert after["status"] == "WAITING_ANSWER"  # B 状态未被扰动
+        exam_view = client.get(f"/api/v1/exams/{exam_id}").json()
+        question_id = exam_view["questions"][0]["id"]
+        assert exam_view["answers"].get(question_id) == "B"  # 只有 A 的提交生效
+
+        # 正常重放（同会话）仍幂等
+        replay = client.post(
+            f"/api/v1/voice/sessions/{session_a}/answers",
+            json={"transcript": "选 B", "event_id": "evt-shared"},
+        ).json()
+        assert replay["idempotent"] is True
+
+
+def test_repo_rejects_cross_session_event_id() -> None:
+    """repository 兜底：并发竞态下跨会话 event_id 同样拒绝（ValueError）。"""
+    app = create_app(SQLITE_URL)
+    with TestClient(app) as client:
+        exam_id = _start_exam(client)
+        session_a = _waiting_session(client, exam_id)
+        client.post(
+            f"/api/v1/voice/sessions/{session_a}/answers",
+            json={"transcript": "选 B", "event_id": "evt-race"},
+        )
+        repo = app.state.voice_answer_events
+        with pytest.raises(ValueError, match="其他会话"):
+            asyncio.run(
+                repo.record(
+                    event_id="evt-race",
+                    session_id="vs-attacker",
+                    exam_id=exam_id,
+                    question_id="q1",
+                    normalized_answer="C",
+                    intent="choose_option",
+                    transcript="选 C",
+                    confidence=0.0,
+                    accepted=True,
+                )
+            )

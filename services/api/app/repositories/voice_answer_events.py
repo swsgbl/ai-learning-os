@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.db.orm import VoiceAnswerEventRow
 from app.repositories.memory import utc_now
 
+_EVENT_ID_CONFLICT = "event_id 已被其他会话使用"
+
 
 def _from_db(value: datetime) -> datetime:
     if value.tzinfo is None:
@@ -48,6 +50,8 @@ class VoiceAnswerEventRepository:
         async with self._sessionmaker() as session, session.begin():
             existing = await session.get(VoiceAnswerEventRow, event_id)
             if existing is not None:
+                if existing.session_id != session_id:
+                    raise ValueError(_EVENT_ID_CONFLICT)  # 跨会话复用 event_id → 拒绝，不读他人事件
                 return self._to_view(existing)
             row = VoiceAnswerEventRow(
                 event_id=event_id,
@@ -65,10 +69,12 @@ class VoiceAnswerEventRepository:
             try:
                 await session.flush()
             except IntegrityError:
-                # 并发重放撞主键：回读既有行，幂等返回。
+                # 并发重放撞主键：回读既有行，幂等返回（跨会话冲突 → 拒绝）。
                 existing = await session.get(VoiceAnswerEventRow, event_id)
                 if existing is None:
                     raise
+                if existing.session_id != session_id:
+                    raise ValueError(_EVENT_ID_CONFLICT) from None
                 return self._to_view(existing)
             return self._to_view(row)
 
