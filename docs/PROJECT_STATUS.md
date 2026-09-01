@@ -9,7 +9,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-M6-06 Backup/restore drill（下一任务：数据库、对象存储和配置可备份；恢复后考试与报告仍可读）
+M6-06 Backup/restore drill 已完成（feature/M6-06-backup-drill 分支：SQLAlchemy 逻辑备份三件套 + manifest 完整性 fail-closed + drill 隔离演练；pytest 609 passed + ruff 全绿；CLI 备份 26 表→真实服务恢复后考试/报告/提交/试卷全部 200 可读；待提交合并）
 
 ## 已完成任务
 
@@ -66,6 +66,7 @@ M6-06 Backup/restore drill（下一任务：数据库、对象存储和配置可
 | M5-05 Course importer | be11c3d, merge 589d49c | pytest 514 passed（含真实 PG 5433，基线 497→514 +17）：域层 11 测（门禁全拒 4 种 NOT_ADMISSIBLE 状态+原因可见、非法 license_state 拒绝——门禁只认记录快照不接受声明；PUBLIC_ACCESS→FULL/OPEN_LICENSE→ATTRIBUTION_REQUIRED/RESTRICTED_NON_COMMERCIAL→NON_COMMERCIAL_ONLY 三种准入快照正确；概念提取两种确定性模式（「X 的定义/性质/运算/公式/定理」+「名词解释：X」）、去重保序、上限 50 截断、无命中空列表不虚报；草稿 note 有/无概念两态）；API 6 测（闭环 approve、reject+队列过滤、UNKNOWN 403 带原因（默认上传即 UNKNOWN 门禁默认拒绝）、资源 404、草稿 404、无 DB 503）；真实服务冒烟 6 项 PASS（source 认定 OPEN_LICENSE→upload 继承→parse→草稿 201 概念提取【拉格朗日中值定理】+admission 快照→队列可查→approve 终态→UNKNOWN 403 原因可见） | 下一步 M5-06 | 2026-09-01 |
 | M5-06 Paper extractor | 4bde9a2, merge baa3dc0 | pytest 525 passed（含真实 PG 5433，基线 514→525 +11）：域层 6 测（完整试卷字段断言——题号/题型/分值/页码/选项；段标题判定规则（中文序号长行 OK、短行 OK、题号行与长题干预线拒绝）；无关键词 None 不虚报题型；无题空列表+note 明示「未识别出题目」；unknown 题型+None 分值不虚报；同输入两次抽取恒同）；API 5 测（201 闭环——页码/题型/分值经 API 透传+approve 终态+409；资源 404；未解析 409 带 parse_status 原因；草稿 404；无 DB 503）；真实服务冒烟 7 项 PASS（直插 PG 资源+带页码 chunks → HTTP 抽取 201 三题——mcq 3.0 页1、fill_blank 4.0 页2、fill_blank 5.0 页2 题干覆盖；approve 200→409；资源 404；pending 队列可见）| 下一步 M5-07 | 2026-09-01 |
 | M5-07 Course generation workflow | 711e296, merge 5ea07b3 | pytest 535 passed（含真实 PG 5433，基线 525→535 +10）：域层 4 测（概念匹配 canonical+alias 子串保序、先修传递闭包 set 断言、八阶段全链路结构断言——拓扑序 [极限,导数,积分]/章节号 1..3/资源挂接/模板习题 kind=template/补救映射 review_chapters=[[],[1],[2]]、无匹配 NoCompetencyMatch 拒绝空课程、同输入两次生成恒同）；API 6 测（201 生成闭环——plan 全结构断言+资源按 resource_id 去重挂接+note 明示无资源概念+approve 终态+409、DAG 未发布 409、无匹配 422 拒绝空课程、空白 goal 422、草稿 404+MISSING 404、无 DB 503）；真实服务冒烟 9 项 PASS（publish DAG v76 → HTTP 生成 201 三章——拓扑 [极限,导数,积分]、资源检索命中 res_m507_deriv/res_m507_int 及历史语料按资源去重挂接、模板习题、补救 [2]、queue/detail/approve 200→409 终态、404、无匹配 422） | 下一步 M5-08 | 2026-09-01 |
+| M6-06 Backup/restore drill | COMMITHASH, merge MERGEHASH | pytest 609 passed（含真实 PG 5433，基线 606→609 +3，另 MinIO 门控测试带 AIOS_S3_TEST_ENDPOINT 时 +1）：域层/编排 4 测（SQLite 全链路 roundtrip——备份含 DB+对象+配置三件套、manifest 表计数与文件 hash 完整、擦空库恢复后考试/报告逐字全等+配置逐字节一致；篡改 database.json 恢复拒绝 fail-closed 且目标库逐表行数不被触碰；MinIO 真实对象存储独立 bucket roundtrip 2 对象 hash 一致；PG drill 独立库重建恢复——主库 4769 行备份→drill 库 DROP WITH (FORCE) 重建+脏数据 seed→restore 全量替换→考试/报告全等（排除 remaining_seconds/server_remaining_seconds 两个墙钟动态字段））；CLI（python -m app.ops.cli backup/restore，--db-url/--out/--s3-endpoint/bucket/access-key/secret-key/--config，env 回退 DATABASE_URL/S3_*）；真实服务冒烟 PASS：CLI 备份主库（aios-backup-v1 tables: 26 files: 4）→ psql 建 aios_smoke_drill → uvicorn 8027 起一次建表 seed → CLI restore（restore ok: inserted 4769 rows）→ 重启 uvicorn 恢复库后 GET exam/submission/report/papers 全 200，submission score=67 与备份快照逐字一致 | 下一步 M6-07 | 2026-09-01 |
 | M6-05 Security suite | 07a8373, merge a6980c4 | pytest 606 passed（含真实 PG 5433，基线 591→606 +15）：五类安全面集中回归 15 测——SSRF（云元数据端点 169.254.169.254 拒绝、DNS 解析到私网 10.x/172.16 拒绝、域层 check_url_safety 理由可见）、sandbox escape（sympy 字符白名单：__import__/open/dunder 全部进复核不执行、mcq+math 双入口验证）、注入（SQL 元字符 id 四路由 404/int 路径 422 类型拒绝、后续请求存活；SQL 元字符答案 fail-closed 判错；恶意文件名上传 storage_key 内容寻址三段式 uploads/{2hex}/{64hex} 无用户路径成分；坏 JSON parse 显式 422 安全降级不 500）、密钥泄露（voice/search providers 视图无 sk-/AKIA/ghp_/xoxb/PEM 形态；.env.example+compose+livekit.yaml 仓库配置扫描无生产密钥形态——dev 占位值合法）、越权（交卷后建语音会话 409 答案封存、跨会话 event_id 复用 409 状态不扰动——M4-05 套件级守卫、终态草稿 approve→reject 与 reject→approve 双向 409）；真实服务冒烟 6 项 PASS（uvicorn 8026+PG：file 协议 403、元数据 IP 403 带原因、metadata.google.internal 解析失败拒绝、SQLi id 404、交卷后语音 409「考试状态 submitted 不允许语音作答」、providers 无密钥形态） | 下一步 M6-06 | 2026-09-01 |
 | M6-04 Prompt injection suite | b3130fe, merge d6f1632 | pytest 591 passed（含真实 PG 5433，基线 576→591 +15）：四类不变量回归套件 15 测——license 状态向量（恶意文档正文惰性落库 license 保持 UNKNOWN + 复用门禁 403 原因可见；未 verify 来源带注入文档上传 403 不存正文、来源状态不变）、审核队列向量（文档自称「自动通过」无效，唯一离队路径=人工 approve 端点、重复审核 409）、语音注入向量（探针固化 5 案：裸注入/英文注入/时间注入→unknown、答案+注入→槽位优先 choose B、成绩注入→含糊澄清；API 层 unknown 不应用 FSM 状态不变、含糊只进澄清环且不落半成品答案、注入尾巴交卷/改分零效果）、时间向量（答题载荷伪造 end_at/started_at/remaining_seconds/admin_override 被 pydantic 丢弃、服务端时间不动；提交载荷注入字段幂等收敛同一 submission、duration 服务端时钟）、成绩向量（注入答案判 0 分、正确字母+注入尾巴 fail-closed 判错不猜、report 分数只来自服务端判定）、检索面（注入文本 snippet 逐字惰性透传、重复查询恒同无副作用）；真实服务冒烟 8 项 PASS（真实 PG 主库全链路：上传 UNKNOWN→parse→门禁 403「资源授权状态 UNKNOWN 不可复用」→搜索惰性→语音注入 fsm_applied=false→伪造时间被丢弃 end_at 不动→注入提交幂等→注入答案 0 分/正常答案满分/报告 1.0 分服务端判定） | 下一步 M6-05 | 2026-09-01 |
 | M6-03 Citation eval | 113ef28, merge cbaafcf | pytest 576 passed（含真实 PG 5433，基线 566→576 +10）：域层 7 测（outline→concept 映射抽取、样本内全取保序、等步长抽样确定性 100→20 两次恒同、三态判定——OK/资源重解析陈旧 snippet/资源不存在、0.9 阈值边界达标、低于目标 failed、空引用拒绝）；API 3 测（种子草稿+chunk→runs 201 rate 1.0→report 一致→list→detail→404、无草稿 422 不虚报有效率、无 DB 503）；真实服务冒烟 5 项 PASS（主库真实数据 27 条引用抽样 14 条有效率 1.0≥0.9、run 201、list、detail、404） | 下一步 M6-04 | 2026-09-01 |
@@ -77,7 +78,7 @@ M6-06 Backup/restore drill（下一任务：数据库、对象存储和配置可
 
 - [x] M4-01~09 Voice（9/9 ✅ 2026-09-01 收官）
 - [x] M5-01~08 Search + 治理（8/8 完成：M5-01 ✅ M5-02 ✅ M5-03 ✅ M5-04 ✅ M5-05 ✅ M5-06 ✅ M5-07 ✅ M5-08 ✅）
-- [ ] M6-01~07 评测/安全/备份（5/7：M6-01~05 ✅，进行中 M6-06）
+- [ ] M6-01~07 评测/安全/备份（6/7：M6-01~06 ✅，进行中 M6-07）
 - [ ] M7-01~06 Release
 
 ## 阻塞与风险
@@ -151,9 +152,11 @@ M6-06 Backup/restore drill（下一任务：数据库、对象存储和配置可
 | 51 | 引用评测不虚报：引用仅取自课程草稿实际挂接的资源（M5-07 检索命中非虚构），判定=资源存在且 snippet 确实出现在该资源 chunk 正文中（资源重解析导致 snippet 陈旧会被如实判失效）；无可抽样引用 422 拒绝（不出具空报告冒充达标）；抽样按排序等步长无随机——同库态恒同；invalid 全字段透出；kind=citation 复用 eval_runs 表 | M6-03 验收「抽样解释的 evidence 有效率 >= 90%」 | 2026-09-01 |
 | 52 | 注入套件四类不变量（探针先行实证）：license 状态只认来源授权快照——文档/网页正文是惰性数据，parse→chunk→检索全链路不执行内容指令；语音意图词汇表无特权动作——注入 transcript 最多解析为 unknown/槽位/含糊澄清，绝无改 license/时间/成绩的意图；时间服务端权威——契约外字段（end_at/admin_override/remaining_seconds）被 pydantic 丢弃，提交幂等按服务端时钟；判分只看答案字面量——注入尾巴 fail-closed 判错（正确字母+注入尾巴也判错，不猜测清洗）；审核草稿唯一离队路径=人工端点 | M6-04 验收「恶意网页/文档/语音命令不能改变权限、时间、成绩和 license 状态」 | 2026-09-01 |
 | 53 | 安全套件为五面集中回归（增量优先、复用既有专项测试）：SSRF 补云元数据端点与 DNS rebinding 形（169.254.169.254/解析到私网域名一律拒绝）；sandbox escape 依赖 sympy 字符白名单（escape 载荷进复核绝不执行，mcq/math 双入口同语义）；注入面 fail-closed 三态（元字符 id 404/int 参数 422/元字符答案判错）+ 上传路径穿越由内容寻址存储天然免疫（storage_key=uploads/{2hex}/{64hex} 与用户文件名无关）；密钥面双层（API 视图无密钥值形态 + 仓库配置扫描无生产密钥形态、dev 占位值显式合法）；越权面守住生命周期边界（终态考试拒新语音会话、跨会话 event_id 409、终态草稿双向不可逆） | M6-05 验收「越权、SSRF、密钥泄露、注入和 sandbox escape 全部有回归测试」 | 2026-09-01 |
+| 54 | 备份三件套为 SQLAlchemy 逻辑备份（ORM 反射全表→JSON 快照，SQLite/PG 同一路径，零外部依赖真实实现；pg_dump/mc mirror 可按同协议替换）；manifest 为完整性真相源——记录 schema 版本/时间/表计数/全文件 sha256，恢复前强制校验，文件集或任一 hash 不符 fail-closed 拒绝恢复（BackupIntegrityError），且校验先行——目标库/存储在通过校验前不被触碰；restore 语义=全量替换（逆拓扑序 delete + 拓扑序 insert，单事务，目标库可重复演练）；drill 用独立库（DROP WITH (FORCE) 重建）与独立 bucket 隔离不碰主库；动态墙钟字段（remaining_seconds/server_remaining_seconds）随时间自然漂移，不参与逐字比对 | M6-06 验收「数据库、对象存储和配置可备份；恢复后考试与报告仍可读」 | 2026-09-01 |
+
 ## 下一任务
 
-M6-05 完成（五类安全面 15 测集中回归 + 冒烟 6 项：SSRF/escape/注入/泄密/越权全 fail-closed）。下一任务 M6-06 Backup/restore drill：数据库、对象存储和配置可备份；恢复后考试与报告仍可读。
+M6-06 完成（备份三件套 4 测 drill 套件 + 冒烟：CLI 备份 26 表→真实服务恢复后考试/报告/提交/试卷全 200 可读，篡改备份 fail-closed，MinIO/PG 独立演练隔离）。下一任务 M6-07 Load and reliability：非模型 API p95≤500ms；自动提交和评分任务重试不丢失。
 
 ## 追加：M0 收尾验证（compose 全栈）
 
