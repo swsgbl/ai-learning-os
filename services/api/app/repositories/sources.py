@@ -5,6 +5,7 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.orm import SourceRow
@@ -44,10 +45,23 @@ class SourceRepository:
             return 6
 
     async def create(self, record: SourceRecord) -> SourceRecord:
+        # id 与 name 均有唯一约束；冲突显式转 ValueError（路由层映射 409），
+        # 不让 IntegrityError 冒泡成 500。预检 + 约束兜底双保险（并发窗口）。
         async with self._sessionmaker() as session, session.begin():
             if await session.get(SourceRow, record.id):
                 raise ValueError("source id already exists")
-            session.add(self._row(record))
+            name_taken = await session.scalar(
+                select(SourceRow.id).where(SourceRow.name == record.name).limit(1)
+            )
+            if name_taken:
+                raise ValueError("source name already exists")
+            try:
+                session.add(self._row(record))
+                await session.flush()
+            except IntegrityError as cause:
+                raise ValueError(
+                    "source id/name already exists (concurrent insert)"
+                ) from cause
         return record
 
     async def get(self, source_id: str) -> SourceRecord | None:

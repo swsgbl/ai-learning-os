@@ -87,3 +87,27 @@ def test_sources_api_requires_database() -> None:
     with TestClient(create_app()) as client:
         response = client.get("/api/v1/sources")
         assert response.status_code == 503
+
+
+def test_create_source_duplicate_name_returns_409_not_500() -> None:
+    """M7-02 冒烟发现：name 撞 uq_sources_name 唯一约束曾 500（IntegrityError 冒泡）。
+
+    现语义与 id 冲突对齐：同 name 不同 id 的新建返回 409，原因可见。
+    """
+    from fastapi.testclient import TestClient
+
+    from app.main import create_app
+
+    with TestClient(create_app("sqlite+aiosqlite:///:memory:")) as client:
+        body = {
+            "name": "dup-name-source",
+            "source_type": "oer",
+            "homepage": "https://example.edu/",
+            "license_state": "OPEN_LICENSE",
+        }
+        first = client.post("/api/v1/sources", json={"id": "src_dup_name_a", **body})
+        assert first.status_code == 201, first.text
+
+        dup = client.post("/api/v1/sources", json={"id": "src_dup_name_b", **body})
+        assert dup.status_code == 409, dup.text
+        assert "name" in dup.json()["detail"]
