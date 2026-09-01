@@ -9,7 +9,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-M6-03 Citation eval（feature/M6-03-citation-eval 分支已完成域层/路由/测试，pytest 576 + ruff 全绿，冒烟 5 项 PASS（主库 27 引用抽样 14 全有效），待提交合并）
+M6-04 Prompt injection suite（feature/M6-04-prompt-injection 分支已完成 15 测套件，pytest 591 + ruff 全绿，冒烟 8 项 PASS，待提交合并）
 
 ## 已完成任务
 
@@ -66,6 +66,7 @@ M6-03 Citation eval（feature/M6-03-citation-eval 分支已完成域层/路由/�
 | M5-05 Course importer | be11c3d, merge 589d49c | pytest 514 passed（含真实 PG 5433，基线 497→514 +17）：域层 11 测（门禁全拒 4 种 NOT_ADMISSIBLE 状态+原因可见、非法 license_state 拒绝——门禁只认记录快照不接受声明；PUBLIC_ACCESS→FULL/OPEN_LICENSE→ATTRIBUTION_REQUIRED/RESTRICTED_NON_COMMERCIAL→NON_COMMERCIAL_ONLY 三种准入快照正确；概念提取两种确定性模式（「X 的定义/性质/运算/公式/定理」+「名词解释：X」）、去重保序、上限 50 截断、无命中空列表不虚报；草稿 note 有/无概念两态）；API 6 测（闭环 approve、reject+队列过滤、UNKNOWN 403 带原因（默认上传即 UNKNOWN 门禁默认拒绝）、资源 404、草稿 404、无 DB 503）；真实服务冒烟 6 项 PASS（source 认定 OPEN_LICENSE→upload 继承→parse→草稿 201 概念提取【拉格朗日中值定理】+admission 快照→队列可查→approve 终态→UNKNOWN 403 原因可见） | 下一步 M5-06 | 2026-09-01 |
 | M5-06 Paper extractor | 4bde9a2, merge baa3dc0 | pytest 525 passed（含真实 PG 5433，基线 514→525 +11）：域层 6 测（完整试卷字段断言——题号/题型/分值/页码/选项；段标题判定规则（中文序号长行 OK、短行 OK、题号行与长题干预线拒绝）；无关键词 None 不虚报题型；无题空列表+note 明示「未识别出题目」；unknown 题型+None 分值不虚报；同输入两次抽取恒同）；API 5 测（201 闭环——页码/题型/分值经 API 透传+approve 终态+409；资源 404；未解析 409 带 parse_status 原因；草稿 404；无 DB 503）；真实服务冒烟 7 项 PASS（直插 PG 资源+带页码 chunks → HTTP 抽取 201 三题——mcq 3.0 页1、fill_blank 4.0 页2、fill_blank 5.0 页2 题干覆盖；approve 200→409；资源 404；pending 队列可见）| 下一步 M5-07 | 2026-09-01 |
 | M5-07 Course generation workflow | 711e296, merge 5ea07b3 | pytest 535 passed（含真实 PG 5433，基线 525→535 +10）：域层 4 测（概念匹配 canonical+alias 子串保序、先修传递闭包 set 断言、八阶段全链路结构断言——拓扑序 [极限,导数,积分]/章节号 1..3/资源挂接/模板习题 kind=template/补救映射 review_chapters=[[],[1],[2]]、无匹配 NoCompetencyMatch 拒绝空课程、同输入两次生成恒同）；API 6 测（201 生成闭环——plan 全结构断言+资源按 resource_id 去重挂接+note 明示无资源概念+approve 终态+409、DAG 未发布 409、无匹配 422 拒绝空课程、空白 goal 422、草稿 404+MISSING 404、无 DB 503）；真实服务冒烟 9 项 PASS（publish DAG v76 → HTTP 生成 201 三章——拓扑 [极限,导数,积分]、资源检索命中 res_m507_deriv/res_m507_int 及历史语料按资源去重挂接、模板习题、补救 [2]、queue/detail/approve 200→409 终态、404、无匹配 422） | 下一步 M5-08 | 2026-09-01 |
+| M6-04 Prompt injection suite | COMMITHASH, merge MERGEHASH | pytest 591 passed（含真实 PG 5433，基线 576→591 +15）：四类不变量回归套件 15 测——license 状态向量（恶意文档正文惰性落库 license 保持 UNKNOWN + 复用门禁 403 原因可见；未 verify 来源带注入文档上传 403 不存正文、来源状态不变）、审核队列向量（文档自称「自动通过」无效，唯一离队路径=人工 approve 端点、重复审核 409）、语音注入向量（探针固化 5 案：裸注入/英文注入/时间注入→unknown、答案+注入→槽位优先 choose B、成绩注入→含糊澄清；API 层 unknown 不应用 FSM 状态不变、含糊只进澄清环且不落半成品答案、注入尾巴交卷/改分零效果）、时间向量（答题载荷伪造 end_at/started_at/remaining_seconds/admin_override 被 pydantic 丢弃、服务端时间不动；提交载荷注入字段幂等收敛同一 submission、duration 服务端时钟）、成绩向量（注入答案判 0 分、正确字母+注入尾巴 fail-closed 判错不猜、report 分数只来自服务端判定）、检索面（注入文本 snippet 逐字惰性透传、重复查询恒同无副作用）；真实服务冒烟 8 项 PASS（真实 PG 主库全链路：上传 UNKNOWN→parse→门禁 403「资源授权状态 UNKNOWN 不可复用」→搜索惰性→语音注入 fsm_applied=false→伪造时间被丢弃 end_at 不动→注入提交幂等→注入答案 0 分/正常答案满分/报告 1.0 分服务端判定） | 下一步 M6-05 | 2026-09-01 |
 | M6-03 Citation eval | 113ef28, merge cbaafcf | pytest 576 passed（含真实 PG 5433，基线 566→576 +10）：域层 7 测（outline→concept 映射抽取、样本内全取保序、等步长抽样确定性 100→20 两次恒同、三态判定——OK/资源重解析陈旧 snippet/资源不存在、0.9 阈值边界达标、低于目标 failed、空引用拒绝）；API 3 测（种子草稿+chunk→runs 201 rate 1.0→report 一致→list→detail→404、无草稿 422 不虚报有效率、无 DB 503）；真实服务冒烟 5 项 PASS（主库真实数据 27 条引用抽样 14 条有效率 1.0≥0.9、run 201、list、detail、404） | 下一步 M6-04 | 2026-09-01 |
 | M6-02 Voice eval set | b3e5e6a, merge a01269a | pytest 566 passed（含真实 PG 5433，基线 557→566 +9）：域层 6 测（30 案唯一 id+六类全覆盖、全量 accuracy==1.0+无 mismatch、同输入两次字节级一致、注入坏 case accuracy 30/31+mismatch 全字段透出、空集拒绝、parser 缺口修复回归——选的是A→choose A/选项再念一遍→repeat_options/重复选项不回归）；API 3 测（report 无 DB 恒可用 200 两次一致、runs 落库 kind=voice agreement 承载 accuracy→list→detail 回查→404、无 DB 503）；真实服务冒烟 5 项 PASS（report 200 确定性、run 201、list、detail、404） | 下一步 M6-03 | 2026-09-01 |
 | M6-01 Golden grading set | dd16093, merge 92b7245 | pytest 557 passed（含真实 PG 5433，基线 548→557 +9）：域层 5 测（coverage_complete 全题型覆盖 issubset、28 案全对 agreement==1.0+三规则版本、同输入两次报告字节级一致、mismatch 透明注入坏 case 显露、空 golden set 拒绝）；judge_case 3 测（按 case_id 路由 mcq/tf/numeric/math/essay 抽查全对）；API 3 测（report 无 DB 恒可用 200、runs 落库 201→list→detail 回查含 report dict 与 created_at 前缀、无 DB runs 503）；真实服务冒烟 5 项 PASS（report 200 agreement 1.0 两次一致、run 201 id=1 eval-v1、list runs=1、detail 200、404） | 下一步 M6-02 | 2026-09-01 |
@@ -75,7 +76,7 @@ M6-03 Citation eval（feature/M6-03-citation-eval 分支已完成域层/路由/�
 
 - [x] M4-01~09 Voice（9/9 ✅ 2026-09-01 收官）
 - [x] M5-01~08 Search + 治理（8/8 完成：M5-01 ✅ M5-02 ✅ M5-03 ✅ M5-04 ✅ M5-05 ✅ M5-06 ✅ M5-07 ✅ M5-08 ✅）
-- [ ] M6-01~07 评测/安全/备份（3/7：M6-01~03 ✅，进行中 M6-04）
+- [ ] M6-01~07 评测/安全/备份（4/7：M6-01~04 ✅，进行中 M6-05）
 - [ ] M7-01~06 Release
 
 ## 阻塞与风险
@@ -147,9 +148,10 @@ M6-03 Citation eval（feature/M6-03-citation-eval 分支已完成域层/路由/�
 | 49 | 评测 golden set 的 expected_verdict 全部先经 grader 探针实测后固化（不虚报预期）：28 案覆盖 8 题型+别名归一+unknown 桶，judge_case 按 question_type 路由到 grade_answer/grade_numeric/grade_math/judge_question+KeywordRubricJudge；run_grading_eval 报告无时间戳无随机——同输入两次字节级一致（可重复 CI 门禁）；per_type 全量透出、mismatch 案例透明列出（不虚报 agreement）；运行结果落 eval_runs 表（kind/rule_version/case_count/agreement/report）可回查 | M6-01 验收「golden set 判分 100%、判分记录规则版本与输入事件」 | 2026-09-01 |
 | 50 | 语音评测集 expected 先经 parser 探针实测并修复真实缺口后固化（探针暴露「等等 我选的是A」→unknown 应为 choose A、「选项再念一遍」→unknown 应为 repeat_options 两个缺口，先修 parser 再固化预期）：30 案六类覆盖（噪声填充词/杂音、方言词形、打断词先行、中阿序号+数值答案转澄清、公式陈述不误标、命令全谱），accuracy=matched/total 可计算、per_category 分类统计、mismatch 全量透出（不虚报准确率）；报告无时间戳无随机字节级一致；kind=voice 复用 eval_runs 表（agreement 列语义=本次评测头部分数），无新迁移 | M6-02 验收「覆盖噪声、口音、打断、数字、公式和命令；意图准确率可计算」 | 2026-09-01 |
 | 51 | 引用评测不虚报：引用仅取自课程草稿实际挂接的资源（M5-07 检索命中非虚构），判定=资源存在且 snippet 确实出现在该资源 chunk 正文中（资源重解析导致 snippet 陈旧会被如实判失效）；无可抽样引用 422 拒绝（不出具空报告冒充达标）；抽样按排序等步长无随机——同库态恒同；invalid 全字段透出；kind=citation 复用 eval_runs 表 | M6-03 验收「抽样解释的 evidence 有效率 >= 90%」 | 2026-09-01 |
+| 52 | 注入套件四类不变量（探针先行实证）：license 状态只认来源授权快照——文档/网页正文是惰性数据，parse→chunk→检索全链路不执行内容指令；语音意图词汇表无特权动作——注入 transcript 最多解析为 unknown/槽位/含糊澄清，绝无改 license/时间/成绩的意图；时间服务端权威——契约外字段（end_at/admin_override/remaining_seconds）被 pydantic 丢弃，提交幂等按服务端时钟；判分只看答案字面量——注入尾巴 fail-closed 判错（正确字母+注入尾巴也判错，不猜测清洗）；审核草稿唯一离队路径=人工端点 | M6-04 验收「恶意网页/文档/语音命令不能改变权限、时间、成绩和 license 状态」 | 2026-09-01 |
 ## 下一任务
 
-M6-03 完成（引用有效率抽样评测 1.0≥0.9 达标 + 陈旧 snippet/缺资源如实判失效）。下一任务 M6-04 Prompt injection suite：恶意网页/文档/语音命令不能改变权限、时间、成绩和 license 状态。
+M6-04 完成（四类不变量 15 测回归套件 + 冒烟 8 项：license/时间/成绩/审核面注入全部无效）。下一任务 M6-05 Security suite：越权、SSRF、密钥泄露、注入和 sandbox escape 全部有回归测试。
 
 ## 追加：M0 收尾验证（compose 全栈）
 
