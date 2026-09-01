@@ -496,3 +496,18 @@ class VariantQuestionDraftRow(Base):
     review_note: Mapped[str | None] = mapped_column(String(512), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+
+class EvalRunRow(Base):
+    """M6-01 评测运行记录：golden set agreement report 落库可回查。"""
+
+    __tablename__ = "eval_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(String(32), index=True)
+    rule_version: Mapped[str] = mapped_column(String(64))
+    case_count: Mapped[int] = mapped_column(Integer)
+    agreement: Mapped[float | None] = mapped_column(nullable=True)
+    report: Mapped[dict] = mapped_column(JSON)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
