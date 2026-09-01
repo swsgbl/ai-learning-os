@@ -9,7 +9,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-M5-07 Course generation workflow（feature/M5-07-course-workflow 分支已建，域层/存储/路由/测试已完成，pytest 535 + ruff 全绿，冒烟 PASS，待提交合并）
+M5-08 Variant question generator（feature/M5-08-variant-generator 分支已建，域层/存储/路由/测试已完成，pytest 548 + ruff 全绿，冒烟 PASS，待提交合并）
 
 ## 已完成任务
 
@@ -66,11 +66,12 @@ M5-07 Course generation workflow（feature/M5-07-course-workflow 分支已建，
 | M5-05 Course importer | be11c3d, merge 589d49c | pytest 514 passed（含真实 PG 5433，基线 497→514 +17）：域层 11 测（门禁全拒 4 种 NOT_ADMISSIBLE 状态+原因可见、非法 license_state 拒绝——门禁只认记录快照不接受声明；PUBLIC_ACCESS→FULL/OPEN_LICENSE→ATTRIBUTION_REQUIRED/RESTRICTED_NON_COMMERCIAL→NON_COMMERCIAL_ONLY 三种准入快照正确；概念提取两种确定性模式（「X 的定义/性质/运算/公式/定理」+「名词解释：X」）、去重保序、上限 50 截断、无命中空列表不虚报；草稿 note 有/无概念两态）；API 6 测（闭环 approve、reject+队列过滤、UNKNOWN 403 带原因（默认上传即 UNKNOWN 门禁默认拒绝）、资源 404、草稿 404、无 DB 503）；真实服务冒烟 6 项 PASS（source 认定 OPEN_LICENSE→upload 继承→parse→草稿 201 概念提取【拉格朗日中值定理】+admission 快照→队列可查→approve 终态→UNKNOWN 403 原因可见） | 下一步 M5-06 | 2026-09-01 |
 | M5-06 Paper extractor | 4bde9a2, merge baa3dc0 | pytest 525 passed（含真实 PG 5433，基线 514→525 +11）：域层 6 测（完整试卷字段断言——题号/题型/分值/页码/选项；段标题判定规则（中文序号长行 OK、短行 OK、题号行与长题干预线拒绝）；无关键词 None 不虚报题型；无题空列表+note 明示「未识别出题目」；unknown 题型+None 分值不虚报；同输入两次抽取恒同）；API 5 测（201 闭环——页码/题型/分值经 API 透传+approve 终态+409；资源 404；未解析 409 带 parse_status 原因；草稿 404；无 DB 503）；真实服务冒烟 7 项 PASS（直插 PG 资源+带页码 chunks → HTTP 抽取 201 三题——mcq 3.0 页1、fill_blank 4.0 页2、fill_blank 5.0 页2 题干覆盖；approve 200→409；资源 404；pending 队列可见）| 下一步 M5-07 | 2026-09-01 |
 | M5-07 Course generation workflow | 711e296, merge 5ea07b3 | pytest 535 passed（含真实 PG 5433，基线 525→535 +10）：域层 4 测（概念匹配 canonical+alias 子串保序、先修传递闭包 set 断言、八阶段全链路结构断言——拓扑序 [极限,导数,积分]/章节号 1..3/资源挂接/模板习题 kind=template/补救映射 review_chapters=[[],[1],[2]]、无匹配 NoCompetencyMatch 拒绝空课程、同输入两次生成恒同）；API 6 测（201 生成闭环——plan 全结构断言+资源按 resource_id 去重挂接+note 明示无资源概念+approve 终态+409、DAG 未发布 409、无匹配 422 拒绝空课程、空白 goal 422、草稿 404+MISSING 404、无 DB 503）；真实服务冒烟 9 项 PASS（publish DAG v76 → HTTP 生成 201 三章——拓扑 [极限,导数,积分]、资源检索命中 res_m507_deriv/res_m507_int 及历史语料按资源去重挂接、模板习题、补救 [2]、queue/detail/approve 200→409 终态、404、无匹配 422） | 下一步 M5-08 | 2026-09-01 |
+| M5-08 Variant question generator | COMMITHASH, merge MERGEHASH | pytest 548 passed（含真实 PG 5433，基线 535→548 +13）：域层 7 测（语境替换全部命中实体换/数值选项不动解不变、数值 x2 相同数字同映射 5->10 两处一致+选项同步 [6,10,14,20]、概念映射逐题继承+evidence 完整（题号/页码/资源/stem 摘录）、0 变式题明示不硬凑、确定性、空 questions 拒绝、小数精确 x2 0.5->1）；API 6 测（201 生成闭环——variants 全结构断言+approve 终态+409、全部源题 0 变式 422 不虚报空草稿、未知题型 422、空 questions 422、404、无 DB 503）；真实服务冒烟 7 项 PASS（HTTP 生成 201 两变式——语境替换「小红有 5 个橙子」解不变+x2 重标定选项同步、概念映射 c_deriv 与 evidence 资源/题号保留、queue/detail/approve 200→409 终态、404、全无解 422） | 下一步 M6-01 | 2026-09-01 |
 
 ## 待办任务（按 backlog 顺序）
 
 - [x] M4-01~09 Voice（9/9 ✅ 2026-09-01 收官）
-- [ ] M5-01~08 Search + 治理（进行中 7/8：M5-01 ✅ M5-02 ✅ M5-03 ✅ M5-04 ✅ M5-05 ✅ M5-06 ✅ M5-07 ✅）
+- [x] M5-01~08 Search + 治理（8/8 完成：M5-01 ✅ M5-02 ✅ M5-03 ✅ M5-04 ✅ M5-05 ✅ M5-06 ✅ M5-07 ✅ M5-08 ✅）
 - [ ] M6-01~07 评测/安全/备份
 - [ ] M7-01~06 Release
 
@@ -139,9 +140,10 @@ M5-07 Course generation workflow（feature/M5-07-course-workflow 分支已建，
 
 | 46 | 试卷题目抽取为确定性规则引擎：题型段标题（中文序号前缀或短行+关键词显式映射 mcq/multiple_select/true_false/fill_blank/solved）、题号行、选项行逐行扫描；分值两级来源（段标题「每小题/每空 X 分」默认 + 题干「（X分）」覆盖），两级都无则 None（不虚报）；无段标题题型记 unknown（不猜测）；页码从 chunk.page_start/page_end 继承（题目可回溯原文页码）；无题返回空列表且 note 明示「未识别出题目」；草稿进人工审核队列（pending_review 起步，approve/reject 终态不可逆，重复审核 409）——与 ADR 45 同款审核模式；资源 parse_status != parsed 一律 409 拒绝（不虚报可抽取） | M5-06 验收「从试卷 PDF 抽取题目草稿；原文页码、题型和分值保留」 | 2026-09-01 |
 | 47 | 课程生成工作流为确定性八阶段管线（Goal->Competency->DAG->Resource->Outline->Lessons->Assessments->Remediation），不依赖 LLM：概念匹配用 canonical_name/alias 子串（保序去重）、先修闭包 DFS、拓扑排序 Kahn+字典序（同图同输入恒同序）；目标未匹配任何概念即抛 NoCompetencyMatch 拒绝生成空课程（fail-closed 不虚报）；资源按概念检索本地语料并按 resource_id 去重挂接，缺失在 generation_note 汇总明示（资源缺失不虚构）；习题为生成模板 assessment_kind=template（不虚报真题）；草稿进人工审核队列（与 ADR 45/46 同款 pending_review + 终态不可逆 409 模式） | M5-07 验收「Goal -> Competency -> DAG -> Resource -> Outline -> Lessons -> Assessments -> Remediation。」 | 2026-09-01 |
+| 48 | 变式题生成为解保持变换白名单（ADR 系列「不虚报」原则延续）：context_swap 语境实体替换（固定词典、全部命中实体都替换、数值与选项不动——解不变，可解性由构造保证）+ numeric_scale 数值精确 x2（Decimal 十进制乘 2 恒精确无舍入、相同原文数字同映射可逆、mcq/multiple_select 选项同步缩放保持题干-选项一致性）；白名单外一律不做（不盲换表面数字）；无实体命中且无数值 -> 0 变式并 note 明示（不硬凑）；全部源题 0 变式 422；变式逐题继承概念映射并携带原题 evidence（题号/页码/资源/stem 摘录）；草稿进人工审核队列（与 ADR 45/46/47 同款 pending_review + 终态不可逆 409 模式） | M5-08 验收「变式题保留概念映射和原题 evidence；不会只换表面数字导致无解」 | 2026-09-01 |
 ## 下一任务
 
-M5-07 完成（课程生成工作流八阶段确定性管线 + 人工审核队列）。下一任务 M5-08 Variant question generator：变式题生成保留概念映射与原题 evidence（不会只换表面数字导致无解）。
+M5-08 完成（变式题解保持变换白名单 + 概念映射/evidence 保留 + 审核队列）。M5 全部完成。下一任务 M6-01 Eval framework：评测框架（golden set 判分 100%、判分记录规则版本与输入事件）。
 
 ## 追加：M0 收尾验证（compose 全栈）
 

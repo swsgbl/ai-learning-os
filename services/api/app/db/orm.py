@@ -480,3 +480,19 @@ class CourseGenerationDraftRow(Base):
     review_note: Mapped[str | None] = mapped_column(String(512), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+
+class VariantQuestionDraftRow(Base):
+    """M5-08 变式题生成草稿：解保持变换产出 + 概念映射/原题 evidence 保留。"""
+
+    __tablename__ = "variant_question_drafts"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending_review", index=True)
+    variants: Mapped[dict] = mapped_column(JSON)
+    variant_count: Mapped[int] = mapped_column(Integer)
+    generation_note: Mapped[str] = mapped_column(String(512))
+    review_note: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

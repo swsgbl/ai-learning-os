@@ -22,6 +22,7 @@ from app.api.routes.sources import router as sources_router
 from app.api.routes.student import router as student_router
 from app.api.routes.system import router as system_router
 from app.api.routes.validate import router as validate_router
+from app.api.routes.variant_generator import router as variant_generator_router
 from app.api.routes.voice import router as voice_router
 from app.api.routes.web import router as web_router
 from app.core.config import get_settings
@@ -43,6 +44,7 @@ from app.repositories.resources import ResourceRepository
 from app.repositories.search_queries import SearchQueryRepository
 from app.repositories.sources import SourceRepository
 from app.repositories.student_state import StudentStateRepository
+from app.repositories.variant_question_drafts import VariantQuestionDraftRepository
 from app.repositories.voice_answer_events import VoiceAnswerEventRepository
 from app.repositories.voice_sessions import VoiceSessionRepository
 from app.repositories.voice_trace import VoiceTraceRepository
@@ -79,6 +81,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
             search_queries = SearchQueryRepository(sessionmaker)
             course_import_drafts = CourseImportDraftRepository(sessionmaker)
             course_generation_drafts = CourseGenerationDraftRepository(sessionmaker)
+            variant_question_drafts = VariantQuestionDraftRepository(sessionmaker)
             paper_question_drafts = PaperQuestionDraftRepository(sessionmaker)
             resources = ResourceRepository(sessionmaker)
             objects = make_object_store(settings)
@@ -107,6 +110,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         app.state.search_queries = search_queries if resolved_url else None
         app.state.course_import_drafts = course_import_drafts if resolved_url else None
         app.state.course_generation_drafts = course_generation_drafts if resolved_url else None
+        app.state.variant_question_drafts = variant_question_drafts if resolved_url else None
         app.state.paper_question_drafts = paper_question_drafts if resolved_url else None
         app.state.search_registry = search_registry if resolved_url else None
         app.state.resources = resources if resolved_url else None
@@ -139,6 +143,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(exams_router)
     app.include_router(concepts_router)
     app.include_router(course_workflow_router)
+    app.include_router(variant_generator_router)
     app.include_router(courses_router)
     app.include_router(student_router)
     app.include_router(misconceptions_router)
