@@ -1,0 +1,216 @@
+"""M7-05 Release checklist: executable release gate summary.
+
+Acceptance (backlog M7-05): lint / typecheck / test / build / E2E /
+migration / backup / voice / license all green.
+
+Three guard layers:
+1. coverage guard - the nine acceptance words map to real check ids
+   (no missing item, no phantom item);
+2. command assembly - local checks invoke the same commands as CI
+   (ruff / npm lint / tsc / next build / pytest / alembic / backup CLI);
+3. orchestration + live checks - run_release_check aggregates pass/fail,
+   live items (E2E walkthrough / voice / license) execute against a real
+   TestClient app; a missing client is an honest fail, never a fake green.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+
+from fastapi.testclient import TestClient
+
+from app.main import create_app
+from app.ops.release_check import (
+    ACCEPTANCE_COVERAGE,
+    DEFAULT_LIVE_CHECKS,
+    CommandCheck,
+    check_e2e,
+    check_license,
+    check_migration_current,
+    check_voice,
+    default_command_checks,
+    run_release_check,
+    summarize,
+)
+
+SQLITE_URL = "sqlite+aiosqlite:///:memory:"
+
+
+def _all_check_ids() -> set[str]:
+    cmds, lives = (
+        default_command_checks(),
+        DEFAULT_LIVE_CHECKS,
+    )
+    return {c.id for c in cmds} | {lc.id for lc in lives}
+
+
+def test_acceptance_nine_words_covered() -> None:
+    """九个验收字面每一项都映射到真实检查项（无漏项、无虚设项）。"""
+    ids = _all_check_ids()
+    covered: set[str] = set()
+    for word, check_ids in ACCEPTANCE_COVERAGE.items():
+        assert check_ids, f"acceptance word {word} maps to no check"
+        unknown = set(check_ids) - ids
+        assert not unknown, f"acceptance word {word} maps to phantom checks: {unknown}"
+        covered.add(word)
+    assert covered == set(ACCEPTANCE_COVERAGE), "coverage map drifted"
+
+
+def test_command_checks_match_ci_commands() -> None:
+    """本地命令与 CI 同构：ruff/eslint/tsc/next build/pytest/alembic/backup。"""
+    checks = {c.id: c for c in default_command_checks()}
+    assert checks["api-lint"].argv[-2:] == ("check", ".")
+    assert "ruff" in checks["api-lint"].argv
+    assert checks["web-lint"].argv == ("npm", "run", "lint")
+    assert checks["web-typecheck"].argv == ("npm", "run", "typecheck")
+    assert checks["web-build"].argv == ("npm", "run", "build")
+    assert checks["api-test"].argv[-1] == "-q"
+    assert "pytest" in checks["api-test"].argv
+    assert checks["migration"].argv[-2:] == ("upgrade", "head")
+    assert "alembic" in checks["migration"].argv
+    b = checks["backup"]
+    assert "backup" in b.argv and "--out" in b.argv
+    # cwd 真实存在（services/api 与 apps/web）
+    for c in checks.values():
+        assert c.cwd.exists(), f"cwd missing: {c.cwd}"
+    # --db-url 透传到 api-test 门控与 backup 参数
+    gated = {c.id: c for c in default_command_checks(db_url="postgresql+asyncpg://x")}
+    assert gated["api-test"].env.get("AIOS_PG_TEST_URL") == "postgresql+asyncpg://x"
+    assert "postgresql+asyncpg://x" in gated["backup"].argv
+
+
+def test_live_checks_present() -> None:
+    ids = {lc.id for lc in DEFAULT_LIVE_CHECKS}
+    assert {"e2e", "voice", "license"} <= ids
+
+
+def test_run_release_check_orchestration_all_green() -> None:
+    """假 execute 全 ok -> 10 项全 pass，live 用真实 TestClient app 全过。"""
+    cmd_checks = [
+        CommandCheck("a", "A", ("true",), Path(".")),
+        CommandCheck("b", "B", ("false",), Path(".")),
+    ]
+
+    def fake_execute(check: CommandCheck) -> tuple[bool, str]:
+        return True, "ok"
+
+    with TestClient(create_app(SQLITE_URL)) as client:
+        results = run_release_check(
+            cmd_checks, DEFAULT_LIVE_CHECKS, execute=fake_execute, client=client
+        )
+    by_id = {r.id: r for r in results}
+    assert {r.status for r in results} == {"pass"}
+    assert by_id["e2e"].kind == "live"
+    assert "walkthrough" in by_id["e2e"].detail
+
+
+def test_run_release_check_failure_is_honest() -> None:
+    """一项命令 fail -> 该项透出且整体不绿；live 缺 client -> fail 不虚报。"""
+    cmd_checks = [
+        CommandCheck("good", "G", ("true",), Path(".")),
+        CommandCheck("bad", "B", ("true",), Path(".")),
+    ]
+
+    def fake_execute(check: CommandCheck) -> tuple[bool, str]:
+        if check.id == "bad":
+            return False, "exit 1 boom"
+        return True, "ok"
+
+    results = run_release_check(cmd_checks, DEFAULT_LIVE_CHECKS, execute=fake_execute, client=None)
+    by_id = {r.id: r for r in results}
+    assert by_id["good"].status == "pass"
+    assert by_id["bad"].status == "fail"
+    assert "exit 1 boom" in by_id["bad"].detail
+    for lid in ("voice", "license", "e2e"):
+        assert by_id[lid].status == "fail"
+        assert "需要运行中的 API" in by_id[lid].detail
+    all_green, report = summarize(results)
+    assert not all_green
+    assert "FAILED" in report and "bad" in report
+
+
+def test_summarize_all_green_format() -> None:
+    results = run_release_check([], None)
+    all_green, report = summarize(results)
+    assert all_green and results == []
+    assert "ALL GREEN" in report
+
+
+def test_check_migration_current_alembic_injectable() -> None:
+    """migration 第二步 current 对账：alembic 可注入，不一致如实 fail。"""
+
+    class _FakeAlembic:
+        def __init__(self, heads: str, current: str) -> None:
+            self._heads, self._current = heads, current
+
+        def __call__(self, argv, **kw):
+            out = self._heads if argv[3] == "heads" else self._current
+
+            class P:
+                stdout = out
+                stderr = ""
+                returncode = 0
+
+            return P()
+
+    ok_case = _FakeAlembic("0046_merge (head)\n", "0046_merge\n")
+    assert "==" in check_migration_current(Path("."), alembic=ok_case)
+    bad_case = _FakeAlembic("0046_merge (head)\n", "\n")
+    try:
+        check_migration_current(Path("."), alembic=bad_case)
+    except AssertionError as exc:
+        assert "current=(none)" in str(exc)
+    else:
+        raise AssertionError("stale current must fail")
+
+
+def test_check_voice_live() -> None:
+    """voice 项真实执行：providers 视图 + synthesize 音频头。"""
+    with TestClient(create_app(SQLITE_URL)) as client:
+        detail = check_voice(client)
+    assert "voice_mode=" in detail and "audio/wav" in detail
+
+
+def test_check_license_live() -> None:
+    """license 项真实执行：report 200 + 四区段。"""
+    with TestClient(create_app(SQLITE_URL)) as client:
+        detail = check_license(client)
+    assert "api deps" in detail
+
+
+def test_check_license_missing_section_is_fail() -> None:
+    """缺区段的 report 如实 fail（不虚报四区段齐全）。"""
+
+    class _BrokenClient:
+        def get(self, path: str):
+            class R:
+                status_code = 200
+
+                def json(self):
+                    return {"dependencies": {}, "models": []}
+
+            return R()
+
+    try:
+        check_license(_BrokenClient())
+    except AssertionError as exc:
+        assert "content_sources" in str(exc)
+    else:
+        raise AssertionError("missing sections must fail")
+
+
+def test_e2e_check_runs_real_walkthrough() -> None:
+    """E2E 项 = M7-02 onboarding 全路径真实执行（非 mock）。"""
+    with TestClient(create_app(SQLITE_URL)) as client:
+        detail = check_e2e(client)
+    assert "steps" in detail
+
+
+def test_cli_release_check_registered() -> None:
+    """CLI 子命令已注册：--api-base/--db-url/--local-only 三参数可解析。"""
+    from app.ops import cli as cli_mod
+
+    assert hasattr(cli_mod, "_run_release_check")
+    src = Path(cli_mod.__file__).read_text(encoding="utf-8")
+    for kw in ("api-base", "db-url", "local-only"):
+        assert kw in src, kw
+    assert "release-check" in src

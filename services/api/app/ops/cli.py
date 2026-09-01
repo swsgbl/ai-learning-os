@@ -49,6 +49,45 @@ async def _run_restore(args) -> int:
                                  Path(args.config_target) if args.config_target else None)
     print("restore ok: inserted", inserted, "rows")
     return 0
+def _run_release_check(args) -> int:
+    """python -m app.ops.cli release-check [--api-base URL] [--db-url URL]
+
+    本地七项命令门禁默认全跑；--api-base 提供时 live 三项对运行中服务
+    执行（E2E walkthrough/voice/license）。任一 fail 退出码 1。
+    """
+    import httpx
+
+    from app.ops.release_check import (
+        build_release_checks,
+        run_release_check,
+        summarize,
+    )
+
+    cmd_checks, live_checks = build_release_checks(db_url=args.db_url)
+    client = None
+    if args.api_base and not args.local_only:
+        client = httpx.Client(
+            base_url=args.api_base, trust_env=False, timeout=600.0
+        )
+    with client or _nullcontext():
+        results = run_release_check(
+            cmd_checks, None if args.local_only else live_checks, client=client
+        )
+        all_green, report = summarize(results)
+    print(report)
+    return 0 if all_green else 1
+
+
+class _nullcontext:
+    """httpx.Client 缺席时的空上下文，保持 with 对称。"""
+
+    def __enter__(self):
+        return None
+
+    def __exit__(self, *exc):
+        return False
+
+
 async def _run_license_report(args) -> int:
     """license-report 子命令：输出四区段授权清单 JSON（无 DB 时含说明段）。"""
     import json as _json
@@ -134,11 +173,19 @@ def main() -> None:
     p_l = sub.add_parser("license-report", help="依赖/模型/内容源/派生对象授权清单")
     p_l.add_argument("--db-url", default=None)
     p_l.add_argument("--requirements", default=None)
+    p_rc = sub.add_parser(
+        "release-check", help="发布门禁汇总（lint/typecheck/test/build/migration/backup + live 项）"
+    )
+    p_rc.add_argument("--api-base", default="http://127.0.0.1:8000")
+    p_rc.add_argument("--db-url", default=None)
+    p_rc.add_argument("--local-only", action="store_true", help="跳过 live 项（不依赖运行中服务）")
     args = parser.parse_args()
     if args.command == "backup":
         raise SystemExit(asyncio.run(_run_backup(args)))
     if args.command == "license-report":
         raise SystemExit(asyncio.run(_run_license_report(args)))
+    if args.command == "release-check":
+        raise SystemExit(_run_release_check(args))
     raise SystemExit(asyncio.run(_run_restore(args)))
 
 
