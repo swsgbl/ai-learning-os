@@ -9,7 +9,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-M5-06 Paper extractor（feature/M5-06-paper-extractor 分支已建，域层/存储/路由/测试已完成，pytest 525 + ruff 全绿，冒烟 PASS，待提交合并）
+M5-07 Course generation workflow（feature/M5-07-course-workflow 分支已建，域层/存储/路由/测试已完成，pytest 535 + ruff 全绿，冒烟 PASS，待提交合并）
 
 ## 已完成任务
 
@@ -65,11 +65,12 @@ M5-06 Paper extractor（feature/M5-06-paper-extractor 分支已建，域层/存�
 | M5-04 Result dedup/rank | 3ebf4f4, merge 79435cc | pytest 497 passed（含真实 PG 5433，基线 484→497 +13）：域层 10 测（四层乱序输入按 official>oer>platform>community 输出且 rank_reason 逐条含层级标注；同层保持输入顺序稳定排序；同 URL 重复保留高层级条目且理由含去重说明、同层保留先出现；URL 规范化归并（小写 scheme/host、去 fragment、去末尾斜杠保留 query、内部路径归一同键）；无标注/未知标注一律 community 兜底且理由明示未标注（不猜测 URL 隐含权威度，ADR 44）；空 URL 不参与去重逐条保留；混合输入 rank_reason 恒非空；同输入两次排序结果恒同）；API 3 测（/queries 结果带 authority=platform + rank_reason；limit=1 排序后截断 2→1；回查记录仍带理由——审计面）；真实服务冒烟 6 项 PASS（seed 2 docs → local 命中 2 条带 platform 标注与理由、limit=1 截断、回查带理由、全源查询 cloud-web skipped 原因可见） | 下一步 M5-05 | 2026-09-01 |
 | M5-05 Course importer | be11c3d, merge 589d49c | pytest 514 passed（含真实 PG 5433，基线 497→514 +17）：域层 11 测（门禁全拒 4 种 NOT_ADMISSIBLE 状态+原因可见、非法 license_state 拒绝——门禁只认记录快照不接受声明；PUBLIC_ACCESS→FULL/OPEN_LICENSE→ATTRIBUTION_REQUIRED/RESTRICTED_NON_COMMERCIAL→NON_COMMERCIAL_ONLY 三种准入快照正确；概念提取两种确定性模式（「X 的定义/性质/运算/公式/定理」+「名词解释：X」）、去重保序、上限 50 截断、无命中空列表不虚报；草稿 note 有/无概念两态）；API 6 测（闭环 approve、reject+队列过滤、UNKNOWN 403 带原因（默认上传即 UNKNOWN 门禁默认拒绝）、资源 404、草稿 404、无 DB 503）；真实服务冒烟 6 项 PASS（source 认定 OPEN_LICENSE→upload 继承→parse→草稿 201 概念提取【拉格朗日中值定理】+admission 快照→队列可查→approve 终态→UNKNOWN 403 原因可见） | 下一步 M5-06 | 2026-09-01 |
 | M5-06 Paper extractor | 4bde9a2, merge baa3dc0 | pytest 525 passed（含真实 PG 5433，基线 514→525 +11）：域层 6 测（完整试卷字段断言——题号/题型/分值/页码/选项；段标题判定规则（中文序号长行 OK、短行 OK、题号行与长题干预线拒绝）；无关键词 None 不虚报题型；无题空列表+note 明示「未识别出题目」；unknown 题型+None 分值不虚报；同输入两次抽取恒同）；API 5 测（201 闭环——页码/题型/分值经 API 透传+approve 终态+409；资源 404；未解析 409 带 parse_status 原因；草稿 404；无 DB 503）；真实服务冒烟 7 项 PASS（直插 PG 资源+带页码 chunks → HTTP 抽取 201 三题——mcq 3.0 页1、fill_blank 4.0 页2、fill_blank 5.0 页2 题干覆盖；approve 200→409；资源 404；pending 队列可见）| 下一步 M5-07 | 2026-09-01 |
+| M5-07 Course generation workflow | 2223014, merge MERGEHASH | pytest 535 passed（含真实 PG 5433，基线 525→535 +10）：域层 4 测（概念匹配 canonical+alias 子串保序、先修传递闭包 set 断言、八阶段全链路结构断言——拓扑序 [极限,导数,积分]/章节号 1..3/资源挂接/模板习题 kind=template/补救映射 review_chapters=[[],[1],[2]]、无匹配 NoCompetencyMatch 拒绝空课程、同输入两次生成恒同）；API 6 测（201 生成闭环——plan 全结构断言+资源按 resource_id 去重挂接+note 明示无资源概念+approve 终态+409、DAG 未发布 409、无匹配 422 拒绝空课程、空白 goal 422、草稿 404+MISSING 404、无 DB 503）；真实服务冒烟 9 项 PASS（publish DAG v76 → HTTP 生成 201 三章——拓扑 [极限,导数,积分]、资源检索命中 res_m507_deriv/res_m507_int 及历史语料按资源去重挂接、模板习题、补救 [2]、queue/detail/approve 200→409 终态、404、无匹配 422） | 下一步 M5-08 | 2026-09-01 |
 
 ## 待办任务（按 backlog 顺序）
 
 - [x] M4-01~09 Voice（9/9 ✅ 2026-09-01 收官）
-- [ ] M5-01~08 Search + 治理（进行中 6/8：M5-01 ✅ M5-02 ✅ M5-03 ✅ M5-04 ✅ M5-05 ✅ M5-06 ✅）
+- [ ] M5-01~08 Search + 治理（进行中 7/8：M5-01 ✅ M5-02 ✅ M5-03 ✅ M5-04 ✅ M5-05 ✅ M5-06 ✅ M5-07 ✅）
 - [ ] M6-01~07 评测/安全/备份
 - [ ] M7-01~06 Release
 
@@ -137,9 +138,10 @@ M5-06 Paper extractor（feature/M5-06-paper-extractor 分支已建，域层/存�
 | 45 | 课程导入草稿门禁：资源的 license_state 快照经 REUSE_ADMISSION 映射判定复用资格，NOT_ADMISSIBLE（UNKNOWN/ACCESS_CONTROLLED/ALL_RIGHTS_RESERVED/PROHIBITED）一律 403 拒绝且原因可见，非法 license_state 同样拒绝——门禁只认资源记录的授权快照，不接受调用方声明（不虚报，与 ADR 41/43/44 同款）；概念提取为确定性规则（「X 的定义/性质/运算/公式/定理」「名词解释：X」两模式，去重保序，上限 50 截断），无命中返回空列表并在 extraction_note 明示「未识别出候选概念」；草稿固定 pending_review 起步，只能经人工 approve/reject 离开审核队列（approved/rejected 终态不可逆，重复审核 409），授权快照（license_state + reuse_admission）与提取说明一并落库可审计 | M5-05 验收「从授权资源生成 Course/Concept/Resource 草稿并进入人工审核」 | 2026-09-01 |
 
 | 46 | 试卷题目抽取为确定性规则引擎：题型段标题（中文序号前缀或短行+关键词显式映射 mcq/multiple_select/true_false/fill_blank/solved）、题号行、选项行逐行扫描；分值两级来源（段标题「每小题/每空 X 分」默认 + 题干「（X分）」覆盖），两级都无则 None（不虚报）；无段标题题型记 unknown（不猜测）；页码从 chunk.page_start/page_end 继承（题目可回溯原文页码）；无题返回空列表且 note 明示「未识别出题目」；草稿进人工审核队列（pending_review 起步，approve/reject 终态不可逆，重复审核 409）——与 ADR 45 同款审核模式；资源 parse_status != parsed 一律 409 拒绝（不虚报可抽取） | M5-06 验收「从试卷 PDF 抽取题目草稿；原文页码、题型和分值保留」 | 2026-09-01 |
+| 47 | 课程生成工作流为确定性八阶段管线（Goal->Competency->DAG->Resource->Outline->Lessons->Assessments->Remediation），不依赖 LLM：概念匹配用 canonical_name/alias 子串（保序去重）、先修闭包 DFS、拓扑排序 Kahn+字典序（同图同输入恒同序）；目标未匹配任何概念即抛 NoCompetencyMatch 拒绝生成空课程（fail-closed 不虚报）；资源按概念检索本地语料并按 resource_id 去重挂接，缺失在 generation_note 汇总明示（资源缺失不虚构）；习题为生成模板 assessment_kind=template（不虚报真题）；草稿进人工审核队列（与 ADR 45/46 同款 pending_review + 终态不可逆 409 模式） | M5-07 验收「Goal -> Competency -> DAG -> Resource -> Outline -> Lessons -> Assessments -> Remediation。」 | 2026-09-01 |
 ## 下一任务
 
-M5-06 完成（试卷题目抽取 + 页码/题型/分值保留 + 审核队列）。下一任务 M5-07 Course generation workflow：Goal -> Competency -> DAG -> Resource -> Outline -> Lessons -> Assessments -> Remediation 生成工作流。
+M5-07 完成（课程生成工作流八阶段确定性管线 + 人工审核队列）。下一任务 M5-08 Variant question generator：变式题生成保留概念映射与原题 evidence（不会只换表面数字导致无解）。
 
 ## 追加：M0 收尾验证（compose 全栈）
 

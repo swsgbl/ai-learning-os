@@ -463,3 +463,20 @@ class PaperQuestionDraftRow(Base):
     review_note: Mapped[str | None] = mapped_column(String(512), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CourseGenerationDraftRow(Base):
+    """M5-07 课程生成工作流草稿：八阶段产物 JSON + DAG 版本快照 + 审核终态。"""
+
+    __tablename__ = "course_generation_drafts"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    goal: Mapped[str] = mapped_column(String(512))
+    status: Mapped[str] = mapped_column(String(24), default="pending_review", index=True)
+    dag_version: Mapped[int] = mapped_column()
+    plan: Mapped[dict] = mapped_column(JSON, default=dict)
+    chapter_count: Mapped[int] = mapped_column()
+    generation_note: Mapped[str] = mapped_column(String(512))
+    review_note: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
