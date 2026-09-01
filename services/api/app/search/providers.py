@@ -38,7 +38,11 @@ class ProviderEntry:
 
 
 class LocalCorpusProvider:
-    """本地语料检索：chunks 表 contains 匹配，无需外网。"""
+    """本地语料检索：chunks 表 contains 匹配，无需外网。
+
+    结果标注 authority="platform"——种子语料是平台自持、经导入审核的内容
+    （M5-04 分层排序依据；不虚报为 official）。
+    """
 
     name = "local-corpus"
     kind = "local-corpus"
@@ -55,6 +59,7 @@ class LocalCorpusProvider:
                 "snippet": row["text"][:200],
                 "source": self.name,
                 "provider": self.name,
+                "authority": "platform",
             }
             for row in rows
         ]
