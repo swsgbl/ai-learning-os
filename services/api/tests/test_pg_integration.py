@@ -693,3 +693,39 @@ def test_voice_intent_flow_against_real_postgres() -> None:
         assert unknown.json()["fsm_applied"] is False
         after = client.get(f"/api/v1/voice/sessions/{session_id}").json()
         assert after["status"] == "ANSWER_COMMITTED"
+
+
+def test_voice_answer_normalizer_against_real_postgres() -> None:
+    """M4-04/M4-05：真实 PG 下 /answers 规范化提交 + event_id 幂等重放。"""
+    with TestClient(create_app(PG_URL)) as client:  # type: ignore[arg-type]
+        exam_id = client.post(
+            "/api/v1/papers/functions-basics/exams", json={"mode": "exam"}
+        ).json()["exam_id"]
+        session_id = client.post(
+            "/api/v1/voice/sessions", json={"exam_id": exam_id}
+        ).json()["session_id"]
+        for command in ("start_reading", "question_read", "options_read"):
+            assert client.post(
+                f"/api/v1/voice/sessions/{session_id}/commands", json={"type": command}
+            ).status_code == 200
+
+        url = f"/api/v1/voice/sessions/{session_id}/answers"
+        # 「选 b」→ 规范化 B 落库（客户端伪造 normalized_answer 不被信任）
+        first = client.post(
+            url,
+            json={"transcript": "选 b", "event_id": "pg-evt-001", "normalized_answer": "Z"},
+        ).json()
+        assert first["accepted"] is True and first["normalized_answer"] == "B"
+
+        # 同 event_id 重放：幂等返回，不重复落库
+        replay = client.post(url, json={"transcript": "选 b", "event_id": "pg-evt-001"}).json()
+        assert replay["idempotent"] is True
+        exam_view = client.get(f"/api/v1/exams/{exam_id}").json()
+        question_id = exam_view["questions"][0]["id"]
+        assert exam_view["answers"].get(question_id) == "B"
+        assert exam_view["next_sequence"] == 2  # 幂等：只落了一次
+
+        # 无效选项 → 澄清不落库
+        clarified = client.post(url, json={"transcript": "我选第九个", "event_id": "pg-evt-002"}).json()
+        assert clarified["accepted"] is False
+        assert clarified["session"]["status"] == "CLARIFYING"

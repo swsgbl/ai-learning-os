@@ -16,6 +16,7 @@ from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
 from app.domain import voice_session_fsm as fsm
+from app.domain.answer_normalizer import normalize_answer
 from app.domain.intent_parser import INTENT_UNKNOWN, ordinal_to_letter, parse
 from app.domain.models import ExamStatus
 from app.domain.voice_tokens import (
@@ -542,4 +543,128 @@ async def apply_voice_intent(
         applied_event=command_out.applied_event,
         session=command_out.session,
         clarified_question=clarified_question or command_out.clarified_question,
+    )
+
+
+# ---------- M4-05 Answer normalizer：/answers 规范化提交（04 文档契约） ----------
+
+
+class VoiceAnswerRequest(BaseModel):
+    transcript: str = Field(min_length=1, max_length=500)
+    event_id: str = Field(min_length=4, max_length=64)  # 客户端幂等键（client-uuid）
+    question_id: str | None = None  # 缺省绑定 FSM 当前题
+    normalized_answer: str | None = None  # 客户端参考值——服务端不信任，重新规范化
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class VoiceAnswerOut(BaseModel):
+    event_id: str
+    idempotent: bool  # True=同 event_id 重放，返回既有结果（不重复落库）
+    accepted: bool  # False=澄清/拒绝（不含答案）
+    normalized_answer: str | None = None
+    intent: str
+    question_id: str
+    session: VoiceSessionOut | None = None
+    clarified_question: str | None = None
+
+
+@router.post("/sessions/{session_id}/answers", response_model=VoiceAnswerOut)
+async def submit_voice_answer(
+    session_id: str, payload: VoiceAnswerRequest, request: Request
+) -> VoiceAnswerOut:
+    """语音答案规范化提交（M4-05）：只生成规范化答案事件，判定由服务端执行。
+
+    - 服务端从 transcript 重新解析+规范化，不信任客户端 normalized_answer/confidence；
+    - event_id 幂等：重放返回既有结果，绝不重复落库；
+    - 规范化失败（选项不存在/题型不支持/含糊）→ 澄清，accepted=false 不含答案。
+    """
+    sessions = request.app.state.voice_sessions
+    answer_events = request.app.state.voice_answer_events
+    if sessions is None or answer_events is None:
+        raise HTTPException(status_code=503, detail="Voice answers require a database")
+    view = await sessions.get(session_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="语音会话不存在")
+
+    # 幂等重放：同 event_id 直接返回既有结果（不改状态不重复提交）
+    existing = await answer_events.get(payload.event_id)
+    if existing is not None:
+        session_out = await sessions.get(session_id)
+        return VoiceAnswerOut(
+            event_id=payload.event_id,
+            idempotent=True,
+            accepted=existing["accepted"],
+            normalized_answer=existing["normalized_answer"],
+            intent=existing["intent"],
+            question_id=existing["question_id"],
+            session=VoiceSessionOut(**session_out) if session_out else None,
+        )
+
+    _, paper = await _load_paper(request, view["exam_id"])
+    questions = list(paper.questions)
+    index = view["question_index"]
+    if payload.question_id is not None:
+        if payload.question_id not in [q.id for q in questions]:
+            raise HTTPException(status_code=422, detail="题目不属于该试卷")
+        question = next(q for q in questions if q.id == payload.question_id)
+    else:
+        if index >= len(questions):
+            raise HTTPException(status_code=409, detail="当前题索引越界")
+        question = questions[index]
+
+    parsed = parse(payload.transcript)
+    normalized = normalize_answer(
+        question,
+        letter=parsed.letter,
+        ordinal=parsed.ordinal,
+        transcript=payload.transcript,
+        intent=parsed.intent,
+        confidence=payload.confidence,
+    )
+
+    clarified_question: str | None = None
+    if normalized.is_valid:
+        exam_record = await request.app.state.repository.get_exam(view["exam_id"])
+        assert exam_record is not None
+        sequence = exam_record.events[-1].sequence + 1 if exam_record.events else 1
+        try:
+            await request.app.state.repository.save_answer(
+                view["exam_id"], sequence, question.id, normalized.answer
+            )
+        except PermissionError as cause:
+            raise HTTPException(status_code=409, detail="考试已结束，不能再修改答案") from cause
+        except ValueError as cause:
+            raise HTTPException(status_code=409, detail=str(cause)) from cause
+        event = fsm.EV_ANSWER_PROPOSED
+    else:
+        event = fsm.EV_ANSWER_CLARIFY  # 澄清分支不落库答案，只留 accepted=false 审计
+        clarified_question = f"{normalized.reason}。"
+
+    try:
+        target = fsm.transition(view["status"], event)
+    except ValueError as cause:
+        raise HTTPException(status_code=409, detail=str(cause)) from cause
+    updated = await sessions.apply(
+        session_id, new_status=target, expected_revision=None
+    )
+    await answer_events.record(
+        event_id=payload.event_id,
+        session_id=session_id,
+        exam_id=view["exam_id"],
+        question_id=question.id,
+        normalized_answer=normalized.answer if normalized.is_valid else None,
+        intent=parsed.intent,
+        transcript=payload.transcript,
+        confidence=payload.confidence,
+        accepted=normalized.is_valid,
+    )
+    return VoiceAnswerOut(
+        event_id=payload.event_id,
+        idempotent=False,
+        accepted=normalized.is_valid,
+        normalized_answer=normalized.answer,
+        intent=parsed.intent,
+        question_id=question.id,
+        session=VoiceSessionOut(**updated),
+        clarified_question=clarified_question,
     )
