@@ -47,6 +47,7 @@ _CHANGE_PATTERNS = (
 )
 _CHOOSE_LETTER_PATTERNS = (
     re.compile(r"(?:我)?(?:选|选择|选定)\s*([a-zA-Z])\s*(?:个?选项?)?"),
+    re.compile(r"(?:我)?(?:选|选择)(?:的\s*是|的是)\s*([a-zA-Z])"),
     re.compile(r"([a-zA-Z])\s*(?:个?选项)"),
     re.compile(r"(?:我的)?(?:答案是?|答案选)\s*([a-zA-Z])"),
     re.compile(r"就\s*([a-zA-Z])\s*(?:吧|了)?"),
@@ -55,6 +56,7 @@ _ORDINAL_RE = re.compile(r"第\s*([一二三四五六七八九十\d]+)\s*[个项
 _CN_DIGITS = {"一": 1, "二": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
 _REPEAT_QUESTION_RE = re.compile(r"重复|再说?一?遍|再来?一?遍|没听清|再读一?遍|重来")
 _REPEAT_OPTIONS_RE = re.compile(r"选项|答案项")
+_REPEAT_VERB_RE = re.compile(r"再?(?:念|读|说|讲)一?遍|重复")
 _SLOW_DOWN_RE = re.compile(r"慢(?:一?点|些)|说慢|太?快了")
 _SKIP_RE = re.compile(r"跳过|下一[题道]|这题不会|不会.*跳过|pass", re.IGNORECASE)
 _PAUSE_RE = re.compile(r"暂停|停一下|先停")
@@ -130,6 +132,9 @@ def parse(transcript: str) -> ParsedIntent:
         if _REPEAT_OPTIONS_RE.search(text):
             return ParsedIntent(INTENT_REPEAT_OPTIONS, None, None, False, text)
         return ParsedIntent(INTENT_REPEAT_QUESTION, None, None, False, text)
+    if _REPEAT_OPTIONS_RE.search(text) and _REPEAT_VERB_RE.search(text):
+        # M6-02 探针缺口修复：「选项再念一遍」无「重复」关键词也归 repeat_options
+        return ParsedIntent(INTENT_REPEAT_OPTIONS, None, None, False, text)
     if _SLOW_DOWN_RE.search(text):
         return ParsedIntent(INTENT_SLOW_DOWN, None, None, False, text)
     if _PAUSE_RE.search(text):

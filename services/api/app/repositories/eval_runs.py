@@ -20,13 +20,23 @@ class EvalRunRepository:
         self._sessionmaker = sessionmaker
         self._clock = clock
 
-    async def record(self, kind: str, report: dict) -> dict:
+    async def record(
+        self,
+        kind: str,
+        report: dict,
+        agreement: float | None = None,
+    ) -> dict:
+        """落库一条评测运行；agreement 缺省取 report 的头部指标。
+
+        grading 用 report["agreement"]；voice 评测头部分数是 accuracy，
+        显式传入 agreement 列（列语义 = 本次评测的头部分数）。
+        """
         async with self._sessionmaker() as session, session.begin():
             row = EvalRunRow(
                 kind=kind,
                 rule_version=report["rule_versions"]["eval"],
                 case_count=report["case_count"],
-                agreement=report["agreement"],
+                agreement=agreement if agreement is not None else report["agreement"],
                 report=report,
                 created_at=self._clock(),
             )
