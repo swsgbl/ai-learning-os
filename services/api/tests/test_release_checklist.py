@@ -214,3 +214,25 @@ def test_cli_release_check_registered() -> None:
     for kw in ("api-base", "db-url", "local-only"):
         assert kw in src, kw
     assert "release-check" in src
+
+
+def test_api_test_env_isolates_caller_pollution() -> None:
+    """调用方 shell 带了 DATABASE_URL 时，api-test 子进程必须拿不到它（None=删除语义）。
+
+    终验暴露的真实缺陷：pytest 继承调用方 DATABASE_URL 后，「无 DB」测试
+    预期 503 却拿到 201，24 测误报失败。env 分离必须对调用方环境鲁棒。
+    """
+    import os
+
+    from app.ops.release_check import default_command_checks
+
+    checks = default_command_checks(
+        db_url="postgresql+asyncpg://u:p@localhost:5433/x"
+    )
+    api_test = next(c for c in checks if c.id == "api-test")
+    assert api_test.env["DATABASE_URL"] is None  # 删除语义：调用方污染被剥离
+    assert api_test.env["AIOS_PG_TEST_URL"] == "postgresql+asyncpg://u:p@localhost:5433/x"
+    # migration/backup 仍需真实 DATABASE_URL（非 None）
+    mig = next(c for c in checks if c.id == "migration")
+    assert mig.env["DATABASE_URL"] == "postgresql+asyncpg://u:p@localhost:5433/x"
+    assert os.environ.get("_AIOS_SENTINEL_") is None  # sanity: 不改全局
