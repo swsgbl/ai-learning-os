@@ -364,3 +364,24 @@ class VoiceSessionRow(Base):
     revision: Mapped[int] = mapped_column(Integer, default=1)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class VoiceAnswerEventRow(Base):
+    """M4-05 规范化语音答案事件：event_id 为客户端幂等键（唯一约束兜底重放）。
+
+    accepted=false 记录含糊/无效答案的澄清路径（不含答案，只留审计痕迹）；
+    accepted=true 的 answer 已由服务端经 exam answer_events 确定性提交。
+    """
+
+    __tablename__ = "voice_answer_events"
+
+    event_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    session_id: Mapped[str] = mapped_column(String(64), index=True)
+    exam_id: Mapped[str] = mapped_column(String(64))
+    question_id: Mapped[str] = mapped_column(String(64))
+    normalized_answer: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    intent: Mapped[str] = mapped_column(String(32))
+    transcript: Mapped[str] = mapped_column(Text)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    accepted: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
