@@ -385,3 +385,23 @@ class VoiceAnswerEventRow(Base):
     confidence: Mapped[float] = mapped_column(Float, default=0.0)
     accepted: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class VoiceTraceSpanRow(Base):
+    """M4-09 语音链路耗时观测 span：source 区分 server 自动埋点 / client 上报。
+
+    观测只记录不判定：trace 数据不影响任何业务状态；
+    vad/llm/first_audio 发生在客户端与上游模型，由客户端上报（source=client），
+    服务端只自动埋 asr/tts/intent/fsm 四个可测环节——不虚报测不到的阶段。
+    """
+
+    __tablename__ = "voice_trace_spans"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    stage: Mapped[str] = mapped_column(String(32), index=True)
+    duration_ms: Mapped[int] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(16))  # server | client
+    session_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    exam_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    question_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

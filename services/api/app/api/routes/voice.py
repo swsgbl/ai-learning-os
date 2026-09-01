@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+import time
 
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, Field
@@ -31,6 +32,7 @@ from app.domain.voice_tokens import (
     build_voice_token,
     new_identity,
 )
+from app.domain.voice_trace import MAX_DURATION_MS, TRACE_STAGES, summarize_spans
 from app.voice.providers import (
     LOCAL_ASR,
     LOCAL_TTS,
@@ -215,10 +217,12 @@ async def transcribe(request: Request, audio: UploadFile) -> TranscriptionOut:
 
     choice = resolve_asr(mode, settings.asr_provider, bool(settings.asr_cloud_endpoint and settings.asr_cloud_api_key))
     provider = _build_asr(settings, choice.provider)
+    t0 = time.monotonic()
     try:
         result = await provider.transcribe(data, content_type=audio.content_type or "audio/wav")
     except ProviderUnavailable as cause:
         raise HTTPException(status_code=502, detail=str(cause)) from cause
+    await _record_trace(request, stage="asr", duration_ms=int((time.monotonic() - t0) * 1000))
 
     audio_object_key: str | None = None
     audio_stored = False
@@ -263,16 +267,18 @@ async def list_transcripts(request: Request, limit: int = 50) -> TranscriptsOut:
 
 
 @router.post("/synthesize")
-async def synthesize(payload: SynthesizeRequest) -> Response:
+async def synthesize(payload: SynthesizeRequest, request: Request) -> Response:
     """文本→WAV。合成不落库（派生音频无留存需求），provider 透出响应头。"""
     settings = get_settings()
     mode = _voice_mode(settings)
     choice = resolve_tts(mode, settings.tts_provider, bool(settings.tts_cloud_endpoint and settings.tts_cloud_api_key))
     provider = _build_tts(settings, choice.provider)
+    t0 = time.monotonic()
     try:
         result = await provider.synthesize(payload.text)
     except ProviderUnavailable as cause:
         raise HTTPException(status_code=502, detail=str(cause)) from cause
+    await _record_trace(request, stage="tts", duration_ms=int((time.monotonic() - t0) * 1000))
     return Response(
         content=result.audio,
         media_type="audio/wav",
@@ -446,6 +452,95 @@ async def get_voice_report(session_id: str, request: Request) -> VoiceReportOut:
     )
 
 
+# ---------- M4-09 Latency tracing：各阶段耗时观测 ----------
+
+
+async def _record_trace(
+    request: Request,
+    *,
+    stage: str,
+    duration_ms: int,
+    session_id: str | None = None,
+    exam_id: str | None = None,
+    question_id: str | None = None,
+) -> None:
+    """服务端自动埋点（source=server）：观测尽力而为，失败不破坏主流程。"""
+    repo = request.app.state.voice_trace
+    if repo is None:
+        return
+    try:
+        await repo.record(
+            stage=stage,
+            duration_ms=duration_ms,
+            source="server",
+            session_id=session_id,
+            exam_id=exam_id,
+            question_id=question_id,
+        )
+    except Exception:  # noqa: BLE001, S110 —— 观测埋点尽力而为，绝不影响业务主流程
+        pass
+
+
+class TraceSpanRequest(BaseModel):
+    stage: str
+    duration_ms: int = Field(ge=1, le=MAX_DURATION_MS)
+    session_id: str | None = None
+    exam_id: str | None = None
+    question_id: str | None = None
+
+
+class TraceSpanOut(BaseModel):
+    id: int
+    stage: str
+    duration_ms: int
+    source: str
+    session_id: str | None
+    exam_id: str | None
+    question_id: str | None
+    created_at: str
+
+
+class TraceSummaryOut(BaseModel):
+    item_count: int  # 聚合窗口内的 span 总数
+    stages: dict[str, dict]  # per-stage: count/avg_ms/p50_ms/p95_ms/max_ms
+
+
+@router.post("/trace", response_model=TraceSpanOut, status_code=201)
+async def report_trace_span(payload: TraceSpanRequest, request: Request) -> TraceSpanOut:
+    """客户端上报耗时 span（source=client）：vad/llm/first_audio 等服务端测不到的环节。
+
+    观测只记录不判定：上报不影响任何业务状态；
+    stage 白名单校验（TRACE_STAGES），duration_ms 上限 10 分钟。
+    """
+    repo = request.app.state.voice_trace
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Voice trace requires a database")
+    if payload.stage not in TRACE_STAGES:
+        raise HTTPException(status_code=422, detail=f"未知阶段: {payload.stage}，可选: {', '.join(TRACE_STAGES)}")
+    view = await repo.record(
+        stage=payload.stage,
+        duration_ms=payload.duration_ms,
+        source="client",
+        session_id=payload.session_id,
+        exam_id=payload.exam_id,
+        question_id=payload.question_id,
+    )
+    return TraceSpanOut(**view)
+
+
+@router.get("/trace/summary", response_model=TraceSummaryOut)
+async def get_trace_summary(request: Request) -> TraceSummaryOut:
+    """各阶段耗时聚合视图（per-stage count/avg/p50/p95/max）——M4-09 验收面。"""
+    repo = request.app.state.voice_trace
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Voice trace requires a database")
+    spans = await repo.list_recent()
+    return TraceSummaryOut(
+        item_count=len(spans),
+        stages=summarize_spans(spans),
+    )
+
+
 async def _load_paper(request: Request, exam_id: str):
     exam = await request.app.state.repository.get_exam(exam_id)
     if exam is None:
@@ -485,6 +580,7 @@ async def apply_voice_command(
     if event in (fsm.EV_ANSWER_PROPOSED, fsm.EV_ANSWER_CLARIFY) and not (payload.question_id and payload.answer):
         raise HTTPException(status_code=422, detail="answer_proposed 需要 question_id 与 answer")
 
+    t0 = time.monotonic()
     try:
         target = fsm.transition(view["status"], event)
     except ValueError as cause:
@@ -538,6 +634,10 @@ async def apply_voice_command(
         raise HTTPException(status_code=404, detail=str(cause)) from cause
     except ValueError as cause:
         raise HTTPException(status_code=409, detail=str(cause)) from cause
+    await _record_trace(
+        request, stage="fsm", duration_ms=int((time.monotonic() - t0) * 1000),
+        session_id=session_id, exam_id=view["exam_id"],
+    )
 
     return VoiceCommandOut(
         applied_event=event,
@@ -586,8 +686,10 @@ async def apply_voice_intent(
     if view is None:
         raise HTTPException(status_code=404, detail="语音会话不存在")
 
+    t0 = time.monotonic()
     parsed = parse(payload.transcript)
     command = parsed.fsm_command
+    await _record_trace(request, stage="intent", duration_ms=int((time.monotonic() - t0) * 1000), session_id=session_id, exam_id=view["exam_id"])
     if parsed.intent == INTENT_UNKNOWN or command is None:
         return VoiceIntentOut(
             transcript=payload.transcript,
