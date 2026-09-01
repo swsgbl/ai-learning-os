@@ -10,6 +10,7 @@ from app.api.routes.concepts import router as concepts_router
 from app.api.routes.courses import router as courses_router
 from app.api.routes.exams import router as exams_router
 from app.api.routes.misconceptions import router as misconceptions_router
+from app.api.routes.paper_extractor import router as paper_extractor_router
 from app.api.routes.papers import router as papers_router
 from app.api.routes.planner import router as planner_router
 from app.api.routes.resources import router as resources_router
@@ -33,6 +34,7 @@ from app.repositories.concept_dag import ConceptDagRepository
 from app.repositories.course_import_drafts import CourseImportDraftRepository
 from app.repositories.memory import MemoryRepository
 from app.repositories.misconceptions import MisconceptionRepository
+from app.repositories.paper_question_drafts import PaperQuestionDraftRepository
 from app.repositories.parsejobs import ParseJobRepository
 from app.repositories.postgres import PostgresRepository
 from app.repositories.resources import ResourceRepository
@@ -74,6 +76,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
             voice_trace = VoiceTraceRepository(sessionmaker)
             search_queries = SearchQueryRepository(sessionmaker)
             course_import_drafts = CourseImportDraftRepository(sessionmaker)
+            paper_question_drafts = PaperQuestionDraftRepository(sessionmaker)
             resources = ResourceRepository(sessionmaker)
             objects = make_object_store(settings)
             parsers = make_default_registry()
@@ -100,6 +103,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         app.state.voice_trace = voice_trace if resolved_url else None
         app.state.search_queries = search_queries if resolved_url else None
         app.state.course_import_drafts = course_import_drafts if resolved_url else None
+        app.state.paper_question_drafts = paper_question_drafts if resolved_url else None
         app.state.search_registry = search_registry if resolved_url else None
         app.state.resources = resources if resolved_url else None
         app.state.objects = objects if resolved_url else None
@@ -126,6 +130,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.include_router(paper_extractor_router)
     app.include_router(papers_router)
     app.include_router(exams_router)
     app.include_router(concepts_router)
