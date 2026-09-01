@@ -9,7 +9,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-M4-06 Barge-in 与播报控制
+M4-07 断线恢复
 
 ## 已完成任务
 
@@ -55,10 +55,11 @@ M4-06 Barge-in 与播报控制
 | M4-03 VoiceSession FSM | 47fc4a5, merge d24a6ca | pytest 350 passed（含真实 PG 5433）：domain 10 测（8 状态全迁移矩阵——happy path 可达全部状态、下题循环 NEXT_QUESTION→READING_QUESTION、播报期 propose 一律拒绝=打断不提交半成品、committed 后 propose=覆盖提交（「我改成 C」）、澄清环 WAITING→含糊→CLARIFYING 自环→明确→committed、repeat/slow_down 播报控制自环不破坏状态、skip→NEXT_QUESTION、end 从任意非终态直达 REPORT_READY、终态拒绝全部事件、未知状态/事件显式拒绝、全矩阵 (状态×事件) 确定性幂等）；API 9 测（POST /sessions 仅 ACTIVE 考试 409/404 边界、生命周期端到端 SESSION_READY→WAITING→committed 且 exam answers 落库、覆盖提交追加事件 next_sequence≥3、播报期 propose 409 且半成品绝不落库、ambiguous→CLARIFYING+追问文案、skip→report_ready 透出题数、未知命令 422、expected_revision 并发冲突 409、无 DB 503、响应不含 correct/explanation=考试模式不泄露答案）；PG 集成 1 测（真实 PG 全生命周期+覆盖+打断拒绝）；新增 voice_sessions 表（migration 0013）+ revision 乐观并发 repository；真实服务冒烟（uvicorn 8020+PG）：读题流→打断 409→澄清→提交→改成 C 覆盖（revision 7）→end 终态→exam answers={functions-1: C} 核验全过 | 2026-09-01 |
 | M4-04 Intent parser | 68b5469, merge 887921e | pytest 389 passed（含真实 PG 5433）：domain 18 测（G 提示词全示例槽位抽取——选 B/答案是 D/B 选项/就 A 吧→letter 大写归一、我选第二个/第一个/第十个→中文数字序号、我改成 C/改选 C/换成第四个→change；命令集 repeat_question/repeat_options（重复选项）/slow_down/跳过/下一题/end（结束/交卷/做完了）；pause/resume 解析成功但 FSM 映射 None（M4-06 接入）；含糊（我选那个/选这个）→ambiguous 走澄清、改成无槽位→ambiguous、今天天气不错→unknown 且不误标 ambiguous——解析失败≠澄清；ordinal_to_letter 1-based A 起超界 None；同输入恒同输出确定性）；API 10 测（POST /sessions/{id}/intents 一体化应用——选 B 提交落库、我选第二个结合选项数映射 B、我改成 C 覆盖 next_sequence≥3、第五个超选项数→CLARIFYING 不猜答案不落库、我选那个→CLARIFYING、跳过→NEXT_QUESTION、结束→REPORT_READY、unknown/pause fsm_applied=false 且状态与 revision 均不变、404/503）；PG 集成 1 测（真实 PG：选 B 提交→我改成 C 覆盖→answers={q: C}+next_sequence≥3→unknown 不扰动）；真实服务冒烟（uvicorn 8021+PG）：G 示例全链路（我选那个→CLARIFYING、选 B→COMMITTED、我改成 C 覆盖、unknown 不扰动、pause 无 FSM、跳过→NEXT_QUESTION、结束→REPORT_READY、exam answers={functions-1: C}） | 2026-09-01 |
 | M4-05 Answer normalizer | e7cea22, merge fee15a8 | pytest 406 passed（含真实 PG 5433）：domain 10 测（mcq 字母大写归一+选项存在性校验「选 b」→B、序号映射与超界拒绝（reason 含选项数）、不存在的选项字母拒绝且 reason 列出可选项、无槽位拒绝、true_false 对/正确/错/错误归一 T/F 且与 grading._normalize_tf 同语义、short_answer 去空白、essay 拒绝语音作答（主观题书面作答）、normalize_type 与判分器同源、同输入恒同输出）；API 6 测（POST /answers 04 文档契约——「选 b」规范化 B 落库、同 event_id 重放幂等返回且 next_sequence 不变=只落一次、客户端伪造 normalized_answer=X 服务端以 transcript 重解析为准=B、无效选项澄清不落库+CLARIFYING、澄清后新 event_id 恢复提交回 COMMITTED、缺 event_id 422/未知会话 404/无 DB 503）；PG 集成 1 测（真实 PG：规范化提交+伪造不被信任+幂等重放 next_sequence==2+无效澄清）；新增 voice_answer_events 表（migration 0014）+ event_id 主键幂等 repository（并发重放捕获回读，accepted=false 留澄清审计不含答案）；真实服务冒烟（uvicorn 8022+PG）：「选 b」规范化 B（伪造 Z 被拒）→幂等重放→「我选第九个」澄清（reason 透出选项数）→「改成第二个」恢复提交→exam answers={functions-1: B}+next_sequence=3（覆盖事件语义一致）；安全加固 383d7d3（merge 3634d24）：event_id 幂等键按会话域隔离——重放分支校验 session 归属、跨会话复用一律 409（repository 预检+并发兜底双保险），防跨会话读取答案事件（含语音转写）与响应投毒，新增 2 测（跨会话 409 状态不扰动+同会话仍幂等、repo 直调跨会话 ValueError），PG 集成测试 event_id 改为每次运行唯一 | 2026-09-01 |
+| M4-06 Barge-in 与播报控制 | PENDING | pytest 416 passed（含真实 PG 5433）：domain 4 测（pause/resume 任意非终态自环（状态不变=TTS 暂停是客户端行为，revision 留审计痕迹）；barge_in 播报期→WAITING_ANSWER 停止播报进倾听+当前题保留、倾听期自环；初始/已提交确认/下题环节/终态打断拒绝=语义不明绝不乱迁移；终态拒绝 pause/resume/barge_in；全矩阵确定性）；API 3 测（读题播报期打断→WAITING_ANSWER 且 question_index 不变→提交落对题；pause/resume 命令状态不变 revision+1；SESSION_READY 打断 409）；intents 接入 2 测更新（「暂停」「继续」映射同名命令 fsm_applied=true 自环；unknown 仍不应用 FSM）；PG 集成 1 测（真实 PG：打断→pause/resume 自环→提交落对题→next_sequence==2）；真实服务冒烟（uvicorn 8023+PG）：播报期提交 409→打断进倾听（当前题保留）→pause/resume 自环（rev 3→4）→提交 B→intents「暂停」committed 自环→覆盖 C（next_seq=3）→end 终态，8/8 PASS） | 2026-09-01 |
 
 ## 待办任务（按 backlog 顺序）
 
-- [ ] M4-01~09 Voice（M4 进行中 5/9：M4-01~05 ✅）
+- [ ] M4-01~09 Voice（M4 进行中 6/9：M4-01~06 ✅）
 - [ ] M4-01~09 Voice
 - [ ] M5-01~08 Search + 治理
 - [ ] M6-01~07 评测/安全/备份
@@ -114,10 +115,11 @@ M4-06 Barge-in 与播报控制
 | 34 | VoiceSession FSM 边界：8 状态迁移矩阵为唯一领域规则源（repository 只落库不重复校验）；读题/读选项播报期收到答案一律拒绝——打断绝不提交半成品；ANSWER_COMMITTED 后 propose 语义为覆盖（复用 exam answer_events 追加式序号，「我改成 C」生成覆盖事件而非原地改写）；answer_proposed 由服务端确定性落库（exam repo save_answer），响应不含对错判定（考试模式不泄露答案）；revision 乐观并发计数，expected_revision 不匹配显式 409；repeat/slow_down 为播报控制自环（M4-06 前置语义）；end 与全卷完成（report_ready）均进 REPORT_READY 终态，报告内容由 M4-08 生成 | M4-03 验收「读题、读选项、等待答案、澄清、确认、下一题、报告状态完整」+ G 提示词 FSM 状态表 | 2026-09-01 |
 | 35 | Intent parser 为零 LLM 依赖的确定性规则解析：同 transcript 恒同输出（幂等语义同 ADR 27/29/30/31）；扫描优先级=精确槽位抽取（改答案→选字母→选序号）>改答案无槽位（ambiguous）>会话命令>答案模糊回退>unknown；中文 isalpha 恒真故 ASCII 字母才算选项字母（「二」归序号）；含糊答案与未识别严格区分——含糊→answer_clarify 澄清，unknown→不改状态不虚报理解；pause/resume 解析成功但 FSM 映射 None（M4-06 接入）；序号→字母需当前题选项数（1-based A 起），超界不猜答案转澄清 | M4-04 验收「选 B/第二个/改成 C/重复一遍/跳过/暂停/结束解析准确」+ G 提示词示例表 | 2026-09-01 |
 | 36 | 语音答案规范化边界：normalizer 只规范化不判定（「最终提交由服务端判定」），规范化语义与判分器同源（共用 normalize_type；true_false 归一与 grading._normalize_tf 同规则）；服务端从 transcript 重新解析+规范化，不信任客户端 normalized_answer/confidence（04 文档「不信任客户端分数」）；event_id 为客户端幂等键（voice_answer_events 主键+并发重放捕获回读），重放返回既有结果不改状态不重复落库且按会话域隔离（跨会话复用 event_id 一律 409，路由校验+repository 并发兜底）；无效答案（选项不存在/序号超界/题型不支持）→澄清且 accepted=false 审计留痕不含答案；essay 拒绝语音作答（rubric 管线走书面提交） | M4-05 验收「语音答案只生成规范化答案事件，最终提交由服务端判定」+ 04 文档 /answers 契约 | 2026-09-01 |
+| 37 | 播报控制边界：pause/resume 为任意非终态自环（TTS 暂停/恢复是客户端行为，服务端状态不变仅 revision 留审计痕迹）；barge_in 为显式打断事件——播报期（READING_QUESTION/READING_OPTIONS）→ WAITING_ANSWER（停止 TTS、保留当前题、进入倾听），倾听期自环，初始/已提交确认/下题环节/终态一律拒绝（语义不明绝不乱迁移）；提交必须走 propose 路径，打断信号本身绝不携带/提交答案（打断不提交半成品）——播报期提交路径保持关闭，正确流程=先打断进倾听再提交 | M4-06 验收「打断不提交半成品答案；重复、放慢、跳过不破坏状态」+ 05 文档 §7 打断处理 | 2026-09-01 |
 
 ## 下一任务
 
-M4-05 完成后：进入 M4-06 Barge-in 与播报控制（打断不提交半成品答案；重复、放慢、跳过不破坏状态；pause/resume FSM 迁移接入）。
+M4-06 完成后：进入 M4-07 断线恢复（会话断开后可恢复进度——voice session sticky 恢复、已提交答案不丢失、FSM 状态重建后继续作答；衔接 05 文档断线恢复设计）。
 
 ## 追加：M0 收尾验证（compose 全栈）
 
