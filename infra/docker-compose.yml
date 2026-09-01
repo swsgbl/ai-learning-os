@@ -48,6 +48,8 @@ services:
     build:
       context: ..
       dockerfile: services/api/Dockerfile
+    # M7-06: 应用回滚锚点 —— 发布时 docker tag 固化版本镜像；回滚 = AIOS_IMAGE_TAG=<旧tag> up -d --no-build
+    image: aios/api:${AIOS_IMAGE_TAG:-local}
     environment:
       APP_ENV: docker
       CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
@@ -93,6 +95,7 @@ services:
     build:
       context: ..
       dockerfile: apps/web/Dockerfile
+    image: aios/web:${AIOS_IMAGE_TAG:-local}
     environment:
       NODE_ENV: production
       # Next standalone server.js 读 HOSTNAME 作为绑定地址；容器默认 HOSTNAME=容器 ID

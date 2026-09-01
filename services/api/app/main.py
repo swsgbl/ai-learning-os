@@ -168,6 +168,10 @@ def create_app(database_url: str | None = None) -> FastAPI:
     from app.api.routes.license import router as license_router
 
     app.include_router(license_router)
+
+    from app.api.routes.version import router as version_router
+
+    app.include_router(version_router)
     app.include_router(web_router)
     # M5-03 抓取预检频率限制（per-IP 固定窗口，内存实现，无 DB 也可用）
     app.state.fetch_limiter = RateLimiter(settings.fetch_rate_limit_per_minute)
