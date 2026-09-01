@@ -9,7 +9,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-M5-02 Query planner（M5 进行中 1/8）
+M5-03 SSRF/rate limit/robots gate（M5 进行中 2/8）
 
 ## 已完成任务
 
@@ -60,11 +60,12 @@ M5-02 Query planner（M5 进行中 1/8）
 | M4-08 Voice report | 2107786, merge 13666c0 | pytest 433 passed（含真实 PG 5433）：domain 5 测（build_voice_report 只投影不判定——分数/错题/补救全部来自 M2-11 build_report 判分结果；spoken_text 第一遍播报=短结论+总分+错题数（60 分/答对 3/2 道错题，长度<120 不展开逐题讲解）、written_report_url 指向书面报告；错题摘要字段完整（题号/长题干截断 ends …/你的答案「未作答」兜底/正确答案/概念列表/错因）；全对场景恭喜+双摘要为空；补救建议聚合到概念级（同概念 2 道错题→1 条聚合、actions 去重、question_ids 收齐错题）；同 (报告, exam_id) 恒同输出确定性）；API 5 测（终态+已提交 200 全字段+书面报告可访问且 spoken_text 总分与书面 score 一致、幂等两次恒同、非终态 409、REPORT_READY 未提交判分 409、404/无 DB 503）；真实服务冒烟（uvicorn 8000+PG)9 项 PASS：终态会话报告 200（spoken_text=33 分/2 道错题+错题摘要含「未作答」与概念/补救聚合 actions=[review_concept,variant_practice]）→书面报告分数一致→幂等恒同→ | 2026-09-01 |
 | M4-09 Latency tracing | 6645e85, merge 01f1155 | pytest 445 passed（含真实 PG 5433）：domain 5 测（TRACE_STAGES=验收原文 7 阶段 vad/asr/intent/fsm/llm/tts/first_audio；nearest-rank 分位已知样本精确断言 p50=30/p95=50；空阶段 count=0 零缺省不虚报；单样本 p50=p95=max；确定性恒同输出）；API 7 测（POST /voice/trace 客户端上报 source=client→summary 可见、服务端自动埋点全链路 asr(t)/tts(s)/intent(i)/fsm(c) 四环节后 summary 可见、stage 白名单 422、duration 0/超上限 422、上报不扰动 session 业务状态、聚合只读幂等两次恒同、无 DB 503）；真实服务冒烟（uvicorn 8000+PG）7/7 PASS：client 上报 vad/llm/first_audio 201→transcribe 记 asr→intents 记 intent+fsm→synthesize 记 tts→summary 7 阶段全有数据（fsm p95=15ms 等）→幂等恒同→白名单/边界 422 | 2026-09-01 |
 | M5-01 Search provider 抽象 | 52a625a, merge 5e4106d | pytest 455 passed（含真实 PG 5433）：domain 3 测（registry=local-corpus+cloud-web 可插拔顺序恒定、cloud-web 未配置 enabled=False 且 unavailable_reason 非空不虚报可用、registry 配置面确定性投影恒同）；API 7 测（GET /search/providers local enabled/cloud disabled 带原因；本地检索命中：上传语料+parse→查询「正弦定理」result_count>=1、snippet 含词、provider=local-corpus、skipped=cloud-web 未配置原因、记录 query_id 落盘可回查全字段一致；未知搜索源进 skipped 记「未知搜索源」记录仍落盘；limit 截断<=limit；limit 0/51 与空白查询 422；记录 404；无 DB 503）；真实服务冒烟（uvicorn 8000+PG）8 项 PASS：providers 视图 200（local enabled + cloud-web 未配置原因可见）→上传 JSON 语料+parse 200→查询「正弦定理」命中 result_count=1、snippet 含词、provider=local-corpus、skipped cloud-web 带原因→记录 GET /search/queries/1 全字段一致→未知源 skipped「未知搜索源」→空白查询 422→记录 404 | 下一步 M5-02 | 2026-09-01 |
+| M5-02 Query planner | COMMITHASH, merge MERGEHASH | pytest 469 passed（含真实 PG 5433）：domain 9 测（6 槽位识别全命中——2024年清华大学高等数学公开课多项选择题→year/school/course/question_type/publicity 全识别且 subject=None 课程优先不误标、学科+题型部分识别、无槽位全 None 不虚报、学校正则+年份、年份「年」字摘除后再匹配学校、确定性恒同；计划逐源生成 2 源 2 条不可用源带 unavailable_reason、查询词=槽位固定顺序拼接「高等数学 多项选择题 公开课 清华大学 2024」、全空回退原词、确定性）；API 5 测（POST /search/plan 槽位+多源计划 200、指定未知源 422 预览接口直接拒绝、空白 422、无 DB 503、计划闭环——上传语料→plan 取 enabled 计划词→queries 执行命中同 snippet）；真实服务冒烟（uvicorn 8000+PG）9 项 PASS：全槽位 plan 200（slots 全识别+计划查询词=槽位拼接）、部分槽位、无槽位回退、上传语料→plan→执行计划词命中（拉格朗日中值定理冒烟）、未知源 422、空白 422 | 下一步 M5-03 | 2026-09-01 |
 
 ## 待办任务（按 backlog 顺序）
 
 - [x] M4-01~09 Voice（9/9 ✅ 2026-09-01 收官）
-- [ ] M5-01~08 Search + 治理（进行中 1/8：M5-01 ✅）
+- [ ] M5-01~08 Search + 治理（进行中 2/8：M5-01 ✅ M5-02 ✅）
 - [ ] M6-01~07 评测/安全/备份
 - [ ] M7-01~06 Release
 
@@ -125,9 +126,11 @@ M5-02 Query planner（M5 进行中 1/8）
 
 | 41 | 搜索源可插拔边界：SearchProvider Protocol 统一契约（name/kind/search），registry 注册即插拔（追加源=build_search_registry 一处）；不可用源不虚报——cloud-web 未配置 SEARCH_CLOUD_ENDPOINT/SEARCH_CLOUD_API_KEY 即 enabled=False 且 unavailable_reason 落 registry 视图与 skipped 记录（与 ADR 40「不虚报测不到的阶段」同款），未知源进 skipped 记原因、记录仍落盘；每次执行查询计划/结果/弃用原因一并落 search_queries 表可回查可审计；本地检索 local-corpus 复用 M1 chunks contains 检索，结果 url 指向 /resources/{id}/chunks/{idx} 可溯源 | M5-01 验收「多搜索源可插拔；查询计划、结果和弃用原因可记录」 | 2026-09-01 |
 
+| 42 | 查询计划边界：槽位识别为纯规则（词表最长优先+正则），无 LLM 依赖——同输入恒同输出（幂等语义同前）；课程含学科词时课程优先不误标学科；年份摘除（含后缀「年」字）后再匹配学校防误吃；未识别槽位为 None 不虚报；计划生成与执行分离——POST /search/plan 只产出计划不执行（预览可审计），不可用源同样出计划并带 unavailable_reason（延续 ADR 41「不虚报」边界），执行仍走 POST /search/queries；计划查询词=槽位固定顺序拼接，全空回退原始查询词 | M5-02 验收「识别学科、学校、年份、课程、题型和公开范围；生成多源查询」 | 2026-09-01 |
+
 ## 下一任务
 
-M5-01 完成（registry 可插拔 + 计划/结果/弃用原因可记录）。下一任务 M5-02 Query planner：学科/学校/年份/课程/题型/公开范围识别 → 生成多源查询计划。
+M5-02 完成（6 槽位识别 + 多源查询计划）。下一任务 M5-03 SSRF/rate limit/robots gate：内网地址、危险协议、超限频率和 disallow 路径被拒绝。
 
 ## 追加：M0 收尾验证（compose 全栈）
 

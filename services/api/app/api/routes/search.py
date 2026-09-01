@@ -12,6 +12,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
+from app.domain.query_planner import build_query_plan, parse_query_slots
 from app.search.providers import ProviderUnavailable
 
 router = APIRouter(prefix="/api/v1/search", tags=["search"])
@@ -67,6 +68,40 @@ class ProvidersOut(BaseModel):
     items: list[ProviderView]
 
 
+class PlanRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=MAX_QUERY_LEN)
+    providers: list[str] | None = None  # 缺省 = 全部已注册源
+
+    @field_validator("query")
+    @classmethod
+    def _reject_blank_query(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("查询词不能为空白")
+        return value
+
+
+class PlanSlots(BaseModel):
+    subject: str | None
+    school: str | None
+    year: str | None
+    course: str | None
+    question_type: str | None
+    publicity: str | None
+
+
+class PlanItem(BaseModel):
+    provider: str
+    query: str
+    enabled: bool
+    unavailable_reason: str | None
+
+
+class PlanOut(BaseModel):
+    query: str
+    slots: PlanSlots
+    plan: list[PlanItem]
+
+
 class SearchRecordOut(BaseModel):
     id: int
     query: str
@@ -94,6 +129,32 @@ async def list_search_providers(request: Request) -> ProvidersOut:
             )
             for entry in registry
         ]
+    )
+
+
+@router.post("/plan", response_model=PlanOut)
+async def build_plan(payload: PlanRequest, request: Request) -> PlanOut:
+    """槽位识别 + 多源查询计划生成（只出计划不执行——预览可审计）。"""
+    registry = request.app.state.search_registry
+    if registry is None:
+        raise HTTPException(status_code=503, detail="Search requires a database")
+
+    entries = registry
+    if payload.providers is not None:
+        by_name = {e.name: e for e in registry}
+        entries = []
+        for name in payload.providers:
+            entry = by_name.get(name)
+            if entry is None:
+                raise HTTPException(status_code=422, detail=f"未知搜索源: {name}")
+            entries.append(entry)
+
+    slots = parse_query_slots(payload.query)
+    plan = build_query_plan(slots, payload.query, entries)
+    return PlanOut(
+        query=payload.query,
+        slots=PlanSlots(**slots),
+        plan=[PlanItem(**item) for item in plan],
     )
 
 
