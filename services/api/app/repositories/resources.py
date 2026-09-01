@@ -26,6 +26,16 @@ class ResourceRepository:
             row = await session.get(ResourceRow, resource_id)
             return self._record(row) if row else None
 
+    async def list_all(self, *, limit: int = 500) -> list[ResourceRecord]:
+        # M7-04 license report 用：派生对象授权快照清单（上限保护）。
+        async with self._sessionmaker() as session:
+            rows = (
+                await session.execute(
+                    select(ResourceRow).order_by(ResourceRow.id).limit(limit)
+                )
+            ).scalars().all()
+            return [self._record(row) for row in rows]
+
     async def get_by_hash(self, content_hash: str) -> ResourceRecord | None:
         async with self._sessionmaker() as session:
             row = (

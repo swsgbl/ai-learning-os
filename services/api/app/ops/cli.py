@@ -49,6 +49,69 @@ async def _run_restore(args) -> int:
                                  Path(args.config_target) if args.config_target else None)
     print("restore ok: inserted", inserted, "rows")
     return 0
+async def _run_license_report(args) -> int:
+    """license-report 子命令：输出四区段授权清单 JSON（无 DB 时含说明段）。"""
+    import json as _json
+
+    from app.core.config import get_settings
+    from app.ops.license_report import (
+        build_license_report,
+        collect_api_dependencies,
+        collect_model_slots,
+        collect_web_dependencies,
+        resource_view,
+        source_view,
+    )
+
+    requirements = args.requirements or (Path(__file__).resolve().parents[2] / "requirements.txt")
+    requirements_text = Path(requirements).read_text(encoding="utf-8")
+    sources_list: list[dict] = []
+    resources_list: list[dict] = []
+    drafts_list: list[dict] = []
+    db_note = "content_sources/derived_objects 需 --db-url（本次未提供，两段为空）"
+    db_url = _db_url_of(args)
+    if db_url:
+        from sqlalchemy.ext.asyncio import (
+            async_sessionmaker,
+            create_async_engine,
+        )
+
+        from app.repositories.course_import_drafts import CourseImportDraftRepository
+        from app.repositories.resources import ResourceRepository
+        from app.repositories.sources import SourceRepository
+
+        engine = create_async_engine(db_url)
+        sessionmaker = async_sessionmaker(engine, expire_on_commit=False)
+        sources_list = [source_view(s) for s in await SourceRepository(sessionmaker).list()]
+        resources_list = [
+            resource_view(r) for r in await ResourceRepository(sessionmaker).list_all()
+        ]
+        drafts_list = [
+            {
+                "id": d["id"],
+                "status": d["status"],
+                "source_license_state": d["source_license_state"],
+                "reuse_admission": d["reuse_admission"],
+                "resource_id": d.get("resource_id"),
+            }
+            for d in await CourseImportDraftRepository(sessionmaker).list_by_status(None)
+        ]
+        await engine.dispose()
+        db_note = None
+    report = build_license_report(
+        dependencies=collect_api_dependencies(requirements_text),
+        web=collect_web_dependencies(),
+        model_slots=collect_model_slots(get_settings()),
+        content_sources=sources_list,
+        resources=resources_list,
+        course_import_drafts=drafts_list,
+    )
+    if db_note:
+        report["db_note"] = db_note
+    print(_json.dumps(report, ensure_ascii=False, indent=2))
+    return 0
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(prog="aios-backup")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -68,9 +131,14 @@ def main() -> None:
     p_r.add_argument("--s3-access-key", default=None)
     p_r.add_argument("--s3-secret-key", default=None)
     p_r.add_argument("--config-target", default=None)
+    p_l = sub.add_parser("license-report", help="依赖/模型/内容源/派生对象授权清单")
+    p_l.add_argument("--db-url", default=None)
+    p_l.add_argument("--requirements", default=None)
     args = parser.parse_args()
     if args.command == "backup":
         raise SystemExit(asyncio.run(_run_backup(args)))
+    if args.command == "license-report":
+        raise SystemExit(asyncio.run(_run_license_report(args)))
     raise SystemExit(asyncio.run(_run_restore(args)))
 
 
