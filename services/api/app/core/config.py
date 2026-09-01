@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     llm_provider: str | None = None
     embedding_provider: str | None = None
     search_provider: str | None = None
+    search_cloud_endpoint: str | None = None  # M5-01 cloud-web 搜索源
+    search_cloud_api_key: str | None = None  # 真实 key 不入库，env 注入
 
     # M2-10 主观题判分：keyword=内置确定性 judge；空=无 judge（essay 全部进复核）
     rubric_judge: str = "keyword"

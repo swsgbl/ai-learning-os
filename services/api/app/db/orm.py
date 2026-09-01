@@ -405,3 +405,22 @@ class VoiceTraceSpanRow(Base):
     exam_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     question_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class SearchQueryRow(Base):
+    """M5-01 搜索执行记录：查询计划、结果与弃用原因可记录（backlog M5-01）。
+
+    providers_skipped 含 per-provider 弃用原因（未配置/未知名称等）；
+    results 存结果摘要 JSON；一次执行一行，append-only。
+    """
+
+    __tablename__ = "search_queries"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    query: Mapped[str] = mapped_column(String(512))
+    providers_requested: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    providers_skipped: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    result_count: Mapped[int] = mapped_column(Integer, default=0)
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    results: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

@@ -13,6 +13,7 @@ from app.api.routes.papers import router as papers_router
 from app.api.routes.planner import router as planner_router
 from app.api.routes.resources import router as resources_router
 from app.api.routes.review import router as review_router
+from app.api.routes.search import router as search_router
 from app.api.routes.selection import router as selection_router
 from app.api.routes.sources import router as sources_router
 from app.api.routes.student import router as student_router
@@ -31,12 +32,14 @@ from app.repositories.misconceptions import MisconceptionRepository
 from app.repositories.parsejobs import ParseJobRepository
 from app.repositories.postgres import PostgresRepository
 from app.repositories.resources import ResourceRepository
+from app.repositories.search_queries import SearchQueryRepository
 from app.repositories.sources import SourceRepository
 from app.repositories.student_state import StudentStateRepository
 from app.repositories.voice_answer_events import VoiceAnswerEventRepository
 from app.repositories.voice_sessions import VoiceSessionRepository
 from app.repositories.voice_trace import VoiceTraceRepository
 from app.repositories.voice_transcripts import VoiceTranscriptRepository
+from app.search.providers import build_search_registry
 from app.storage.objectstore import make_object_store
 
 
@@ -65,10 +68,13 @@ def create_app(database_url: str | None = None) -> FastAPI:
             voice_sessions = VoiceSessionRepository(sessionmaker)
             voice_answer_events = VoiceAnswerEventRepository(sessionmaker)
             voice_trace = VoiceTraceRepository(sessionmaker)
+            search_queries = SearchQueryRepository(sessionmaker)
             resources = ResourceRepository(sessionmaker)
             objects = make_object_store(settings)
             parsers = make_default_registry()
             chunks = ChunkRepository(sessionmaker)
+            # M5-01 搜索注册表：本地语料恒可用；cloud-web 未配置即 unavailable（记弃用原因）
+            search_registry = build_search_registry(chunks, settings)
             parse_jobs = ParseJobRepository(sessionmaker)
             worker = ParseWorker(parse_jobs, resources, chunks, objects, parsers)
             # M1-07 可恢复：重启时把 running 任务重置 pending，再启动消费循环
@@ -87,6 +93,8 @@ def create_app(database_url: str | None = None) -> FastAPI:
         app.state.voice_sessions = voice_sessions if resolved_url else None
         app.state.voice_answer_events = voice_answer_events if resolved_url else None
         app.state.voice_trace = voice_trace if resolved_url else None
+        app.state.search_queries = search_queries if resolved_url else None
+        app.state.search_registry = search_registry if resolved_url else None
         app.state.resources = resources if resolved_url else None
         app.state.objects = objects if resolved_url else None
         app.state.parsers = parsers if resolved_url else None
@@ -125,6 +133,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(system_router)
     app.include_router(validate_router)
     app.include_router(voice_router)
+    app.include_router(search_router)
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, str]:
