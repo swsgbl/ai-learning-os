@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.api.routes.concepts import router as concepts_router
 from app.api.routes.course_workflow import router as course_workflow_router
 from app.api.routes.courses import router as courses_router
+from app.api.routes.eval import router as eval_router
 from app.api.routes.exams import router as exams_router
 from app.api.routes.misconceptions import router as misconceptions_router
 from app.api.routes.paper_extractor import router as paper_extractor_router
@@ -35,6 +36,7 @@ from app.repositories.chunks import ChunkRepository
 from app.repositories.concept_dag import ConceptDagRepository
 from app.repositories.course_generation_drafts import CourseGenerationDraftRepository
 from app.repositories.course_import_drafts import CourseImportDraftRepository
+from app.repositories.eval_runs import EvalRunRepository
 from app.repositories.memory import MemoryRepository
 from app.repositories.misconceptions import MisconceptionRepository
 from app.repositories.paper_question_drafts import PaperQuestionDraftRepository
@@ -82,6 +84,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
             course_import_drafts = CourseImportDraftRepository(sessionmaker)
             course_generation_drafts = CourseGenerationDraftRepository(sessionmaker)
             variant_question_drafts = VariantQuestionDraftRepository(sessionmaker)
+            eval_runs = EvalRunRepository(sessionmaker)
             paper_question_drafts = PaperQuestionDraftRepository(sessionmaker)
             resources = ResourceRepository(sessionmaker)
             objects = make_object_store(settings)
@@ -111,6 +114,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         app.state.course_import_drafts = course_import_drafts if resolved_url else None
         app.state.course_generation_drafts = course_generation_drafts if resolved_url else None
         app.state.variant_question_drafts = variant_question_drafts if resolved_url else None
+        app.state.eval_runs = eval_runs if resolved_url else None
         app.state.paper_question_drafts = paper_question_drafts if resolved_url else None
         app.state.search_registry = search_registry if resolved_url else None
         app.state.resources = resources if resolved_url else None
@@ -144,6 +148,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(concepts_router)
     app.include_router(course_workflow_router)
     app.include_router(variant_generator_router)
+    app.include_router(eval_router)
     app.include_router(courses_router)
     app.include_router(student_router)
     app.include_router(misconceptions_router)
