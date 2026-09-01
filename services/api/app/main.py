@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.concepts import router as concepts_router
+from app.api.routes.courses import router as courses_router
 from app.api.routes.exams import router as exams_router
 from app.api.routes.misconceptions import router as misconceptions_router
 from app.api.routes.papers import router as papers_router
@@ -29,6 +30,7 @@ from app.parsing.registry import make_default_registry
 from app.parsing.worker import ParseWorker
 from app.repositories.chunks import ChunkRepository
 from app.repositories.concept_dag import ConceptDagRepository
+from app.repositories.course_import_drafts import CourseImportDraftRepository
 from app.repositories.memory import MemoryRepository
 from app.repositories.misconceptions import MisconceptionRepository
 from app.repositories.parsejobs import ParseJobRepository
@@ -71,6 +73,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
             voice_answer_events = VoiceAnswerEventRepository(sessionmaker)
             voice_trace = VoiceTraceRepository(sessionmaker)
             search_queries = SearchQueryRepository(sessionmaker)
+            course_import_drafts = CourseImportDraftRepository(sessionmaker)
             resources = ResourceRepository(sessionmaker)
             objects = make_object_store(settings)
             parsers = make_default_registry()
@@ -96,6 +99,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         app.state.voice_answer_events = voice_answer_events if resolved_url else None
         app.state.voice_trace = voice_trace if resolved_url else None
         app.state.search_queries = search_queries if resolved_url else None
+        app.state.course_import_drafts = course_import_drafts if resolved_url else None
         app.state.search_registry = search_registry if resolved_url else None
         app.state.resources = resources if resolved_url else None
         app.state.objects = objects if resolved_url else None
@@ -125,6 +129,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(papers_router)
     app.include_router(exams_router)
     app.include_router(concepts_router)
+    app.include_router(courses_router)
     app.include_router(student_router)
     app.include_router(misconceptions_router)
     app.include_router(review_router)

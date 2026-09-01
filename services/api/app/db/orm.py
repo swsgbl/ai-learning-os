@@ -424,3 +424,26 @@ class SearchQueryRow(Base):
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     results: Mapped[list[Any]] = mapped_column(JSON, default=list)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CourseImportDraftRow(Base):
+    """M5-05 课程导入草稿：授权资源 -> Course/Concept/Resource 草稿 -> 人工审核。
+
+    授权门禁在生成时判定（reuse_admission 快照落库可审计）；concepts 为
+    确定性规则提取的候选列表；approved/rejected 为终态。
+    """
+
+    __tablename__ = "course_import_drafts"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    title: Mapped[str] = mapped_column(String(512))
+    status: Mapped[str] = mapped_column(String(24), default="pending_review", index=True)
+    source_resource_id: Mapped[str] = mapped_column(String(64))
+    source_license_state: Mapped[str] = mapped_column(String(32))
+    reuse_admission: Mapped[str] = mapped_column(String(32))
+    concepts: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    resource_refs: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    extraction_note: Mapped[str] = mapped_column(String(256))
+    review_note: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
