@@ -44,7 +44,7 @@ class CommandCheck:
     title: str
     argv: tuple[str, ...]
     cwd: Path
-    env: dict[str, str] = field(default_factory=dict)
+    env: dict[str, str | None] = field(default_factory=dict)  # None=从继承环境删除
 
 
 @dataclass(frozen=True)
@@ -76,6 +76,7 @@ def default_command_checks(*, db_url: str | None = None) -> list[CommandCheck]:
     db_env: dict[str, str] = {}
     if db_url:
         test_env["AIOS_PG_TEST_URL"] = db_url  # pytest 门控专用
+        test_env["DATABASE_URL"] = None  # 隔离调用方 shell 的 DATABASE_URL（None=删除）
         db_env["DATABASE_URL"] = db_url  # alembic/backup 子进程需要
     python = sys.executable
     return [
@@ -125,9 +126,11 @@ def check_migration_current(api_dir: Path, alembic="alembic", env: dict | None =
         argv = [sys.executable, "-m", "alembic", cmd]
         if callable(alembic):
             return alembic(argv)
+        _env = {**os.environ, **(env or {})}
+        _env = {k: v for k, v in _env.items() if v is not None}
         return subprocess.run(
             argv, cwd=str(api_dir), capture_output=True, text=True, check=False,
-            env={**os.environ, **(env or {})},
+            env=_env,
         )
 
     heads = _exec("heads")
@@ -241,10 +244,14 @@ def run_release_check(
 def _execute_command(check: CommandCheck) -> tuple[bool, str]:
     """真实子进程执行；超时 900s，失败带 stderr 尾部。"""
     try:
+        import os as _os
+
+        _env = {**_os.environ, **check.env}
+        _env = {k: v for k, v in _env.items() if v is not None}
         proc = subprocess.run(
             list(check.argv),
             cwd=str(check.cwd),
-            env={**dict(__import__("os").environ), **check.env},
+            env=_env,
             capture_output=True,
             text=True,
             timeout=900,
