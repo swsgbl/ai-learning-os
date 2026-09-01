@@ -38,6 +38,36 @@ AIOS_VOICE_MODE=cloud docker compose -f infra/docker-compose.yml --profile cloud
 注意：hybrid/cloud 必须显式设置 `AIOS_VOICE_MODE`，未设置时 VOICE_MODE 回退 local
 （服务照常启动但语音走本地，不会虚报云端能力；provider 视图会透出实际路由）。
 
+## 版本与回滚（M7-06）
+
+**版本真相源**：仓库根 `VERSION`（`web package.json` 与 `docs/CHANGELOG.md` 由测试守卫同步）。
+
+```bash
+cd services/api
+python -m app.ops.cli version            # 版本 + git commit + alembic current/head
+curl http://127.0.0.1:8000/api/v1/version
+```
+
+**数据库回滚**（默认 dry-run 不碰库，--yes 才执行）：
+
+```bash
+python -m app.ops.cli db-rollback --steps 1          # dry-run：打印计划
+python -m app.ops.cli backup --out backup-dir/       # 回滚前先备份
+python -m app.ops.cli db-rollback --steps 1 --yes    # 真正执行 alembic downgrade -1
+```
+
+**应用回滚**：compose 以 `AIOS_IMAGE_TAG` 为镜像锚点，发布时固化 tag，回滚即旧 tag 重启：
+
+```bash
+# 发布：build 并固化版本 tag
+docker compose -f infra/docker-compose.yml build
+docker tag aios/api:local aios/api:v0.1.0
+docker tag aios/web:local aios/web:v0.1.0
+# 回滚：旧 tag + --no-build 重启（数据库先按上面 db-rollback/backup 流程处理）
+AIOS_IMAGE_TAG=v0.1.0 docker compose -f infra/docker-compose.yml up -d --no-build
+```
+
+## 本地启动
 ## 本地启动
 
 ```powershell

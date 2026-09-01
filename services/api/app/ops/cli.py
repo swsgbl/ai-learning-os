@@ -7,9 +7,12 @@ from __future__ import annotations
 import argparse
 import asyncio
 import os
+import subprocess
+import sys
 from pathlib import Path
 
 from app.ops.backup import MinioBackupSource, run_backup, run_restore
+from app.ops.version import alembic_state
 
 
 def _s3_from_args_or_env(args):
@@ -49,6 +52,58 @@ async def _run_restore(args) -> int:
                                  Path(args.config_target) if args.config_target else None)
     print("restore ok: inserted", inserted, "rows")
     return 0
+def _run_version(args) -> int:
+    """python -m app.ops.cli version：版本 + git + alembic 真实状态。"""
+    import json as _json
+
+    from app.ops.version import build_version_info, git_commit
+
+    info = build_version_info(git=git_commit(), alembic=alembic_state())
+    if args.as_json:
+        print(_json.dumps(info, ensure_ascii=False))
+    else:
+        for k, v in info.items():
+            print(f"{k}: {v}")
+    return 0
+
+
+def _run_db_rollback(args) -> int:
+    """python -m app.ops.cli db-rollback --steps N [--yes]
+
+    数据库回滚 = alembic downgrade -N 的安全包装：默认 dry-run 只打印
+    计划与涉及的 revision，不触碰数据库；--yes 才真正执行（破坏性
+    操作显式确认）。回滚前打印 backup 提示。
+    """
+    steps = args.steps
+    if steps < 1:
+        print("steps 必须 >= 1")
+        return 2
+    api_dir = Path(__file__).resolve().parents[2]
+    state = alembic_state(api_dir)
+    current, head = state["current"], state["head"]
+    print(f"alembic current={current or '(none)'} head={head or '(none)'}")
+    if current is None:
+        print("无法确定 current revision，拒绝回滚（先 alembic upgrade head）")
+        return 2
+    target_note = f"将执行: alembic downgrade -{steps}（{current} -> 前 {steps} 个 revision）"
+    if not args.yes:
+        print(f"[dry-run] {target_note}")
+        print("[dry-run] 未触碰数据库。回滚是破坏性操作：先 backup（cli backup --out <dir>），")
+        print('[dry-run] 确认后加 --yes 执行。')
+        return 0
+    print("[rollback] 回滚是破坏性操作 —— 强烈建议先执行 cli backup。")
+    proc = subprocess.run(
+        [sys.executable, "-m", "alembic", "downgrade", f"-{steps}"],
+        cwd=str(api_dir), capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        print(f"回滚失败: {proc.stdout.strip()} {proc.stderr.strip()}")
+        return 1
+    after = alembic_state(api_dir)
+    print(f"回滚完成: {current} -> {after['current']}")
+    return 0
+
+
 def _run_release_check(args) -> int:
     """python -m app.ops.cli release-check [--api-base URL] [--db-url URL]
 
@@ -179,6 +234,11 @@ def main() -> None:
     p_rc.add_argument("--api-base", default="http://127.0.0.1:8000")
     p_rc.add_argument("--db-url", default=None)
     p_rc.add_argument("--local-only", action="store_true", help="跳过 live 项（不依赖运行中服务）")
+    p_v = sub.add_parser("version", help="版本 + git + alembic 状态")
+    p_v.add_argument("--json", dest="as_json", action="store_true")
+    p_db = sub.add_parser("db-rollback", help="数据库回滚（默认 dry-run，--yes 执行）")
+    p_db.add_argument("--steps", type=int, default=1)
+    p_db.add_argument("--yes", action="store_true", help="真正执行（破坏性操作显式确认）")
     args = parser.parse_args()
     if args.command == "backup":
         raise SystemExit(asyncio.run(_run_backup(args)))
@@ -186,6 +246,10 @@ def main() -> None:
         raise SystemExit(asyncio.run(_run_license_report(args)))
     if args.command == "release-check":
         raise SystemExit(_run_release_check(args))
+    if args.command == "version":
+        raise SystemExit(_run_version(args))
+    if args.command == "db-rollback":
+        raise SystemExit(_run_db_rollback(args))
     raise SystemExit(asyncio.run(_run_restore(args)))
 
 
