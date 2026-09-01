@@ -9,7 +9,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-M5-03 SSRF/rate limit/robots gate（M5 进行中 2/8）
+M5-04 Result dedup/rank（M5 进行中 3/8）
 
 ## 已完成任务
 
@@ -61,11 +61,12 @@ M5-03 SSRF/rate limit/robots gate（M5 进行中 2/8）
 | M4-09 Latency tracing | 6645e85, merge 01f1155 | pytest 445 passed（含真实 PG 5433）：domain 5 测（TRACE_STAGES=验收原文 7 阶段 vad/asr/intent/fsm/llm/tts/first_audio；nearest-rank 分位已知样本精确断言 p50=30/p95=50；空阶段 count=0 零缺省不虚报；单样本 p50=p95=max；确定性恒同输出）；API 7 测（POST /voice/trace 客户端上报 source=client→summary 可见、服务端自动埋点全链路 asr(t)/tts(s)/intent(i)/fsm(c) 四环节后 summary 可见、stage 白名单 422、duration 0/超上限 422、上报不扰动 session 业务状态、聚合只读幂等两次恒同、无 DB 503）；真实服务冒烟（uvicorn 8000+PG）7/7 PASS：client 上报 vad/llm/first_audio 201→transcribe 记 asr→intents 记 intent+fsm→synthesize 记 tts→summary 7 阶段全有数据（fsm p95=15ms 等）→幂等恒同→白名单/边界 422 | 2026-09-01 |
 | M5-01 Search provider 抽象 | 52a625a, merge 5e4106d | pytest 455 passed（含真实 PG 5433）：domain 3 测（registry=local-corpus+cloud-web 可插拔顺序恒定、cloud-web 未配置 enabled=False 且 unavailable_reason 非空不虚报可用、registry 配置面确定性投影恒同）；API 7 测（GET /search/providers local enabled/cloud disabled 带原因；本地检索命中：上传语料+parse→查询「正弦定理」result_count>=1、snippet 含词、provider=local-corpus、skipped=cloud-web 未配置原因、记录 query_id 落盘可回查全字段一致；未知搜索源进 skipped 记「未知搜索源」记录仍落盘；limit 截断<=limit；limit 0/51 与空白查询 422；记录 404；无 DB 503）；真实服务冒烟（uvicorn 8000+PG）8 项 PASS：providers 视图 200（local enabled + cloud-web 未配置原因可见）→上传 JSON 语料+parse 200→查询「正弦定理」命中 result_count=1、snippet 含词、provider=local-corpus、skipped cloud-web 带原因→记录 GET /search/queries/1 全字段一致→未知源 skipped「未知搜索源」→空白查询 422→记录 404 | 下一步 M5-02 | 2026-09-01 |
 | M5-02 Query planner | fb90aaa, merge d1c93c3 | pytest 469 passed（含真实 PG 5433）：domain 9 测（6 槽位识别全命中——2024年清华大学高等数学公开课多项选择题→year/school/course/question_type/publicity 全识别且 subject=None 课程优先不误标、学科+题型部分识别、无槽位全 None 不虚报、学校正则+年份、年份「年」字摘除后再匹配学校、确定性恒同；计划逐源生成 2 源 2 条不可用源带 unavailable_reason、查询词=槽位固定顺序拼接「高等数学 多项选择题 公开课 清华大学 2024」、全空回退原词、确定性）；API 5 测（POST /search/plan 槽位+多源计划 200、指定未知源 422 预览接口直接拒绝、空白 422、无 DB 503、计划闭环——上传语料→plan 取 enabled 计划词→queries 执行命中同 snippet）；真实服务冒烟（uvicorn 8000+PG）9 项 PASS：全槽位 plan 200（slots 全识别+计划查询词=槽位拼接）、部分槽位、无槽位回退、上传语料→plan→执行计划词命中（拉格朗日中值定理冒烟）、未知源 422、空白 422 | 下一步 M5-03 | 2026-09-01 |
+| M5-03 SSRF/robots/限流 gate | COMMITHASH, merge MERGEHASH | pytest 484 passed（含真实 PG 5433）：domain 12 测（公网 https 放行；file/ftp/javascript/data/mailto 危险协议全拒；环回/10/8/192.168/16/172.16-31/169.254/0.0.0.0 私网 v4 与 ::1/fc00::/7/fe80::/10 保留 v6 全拒（字面 IP 用恒等 resolver 模拟真实 getaddrinfo 行为）；解析失败即拒绝不虚报；robots Disallow 前缀匹配/空规则=全允许/仅 * 组生效/注释与大小写不敏感；固定窗口限流 max=2 第三次拒绝、窗口滚动重置、异键独立）；API 3 测（200/403+原因可见、连发 31 次第 31 次 429、无 DB create_app(None) 照常工作）；真实服务冒烟 7 项 PASS：公网 200→file/javascript 403→环回与 10.x 403→robots disallow 403 带原因→health 正常→连发 32 次尾部 429（前序步骤已耗配额故 29 次即触发，限流语义正确） | 下一步 M5-04 | 2026-09-01 |
 
 ## 待办任务（按 backlog 顺序）
 
 - [x] M4-01~09 Voice（9/9 ✅ 2026-09-01 收官）
-- [ ] M5-01~08 Search + 治理（进行中 2/8：M5-01 ✅ M5-02 ✅）
+- [ ] M5-01~08 Search + 治理（进行中 3/8：M5-01 ✅ M5-02 ✅ M5-03 ✅）
 - [ ] M6-01~07 评测/安全/备份
 - [ ] M7-01~06 Release
 
@@ -128,9 +129,11 @@ M5-03 SSRF/rate limit/robots gate（M5 进行中 2/8）
 
 | 42 | 查询计划边界：槽位识别为纯规则（词表最长优先+正则），无 LLM 依赖——同输入恒同输出（幂等语义同前）；课程含学科词时课程优先不误标学科；年份摘除（含后缀「年」字）后再匹配学校防误吃；未识别槽位为 None 不虚报；计划生成与执行分离——POST /search/plan 只产出计划不执行（预览可审计），不可用源同样出计划并带 unavailable_reason（延续 ADR 41「不虚报」边界），执行仍走 POST /search/queries；计划查询词=槽位固定顺序拼接，全空回退原始查询词 | M5-02 验收「识别学科、学校、年份、课程、题型和公开范围；生成多源查询」 | 2026-09-01 |
 
+| 43 | 抓取预检边界：默认拒绝+原因可见——协议白名单（仅 http/https）、主机解析 IP 命中私网/环回/链路本地保留段（v4+v6）即拒、主机名无法解析即拒绝（不虚报放行，与 ADR 41「不虚报」同款）；resolver 可注入（测试无需真实网络，同输入恒同输出）；robots.txt 仅解析 User-agent: * 组的 Disallow 前缀规则（空规则=全允许，robots 协议语义）；频率限制为 per-IP 固定窗口 60s（RateLimiter 内存实现，上限可配 fetch_rate_limit_per_minute 默认 30/min，超限 429）；预检为纯检查无 DB 依赖——create_app(None) 下照常可用，拒绝与放行理由全部返回给调用方可审计 | M5-03 验收「内网地址、危险协议、超限频率和 disallow 路径被拒绝」 | 2026-09-01 |
+
 ## 下一任务
 
-M5-02 完成（6 槽位识别 + 多源查询计划）。下一任务 M5-03 SSRF/rate limit/robots gate：内网地址、危险协议、超限频率和 disallow 路径被拒绝。
+M5-03 完成（URL 安全 + robots + 限流预检）。下一任务 M5-04 Result dedup/rank：官方 > OER > 平台 > 社区分级排序，排序理由可见。
 
 ## 追加：M0 收尾验证（compose 全栈）
 
