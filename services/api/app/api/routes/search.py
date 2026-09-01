@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
 from app.domain.query_planner import build_query_plan, parse_query_slots
+from app.domain.result_ranker import rank_and_dedup
 from app.search.providers import ProviderUnavailable
 
 router = APIRouter(prefix="/api/v1/search", tags=["search"])
@@ -45,6 +46,8 @@ class SearchResultItem(BaseModel):
     snippet: str
     source: str
     provider: str
+    authority: str | None = None
+    rank_reason: str
 
 
 class SearchOut(BaseModel):
@@ -191,10 +194,11 @@ async def execute_search(payload: SearchRequest, request: Request) -> SearchOut:
             skipped.append({"provider": name, "reason": str(cause)})
             continue
         results.extend(found)
-        if len(results) >= payload.limit:
-            results = results[: payload.limit]
-            break
 
+    # M5-04：聚合结果先去重 + 分层排序（理由可见），再截断 limit
+    results = rank_and_dedup(results)
+    if len(results) > payload.limit:
+        results = results[: payload.limit]
     duration_ms = int((time.monotonic() - t0) * 1000)
     record = await repo.record(
         query=payload.query,
