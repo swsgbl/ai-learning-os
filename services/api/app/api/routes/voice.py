@@ -340,6 +340,68 @@ async def get_voice_session(session_id: str, request: Request) -> VoiceSessionOu
     return VoiceSessionOut(**view)
 
 
+# ---------- M4-07 断线恢复：重连后从当前题、当前选项和服务端状态继续 ----------
+
+
+class VoiceSessionsOut(BaseModel):
+    items: list[VoiceSessionOut]
+
+
+class VoiceResumeOut(BaseModel):
+    session: VoiceSessionOut
+    question: dict | None = None  # 当前题公开字段（id/type/stem/options）——不含 answer/explanation
+    committed_answer: str | None = None  # 服务端权威已提交答案（exam answer_events 最新值）
+    question_total: int
+
+
+@router.get("/sessions", response_model=VoiceSessionsOut)
+async def list_voice_sessions(exam_id: str, request: Request) -> VoiceSessionsOut:
+    """按考试列出语音会话（断线重连后客户端凭 exam_id 找回会话）。"""
+    sessions = request.app.state.voice_sessions
+    if sessions is None:
+        raise HTTPException(status_code=503, detail="Voice sessions require a database")
+    views = await sessions.list_for_exam(exam_id)
+    return VoiceSessionsOut(items=[VoiceSessionOut(**view) for view in views])
+
+
+@router.get("/sessions/{session_id}/resume", response_model=VoiceResumeOut)
+async def resume_voice_session(session_id: str, request: Request) -> VoiceResumeOut:
+    """断线恢复视图：服务端状态 + 当前题公开内容 + 已提交答案。
+
+    只读不迁移（幂等：同状态多次恢复恒同输出）；播报期断线由客户端
+    凭返回的当前题重播；已提交答案以 exam answer_events 权威值为准。
+    """
+    sessions = request.app.state.voice_sessions
+    if sessions is None:
+        raise HTTPException(status_code=503, detail="Voice sessions require a database")
+    view = await sessions.get(session_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="语音会话不存在")
+    if fsm.is_terminal(view["status"]):
+        raise HTTPException(status_code=409, detail="会话已结束，无可恢复状态")
+
+    exam, paper = await _load_paper(request, view["exam_id"])
+    questions = list(paper.questions)
+    index = view["question_index"]
+    question: dict | None = None
+    committed_answer: str | None = None
+    if index < len(questions):
+        current = questions[index]
+        question = {
+            "id": current.id,
+            "type": current.type,
+            "stem": current.stem,
+            "options": [{"key": option.key, "text": option.text} for option in current.options],
+        }
+        committed_answer = exam.answers.get(current.id)
+    return VoiceResumeOut(
+        session=VoiceSessionOut(**view),
+        question=question,
+        committed_answer=committed_answer,
+        question_total=len(questions),
+    )
+
+
 async def _load_paper(request: Request, exam_id: str):
     exam = await request.app.state.repository.get_exam(exam_id)
     if exam is None:

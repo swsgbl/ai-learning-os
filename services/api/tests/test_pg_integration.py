@@ -774,3 +774,48 @@ def test_barge_in_and_announcement_controls_against_real_postgres() -> None:
         exam_view = client.get(f"/api/v1/exams/{exam_id}").json()
         assert exam_view["answers"].get(question_id) == "B"
         assert exam_view["next_sequence"] == 2  # 只落了一次
+
+
+def test_voice_resume_flow_against_real_postgres() -> None:
+    """M4-07 断线恢复：真实 PG 下凭 exam_id 找回会话 + resume 幂等恢复 + 无缝续答。"""
+    with TestClient(create_app(PG_URL)) as client:  # type: ignore[arg-type]
+        exam_id = client.post(
+            "/api/v1/papers/functions-basics/exams", json={"mode": "exam"}
+        ).json()["exam_id"]
+        session_id = client.post(
+            "/api/v1/voice/sessions", json={"exam_id": exam_id}
+        ).json()["session_id"]
+        url = f"/api/v1/voice/sessions/{session_id}/commands"
+        for command in ("start_reading", "question_read", "options_read"):
+            assert client.post(url, json={"type": command}).status_code == 200
+        exam_view = client.get(f"/api/v1/exams/{exam_id}").json()
+        question_id = exam_view["questions"][0]["id"]
+        assert client.post(
+            url,
+            json={"type": "answer_proposed", "question_id": question_id, "answer": "B"},
+        ).status_code == 200
+
+        # 断线重连：凭 exam_id 找回会话列表
+        items = client.get("/api/v1/voice/sessions", params={"exam_id": exam_id}).json()["items"]
+        assert [item["session_id"] for item in items] == [session_id]
+
+        # resume：服务端状态 + 当前题公开字段 + 已提交答案（不含 answer/explanation）
+        first = client.get(f"/api/v1/voice/sessions/{session_id}/resume").json()
+        assert first["session"]["status"] == "ANSWER_COMMITTED"
+        assert first["question"]["id"] == question_id
+        assert "answer" not in first["question"] and "explanation" not in first["question"]
+        assert first["committed_answer"] == "B"
+        assert first["question_total"] >= 1
+
+        # 只读不迁移：二次恢复恒同输出（幂等）
+        second = client.get(f"/api/v1/voice/sessions/{session_id}/resume").json()
+        assert second == first
+
+        # 恢复后无缝续答：改口覆盖 B → C
+        assert client.post(
+            url,
+            json={"type": "answer_proposed", "question_id": question_id, "answer": "C"},
+        ).status_code == 200
+        exam_view = client.get(f"/api/v1/exams/{exam_id}").json()
+        assert exam_view["answers"].get(question_id) == "C"
+        assert exam_view["next_sequence"] == 3
