@@ -447,3 +447,19 @@ class CourseImportDraftRow(Base):
     review_note: Mapped[str | None] = mapped_column(String(512), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class PaperQuestionDraftRow(Base):
+    """M5-06 试卷题目抽取草稿：题目 JSON + 页码 + 审核终态（不虚报，未见即无）。"""
+
+    __tablename__ = "paper_question_drafts"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    resource_id: Mapped[str] = mapped_column(String(64))
+    status: Mapped[str] = mapped_column(String(24), default="pending_review", index=True)
+    questions: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    question_count: Mapped[int] = mapped_column()
+    extraction_note: Mapped[str] = mapped_column(String(256))
+    review_note: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

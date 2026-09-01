@@ -1,0 +1,85 @@
+"""M5-06 试卷题目抽取草稿持久化：创建/查询/人工审核（终态不可逆，同 M5-05 队列模式）。"""
+from __future__ import annotations
+
+import uuid
+from collections.abc import Callable
+from datetime import datetime
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+from app.db.orm import PaperQuestionDraftRow
+from app.repositories.memory import utc_now
+
+_TERMINAL = {"approved", "rejected"}
+
+
+class PaperQuestionDraftRepository:
+    def __init__(
+        self,
+        sessionmaker: async_sessionmaker[AsyncSession],
+        clock: Callable[[], datetime] = utc_now,
+    ) -> None:
+        self._sessionmaker = sessionmaker
+        self._clock = clock
+
+    async def create(self, draft: dict) -> dict:
+        """草稿落库，状态固定 pending_review；返回完整视图。"""
+        draft_id = f"pqd_{uuid.uuid4().hex}"
+        now = self._clock()
+        async with self._sessionmaker() as session, session.begin():
+            session.add(PaperQuestionDraftRow(
+                id=draft_id,
+                resource_id=draft["resource_id"],
+                status="pending_review",
+                questions=draft["questions"],
+                question_count=len(draft["questions"]),
+                extraction_note=draft["extraction_note"],
+                created_at=now,
+            ))
+        return await self.get(draft_id)
+
+    async def get(self, draft_id: str) -> dict | None:
+        async with self._sessionmaker() as session:
+            row = await session.get(PaperQuestionDraftRow, draft_id)
+            if row is None:
+                return None
+            return self._view(row)
+
+    async def list_by_status(self, status: str | None = None) -> list[dict]:
+        """按状态查审核队列；缺省返回全部（含终态）。"""
+        query = select(PaperQuestionDraftRow).order_by(PaperQuestionDraftRow.created_at)
+        if status is not None:
+            query = query.where(PaperQuestionDraftRow.status == status)
+        async with self._sessionmaker() as session:
+            rows = (await session.execute(query)).scalars().all()
+            return [self._view(row) for row in rows]
+
+    async def review(self, draft_id: str, decision: str, note: str | None) -> dict | None:
+        """人工审核：pending_review -> approved/rejected；已终态返回哨兵供上层 409。"""
+        if decision not in _TERMINAL:
+            raise ValueError(f"非法审核决定: {decision}")
+        now = self._clock()
+        async with self._sessionmaker() as session, session.begin():
+            row = await session.get(PaperQuestionDraftRow, draft_id)
+            if row is None:
+                return "MISSING"
+            if row.status in _TERMINAL:
+                return "TERMINAL"
+            row.status = decision
+            row.review_note = note
+            row.reviewed_at = now
+        return await self.get(draft_id)
+
+    def _view(self, row: PaperQuestionDraftRow) -> dict:
+        return {
+            "id": row.id,
+            "resource_id": row.resource_id,
+            "status": row.status,
+            "questions": list(row.questions or []),
+            "question_count": row.question_count,
+            "extraction_note": row.extraction_note,
+            "review_note": row.review_note,
+            "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
+            "created_at": row.created_at.isoformat(),
+        }
