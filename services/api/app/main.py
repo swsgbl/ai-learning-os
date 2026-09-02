@@ -30,7 +30,7 @@ from app.api.routes.voice import router as voice_router
 from app.api.routes.voice_eval import router as voice_eval_router
 from app.api.routes.web import router as web_router
 from app.core.config import get_settings
-from app.core.security import validate_auth_secret
+from app.core.security import validate_auth_secret, validate_exposure
 from app.db.session import create_engine, is_sqlite, make_sessionmaker, prepare_database
 from app.domain.rubric_grader import make_rubric_judge
 from app.domain.web_gate import RateLimiter
@@ -64,6 +64,12 @@ from app.storage.objectstore import make_object_store
 def create_app(database_url: str | None = None) -> FastAPI:
     settings = get_settings()
     validate_auth_secret(settings.auth_secret, app_env=settings.app_env)  # M9-04 fail-closed
+    validate_exposure(  # M9-06 公开暴露 fail-closed
+        host_bind_ip=settings.host_bind_ip,
+        app_env=settings.app_env,
+        auth_secret=settings.auth_secret,
+        livekit_api_secret=settings.livekit_api_secret,
+    )
     resolved_url = database_url if database_url is not None else settings.database_url
     if settings.rubric_judge == "llm":
         # M10-01: LLM judge 经 OpenAI 兼容 gateway；槽位未配齐时 build 返回 None

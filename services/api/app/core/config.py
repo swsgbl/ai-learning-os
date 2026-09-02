@@ -54,6 +54,8 @@ class Settings(BaseSettings):
     # 生产 compose 显式注入。key 只放部署 secret/.env，不入库不入码。
     auth_secret: str | None = None
     auth_token_expire_minutes: int = 1440
+    # M9-06: 宿主端口绑定意图（compose 透传 AIOS_BIND_IP）——非 loopback 时启动校验升级
+    host_bind_ip: str = "127.0.0.1"
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
