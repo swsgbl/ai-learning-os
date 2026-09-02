@@ -39,7 +39,6 @@ jobs:
           --health-retries 10
     env:
       AIOS_PG_TEST_URL: postgresql+asyncpg://aios:aios@localhost:5432/ai_learning_os
-      DATABASE_URL: postgresql+asyncpg://aios:aios@localhost:5432/ai_learning_os
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -52,8 +51,14 @@ jobs:
       - name: Ruff
         run: ruff check services/api
       - name: Pytest (unit + SQLite stand-in + real PG integration)
+        # M8-00: DATABASE_URL 只属于 migration 步骤 —— pytest 必须验证「无 DB 503」
+        # 语义，job 级 DATABASE_URL 会污染 26 个无 DB 断言（CI 失败根因）
+        env:
+          DATABASE_URL: ""
         run: python -m pytest services/api
       - name: Migration check (upgrade - downgrade base - upgrade)
+        env:
+          DATABASE_URL: postgresql+asyncpg://aios:aios@localhost:5432/ai_learning_os
         run: |
           cd services/api
           alembic upgrade head
