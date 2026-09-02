@@ -9,12 +9,14 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-**M9-01 多用户与认证基座已完成**（feature/M9-01-auth 分支，merge 9dc7575 + flaky 修复 fbbe170）：
+**M10-01 LLM 接入已完成**（feature/M10-01-llm-gateway 分支，commit fa11f97，merge 1734f4e）：
 
-- **认证核心**：users 表（alembic 0022）+ bcrypt 密码哈希（同密码盐不同哈希、72 字节上限显式拒绝）+ JWT HS256（登录失败统一文案防枚举 + dummy-hash 时间对齐）；端点 register（重复 409）/ login / me（幽灵用户 token 仍 401）/ status。
-- **门禁策略（诚实降级惯例）**：AUTH_SECRET 未配置 = 认证关闭且 status 如实透出 auth_enabled=false——存量客户端与 657 个存量测试零破坏；配置后全业务路径要求 Bearer token（health/docs/version/status/register/login 豁免，豁免清单集中一处）。
-- **CI flaky 根因修复**：API job 间歇红（同代码一次绿两次红、失败集随机——misconceptions questions[0] IndexError / rubric StopIteration / extractor 404==201）。根因 = ParseWorker 后台循环与请求共享 SQLite StaticPool 单连接，事务交错「刚写的数据读不到」；SQLite 测试替身无连接池隔离，常驻后台循环属架构不匹配（worker 行为由 test_parse_job_queue 裸装配单测覆盖，生产 PG 与 Docker 冒烟栈不受影响）。修复 = 后台循环仅池化后端启动。
-- **证据**：本地全量 pytest 673 passed 2 skipped（657→673 +16 auth 测，存量零破坏）；迁移 0022 up/down/up 真实 PG 通过；Docker 冒烟含认证全链路（auth_enabled=True、无 token 401、register/login/me 201/200/200、带 token 上传→重启→parse 200）；远端 CI run 33587138302 三 job 全绿（Web/API/Docker）。compose 注入 AIOS_AUTH_SECRET（dev 占位，生产覆盖）。CHANGELOG 增 [Unreleased] 节（版本守卫按 Keep a Changelog 跳过 Unreleased）。
+- **LLM gateway**（app/llm/gateway.py）：OpenAI 兼容 chat completions 最小客户端；endpoint/key/model 仅来自部署槽位（不入库不入码不入日志）；transport 可注入；任何网络/协议失败映射 LlmUnavailable——不重试不编造。
+- **rubric LLM judge**（app/llm/rubric_judge.py）：实现 M2-10 预留的 RubricJudge 协议。fail-closed：LLM 不可用/响应非法/模型编造 evidence_id → None → essay 进复核三态；judge_model/prompt_hash 服务端覆写留痕（不信任模型自报）。
+- **开关与默认**：RUBRIC_JUDGE=llm 启用（默认 keyword 确定性判分不变）；LLM 三槽位任一缺席 → None + warning 日志（essay 全部进复核，不虚报模型能力）。
+- **证据**：本地全量 pytest 683 passed 2 skipped（673→683 +10，全 fake transport 无网络——协议格式/失败映射/围栏剥离/编造 evidence 置空/装配两态/端到端 fail-closed）；ruff 全绿；远端 CI run 33588403700 三 job 全绿。
+- **真实端点冒烟**：infra/smoke_llm.sh（gateway 探针 + rubric judge 全链路）——**需要部署 key 才能运行，无 key 明确失败不虚报通过**；key 由用户提供后执行。
+- **已知取舍（ADR 65）**：判分管线为同步域函数，gateway 用同步 httpx（单用户本地版可接受）；判分并发化是后续演进。
 
 ## 已完成任务
 
@@ -81,6 +83,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 | M7-06 Versioning and rollback | 0c607fa, merge 339ed14 | pytest 654 passed（含真实 PG 5433，基线 645→654 +9）：三真相源同步守卫（VERSION==web package.json==CHANGELOG 顶部条目）+ 非法格式拒绝（v1.x raise）+ /version 端点 200 四字段 + 诚实降级（git/alembic 缺席 not_available）+ db-rollback 三测（dry-run 断言绝不执行子进程、--yes 捕获精确 argv downgrade -1 + 回滚后状态回读「0021_eval_runs -> 0020_prev」、steps=0/current=None 拒绝退出码 2 fail-closed）+ compose AIOS_IMAGE_TAG 渲染（无 tag→aios/api:local、v0.1.0 插值→aios/api:v0.1.0，docker compose config）+ README runbook 同源守卫（db-rollback --yes/AIOS_IMAGE_TAG/up -d --no-build/backup 关键命令在文档）；真实服务冒烟（uvicorn+PG：GET /api/v1/version 200 {"version":"0.1.0","git_commit":"...","alembic_current":"not_available","alembic_head":"not_available"}——端点不查 alembic 不引入 DB 依赖，真实状态经 CLI；cli version 三真相源+alembic current=0021_eval_runs==head；cli db-rollback 无 DB fail-closed exit 2、带 DATABASE_URL dry-run 打印计划不执行、--json 正常）；release-check 终验两轮——第一轮 9/10 抓到真实缺陷（调用方 shell 的 DATABASE_URL 经 os.environ 继承进 api-test pytest 子进程，污染「无 DB」测试预期 503→实得 201 误报 24 失败），修复 env None=删除语义（CommandCheck.env→dict[str,str|None]，_execute_command 与 check_migration_current 过滤 None 键，test_env 显式 DATABASE_URL=None——调用方环境污染被剥离而非继承），复跑同污染姿势 ALL GREEN 10/10 EXIT=0（api-test 654 passed 2 skipped），+1 env 隔离回归测试基线 654→655，fix 407c5c7 | 下一步：无——M7 6/6 收官，M0-M7 全部交付 | 2026-09-02 |
 | M8-00 发布真实性修复 | 8ccb47b..8daecca, merge c22342c | 本轮只修真实性不开发新功能——CI 隔离（job 级 DATABASE_URL 只留 migration 步骤，pytest 步骤显式屏蔽，26 个无 DB 503 断言不再被翻成 DB 路径）；API 镜像版本打包（Dockerfile COPY VERSION → /app；version.py 向上探测布局，容器 /app 与源码仓库双兼容，缺失 RuntimeError 不再 IndexError；alembic_dir 双布局）；对象存储真实持久（compose api 注入 S3_* 连 minio + depends_on healthy；MinioObjectStore 幂等建 bucket；MemoryObjectStore 静默回退消除）；CI 新增真实 Docker 门禁 job（compose up -d --build + smoke：6 服务 healthy + /health /version(0.1.0) /papers Web / + 上传→重启→读回；config 渲染不算可运行证明）；冒烟脚本可移植（AIOS_WEB_PORT 感知/cygpath/POST parse）；pytest 654→657 +3 测；本地 Docker 冒烟 ALL PASSED + api 日志零 traceback；远端 CI run 33584180293 三 job 全绿 | 下一步：M8 待定（按需） | 2026-09-02 |
 | M9-01 多用户与认证基座 | 03e7db4, merge 9dc7575 + fbbe170 | 本地全量 pytest 673 passed 2 skipped（+16 auth：status 两态如实、门禁两态、伪造/过期 token 401、register/login/me 闭环、防枚举同文案、幽灵用户 401、输入边界、bcrypt 盐与损坏哈希）；迁移 0022 真实 PG roundtrip；Docker 冒烟认证全链路 PASSED；CI flaky 根因修复（ParseWorker 仅池化后端启动，StaticPool 事务交错是 SQLite 替身架构不匹配）；远端 CI run 33587138302 三 job 全绿 | 下一步：M9-02 数据归属拆分（可选） | 2026-09-02 |
+| M10-01 LLM 接入 | fa11f97, merge 1734f4e | 本地全量 pytest 683 passed 2 skipped（+10 fake-transport LLM 测：协议/失败映射/围栏/编造 evidence/装配两态/端到端 fail-closed）；OpenAI 兼容 gateway + rubric LLM judge（默认关闭，fail-closed 进复核，服务端覆写留痕）；infra/smoke_llm.sh 真实端点冒烟（无 key 明确失败不虚报，key 由用户提供后执行）；远端 CI run 33588403700 三 job 全绿 | 下一步：M9-02 数据归属拆分（可选） | 2026-09-02 |
 
 | M6-05 Security suite | 07a8373, merge a6980c4 | pytest 606 passed（含真实 PG 5433，基线 591→606 +15）：五类安全面集中回归 15 测——SSRF（云元数据端点 169.254.169.254 拒绝、DNS 解析到私网 10.x/172.16 拒绝、域层 check_url_safety 理由可见）、sandbox escape（sympy 字符白名单：__import__/open/dunder 全部进复核不执行、mcq+math 双入口验证）、注入（SQL 元字符 id 四路由 404/int 路径 422 类型拒绝、后续请求存活；SQL 元字符答案 fail-closed 判错；恶意文件名上传 storage_key 内容寻址三段式 uploads/{2hex}/{64hex} 无用户路径成分；坏 JSON parse 显式 422 安全降级不 500）、密钥泄露（voice/search providers 视图无 sk-/AKIA/ghp_/xoxb/PEM 形态；.env.example+compose+livekit.yaml 仓库配置扫描无生产密钥形态——dev 占位值合法）、越权（交卷后建语音会话 409 答案封存、跨会话 event_id 复用 409 状态不扰动——M4-05 套件级守卫、终态草稿 approve→reject 与 reject→approve 双向 409）；真实服务冒烟 6 项 PASS（uvicorn 8026+PG：file 协议 403、元数据 IP 403 带原因、metadata.google.internal 解析失败拒绝、SQLi id 404、交卷后语音 409「考试状态 submitted 不允许语音作答」、providers 无密钥形态） | 下一步 M6-06 | 2026-09-01 |
 | M6-04 Prompt injection suite | b3130fe, merge d6f1632 | pytest 591 passed（含真实 PG 5433，基线 576→591 +15）：四类不变量回归套件 15 测——license 状态向量（恶意文档正文惰性落库 license 保持 UNKNOWN + 复用门禁 403 原因可见；未 verify 来源带注入文档上传 403 不存正文、来源状态不变）、审核队列向量（文档自称「自动通过」无效，唯一离队路径=人工 approve 端点、重复审核 409）、语音注入向量（探针固化 5 案：裸注入/英文注入/时间注入→unknown、答案+注入→槽位优先 choose B、成绩注入→含糊澄清；API 层 unknown 不应用 FSM 状态不变、含糊只进澄清环且不落半成品答案、注入尾巴交卷/改分零效果）、时间向量（答题载荷伪造 end_at/started_at/remaining_seconds/admin_override 被 pydantic 丢弃、服务端时间不动；提交载荷注入字段幂等收敛同一 submission、duration 服务端时钟）、成绩向量（注入答案判 0 分、正确字母+注入尾巴 fail-closed 判错不猜、report 分数只来自服务端判定）、检索面（注入文本 snippet 逐字惰性透传、重复查询恒同无副作用）；真实服务冒烟 8 项 PASS（真实 PG 主库全链路：上传 UNKNOWN→parse→门禁 403「资源授权状态 UNKNOWN 不可复用」→搜索惰性→语音注入 fsm_applied=false→伪造时间被丢弃 end_at 不动→注入提交幂等→注入答案 0 分/正常答案满分/报告 1.0 分服务端判定） | 下一步 M6-05 | 2026-09-01 |
@@ -97,6 +100,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 - [x] M7-01~06 Release（6/6 ✅ 2026-09-02 收官——M0-M7 全部里程碑交付完成）
 - [x] M8-00 发布真实性修复（✅ 2026-09-02——CI 环境隔离/镜像版本打包/MinIO 持久化/Docker CI 门禁，远端 CI 全绿实证）
 - [x] M9-01 多用户与认证基座（✅ 2026-09-02——users/bcrypt/JWT/全局 Bearer 门禁 + CI flaky 根因修复，远端 CI 全绿实证）
+- [x] M10-01 LLM 接入（✅ 2026-09-02——OpenAI 兼容 gateway + rubric LLM judge fail-closed，默认关闭；真实端点冒烟待用户提供 key，远端 CI 全绿实证）
 
 ## 阻塞与风险
 
@@ -180,10 +184,11 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 | 62 | 发布真实性三原则：CI 环境按用途隔离（pytest 只认 AIOS_PG_TEST_URL、DATABASE_URL 只进 alembic/API 运行时——job 级混注入会把「无 DB 503」测试翻成 DB 路径）；版本真相源必须随镜像打包且布局探测兼容源码仓库与容器 /app（固定 parents[N] 在跨布局下越界）；可运行证明只认真实构建启动（compose config 渲染 ≠ 可运行；全栈 healthy + 端点 + 上传对象重启读回才是冒烟门禁），对象存储必配真实后端（S3_* 注入 + 幂等建 bucket，MemoryObjectStore 静默回退即数据丢失） | M8-00 审计「远端 CI 失败/容器崩溃/对象重启丢失」三阻断点 | 2026-09-02 |
 | 63 | 认证开关的诚实降级：AUTH_SECRET 未配置 = 认证关闭且 /auth/status 如实透出 auth_enabled=false（与 voice/search provider「未配置如实降级」同款约定），配置后全业务路径 Bearer 门禁、豁免清单集中一处；登录失败统一文案 + dummy-hash 时间对齐防枚举；密码只存 bcrypt 哈希、72 字节上限显式拒绝；幽灵用户（已删用户的存量 token）一律 401 不因签名有效而放行 | M9-01「多用户与认证基座」 | 2026-09-02 |
 | 64 | SQLite 测试替身不运行常驻后台任务：StaticPool 单连接上后台事务与请求事务交错（慢 runner 随机「刚写读不到」），worker 后台循环仅在池化后端启动；替身的行为覆盖由裸装配单元测试（手动 run_once）承担 | M9-01 期间 CI API job 间歇红根因 | 2026-09-02 |
+| 65 | LLM 接入三原则：key 边界（endpoint/key/model 仅部署槽位，不入库不入码不入日志，真实端点冒烟无 key 明确失败不虚报）；fail-closed（LLM 任何失败 → judge None → essay 进复核三态，模型缺席绝不产生分数；模型自报的 judge_model/prompt_hash 一律服务端覆写）；默认关闭（RUBRIC_JUDGE=keyword 确定性判分是默认态，llm 是显式选配——LLM 只在槽位处替换确定性实现，不改变管线语义）；已知取舍：判分管线同步、gateway 同步 httpx（单用户本地版可接受，并发化后续演进） | M10-01「真实 LLM 接入」 | 2026-09-02 |
 
 ## 下一任务
 
-M7-06 完成（版本真相源 + /version 端点 + CHANGELOG + db-rollback fail-closed CLI + AIOS_IMAGE_TAG 应用回滚锚点 + README runbook；ADR 61）。**M7 6/6 收官，M0-M7 全部里程碑交付完成**——backlog 无剩余任务。M9-01 已完成（多用户认证基座 + CI flaky 根因修复，远端 CI 全绿）。后续演进方向（非 backlog 承诺）：M9-02 数据归属拆分（资源/考试/语音按 user_id 隔离，认证基座已预留 user_id 锚点）、真实 LLM 接入（模型槽位 not_configured）、云语音/搜索 provider key 接入。
+M7-06 完成（版本真相源 + /version 端点 + CHANGELOG + db-rollback fail-closed CLI + AIOS_IMAGE_TAG 应用回滚锚点 + README runbook；ADR 61）。**M7 6/6 收官，M0-M7 全部里程碑交付完成**——backlog 无剩余任务。M10-01 已完成（LLM gateway + rubric LLM judge，远端 CI 全绿；真实端点冒烟待用户提供 key 后运行 infra/smoke_llm.sh）。后续演进方向（非 backlog 承诺）：M9-02 数据归属拆分（资源/考试/语音按 user_id 隔离，认证基座已预留锚点）、云语音/搜索 provider key 接入。
 
 ## 追加：M0 收尾验证（compose 全栈）
 
