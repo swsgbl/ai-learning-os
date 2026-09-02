@@ -73,6 +73,8 @@ class ExamSessionRow(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     end_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # M9-02: 考试归属；NULL = 认证关闭的本地调试模式
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
 
 
 class AnswerEventRow(Base):
@@ -164,7 +166,9 @@ class ResourceRow(Base):
     language: Mapped[str | None] = mapped_column(String(16), nullable=True)
     access_state: Mapped[str] = mapped_column(String(16), default="unknown")
     license_state: Mapped[str] = mapped_column(String(32), default="UNKNOWN")
-    content_hash: Mapped[str] = mapped_column(String(64), unique=True)
+    # M9-02: dedup 作用域 = (owner_id, content_hash)——跨用户同内容各自保留
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    content_hash: Mapped[str] = mapped_column(String(64))
     storage_key: Mapped[str] = mapped_column(String(512))
     size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
     content_type: Mapped[str | None] = mapped_column(String(128), nullable=True)
@@ -173,6 +177,8 @@ class ResourceRow(Base):
     parse_metrics: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     parse_error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (UniqueConstraint("owner_id", "content_hash", name="uq_resources_owner_content"),)
 
 
 class ChunkRow(Base):
@@ -342,6 +348,8 @@ class VoiceTranscriptRow(Base):
     latency_ms: Mapped[int] = mapped_column(Integer, default=0)
     audio_bytes: Mapped[int] = mapped_column(Integer, default=0)
     audio_object_key: Mapped[str | None] = mapped_column(String(256), nullable=True)
+    # M9-02: 转写回查面归属；NULL = 本地调试模式
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     audio_stored: Mapped[bool] = mapped_column(Boolean, default=False)
     exam_id: Mapped[str | None] = mapped_column(String(64), nullable=True)  # M4-03 FSM 绑定
     question_id: Mapped[str | None] = mapped_column(String(64), nullable=True)

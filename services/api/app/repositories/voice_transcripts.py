@@ -43,9 +43,11 @@ class VoiceTranscriptRepository:
         audio_stored: bool,
         exam_id: str | None = None,
         question_id: str | None = None,
+        owner_id: str | None = None,
     ) -> dict:
         """追加一行转写；返回存储视图（含 id/created_at）。"""
         row = VoiceTranscriptRow(
+            owner_id=owner_id,
             provider=provider,
             text=text,
             confidence=confidence,
@@ -62,7 +64,19 @@ class VoiceTranscriptRepository:
             await session.flush()
             return self._to_view(row)
 
+    async def list_for_owner(self, owner_id: str, limit: int = 50) -> list[dict]:
+        """M9-02: auth on 时只回当前用户的转写。"""
+        async with self._sessionmaker() as session:
+            rows = await session.execute(
+                select(VoiceTranscriptRow)
+                .where(VoiceTranscriptRow.owner_id == owner_id)
+                .order_by(VoiceTranscriptRow.id.desc())
+                .limit(limit)
+            )
+            return [self._to_view(row) for row in rows.scalars().all()]
+
     async def list_recent(self, limit: int = 50) -> list[dict]:
+        """最近转写（auth off 本地调试模式与部署级视图使用）。"""
         async with self._sessionmaker() as session:
             rows = await session.execute(
                 select(VoiceTranscriptRow)

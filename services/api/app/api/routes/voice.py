@@ -15,6 +15,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 
+from app.api.routes.auth import current_owner_id
 from app.core.config import get_settings
 from app.domain import voice_session_fsm as fsm
 from app.domain.answer_normalizer import normalize_answer
@@ -232,6 +233,7 @@ async def transcribe(request: Request, audio: UploadFile) -> TranscriptionOut:
         request.app.state.objects.put(audio_object_key, data, audio.content_type or "audio/wav")
         audio_stored = True
     view = await repo.save(
+        owner_id=current_owner_id(request),
         provider=result.provider,
         text=result.text,
         confidence=result.confidence,
@@ -259,7 +261,12 @@ async def list_transcripts(request: Request, limit: int = 50) -> TranscriptsOut:
     if repo is None:
         raise HTTPException(status_code=503, detail="Transcripts require a database")
     limit = max(1, min(limit, 200))
-    rows = await repo.list_recent(limit=limit)
+    owner = current_owner_id(request)
+    rows = (
+        await repo.list_for_owner(owner, limit=limit)
+        if owner is not None
+        else await repo.list_recent(limit=limit)
+    )
     return TranscriptsOut(
         item_count=len(rows),
         items=[TranscriptView(**row) for row in rows],
@@ -322,12 +329,29 @@ class VoiceCommandOut(BaseModel):
     question_total: int | None = None  # 全卷完成时透出，供播报收尾
 
 
+async def _require_owned_session(request: Request, session_id: str) -> None:
+    """M9-02 语音会话读取门：session -> exam -> owner 链式校验（auth on 时 404）。"""
+    owner = current_owner_id(request)
+    if owner is None:
+        return
+    view = await request.app.state.voice_sessions.get(session_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="语音会话不存在")
+    exam_owner = await request.app.state.repository.get_exam_owner(view["exam_id"])
+    if exam_owner != owner:
+        raise HTTPException(status_code=404, detail="语音会话不存在")
+
+
 @router.post("/sessions", response_model=VoiceSessionOut, status_code=201)
 async def create_voice_session(payload: VoiceSessionCreateRequest, request: Request) -> VoiceSessionOut:
     """为进行中的考试创建语音会话（SESSION_READY）。"""
     sessions = request.app.state.voice_sessions
     if sessions is None:
         raise HTTPException(status_code=503, detail="Voice sessions require a database")
+    exam_owner = await request.app.state.repository.get_exam_owner(payload.exam_id)
+    owner = current_owner_id(request)
+    if owner is not None and exam_owner != owner:
+        raise HTTPException(status_code=404, detail="考试不存在")
     exam = await request.app.state.repository.get_exam(payload.exam_id)
     if exam is None:
         raise HTTPException(status_code=404, detail="考试不存在")
@@ -339,6 +363,7 @@ async def create_voice_session(payload: VoiceSessionCreateRequest, request: Requ
 
 @router.get("/sessions/{session_id}", response_model=VoiceSessionOut)
 async def get_voice_session(session_id: str, request: Request) -> VoiceSessionOut:
+    await _require_owned_session(request, session_id)
     sessions = request.app.state.voice_sessions
     if sessions is None:
         raise HTTPException(status_code=503, detail="Voice sessions require a database")
@@ -365,6 +390,11 @@ class VoiceResumeOut(BaseModel):
 @router.get("/sessions", response_model=VoiceSessionsOut)
 async def list_voice_sessions(exam_id: str, request: Request) -> VoiceSessionsOut:
     """按考试列出语音会话（断线重连后客户端凭 exam_id 找回会话）。"""
+    owner = current_owner_id(request)
+    if owner is not None:
+        exam_owner = await request.app.state.repository.get_exam_owner(exam_id)
+        if exam_owner != owner:
+            raise HTTPException(status_code=404, detail="考试不存在")
     sessions = request.app.state.voice_sessions
     if sessions is None:
         raise HTTPException(status_code=503, detail="Voice sessions require a database")
@@ -374,6 +404,7 @@ async def list_voice_sessions(exam_id: str, request: Request) -> VoiceSessionsOu
 
 @router.get("/sessions/{session_id}/resume", response_model=VoiceResumeOut)
 async def resume_voice_session(session_id: str, request: Request) -> VoiceResumeOut:
+    await _require_owned_session(request, session_id)
     """断线恢复视图：服务端状态 + 当前题公开内容 + 已提交答案。
 
     只读不迁移（幂等：同状态多次恢复恒同输出）；播报期断线由客户端
@@ -424,6 +455,7 @@ class VoiceReportOut(BaseModel):
 
 @router.get("/sessions/{session_id}/report", response_model=VoiceReportOut)
 async def get_voice_report(session_id: str, request: Request) -> VoiceReportOut:
+    await _require_owned_session(request, session_id)
     """语音报告：REPORT_READY 终态后从判分结果投影播报视图（M4-08）。
 
     只投影不判定——分数/错题/补救全部来自 M2-11 build_report 判分结果；
@@ -567,6 +599,7 @@ async def apply_voice_command(
     - ANSWER_COMMITTED 后 answer_proposed = 覆盖提交（追加覆盖事件）；
     - 响应不含对错判定（考试模式不泄露答案）。
     """
+    await _require_owned_session(request, session_id)
     sessions = request.app.state.voice_sessions
     if sessions is None:
         raise HTTPException(status_code=503, detail="Voice sessions require a database")
@@ -679,6 +712,7 @@ async def apply_voice_intent(
     - 槽位含糊或序号超界 → answer_clarify（服务端澄清，不落库半成品）；
     - unknown 不改状态——解析失败≠澄清答案；pause/resume 待 M4-06 接入。
     """
+    await _require_owned_session(request, session_id)
     sessions = request.app.state.voice_sessions
     if sessions is None:
         raise HTTPException(status_code=503, detail="Voice sessions require a database")
@@ -786,6 +820,7 @@ async def submit_voice_answer(
     - event_id 幂等：重放返回既有结果，绝不重复落库；
     - 规范化失败（选项不存在/题型不支持/含糊）→ 澄清，accepted=false 不含答案。
     """
+    await _require_owned_session(request, session_id)
     sessions = request.app.state.voice_sessions
     answer_events = request.app.state.voice_answer_events
     if sessions is None or answer_events is None:

@@ -21,7 +21,27 @@ class ResourceRepository:
         self._sessionmaker = sessionmaker
         self._clock = clock
 
+    @staticmethod
+    def _owner_scope(owner_id: str | None):
+        """M9-02 归属过滤：owner=None 表示无主模式（只看 NULL 行），否则严格匹配。"""
+        column = ResourceRow.owner_id
+        return column.is_(None) if owner_id is None else (column == owner_id)
+
+    async def get_owned(self, resource_id: str, owner_id: str | None) -> ResourceRecord | None:
+        """归属感知读取：auth on 时他人/无主资源一律查不到（404，不暴露存在性）。"""
+        async with self._sessionmaker() as session:
+            row = (
+                await session.execute(
+                    select(ResourceRow).where(
+                        ResourceRow.id == resource_id,
+                        self._owner_scope(owner_id),
+                    )
+                )
+            ).scalar_one_or_none()
+            return self._record(row) if row else None
+
     async def get(self, resource_id: str) -> ResourceRecord | None:
+        """无归属校验读取（license report 等部署级治理视图使用）。"""
         async with self._sessionmaker() as session:
             row = await session.get(ResourceRow, resource_id)
             return self._record(row) if row else None
@@ -36,21 +56,30 @@ class ResourceRepository:
             ).scalars().all()
             return [self._record(row) for row in rows]
 
-    async def get_by_hash(self, content_hash: str) -> ResourceRecord | None:
+    async def get_by_hash(
+        self, content_hash: str, owner_id: str | None = None, *, scoped: bool = False
+    ) -> ResourceRecord | None:
+        """dedup 查询；scoped=True 时限定归属作用域（M9-02：跨用户不共享对象）。"""
+        conditions = [ResourceRow.content_hash == content_hash]
+        if scoped:
+            conditions.append(self._owner_scope(owner_id))
         async with self._sessionmaker() as session:
             row = (
-                await session.execute(
-                    select(ResourceRow).where(ResourceRow.content_hash == content_hash)
-                )
+                await session.execute(select(ResourceRow).where(*conditions))
             ).scalar_one_or_none()
             return self._record(row) if row else None
 
-    async def create(self, record: ResourceRecord) -> tuple[ResourceRecord, bool]:
-        """按 content_hash 幂等创建；已存在时返回既有记录与 deduplicated=True。"""
+    async def create(
+        self, record: ResourceRecord, owner_id: str | None = None
+    ) -> tuple[ResourceRecord, bool]:
+        """归属作用域内按 content_hash 幂等创建（M9-02）；已存在返回 deduplicated=True。"""
         async with self._sessionmaker() as session, session.begin():
             existing = (
                 await session.execute(
-                    select(ResourceRow).where(ResourceRow.content_hash == record.content_hash)
+                    select(ResourceRow).where(
+                        ResourceRow.content_hash == record.content_hash,
+                        self._owner_scope(owner_id),
+                    )
                 )
             ).scalar_one_or_none()
             if existing:
@@ -60,7 +89,7 @@ class ResourceRepository:
                     existing.access_state = record.access_state
                     existing.license_state = record.license_state.value
                 return self._record(existing), True
-            session.add(self._row(record))
+            session.add(self._row(record, owner_id))
         return record, False
 
     async def set_parse_status(
@@ -85,9 +114,10 @@ class ResourceRepository:
             return self._record(row)
 
     @staticmethod
-    def _row(record: ResourceRecord) -> ResourceRow:
+    def _row(record: ResourceRecord, owner_id: str | None = None) -> ResourceRow:
         return ResourceRow(
             id=record.id,
+            owner_id=owner_id,
             source_id=record.source_id,
             url=record.url,
             media_type=record.media_type,

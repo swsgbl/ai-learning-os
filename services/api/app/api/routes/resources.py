@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from pydantic import BaseModel
 
+from app.api.routes.auth import current_owner_id
 from app.domain.license import allows_full_text_storage
 from app.domain.resource import ResourceRecord
 from app.parsing.base import ParsedDocument, ParserError, ParserUnavailable
@@ -114,6 +115,7 @@ async def upload_resource(
     source_id: str | None = Form(None),
 ) -> ResourceOut:
     """上传学习资源；同内容（SHA-256）重复上传幂等返回既有记录。"""
+    owner = current_owner_id(request)  # M9-02: 认证开启时资源归属上传者
     access_state, license_state = await _resolve_source(request, source_id)
     data = await _read_upload(file)
     kind = _media_type(file.filename, media_type)
@@ -139,7 +141,7 @@ async def upload_resource(
         access_state=access_state,
         license_state=LicenseState(license_state) if license_state else LicenseState.UNKNOWN,
     )
-    saved, deduplicated = await _repo(request).create(record)
+    saved, deduplicated = await _repo(request).create(record, owner)
     return ResourceOut(
         id=saved.id,
         media_type=saved.media_type,
@@ -156,9 +158,24 @@ async def upload_resource(
     )
 
 
+def _owned_repo(request: Request):
+    """归属感知仓储句柄：get 走 get_owned（auth on 时他人资源 404）。"""
+    repo = _repo(request)
+    owner = current_owner_id(request)
+
+    class _Scoped:
+        async def get(self, resource_id: str):
+            return await repo.get_owned(resource_id, owner)
+
+        def __getattr__(self, name):  # 其余仓储方法原样委托（set_parse_status 等）
+            return getattr(repo, name)
+
+    return _Scoped()
+
+
 @router.get("/{resource_id}", response_model=ResourceOut)
 async def get_resource(resource_id: str, request: Request) -> ResourceOut:
-    record = await _repo(request).get(resource_id)
+    record = await _owned_repo(request).get(resource_id)
     if not record:
         raise HTTPException(status_code=404, detail="资源不存在")
     return ResourceOut(
@@ -197,7 +214,7 @@ async def parse_resource(
     resource_id: str, request: Request, parser: str | None = None
 ) -> ParseOut:
     """同步解析（M1-07 前的桥接）；失败保留错误并允许 ?parser= 换一个重跑。"""
-    repo = _repo(request)
+    repo = _owned_repo(request)
     store = _store(request)
     registry = getattr(request.app.state, "parsers", None)
     if registry is None:
@@ -253,7 +270,7 @@ async def parse_resource(
 @router.get("/{resource_id}/chunks")
 async def get_chunks(resource_id: str, request: Request) -> list[dict]:
     """每个 chunk 带页码/slide locator（M1-06 验收）。"""
-    repo = _repo(request)
+    repo = _owned_repo(request)
     chunk_repo = getattr(request.app.state, "chunks", None)
     if chunk_repo is None:
         raise HTTPException(status_code=503, detail="Chunk store unavailable")
@@ -265,7 +282,7 @@ async def get_chunks(resource_id: str, request: Request) -> list[dict]:
 @router.get("/{resource_id}/evidence")
 async def get_evidence(resource_id: str, request: Request) -> list[dict]:
     """Evidence 记录 parser、hash、locator 与 license 快照（M1-06 验收）。"""
-    repo = _repo(request)
+    repo = _owned_repo(request)
     chunk_repo = getattr(request.app.state, "chunks", None)
     if chunk_repo is None:
         raise HTTPException(status_code=503, detail="Chunk store unavailable")
@@ -296,7 +313,7 @@ async def enqueue_parse(
     resource_id: str, request: Request, parser: str | None = None
 ) -> ParseJobOut:
     """异步解析入队（幂等）；同资源同 parser 重复入队返回既有任务。"""
-    if not await _repo(request).get(resource_id):
+    if not await _owned_repo(request).get(resource_id):
         raise HTTPException(status_code=404, detail="资源不存在")
     job, _created = await _job_repo(request).enqueue(resource_id, parser)
     return ParseJobOut(**{**job, "last_error": job["last_error"]})
@@ -304,7 +321,7 @@ async def enqueue_parse(
 
 @router.get("/{resource_id}/jobs", response_model=list[ParseJobOut])
 async def list_parse_jobs(resource_id: str, request: Request) -> list[ParseJobOut]:
-    if not await _repo(request).get(resource_id):
+    if not await _owned_repo(request).get(resource_id):
         raise HTTPException(status_code=404, detail="资源不存在")
     return [ParseJobOut(**job) for job in await _job_repo(request).list_for_resource(resource_id)]
 
@@ -312,7 +329,7 @@ async def list_parse_jobs(resource_id: str, request: Request) -> list[ParseJobOu
 @router.get("/{resource_id}/quality")
 async def get_quality(resource_id: str, request: Request) -> dict:
     """解析质量报告：页数/块数/公式/表格/OCR 置信度/异常页（M1-08）。"""
-    repo = _repo(request)
+    repo = _owned_repo(request)
     chunk_repo = getattr(request.app.state, "chunks", None)
     if chunk_repo is None:
         raise HTTPException(status_code=503, detail="Chunk store unavailable")
