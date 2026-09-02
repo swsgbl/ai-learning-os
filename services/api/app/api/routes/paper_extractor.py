@@ -11,6 +11,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from app.api.routes.auth import audit_from_request, require_admin
 from app.domain.paper_extractor import extract_questions
 
 router = APIRouter(prefix="/api/v1/papers/import-drafts", tags=["papers"])
@@ -106,12 +107,24 @@ def _terminal_guard(record: dict | str | None) -> PaperDraftOut:
 @router.post("/{draft_id}/approve", response_model=PaperDraftOut)
 async def approve_paper_draft(draft_id: str, payload: ReviewRequest, request: Request) -> PaperDraftOut:
     """人工通过：pending_review -> approved；终态重复 409。"""
+    await require_admin(request)  # M9-04: 草稿审核是全局治理动作
     record = await _repo(request).review(draft_id, "approved", payload.note)
+    await audit_from_request(
+        request, action="paper_extractor.approve", target_type="paper_draft",
+        target_id=draft_id, before={"status": "pending_review"},
+        after={"status": "approved"},
+    )
     return _terminal_guard(record)
 
 
 @router.post("/{draft_id}/reject", response_model=PaperDraftOut)
 async def reject_paper_draft(draft_id: str, payload: ReviewRequest, request: Request) -> PaperDraftOut:
     """人工驳回：pending_review -> rejected；终态重复 409。"""
+    await require_admin(request)  # M9-04: 草稿审核是全局治理动作
     record = await _repo(request).review(draft_id, "rejected", payload.note)
+    await audit_from_request(
+        request, action="paper_extractor.reject", target_type="paper_draft",
+        target_id=draft_id, before={"status": "pending_review"},
+        after={"status": "rejected"},
+    )
     return _terminal_guard(record)

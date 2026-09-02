@@ -38,9 +38,11 @@ class SearchQueryRepository:
         result_count: int,
         duration_ms: int,
         results: list[dict],
+        owner_id: str | None = None,
     ) -> dict:
         row = SearchQueryRow(
             query=query,
+            owner_id=owner_id,
             providers_requested=providers_requested,
             providers_skipped=providers_skipped,
             result_count=result_count,
@@ -57,6 +59,12 @@ class SearchQueryRepository:
         async with self._sessionmaker() as session:
             row = await session.get(SearchQueryRow, query_id)
             return self._to_view(row) if row is not None else None
+
+    async def get_owner(self, query_id: int) -> str | None:
+        """M9-04 归属查询（读取门校验用）。"""
+        async with self._sessionmaker() as session:
+            row = await session.get(SearchQueryRow, query_id)
+            return row.owner_id if row is not None else None
 
     @staticmethod
     def _to_view(row: SearchQueryRow) -> dict:

@@ -52,7 +52,9 @@ services:
     image: aios/api:${AIOS_IMAGE_TAG:-local}
     environment:
       APP_ENV: docker
-      CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
+      # M9-04: CORS 与 Web 端口联动 —— AIOS_WEB_PORT 自定义时默认跟随，
+      # 也可用 AIOS_CORS_ORIGINS 完整覆盖（冒烟验证 preflight 一致性）
+      CORS_ORIGINS: ${AIOS_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost:${AIOS_WEB_PORT:-3000},http://127.0.0.1:${AIOS_WEB_PORT:-3000}}
       DATABASE_URL: postgresql+asyncpg://aios:aios@postgres:5432/ai_learning_os
       REDIS_URL: redis://redis:6379/0
       # M8-00: 对象存储必配 MinIO —— 缺省回退 MemoryObjectStore 会重启丢对象

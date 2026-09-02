@@ -57,3 +57,39 @@ def decode_access_token(token: str, *, secret: str) -> str:
     if not sub:
         raise AuthenticationError(_CREDENTIALS_MESSAGE)
     return str(sub)
+
+
+# 公开默认占位 secret（仓库/文档/compose 示例中出现过的值）——生产环境禁用
+PUBLIC_DEFAULT_SECRETS = frozenset(
+    {
+        "aios-local-dev-secret-7d21b9e4c8a3",
+        "m9-test-secret",
+        "m9-02-isolation-secret",
+        "change-me",
+        "secret",
+    }
+)
+_MIN_SECRET_BYTES = 32
+
+
+def validate_auth_secret(secret: str | None, *, app_env: str) -> None:
+    """生产环境 AUTH_SECRET fail-closed 校验（M9-04）。
+
+    - production：必须配置、≥32 字节、且不得是公开默认占位值，否则拒绝启动；
+    - 其他环境（development/docker 本地栈）：不强制（本地调试与冒烟兼容），
+      但配置了却弱于 32 字节时给出明确错误（配了就要配够）。
+    """
+    if app_env == "production":
+        if not secret:
+            raise RuntimeError("生产环境必须配置 AUTH_SECRET（拒绝以未认证模式启动）")
+        if len(secret.encode("utf-8")) < _MIN_SECRET_BYTES:
+            raise RuntimeError(
+                f"生产环境 AUTH_SECRET 至少 {_MIN_SECRET_BYTES} 字节（当前 {len(secret.encode('utf-8'))}）"
+            )
+        if secret in PUBLIC_DEFAULT_SECRETS:
+            raise RuntimeError("生产环境禁止使用公开默认 AUTH_SECRET 占位值")
+        return
+    if secret and len(secret.encode("utf-8")) < _MIN_SECRET_BYTES:
+        raise RuntimeError(
+            f"AUTH_SECRET 已配置但不足 {_MIN_SECRET_BYTES} 字节（{len(secret.encode('utf-8'))}）——请加长或移除"
+        )

@@ -16,7 +16,7 @@ from app.core.config import get_settings
 from app.main import create_app
 
 SQLITE_URL = "sqlite+aiosqlite:///:memory:"
-SECRET = "m9-02-isolation-secret"
+SECRET = "m9-02-isolation-secret-0123456789abcdef"
 
 
 @pytest.fixture()

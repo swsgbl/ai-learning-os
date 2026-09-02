@@ -57,6 +57,12 @@ code=$(http_code "$WEB/login")
 [ "$code" = "200" ] || fail "Web /login -> $code"
 say "GET Web /login -> 200"
 
+# --- CORS preflight 与 Web 端口一致性（M9-04）---
+origin="http://localhost:${AIOS_WEB_PORT:-3000}"
+aco=$(curl -s -m 15 -X OPTIONS -o /dev/null -D -   -H "Origin: $origin" -H "Access-Control-Request-Method: GET"   "$API/api/v1/papers" | tr -d '' | grep -i '^access-control-allow-origin:' | cut -d' ' -f2)
+[ "$aco" = "$origin" ] || fail "CORS preflight allow-origin=$aco 期望 $origin（AIOS_WEB_PORT 自定义时 CORS 必须一致）"
+say "CORS preflight $origin -> $aco"
+
 # --- 3. /papers 认证两态断言 ---
 case "$enabled" in
   True)
