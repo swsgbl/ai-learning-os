@@ -64,3 +64,17 @@ jobs:
           alembic upgrade head
           alembic downgrade base
           alembic upgrade head
+
+  docker:
+    name: Docker (compose build + healthy + smoke)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start the full stack
+        # M8-00: 真实构建启动门禁 —— compose config 渲染不等于可运行
+        run: docker compose -f infra/docker-compose.yml --profile local up -d --build
+      - name: Smoke (healthy + endpoints + upload survives api restart)
+        run: bash infra/smoke_docker.sh
+      - name: Dump api logs on failure
+        if: failure()
+        run: docker compose -f infra/docker-compose.yml logs --tail 200 api web
