@@ -67,6 +67,7 @@ PUBLIC_DEFAULT_SECRETS = frozenset(
         "m9-02-isolation-secret",
         "change-me",
         "secret",
+        "ailos-local-dev-secret-0f4c9a1e7b2d",  # M9-06: compose LiveKit 占位
     }
 )
 _MIN_SECRET_BYTES = 32
@@ -92,4 +93,39 @@ def validate_auth_secret(secret: str | None, *, app_env: str) -> None:
     if secret and len(secret.encode("utf-8")) < _MIN_SECRET_BYTES:
         raise RuntimeError(
             f"AUTH_SECRET 已配置但不足 {_MIN_SECRET_BYTES} 字节（{len(secret.encode('utf-8'))}）——请加长或移除"
+        )
+
+
+def _is_loopback(ip: str) -> bool:
+    return ip in ("127.0.0.1", "::1", "localhost")
+
+
+def _strong_secret(value: str | None) -> bool:
+    return bool(value) and len(value.encode("utf-8")) >= 32 and value not in PUBLIC_DEFAULT_SECRETS
+
+
+def validate_exposure(
+    *,
+    host_bind_ip: str,
+    app_env: str,
+    auth_secret: str | None,
+    livekit_api_secret: str | None,
+) -> None:
+    """M9-06 公开暴露 fail-closed：绑定非 loopback 时全部安全前置必须满足。
+
+    - APP_ENV 必须 production（走 AUTH_SECRET 最严校验）；
+    - LIVEKIT_API_SECRET 必须已配置、≥32 字节且非仓库默认占位值；
+    任一不满足即 RuntimeError（启动失败），绝不以弱配置公开启动。
+    """
+    if _is_loopback(host_bind_ip):
+        return
+    if app_env != "production":
+        raise RuntimeError(
+            "公开绑定（非 loopback）要求 APP_ENV=production；"
+            f"当前 APP_ENV={app_env!r}——拒绝以非生产配置公开启动"
+        )
+    validate_auth_secret(auth_secret, app_env="production")
+    if not _strong_secret(livekit_api_secret):
+        raise RuntimeError(
+            "公开绑定必须配置强 LIVEKIT_API_SECRET（已配置、≥32 字节且非公开默认占位值）"
         )

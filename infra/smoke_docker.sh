@@ -59,9 +59,19 @@ say "GET Web /login -> 200"
 
 # --- CORS preflight 与 Web 端口一致性（M9-04）---
 origin="http://localhost:${AIOS_WEB_PORT:-3000}"
-aco=$(curl -s -m 15 -X OPTIONS -o /dev/null -D -   -H "Origin: $origin" -H "Access-Control-Request-Method: GET"   "$API/api/v1/papers" | tr -d '' | grep -i '^access-control-allow-origin:' | cut -d' ' -f2)
+aco=$(curl -s -m 15 -X OPTIONS -o /dev/null -D - \
+  -H "Origin: $origin" -H "Access-Control-Request-Method: GET" \
+  "$API/api/v1/papers" | tr -d '\015' | grep -i '^access-control-allow-origin:' | cut -d' ' -f2)
 [ "$aco" = "$origin" ] || fail "CORS preflight allow-origin=$aco 期望 $origin（AIOS_WEB_PORT 自定义时 CORS 必须一致）"
 say "CORS preflight $origin -> $aco"
+
+# --- 宿主端口绑定：默认模式全部只绑 127.0.0.1（含 LiveKit 7881/7882-7892）---
+for svc in postgres redis minio api web livekit; do
+  cid=$($COMPOSE ps -q "$svc")
+  bad=$(docker port "$cid" | grep -v '127.0.0.1' | grep -vE '^$' | head -1 || true)
+  [ -z "$bad" ] || fail "$svc 存在非 loopback 绑定: $bad"
+done
+say "all host ports bound to 127.0.0.1"
 
 # --- 3. /papers 认证两态断言 ---
 case "$enabled" in

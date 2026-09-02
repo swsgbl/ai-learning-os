@@ -74,20 +74,13 @@ X-Request-ID 可关联）。读取 `GET /api/v1/audit` 仅 admin（auth off 本�
   设强 AUTH_SECRET + APP_ENV=production（启动 fail-closed），否则不要对外暴露。
 
 
-- M9-01 认证基座、M9-02 三域归属隔离、M9-03 Web 登录 UI、M9-04 角色授权+治理审计已交付；
-- **已知边界（非完整多用户系统）**：部分草稿类实体（课程生成/导入、变式、试卷抽取）
-  的**创建**仍是全局共享（无 owner 列）——审核已 admin 门禁但创建未按用户隔离；
-  papers 为公共题库无归属；token 存 localStorage（无 BFF/cookie 刷新机制）；
-  审计无防篡改链（append-only 靠约束约定而非哈希链）。
-
-
 - `AUTH_SECRET` 未配置 = 认证关闭，`GET /api/v1/auth/status` 如实透出 `auth_enabled=false`；
 - 配置后（compose 已注入 dev 值）全业务路径要求 `Authorization: Bearer <token>`，
   `register/login/status` 与 `/health`、`/api/v1/version`、`/docs` 豁免；
 - 端点：`POST /api/v1/auth/register`（重复 409）、`POST /api/v1/auth/login`（失败统一
   「用户名或密码错误」防枚举）、`GET /api/v1/auth/me`；JWT HS256，默认 24h 过期。
 - 生产部署用部署 secret 覆盖 `AIOS_AUTH_SECRET`；密码只存 bcrypt 哈希（72 字节上限）。
-- 数据归属拆分（资源/考试/语音按 user_id 隔离）是 M9-02 演进项，当前认证是全局门禁而非租户隔离。
+- 数据归属（M9-02 资源/考试/语音 + M9-05 四类草稿与私有语料边界）已落地：个人数据严格 owner-scoped；当前真实边界见上方「M9 里程碑边界」。
 
 ## LLM 接入（M10-01）
 

@@ -55,7 +55,9 @@ services:
     # M7-06: 应用回滚锚点 —— 发布时 docker tag 固化版本镜像；回滚 = AIOS_IMAGE_TAG=<旧tag> up -d --no-build
     image: aios/api:${AIOS_IMAGE_TAG:-local}
     environment:
-      APP_ENV: docker
+      APP_ENV: ${AIOS_APP_ENV:-docker}
+      # M9-06: 宿主绑定意图传入 API（容器内 env 名对齐 settings 字段 host_bind_ip）
+      HOST_BIND_IP: ${AIOS_BIND_IP:-127.0.0.1}
       # M9-04: CORS 与 Web 端口联动 —— AIOS_WEB_PORT 自定义时默认跟随，
       # 也可用 AIOS_CORS_ORIGINS 完整覆盖（冒烟验证 preflight 一致性）
       CORS_ORIGINS: ${AIOS_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost:${AIOS_WEB_PORT:-3000},http://127.0.0.1:${AIOS_WEB_PORT:-3000}}
@@ -99,8 +101,8 @@ services:
       - ./livekit/livekit.yaml:/etc/livekit/livekit.yaml:ro
     ports:
       - "${AIOS_BIND_IP:-127.0.0.1}:7880:7880"
-      - "7881:7881"
-      - "7882-7892:7882-7892/udp"
+      - "${AIOS_BIND_IP:-127.0.0.1}:7881:7881"
+      - "${AIOS_BIND_IP:-127.0.0.1}:7882-7892:7882-7892/udp"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:7880/ || exit 1"]
       interval: 10s

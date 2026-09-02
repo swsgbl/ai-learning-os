@@ -18,7 +18,7 @@ import yaml
 from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
-from app.core.security import validate_auth_secret
+from app.core.security import validate_auth_secret, validate_exposure
 from app.main import create_app
 
 SQLITE_URL = "sqlite+aiosqlite:///:memory:"
@@ -318,3 +318,76 @@ def test_compose_cors_follows_web_port() -> None:
     cors = compose["services"]["api"]["environment"]["CORS_ORIGINS"]
     assert "AIOS_CORS_ORIGINS" in cors, "必须支持完整覆盖"
     assert "${AIOS_WEB_PORT:-3000}" in cors, "自定义 Web 端口时 CORS 默认联动"
+
+
+# --- M9-06 公开暴露 fail-closed（四类路径） ---
+
+
+def test_exposure_loopback_is_safe_by_default() -> None:
+    """loopback 绑定：任何 APP_ENV/secret 组合都放行（本机开发体验不受影响）。"""
+    validate_exposure(
+        host_bind_ip="127.0.0.1", app_env="development",
+        auth_secret=None, livekit_api_secret=None,
+    )
+    validate_exposure(
+        host_bind_ip="localhost", app_env="docker",
+        auth_secret="aios-local-dev-secret-7d21b9e4c8a3",
+        livekit_api_secret="ailos-local-dev-secret-0f4c9a1e7b2d",
+    )
+
+
+def test_exposure_public_binding_requires_production_env() -> None:
+    with pytest.raises(RuntimeError, match="APP_ENV=production"):
+        validate_exposure(
+            host_bind_ip="0.0.0.0", app_env="docker",
+            auth_secret=None, livekit_api_secret=None,
+        )
+
+
+def test_exposure_public_binding_requires_strong_secrets() -> None:
+    """公开绑定 + production：弱/缺/占位 secret 一律拒绝。"""
+    common = {"host_bind_ip": "0.0.0.0", "app_env": "production"}
+    with pytest.raises(RuntimeError, match="AUTH_SECRET"):
+        validate_exposure(**common, auth_secret=None, livekit_api_secret="x" * 40)
+    with pytest.raises(RuntimeError, match="AUTH_SECRET"):
+        validate_exposure(**common, auth_secret="short", livekit_api_secret="x" * 40)
+    with pytest.raises(RuntimeError, match="AUTH_SECRET"):
+        validate_exposure(
+            **common,
+            auth_secret="aios-local-dev-secret-7d21b9e4c8a3",
+            livekit_api_secret="x" * 40,
+        )
+    with pytest.raises(RuntimeError, match="LIVEKIT_API_SECRET"):
+        validate_exposure(**common, auth_secret="y" * 40, livekit_api_secret=None)
+    with pytest.raises(RuntimeError, match="LIVEKIT_API_SECRET"):
+        validate_exposure(
+            **common, auth_secret="y" * 40,
+            livekit_api_secret="ailos-local-dev-secret-0f4c9a1e7b2d",
+        )
+
+
+def test_exposure_valid_production_config_passes() -> None:
+    validate_exposure(
+        host_bind_ip="0.0.0.0", app_env="production",
+        auth_secret="prod-auth-secret-0123456789abcdef012345",
+        livekit_api_secret="prod-livekit-secret-0123456789abcdef01",
+    )
+
+
+def test_compose_livekit_ports_bound_to_loopback_by_default() -> None:
+    with open(COMPOSE_FILE, encoding="utf-8") as fh:
+        compose = yaml.safe_load(fh)
+    ports = compose["services"]["livekit"]["ports"]
+    assert "${AIOS_BIND_IP:-127.0.0.1}:7881:7881" in ports, "LiveKit TCP 必须显式绑定 IP"
+    assert "${AIOS_BIND_IP:-127.0.0.1}:7882-7892:7882-7892/udp" in ports, (
+        "LiveKit UDP 必须显式绑定 IP"
+    )
+    assert not any(p_.startswith(("7881", "7882-")) for p_ in ports), (
+        "不得存在裸宿主绑定的 LiveKit 端口"
+    )
+    # APP_ENV 支持部署覆盖（fail-closed 校验的入口）
+    assert compose["services"]["api"]["environment"]["APP_ENV"] == "${AIOS_APP_ENV:-docker}"
+    env = compose["services"]["api"]["environment"]
+    assert env.get("HOST_BIND_IP") == "${AIOS_BIND_IP:-127.0.0.1}", (
+        "宿主绑定意图必须以 HOST_BIND_IP 传入 API 容器（对齐 settings.host_bind_ip）"
+    )

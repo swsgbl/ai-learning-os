@@ -97,9 +97,7 @@ async def get_source(source_id: str, request: Request) -> SourceOut:
 @router.post("/{source_id}/verify", response_model=SourceOut)
 async def verify_source(source_id: str, request: Request) -> SourceOut:
     await require_admin(request)  # M9-04
-    record = await _repo(request).mark_verified(source_id)
-    if not record:
-        raise HTTPException(status_code=404, detail="来源不存在")
+    # M9-06: 先构建审计 payload，单次 mark_verified 同事务落库（404 不写成功审计）
     audit = await build_audit_payload(
         request, action="source.verify", target_type="source", target_id=source_id,
         after={"verified": True},
