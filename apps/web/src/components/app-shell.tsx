@@ -1,9 +1,12 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { BookOpen, Headphones, Home, Library, LineChart } from "lucide-react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { BookOpen, EyeOff, Headphones, Home, Library, LineChart, LogIn } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { API_BASE } from "@/lib/api";
+import { clearSession, probeAuth, type AuthState } from "@/lib/auth";
 
 const NAV = [
   { href: "/", label: "首页", icon: Home },
@@ -12,6 +15,67 @@ const NAV = [
   { href: "/library", label: "学习库", icon: Library },
   { href: "/progress", label: "掌握", icon: LineChart },
 ] as const;
+
+function AuthBadge() {
+  const router = useRouter();
+  const [state, setState] = useState<AuthState | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    probeAuth(API_BASE)
+      .then((s) => {
+        if (active) setState(s);
+      })
+      .catch(() => {
+        if (active) setState({ mode: "anonymous" });
+      });
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  if (!state) return null; // 探测中不闪烁
+
+  if (state.mode === "disabled") {
+    return (
+      <span
+        className="inline-flex items-center gap-1 rounded-md bg-surface-2 px-2 py-1 text-[11px] text-muted"
+        title="API 未配置 AUTH_SECRET，数据仅保存在本机"
+      >
+        <EyeOff className="size-3.5" /> 本地模式
+      </span>
+    );
+  }
+
+  if (state.mode === "anonymous") {
+    return (
+      <Link
+        href="/login"
+        className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-accent-fg hover:opacity-90"
+      >
+        <LogIn className="size-3.5" /> 登录
+      </Link>
+    );
+  }
+
+  return (
+    <span className="inline-flex items-center gap-2 text-xs">
+      <span className="max-w-24 truncate rounded-md bg-surface-2 px-2 py-1 text-ink">
+        {state.username}
+      </span>
+      <button
+        type="button"
+        className="text-muted hover:text-ink"
+        onClick={() => {
+          clearSession();
+          router.refresh();
+        }}
+      >
+        退出
+      </button>
+    </span>
+  );
+}
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -42,6 +106,9 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               );
             })}
           </nav>
+          <div className="flex items-center gap-2">
+            <AuthBadge />
+          </div>
         </div>
       </header>
       <main className={cn("mx-auto w-full max-w-5xl px-4 py-6", immersive ? "pb-8" : "pb-24 md:pb-10")}>{children}</main>

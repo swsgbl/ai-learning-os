@@ -53,6 +53,10 @@ code=$(http_code "$WEB/")
 [ "$code" = "200" ] || fail "Web 首页 -> $code"
 say "GET Web / -> 200"
 
+code=$(http_code "$WEB/login")
+[ "$code" = "200" ] || fail "Web /login -> $code"
+say "GET Web /login -> 200"
+
 # --- 3. /papers 认证两态断言 ---
 case "$enabled" in
   True)
