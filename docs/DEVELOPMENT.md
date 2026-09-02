@@ -2,22 +2,11 @@
 
 ## 里程碑状态
 
-### M0 当前完成
+全部里程碑进度、任务台账与架构决策见 `docs/PROJECT_STATUS.md`（单一真相源，
+本文件不再维护里程碑快照——历史快照曾停留在 M0，已删除以免误导）。
 
-- npm workspace monorepo。
-- Next.js Web App 与 FastAPI API 分离。
-- 服务端权威考试 API 契约。
-- 答案事件序列与幂等提交的内存实现。
-- Docker Compose 中的 PostgreSQL、Redis、MinIO。
-- PostgreSQL persistence（SQLAlchemy async）与 Alembic migration（up/down/dry-run 已验证）。
-
-### 尚未完成
-
-- Redis timeout scheduler。
-- CI 门禁（GitHub Actions）。
-- LiveKit room/token 与 ASR/TTS adapter。
-- Source Registry、License State Machine、Evidence Store。
-- LangGraph Agent Runtime 与 Model Gateway。
+当前版本 `0.1.0`（真相源：仓库根 `VERSION`）。M0-M7 已交付；M8-00 为发布
+真实性修复（CI 环境隔离、镜像版本打包、MinIO 持久化、Docker CI 门禁）。
 
 ## API 契约
 
@@ -48,6 +37,15 @@ alembic -c services/api/alembic.ini upgrade head
 
 - PostgreSQL 仓储与内存仓储共用同一 `Repository` 协议，API route 不感知实现差异。
 - 单元测试用 SQLite aiosqlite 内存替身；真实 PG 集成测试设 `AIOS_PG_TEST_URL` 后运行。
+- 环境变量按用途隔离（M8-00 教训）：pytest 只认 `AIOS_PG_TEST_URL`；
+  `DATABASE_URL` 属于 alembic / API 运行时，混入 pytest 会把「无 DB 503」
+  测试翻成 DB 路径导致断言失败。
+
+## 对象存储
+
+- compose 的 api 服务注入 `S3_ENDPOINT/S3_BUCKET/S3_ACCESS_KEY/S3_SECRET_KEY`
+  连接 minio；`MinioObjectStore` 启动时幂等确保 bucket 存在。
+- 本地裸跑 API（无 S3_* 环境变量）回退内存实现——上传数据不持久，仅供契约调试。
 
 ## 本地验证
 
@@ -55,6 +53,15 @@ alembic -c services/api/alembic.ini upgrade head
 npm run typecheck
 npm run lint
 npm run build
-pytest
-ruff check services/api/app
+ruff check services/api
+$env:AIOS_PG_TEST_URL='postgresql+asyncpg://aios:aios@127.0.0.1:5433/ai_learning_os'
+Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
+python -m pytest services/api -q
+```
+
+Docker 生产本地版冒烟（全服务 healthy + 端点 + 上传重启读回）：
+
+```bash
+docker compose -f infra/docker-compose.yml --profile local up -d --build
+bash infra/smoke_docker.sh
 ```
