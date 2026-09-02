@@ -62,7 +62,20 @@ from app.storage.objectstore import make_object_store
 def create_app(database_url: str | None = None) -> FastAPI:
     settings = get_settings()
     resolved_url = database_url if database_url is not None else settings.database_url
-    rubric_judge = make_rubric_judge(settings.rubric_judge)
+    if settings.rubric_judge == "llm":
+        # M10-01: LLM judge 经 OpenAI 兼容 gateway；槽位未配齐时 build 返回 None
+        # （essay 全部进复核，fail-closed 不虚报模型能力）
+        from app.llm.rubric_judge import build_llm_judge
+
+        rubric_judge = build_llm_judge(
+            {
+                "endpoint": settings.llm_endpoint,
+                "api_key": settings.llm_api_key,
+                "model": settings.llm_model,
+            }
+        )
+    else:
+        rubric_judge = make_rubric_judge(settings.rubric_judge)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:

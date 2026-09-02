@@ -51,6 +51,19 @@ alembic -c services/api/alembic.ini upgrade head
 - 生产部署用部署 secret 覆盖 `AIOS_AUTH_SECRET`；密码只存 bcrypt 哈希（72 字节上限）。
 - 数据归属拆分（资源/考试/语音按 user_id 隔离）是 M9-02 演进项，当前认证是全局门禁而非租户隔离。
 
+## LLM 接入（M10-01）
+
+- OpenAI 兼容 gateway（`app/llm/gateway.py`）：`LLM_ENDPOINT/LLM_API_KEY/LLM_MODEL`
+  三槽位齐备才装配；key 只放本机 .env 或部署 secret，不入库不入码不入日志。
+- 接入点：主观题 rubric LLM judge（`app/llm/rubric_judge.py`，实现 M2-10 预留的
+  `RubricJudge` 协议）。`RUBRIC_JUDGE=llm` 启用；默认 `keyword` 保持确定性判分。
+- fail-closed：LLM 不可用 / 响应非法 / 模型编造 evidence_id → judge 返回 None →
+  essay 进复核三态。模型缺席绝不产生分数；`judge_model`/`prompt_hash` 服务端覆写留痕。
+- 真实端点冒烟（需要部署 key，无 key 明确失败不虚报）：`bash infra/smoke_llm.sh`。
+- 单测全部 fake transport（协议格式 / 失败语义 / 装配两态），不发起网络调用。
+- 已知取舍（ADR 65）：判分管线是同步域函数，gateway 用同步 httpx——单用户本地版
+  可接受；判分并发化是后续演进。
+
 ## 对象存储
 
 - compose 的 api 服务注入 `S3_ENDPOINT/S3_BUCKET/S3_ACCESS_KEY/S3_SECRET_KEY`

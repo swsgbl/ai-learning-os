@@ -10,6 +10,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   + register/login/me/status 端点 + 全业务路径 Bearer 门禁；
   AUTH_SECRET 未配置 = 认证关闭且 status 如实透出（存量客户端零破坏）
 - M8-00 冒烟脚本与 Docker CI 门禁
+- M10-01 LLM 接入：OpenAI 兼容 gateway + rubric LLM judge（fail-closed 进复核，
+  默认关闭保持确定性判分；真实端点冒烟脚本 infra/smoke_llm.sh）
 
 ## [0.1.0] - 2026-09-02
 

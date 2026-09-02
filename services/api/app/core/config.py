@@ -37,6 +37,10 @@ class Settings(BaseSettings):
     tts_cloud_api_key: str | None = None
     tts_cloud_model: str = "tts-1"
     llm_provider: str | None = None
+    # M10-01 LLM 槽位：OpenAI 兼容端点；key 只放部署 secret/.env，不入库不入码
+    llm_endpoint: str | None = None
+    llm_api_key: str | None = None
+    llm_model: str | None = None
     embedding_provider: str | None = None
     search_provider: str | None = None
     search_cloud_endpoint: str | None = None  # M5-01 cloud-web 搜索源
