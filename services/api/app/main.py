@@ -30,7 +30,7 @@ from app.api.routes.voice import router as voice_router
 from app.api.routes.voice_eval import router as voice_eval_router
 from app.api.routes.web import router as web_router
 from app.core.config import get_settings
-from app.db.session import create_engine, make_sessionmaker, prepare_database
+from app.db.session import create_engine, is_sqlite, make_sessionmaker, prepare_database
 from app.domain.rubric_grader import make_rubric_judge
 from app.domain.web_gate import RateLimiter
 from app.parsing.registry import make_default_registry
@@ -101,7 +101,12 @@ def create_app(database_url: str | None = None) -> FastAPI:
             worker = ParseWorker(parse_jobs, resources, chunks, objects, parsers)
             # M1-07 可恢复：重启时把 running 任务重置 pending，再启动消费循环
             await parse_jobs.recover_stale_running()
-            worker.start()
+            # M9-01 flaky 修复：SQLite 测试替身是 StaticPool 单连接，后台 worker
+            # 的事务会与请求事务在同一物理连接上交错（慢 CI runner 上随机踩踏，
+            # 表现为「刚写入的数据读不到」）。后台循环只在池化后端（PG）启动；
+            # worker 行为本身由 test_parse_job_queue 裸装配单元测试覆盖。
+            if not is_sqlite(resolved_url):
+                worker.start()
         else:
             repository = MemoryRepository(rubric_judge=rubric_judge)
         app.state.repository = repository
