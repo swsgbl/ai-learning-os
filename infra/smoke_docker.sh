@@ -9,7 +9,8 @@ cd "$(dirname "$0")/.."
 
 COMPOSE="docker compose -f infra/docker-compose.yml --profile local"
 API=http://127.0.0.1:8000
-WEB=http://127.0.0.1:3000
+# 与 compose 的 ${AIOS_WEB_PORT:-3000} 插值一致（宿主 3000 被占时 AIOS_WEB_PORT=3100）
+WEB="http://127.0.0.1:${AIOS_WEB_PORT:-3000}"
 
 say() { printf '[smoke] %s\n' "$*"; }
 fail() { printf '[smoke] FAIL: %s\n' "$*" >&2; exit 1; }
@@ -54,9 +55,15 @@ say "GET Web / -> 200"
 # --- 3. 上传 -> 重启 api -> 读回 ---
 payload=$(mktemp /tmp/smoke-payload-XXXXXX.json)
 trap 'rm -f "$payload"' EXIT
+# Git Bash 的 Windows 原生 curl 读不了 MSYS /tmp 路径；CI (Linux) 无 cygpath
+if command -v cygpath >/dev/null 2>&1; then
+  payload_curl=$(cygpath -m "$payload")
+else
+  payload_curl="$payload"
+fi
 printf '{"question":"does the object survive an api restart?"}' > "$payload"
 
-resp=$(curl -s -m 30 -F "file=@$payload;type=application/json" "$API/api/v1/resources/upload")
+resp=$(curl -s -m 30 -F "file=@$payload_curl;type=application/json" "$API/api/v1/resources/upload")
 rid=$(printf '%s' "$resp" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("id",""))')
 [ -n "$rid" ] || fail "上传失败: $resp"
 say "uploaded resource_id=$rid"
@@ -65,7 +72,7 @@ say "restarting api ..."
 $COMPOSE restart api >/dev/null
 wait_healthy api 90
 
-pcode=$(http_code "$API/api/v1/resources/$rid/parse")
+pcode=$(curl -s -o /dev/null -w '%{http_code}' -m 30 -X POST "$API/api/v1/resources/$rid/parse")
 # parse 需要从对象存储读回原文：内存回退在重启后丢对象 -> 500；MinIO 持久 -> 200
 [ "$pcode" = "200" ] || fail "重启后 parse -> $pcode（对象丢失 = 存储回退内存实现）"
 say "POST /resources/$rid/parse after restart -> 200"
