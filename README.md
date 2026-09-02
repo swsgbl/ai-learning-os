@@ -101,6 +101,12 @@ API 启动时读取 `.env` 的 `DATABASE_URL`：已配置则自动执行 Alembic
 - Web: http://localhost:3000
 - API: http://127.0.0.1:8000/docs
 
+## 可选：LLM 主观题判分
+
+`RUBRIC_JUDGE=llm` + `LLM_ENDPOINT/LLM_API_KEY/LLM_MODEL`（OpenAI 兼容，key 放 .env）
+启用模型判分；模型不可用时 essay 自动进复核（fail-closed），默认 `keyword` 确定性判分。
+详见 docs/DEVELOPMENT.md「LLM 接入」。
+
 ## 当前架构边界
 
 - 考试开始和结束时间由 API 服务器写入，客户端只根据 `server_end_at` 显示倒计时。
