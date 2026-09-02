@@ -5,6 +5,8 @@
 # """
 from __future__ import annotations
 
+from datetime import datetime
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -168,7 +170,9 @@ def test_client_forged_time_fields_ignored() -> None:
         r = client.put(f"/api/v1/exams/{exam_id}/answers", json=forged)
         assert r.status_code == 200, r.text
         after = client.get(f"/api/v1/exams/{exam_id}").json()
-        assert "2099" not in after["server_end_at"]
+        # M9-06: 按语义断言（解析 datetime 比年份），不做脆弱的字符串包含判断
+        server_end = datetime.fromisoformat(after["server_end_at"].replace("Z", "+00:00"))
+        assert server_end.year != 2099, "伪造 end_at 不得改变服务端考试结束时间"
         assert after["server_remaining_seconds"] > 0
         assert after["answers"][q1] == "B"
 
