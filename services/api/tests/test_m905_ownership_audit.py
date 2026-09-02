@@ -151,19 +151,34 @@ def test_course_generation_excludes_foreign_private_chunks(stack, auth_on, monke
         headers=bob.headers,
     )
     assert gen.status_code == 201, gen.text
-    plan_text = str(gen.json()["plan"])
-    assert "genPrivateMarkerXyz" not in plan_text or "/chunks/" not in plan_text or (
-        # 若引用了 chunk，必须是 public 或自己的——Bob 无自有 → 不得出现 Alice 私有资源
-        all(
-            ref.get("resource_id") != ""
-            for ref in gen.json()["plan"].get("resources", [])
-        )
+    body = gen.json()
+    alice_rid = _upload(client, alice.headers, "genSecondPrivateMarker", source_id=None)
+    # M9-06 补强：拿到 Alice 私有 resource_id 后做决定性断言——
+    # 响应序列化结果与 plan.resources 均不得出现该 id（检索阶段已被 owner 过滤）
+    assert alice_rid not in str(body), "Bob 生成的草稿响应不得引用 Alice 私有资源"
+    resources_in_plan = body["plan"].get("resources", [])
+    assert all(
+        ref.get("resource_id") != alice_rid for ref in resources_in_plan
+    ), "plan.resources 不得引用 Alice 私有资源"
+
+    # generation draft ownership：Alice 创建后 Bob list 不可见、get 404、admin 可读
+    alice_gen = client.post(
+        "/api/v1/courses/generation-drafts",
+        json={"goal": "genPrivateMarkerXyz"},  # 匹配 DAG 概念名
+        headers=alice.headers,
     )
-    # 决定性断言：Bob 生成里不含 Alice 私有资源 id（检索阶段已被 owner 过滤）
-    alice_rid_rows = client.get(
-        "/api/v1/search/queries?status=pending_review"
-    )  # 占位，不使用
-    del alice_rid_rows
+    assert alice_gen.status_code == 201, alice_gen.text
+    alice_gen_id = alice_gen.json()["id"]
+    bob_gen_list = client.get(
+        "/api/v1/courses/generation-drafts", headers=bob.headers
+    ).json()
+    assert all(item["id"] != alice_gen_id for item in bob_gen_list), "Bob list 不得看到 Alice 草稿"
+    assert client.get(
+        f"/api/v1/courses/generation-drafts/{alice_gen_id}", headers=bob.headers
+    ).status_code == 404
+    assert client.get(
+        f"/api/v1/courses/generation-drafts/{alice_gen_id}", headers=admin.headers
+    ).status_code == 200, "admin 治理读取可见"
 
 
 # --- 2. 四类草稿归属 ---
@@ -319,3 +334,46 @@ def test_auth_off_semantics_unchanged(monkeypatch) -> None:
         )
         assert r.status_code == 201
         assert client.get("/api/v1/audit").status_code == 200
+
+
+# --- 5. variant draft ownership（M9-06 补强） ---
+
+
+def test_variant_draft_ownership(stack, auth_on) -> None:
+    """Alice 创建 variant draft 后：Bob list 不可见、get 404、admin 可读。"""
+    client, db_url = stack
+    admin = User(client, "gov_admin_var")
+    _promote(db_url, "gov_admin_var")
+    alice = User(client, "alice_variant")
+    bob = User(client, "bob_variant")
+
+    q1 = {
+        "question_no": 1, "stem": "小红有 5 个苹果，给了同学 2 个，还剩几个？",
+        "question_type": "mcq", "score": 3.0, "page_start": 1, "page_end": 1,
+        "resource_id": "res_x",
+        "options": [
+            {"label": "A", "text": "3"}, {"label": "B", "text": "5"},
+            {"label": "C", "text": "7"}, {"label": "D", "text": "10"},
+        ],
+        "concept_ids": ["c_sub"],
+    }
+    created = client.post(
+        "/api/v1/questions/variant-drafts",
+        json={"questions": [q1]},
+        headers=alice.headers,
+    )
+    assert created.status_code == 201, created.text
+    draft_id = created.json()["id"]
+
+    bob_list = client.get("/api/v1/questions/variant-drafts", headers=bob.headers).json()
+    assert all(item["id"] != draft_id for item in bob_list), "Bob list 不得看到 Alice 草稿"
+    assert client.get(
+        f"/api/v1/questions/variant-drafts/{draft_id}", headers=bob.headers
+    ).status_code == 404
+    assert client.get(
+        f"/api/v1/questions/variant-drafts/{draft_id}", headers=admin.headers
+    ).status_code == 200, "admin 治理读取可见"
+    alice_list = client.get(
+        "/api/v1/questions/variant-drafts", headers=alice.headers
+    ).json()
+    assert any(item["id"] == draft_id for item in alice_list)
