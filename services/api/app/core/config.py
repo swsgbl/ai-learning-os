@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     # M2-10 主观题判分：keyword=内置确定性 judge；空=无 judge（essay 全部进复核）
     rubric_judge: str = "keyword"
 
+    # M9-01 认证：AUTH_SECRET 未配置 = 认证关闭（status 如实透出，不虚报受保护）；
+    # 生产 compose 显式注入。key 只放部署 secret/.env，不入库不入码。
+    auth_secret: str | None = None
+    auth_token_expire_minutes: int = 1440
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @property
