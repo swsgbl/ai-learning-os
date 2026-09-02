@@ -149,6 +149,77 @@ def current_owner_id(request: Request) -> str | None:
     return _current_user_id(request) or None
 
 
+async def current_is_admin(request: Request) -> bool:
+    """auth off -> True（本地单用户）；auth on -> 实时 role==admin。无效 token False。"""
+    if not get_settings().auth_secret:
+        return True
+    auth = request.headers.get("Authorization", "")
+    if not auth.startswith("Bearer "):
+        return False
+    try:
+        user_id = decode_access_token(
+            auth.removeprefix("Bearer ").strip(), secret=get_settings().auth_secret
+        )
+    except AuthenticationError:
+        return False
+    repo = getattr(request.app.state, "users", None)
+    if repo is None:
+        return False
+    return await repo.get_role(user_id) == "admin"
+
+
+async def require_admin(request: Request) -> None:
+    """M9-04 治理门禁：auth on 时要求 admin 角色（403），auth off 本地模式放行。
+
+    角色每次实时读库（撤销提升即时生效）；无效 token 一律 401。
+    """
+    secret = get_settings().auth_secret
+    if not secret:
+        return
+    user_id = _current_user_id(request)
+    repo = getattr(request.app.state, "users", None)
+    if repo is None:
+        raise HTTPException(status_code=503, detail="Auth requires a database")
+    role = await repo.get_role(user_id)
+    if role != "admin":
+        raise HTTPException(status_code=403, detail="需要管理员权限")
+
+
+async def audit_from_request(
+    request: Request,
+    *,
+    action: str,
+    target_type: str,
+    target_id: str,
+    before=None,
+    after=None,
+) -> None:
+    """M9-04 治理动作审计：actor/request id 从请求上下文取；失败不阻塞主流程。"""
+    import logging
+
+    audit = getattr(request.app.state, "audit", None)
+    if audit is None:
+        return
+    owner = current_owner_id(request)
+    username = None
+    if owner:
+        user = await request.app.state.users.get(owner)
+        username = user.username if user else None
+    try:
+        await audit.record(
+            action=action,
+            target_type=target_type,
+            target_id=target_id,
+            request_id=getattr(request.state, "request_id", "unknown"),
+            actor_id=owner,
+            actor_username=username,
+            before=before,
+            after=after,
+        )
+    except Exception:
+        logging.getLogger(__name__).exception("audit record failed: %s %s", action, target_id)
+
+
 @router.get("/status", response_model=AuthStatusOut)
 async def status() -> AuthStatusOut:
     """认证开关如实透出——不虚报受保护状态（前端据此决定是否展示登录）。"""

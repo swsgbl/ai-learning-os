@@ -41,7 +41,35 @@ alembic -c services/api/alembic.ini upgrade head
   `DATABASE_URL` 属于 alembic / API 运行时，混入 pytest 会把「无 DB 503」
   测试翻成 DB 路径导致断言失败。
 
-## 认证（M9-01）
+## 认证与角色（M9-01 / M9-04）
+
+- `AUTH_SECRET` 未配置 = 认证关闭（本地单用户模式），`GET /api/v1/auth/status` 如实透出；
+- 配置后全业务路径要求 Bearer token；**治理动作（source 登记/verify/license 改判、
+  概念图发布、课程生成/导入、变式、试卷抽取草稿的 approve/reject、审计读取）仅 admin**：
+  learner 返回 403（门禁先于 404，不暴露存在性）；
+- 个人数据（私有资源、考试、语音会话、搜索记录）严格 owner-scoped（他人 404）；
+- 角色：`role` 默认 learner，无默认管理员账号——首个 admin 由持有数据库访问权的
+  运维经 CLI 提升：`python -m app.ops.cli admin promote|demote|list <username> --db-url ...`；
+  每次变更写审计（actor/before/after/request_id）；
+- 生产 AUTH_SECRET fail-closed：APP_ENV=production 时未配置 / <32 字节 / 公开默认占位值
+  一律拒绝启动；其他环境配置了但 <32 字节也明确报错；
+- CORS 与 Web 端口联动：`AIOS_WEB_PORT` 自定义时默认跟随，`AIOS_CORS_ORIGINS` 可完整覆盖
+  （冒烟验证 preflight 一致性）。
+
+## 审计（M9-04）
+
+治理动作（license 变更、DAG 发布、四类草稿 approve/reject、角色提升/降级）写
+`audit_log`：actor、action、target、before/after、时间、request id（响应头
+X-Request-ID 可关联）。读取 `GET /api/v1/audit` 仅 admin（auth off 本地模式可读）。
+
+### M9 里程碑边界（如实陈述，2026-09-02）
+
+- M9-01 认证基座、M9-02 三域归属隔离、M9-03 Web 登录 UI、M9-04 角色授权+治理审计已交付；
+- **已知边界（非完整多用户系统）**：部分草稿类实体（课程生成/导入、变式、试卷抽取）
+  的**创建**仍是全局共享（无 owner 列）——审核已 admin 门禁但创建未按用户隔离；
+  papers 为公共题库无归属；token 存 localStorage（无 BFF/cookie 刷新机制）；
+  审计无防篡改链（append-only 靠约束约定而非哈希链）。
+
 
 - `AUTH_SECRET` 未配置 = 认证关闭，`GET /api/v1/auth/status` 如实透出 `auth_enabled=false`；
 - 配置后（compose 已注入 dev 值）全业务路径要求 `Authorization: Bearer <token>`，

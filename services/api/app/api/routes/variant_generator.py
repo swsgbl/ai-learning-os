@@ -12,6 +12,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
+from app.api.routes.auth import audit_from_request, require_admin
 from app.domain.variant_generator import generate_variant_draft
 
 router = APIRouter(prefix="/api/v1/questions/variant-drafts", tags=["questions"])
@@ -137,12 +138,24 @@ class ReviewRequest(BaseModel):
 @router.post("/{draft_id}/approve", response_model=VariantDraftOut)
 async def approve_variant_draft(draft_id: str, payload: ReviewRequest, request: Request) -> VariantDraftOut:
     """人工通过：pending_review -> approved；终态重复 409。"""
+    await require_admin(request)  # M9-04: 草稿审核是全局治理动作
     record = await _repo(request).review(draft_id, "approved", payload.note)
+    await audit_from_request(
+        request, action="variant_generation.approve", target_type="variant_draft",
+        target_id=draft_id, before={"status": "pending_review"},
+        after={"status": "approved"},
+    )
     return _terminal_guard(record)
 
 
 @router.post("/{draft_id}/reject", response_model=VariantDraftOut)
 async def reject_variant_draft(draft_id: str, payload: ReviewRequest, request: Request) -> VariantDraftOut:
     """人工驳回：pending_review -> rejected；终态重复 409。"""
+    await require_admin(request)  # M9-04: 草稿审核是全局治理动作
     record = await _repo(request).review(draft_id, "rejected", payload.note)
+    await audit_from_request(
+        request, action="variant_generation.reject", target_type="variant_draft",
+        target_id=draft_id, before={"status": "pending_review"},
+        after={"status": "rejected"},
+    )
     return _terminal_guard(record)

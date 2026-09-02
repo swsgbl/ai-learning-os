@@ -10,6 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from app.api.routes.auth import audit_from_request, require_admin
 from app.domain.course_importer import NotAdmissible, build_import_draft
 
 router = APIRouter(prefix="/api/v1/courses", tags=["courses"])
@@ -95,7 +96,13 @@ async def get_import_draft(draft_id: str, request: Request) -> ImportDraftOut:
 @router.post("/import-drafts/{draft_id}/approve", response_model=ImportDraftOut)
 async def approve_draft(draft_id: str, payload: ReviewRequest, request: Request) -> ImportDraftOut:
     """人工通过：pending_review -> approved；终态重复 409。"""
+    await require_admin(request)  # M9-04: 草稿审核是全局治理动作
     record = await _repo(request).review(draft_id, "approved", payload.note)
+    await audit_from_request(
+        request, action="course_import.approve", target_type="import_draft",
+        target_id=draft_id, before={"status": "pending_review"},
+        after={"status": "approved"},
+    )
     if record == "MISSING":
         raise HTTPException(status_code=404, detail="草稿不存在")
     if record == "TERMINAL":
@@ -106,7 +113,13 @@ async def approve_draft(draft_id: str, payload: ReviewRequest, request: Request)
 @router.post("/import-drafts/{draft_id}/reject", response_model=ImportDraftOut)
 async def reject_draft(draft_id: str, note: ReviewRequest, request: Request) -> ImportDraftOut:
     """人工驳回：pending_review -> rejected；终态重复 409。"""
+    await require_admin(request)  # M9-04: 草稿审核是全局治理动作
     record = await _repo(request).review(draft_id, "rejected", note.note)
+    await audit_from_request(
+        request, action="course_import.reject", target_type="import_draft",
+        target_id=draft_id, before={"status": "pending_review"},
+        after={"status": "rejected"},
+    )
     if record == "MISSING":
         raise HTTPException(status_code=404, detail="草稿不存在")
     if record == "TERMINAL":

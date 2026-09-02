@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from app.api.routes.auth import audit_from_request, require_admin
 from app.domain.concept_dag import (
     ConceptDag,
     ConceptEdge,
@@ -118,6 +119,7 @@ async def get_dag_version(version: int, request: Request) -> ConceptDagOut:
 @router.post("/versions", response_model=ConceptDagOut, status_code=201)
 async def publish_dag(payload: PublishDagRequest, request: Request) -> ConceptDagOut:
     """发布新版本：校验（引用完整/无环/难度边界）后原子落库。"""
+    await require_admin(request)  # M9-04: 概念图发布是全局治理动作
     nodes = tuple(
         ConceptNode(
             id=node.id,
@@ -139,4 +141,9 @@ async def publish_dag(payload: PublishDagRequest, request: Request) -> ConceptDa
         dag = await _repo(request).publish(nodes, edges, payload.note)
     except DagValidationError as cause:
         raise HTTPException(status_code=422, detail=str(cause)) from cause
+    await audit_from_request(
+        request, action="dag.publish", target_type="concept_dag",
+        target_id=f"v{dag.version}",
+        after={"version": dag.version, "nodes": len(dag.nodes), "edges": len(dag.edges)},
+    )
     return _dag_out(dag)

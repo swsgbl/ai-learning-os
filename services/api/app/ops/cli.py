@@ -104,6 +104,97 @@ def _run_db_rollback(args) -> int:
     return 0
 
 
+def _make_users_repo(db_url: str | None):
+    """admin CLI 共用：DATABASE_URL -> users 仓储（无库即明确失败）。"""
+    from app.core.config import get_settings
+    from app.db.session import create_engine, make_sessionmaker
+    from app.repositories.users import UserRepository
+
+    resolved = db_url or os.environ.get("DATABASE_URL") or get_settings().database_url
+    if not resolved:
+        print("需要数据库：用 --db-url 或环境变量 DATABASE_URL 指定")
+        raise SystemExit(2)
+    return UserRepository(make_sessionmaker(create_engine(resolved)))
+
+
+def _run_admin(args) -> int:
+    """python -m app.ops.cli admin promote|demote|list —— 角色运维（M9-04）。
+
+    无默认管理员：首个 admin 必须由持有数据库访问权的运维显式提升。
+    提升/降级均写审计（actor=cli，request_id 随机标识）。
+    """
+    import uuid
+
+    action = args.action
+    repo = _make_users_repo(getattr(args, "db_url", None))
+
+    async def _audit(actor_id: str | None, actor_name: str, act: str,
+                     target: str, before: dict | None, after: dict | None) -> None:
+        from datetime import UTC, datetime
+
+        from sqlalchemy import insert
+
+        from app.db.orm import AuditLogRow
+
+        audit = _make_audit_repo(getattr(args, "db_url", None))
+        async with audit._sessionmaker() as session, session.begin():
+            await session.execute(
+                insert(AuditLogRow).values(
+                    actor_id=actor_id,
+                    actor_username=actor_name,
+                    action=act,
+                    target_type="user",
+                    target_id=target,
+                    before=before,
+                    after=after,
+                    request_id=f"cli-{uuid.uuid4().hex[:12]}",
+                    created_at=datetime.now(UTC),
+                )
+            )
+
+    async def run() -> int:
+        if action == "list":
+            users = await repo.list_users()
+            for u in users:
+                print(f"{u.username}	{u.role}	{u.id}")
+            return 0
+        username = args.username
+        target_role = "admin" if action == "promote" else "learner"
+        current = None
+        for u in await repo.list_users():
+            if u.username == username:
+                current = u
+                break
+        if current is None:
+            print(f"用户不存在: {username}")
+            return 2
+        if current.role == target_role:
+            print(f"{username} 已是 {target_role}，无需变更")
+            return 0
+        updated = await repo.set_role(username, target_role)
+        assert updated is not None
+        await _audit(
+            updated.id, username, f"role.{action}", username,
+            {"role": current.role}, {"role": target_role},
+        )
+        print(f"{username}: {current.role} -> {target_role}")
+        return 0
+
+    return asyncio.run(run())
+
+
+def _make_audit_repo(db_url: str | None):
+    from app.core.config import get_settings
+    from app.db.session import create_engine, make_sessionmaker
+    from app.repositories.audit import AuditRepository
+
+    resolved = db_url or os.environ.get("DATABASE_URL") or get_settings().database_url
+    if not resolved:
+        print("需要数据库：用 --db-url 或环境变量 DATABASE_URL 指定")
+        raise SystemExit(2)
+    return AuditRepository(make_sessionmaker(create_engine(resolved)))
+
+
 def _run_release_check(args) -> int:
     """python -m app.ops.cli release-check [--api-base URL] [--db-url URL]
 
@@ -239,6 +330,10 @@ def main() -> None:
     p_db = sub.add_parser("db-rollback", help="数据库回滚（默认 dry-run，--yes 执行）")
     p_db.add_argument("--steps", type=int, default=1)
     p_db.add_argument("--yes", action="store_true", help="真正执行（破坏性操作显式确认）")
+    p_ad = sub.add_parser("admin", help="角色运维：promote/demote/list（M9-04）")
+    p_ad.add_argument("action", choices=["promote", "demote", "list"])
+    p_ad.add_argument("username", nargs="?", default=None)
+    p_ad.add_argument("--db-url", default=None)
     args = parser.parse_args()
     if args.command == "backup":
         raise SystemExit(asyncio.run(_run_backup(args)))
@@ -250,6 +345,11 @@ def main() -> None:
         raise SystemExit(_run_version(args))
     if args.command == "db-rollback":
         raise SystemExit(_run_db_rollback(args))
+    if args.command == "admin":
+        if args.action != "list" and not args.username:
+            print("promote/demote 需要用户名")
+            raise SystemExit(2)
+        raise SystemExit(_run_admin(args))
     raise SystemExit(asyncio.run(_run_restore(args)))
 
 

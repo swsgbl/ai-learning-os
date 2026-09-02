@@ -1,0 +1,320 @@
+"""M9-04 管理员授权、治理审计与泄漏修复。
+
+覆盖矩阵：
+1. learner 对治理端点 403 / admin 可用（sources verify/license、DAG publish、
+   课程生成/导入、变式、试卷抽取 approve/reject）；
+2. 搜索记录归属：B 读 A 的 query_id 404、本人 200、admin 可读全部（治理语义）；
+3. auth off 本地模式回归（治理端点放行 + 审计可读——存量语义零破坏）；
+4. 审计内容断言（actor/action/target/before/after/request_id）与 learner 403；
+5. admin CLI promote/demote/list 真实执行（文件 SQLite 库）；
+6. compose CORS 与 AIOS_WEB_PORT 联动渲染断言。
+"""
+from __future__ import annotations
+
+import os
+
+import pytest
+import yaml
+from fastapi.testclient import TestClient
+
+from app.core.config import get_settings
+from app.core.security import validate_auth_secret
+from app.main import create_app
+
+SQLITE_URL = "sqlite+aiosqlite:///:memory:"
+SECRET = "m9-04-admin-audit-secret-0123456789abcdef"
+COMPOSE_FILE = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "..", "..", "infra", "docker-compose.yml")
+)
+
+
+@pytest.fixture()
+def auth_on(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("AUTH_SECRET", SECRET)
+    get_settings.cache_clear()
+    yield
+    monkeypatch.delenv("AUTH_SECRET", raising=False)
+    get_settings.cache_clear()
+
+
+class User:
+    def __init__(self, client: TestClient, name: str) -> None:
+        body = {"username": name, "password": "password-123"}
+        client.post("/api/v1/auth/register", json=body)
+        token = client.post("/api/v1/auth/login", json=body).json()["access_token"]
+        self.name = name
+        self.headers = {"Authorization": f"Bearer {token}"}
+
+
+def _promote_to_admin(db_url: str, username: str) -> None:
+    """测试内模拟运维提升（等效于 CLI 的 repo.set_role 路径）。"""
+    import asyncio
+
+    from app.db.session import create_engine, make_sessionmaker
+    from app.repositories.users import UserRepository
+
+    async def _do_real() -> None:
+        repo = UserRepository(make_sessionmaker(create_engine(db_url)))
+        updated = await repo.set_role(username, "admin")
+        assert updated is not None
+
+    asyncio.run(_do_real())
+
+
+# --- 治理端点权限矩阵 ---
+
+
+PAPER = {
+    "title": "Admin Paper",
+    "duration_seconds": 1800,
+    "questions": [
+        {
+            "question": {
+                "question_type": "mcq",
+                "stem": "治理卷",
+                "options": ["a", "b"],
+                "answer": {"option_index": 1},
+                "explanation": "x",
+                "concept_ids": ["c"],
+                "difficulty": 1,
+            },
+            "score": 1.0,
+        }
+    ],
+}
+
+
+def _paper_id(client: TestClient, headers: dict) -> str:
+    client.post("/api/v1/papers/import", json=[PAPER], headers=headers)
+    papers = client.get("/api/v1/papers", headers=headers).json()
+    return next(p["id"] for p in papers if p["title"] == "Admin Paper")
+
+
+@pytest.fixture()
+def client_and_db(tmp_path):
+    db_url = f"sqlite+aiosqlite:///{tmp_path/'admin_audit.db'}"
+    with TestClient(create_app(db_url)) as c:
+        yield c, db_url
+
+
+def test_learner_forbidden_on_governance_endpoints(client_and_db, auth_on) -> None:
+    client, _db = client_and_db
+    learner = User(client, "gov_learner")
+
+    # source verify / license
+    r = client.post(
+        "/api/v1/sources",
+        json={"id": "src_x", "name": "x", "source_type": "oer", "license_state": "OPEN_LICENSE",
+              "trust_tier": "B", "authority_score": 5, "homepage": "https://example.edu/x"},
+        headers=learner.headers,
+    )
+    assert r.status_code == 403, r.text
+    r = client.post("/api/v1/sources/src_gov1/verify", headers=learner.headers)
+    assert r.status_code in (403,), r.text  # 门禁先于 404 —— 存在性不泄露
+    r = client.post("/api/v1/sources/src_gov1/license", json={"state": "PUBLIC_ACCESS"}, headers=learner.headers)
+    assert r.status_code == 403
+
+    # DAG publish
+    r = client.post(
+        "/api/v1/concept-dag/versions",
+        json={"nodes": [{"id": "c9", "canonical_name": "c", "subject": "math",
+                          "difficulty": 1, "aliases": [], "evidence_ids": []}],
+              "edges": [], "note": "x"},
+        headers=learner.headers,
+    )
+    assert r.status_code == 403
+
+    # 草稿审核（四类）
+    for path in (
+        "/api/v1/courses/generation-drafts/d1/approve",
+        "/api/v1/courses/generation-drafts/d1/reject",
+        "/api/v1/questions/variant-drafts/d1/approve",
+        "/api/v1/papers/import-drafts/d1/approve",
+        "/api/v1/courses/import-drafts/d1/approve",
+    ):
+        r = client.post(path, json={"note": "n"}, headers=learner.headers)
+        assert r.status_code == 403, f"{path} -> {r.status_code}"
+
+
+def test_admin_can_perform_governance_and_audits(client_and_db, auth_on, tmp_path) -> None:
+    client, db_url = client_and_db
+    admin_user = User(client, "gov_admin")
+    _promote_to_admin(db_url, "gov_admin")
+
+    _paper_id(client, admin_user.headers)  # 导入公共卷供治理链路用
+
+    # source create + verify + license（admin 全通）
+    r = client.post(
+        "/api/v1/sources",
+        json={"id": "src_gov1", "name": "x", "source_type": "oer", "license_state": "UNKNOWN",
+              "trust_tier": "B", "authority_score": 5, "homepage": "https://example.edu/src"},
+        headers=admin_user.headers,
+    )
+    assert r.status_code == 201, r.text
+    assert client.post("/api/v1/sources/src_gov1/verify", headers=admin_user.headers).status_code == 200
+    lic = client.post(
+        "/api/v1/sources/src_gov1/license", json={"state": "PUBLIC_ACCESS"},
+        headers=admin_user.headers,
+    )
+    assert lic.status_code == 200, lic.text
+
+    # DAG publish
+    dag = client.post(
+        "/api/v1/concept-dag/versions",
+        json={"nodes": [{"id": "c1", "canonical_name": "概念1", "subject": "math",
+                          "difficulty": 2, "aliases": [], "evidence_ids": []}],
+              "edges": [], "note": "v1"},
+        headers=admin_user.headers,
+    )
+    assert dag.status_code == 201, dag.text
+
+    # 审计内容断言（admin 读）
+    audit = client.get("/api/v1/audit", headers=admin_user.headers)
+    assert audit.status_code == 200
+    entries = audit.json()
+    actions = {e["action"] for e in entries}
+    assert {"source.create", "source.verify", "source.license_change", "dag.publish"} <= actions
+    lic_entry = next(e for e in entries if e["action"] == "source.license_change")
+    assert lic_entry["actor_username"] == "gov_admin"
+    assert lic_entry["before"] == {"license_state": "UNKNOWN"}
+    assert lic_entry["after"] == {"license_state": "PUBLIC_ACCESS"}
+    assert lic_entry["request_id"]
+
+
+def test_learner_cannot_read_audit_log(client_and_db, auth_on) -> None:
+    client, _db = client_and_db
+    learner = User(client, "audit_learner")
+    r = client.get("/api/v1/audit", headers=learner.headers)
+    assert r.status_code == 403
+
+
+def test_learner_cannot_read_others_search_records(client_and_db, auth_on) -> None:
+    client, _db = client_and_db
+    alice = User(client, "search_alice")
+    bob = User(client, "search_bob")
+
+    executed = client.post(
+        "/api/v1/search/queries",
+        json={"query": "快速排序", "limit": 5},
+        headers=alice.headers,
+    )
+    assert executed.status_code == 200, executed.text
+    query_id = executed.json()["query_id"]
+
+    assert client.get(f"/api/v1/search/queries/{query_id}", headers=alice.headers).status_code == 200
+    assert client.get(f"/api/v1/search/queries/{query_id}", headers=bob.headers).status_code == 404
+
+
+def test_admin_reads_all_search_records(client_and_db, auth_on) -> None:
+    client, db_url = client_and_db
+    admin_user = User(client, "search_admin")
+    _promote_to_admin(db_url, "search_admin")
+    alice = User(client, "search_alice2")
+
+    executed = client.post(
+        "/api/v1/search/queries",
+        json={"query": "动态规划", "limit": 5},
+        headers=alice.headers,
+    )
+    query_id = executed.json()["query_id"]
+    assert client.get(
+        f"/api/v1/search/queries/{query_id}", headers=admin_user.headers
+    ).status_code == 200
+
+
+def test_auth_off_keeps_local_mode_semantics(client_and_db) -> None:
+    """auth off：治理端点放行 + 审计可读（本地单用户兼容，存量语义零破坏）。"""
+    client, _db = client_and_db
+    r = client.post(
+        "/api/v1/sources",
+        json={"id": "src_local", "name": "x", "source_type": "oer", "license_state": "UNKNOWN",
+              "trust_tier": "B", "authority_score": 5, "homepage": "https://example.edu/local"},
+    )
+    assert r.status_code == 201
+    assert client.get("/api/v1/audit").status_code == 200
+
+
+# --- admin CLI（真实执行，文件 SQLite 库）---
+
+
+def test_admin_cli_promote_demote_list(auth_on, tmp_path, monkeypatch, capsys) -> None:
+    from app.ops import cli as cli_mod
+
+    db_path = tmp_path / "cli_users.db"
+    db_url = f"sqlite+aiosqlite:///{db_path}"
+    # 预建表（CLI 不跑 migration；等效生产 DB 已迁移态）
+    import asyncio
+
+    from app.db.base import Base
+    from app.db.session import create_engine
+
+    async def _create():
+        engine = create_engine(db_url)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        await engine.dispose()
+
+    asyncio.run(_create())
+
+    monkeypatch.setenv("DATABASE_URL", db_url)
+    get_settings.cache_clear()
+
+    class _A:
+        action = "list"
+        username = None
+        db_url = None
+
+    # 先造一个用户（经 CLI 同款仓储）
+    from app.db.session import make_sessionmaker
+    from app.repositories.users import UserRepository
+
+    async def _seed():
+        repo = UserRepository(make_sessionmaker(create_engine(db_url)))
+        await repo.create("cli_user", "x")
+
+    asyncio.run(_seed())
+
+    assert cli_mod._run_admin(type("A", (), {"action": "list", "username": None, "db_url": None})()) == 0
+    out = capsys.readouterr().out
+    assert "cli_user" in out
+
+    assert cli_mod._run_admin(type("A", (), {"action": "promote", "username": "cli_user", "db_url": None})()) == 0
+    out = capsys.readouterr().out
+    assert "cli_user: learner -> admin" in out
+
+    # 幂等：重复 promote 明示无变更
+    assert cli_mod._run_admin(type("A", (), {"action": "promote", "username": "cli_user", "db_url": None})()) == 0
+    assert "无需变更" in capsys.readouterr().out
+
+    assert cli_mod._run_admin(type("A", (), {"action": "demote", "username": "cli_user", "db_url": None})()) == 0
+    assert "cli_user: admin -> learner" in capsys.readouterr().out
+
+    # 未知用户
+    assert cli_mod._run_admin(type("A", (), {"action": "promote", "username": "ghost", "db_url": None})()) == 2
+
+
+# --- 部署安全 ---
+
+
+def test_validate_auth_secret_production_fail_closed() -> None:
+    import pytest as _pytest
+
+    with _pytest.raises(RuntimeError):
+        validate_auth_secret(None, app_env="production")
+    with _pytest.raises(RuntimeError):
+        validate_auth_secret("short", app_env="production")
+    with _pytest.raises(RuntimeError):
+        validate_auth_secret("aios-local-dev-secret-7d21b9e4c8a3", app_env="production")
+    validate_auth_secret("x" * 32, app_env="production")  # 合规通过
+    # 非生产：不配置放行；配置了但太短明确拒绝
+    validate_auth_secret(None, app_env="development")
+    with _pytest.raises(RuntimeError):
+        validate_auth_secret("short", app_env="development")
+
+
+def test_compose_cors_follows_web_port() -> None:
+    with open(COMPOSE_FILE, encoding="utf-8") as fh:
+        compose = yaml.safe_load(fh)
+    cors = compose["services"]["api"]["environment"]["CORS_ORIGINS"]
+    assert "AIOS_CORS_ORIGINS" in cors, "必须支持完整覆盖"
+    assert "${AIOS_WEB_PORT:-3000}" in cors, "自定义 Web 端口时 CORS 默认联动"

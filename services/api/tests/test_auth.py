@@ -17,7 +17,7 @@ from app.core.security import create_access_token, hash_password, verify_passwor
 from app.main import create_app
 
 SQLITE_URL = "sqlite+aiosqlite:///:memory:"
-SECRET = "m9-test-secret"
+SECRET = "m9-auth-test-secret-0123456789abcdef"
 
 
 @pytest.fixture()

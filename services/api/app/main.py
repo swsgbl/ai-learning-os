@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.auth import require_user
@@ -30,11 +30,13 @@ from app.api.routes.voice import router as voice_router
 from app.api.routes.voice_eval import router as voice_eval_router
 from app.api.routes.web import router as web_router
 from app.core.config import get_settings
+from app.core.security import validate_auth_secret
 from app.db.session import create_engine, is_sqlite, make_sessionmaker, prepare_database
 from app.domain.rubric_grader import make_rubric_judge
 from app.domain.web_gate import RateLimiter
 from app.parsing.registry import make_default_registry
 from app.parsing.worker import ParseWorker
+from app.repositories.audit import AuditRepository
 from app.repositories.chunks import ChunkRepository
 from app.repositories.concept_dag import ConceptDagRepository
 from app.repositories.course_generation_drafts import CourseGenerationDraftRepository
@@ -61,6 +63,7 @@ from app.storage.objectstore import make_object_store
 
 def create_app(database_url: str | None = None) -> FastAPI:
     settings = get_settings()
+    validate_auth_secret(settings.auth_secret, app_env=settings.app_env)  # M9-04 fail-closed
     resolved_url = database_url if database_url is not None else settings.database_url
     if settings.rubric_judge == "llm":
         # M10-01: LLM judge 经 OpenAI 兼容 gateway；槽位未配齐时 build 返回 None
@@ -105,6 +108,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
             paper_question_drafts = PaperQuestionDraftRepository(sessionmaker)
             resources = ResourceRepository(sessionmaker)
             users = UserRepository(sessionmaker)
+            audit = AuditRepository(sessionmaker)
             objects = make_object_store(settings)
             parsers = make_default_registry()
             chunks = ChunkRepository(sessionmaker)
@@ -142,6 +146,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         app.state.search_registry = search_registry if resolved_url else None
         app.state.resources = resources if resolved_url else None
         app.state.users = users if resolved_url else None
+        app.state.audit = audit if resolved_url else None
         app.state.objects = objects if resolved_url else None
         app.state.parsers = parsers if resolved_url else None
         app.state.chunks = chunks if resolved_url else None
@@ -169,6 +174,18 @@ def create_app(database_url: str | None = None) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    @app.middleware("http")
+    async def request_id_middleware(request: Request, call_next):
+        """M9-04: 每请求 request id（透传上游 X-Request-ID 或生成），审计留痕用。"""
+        import uuid
+
+        request.state.request_id = (
+            request.headers.get("X-Request-ID") or f"req-{uuid.uuid4().hex[:12]}"
+        )
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request.state.request_id
+        return response
     app.include_router(paper_extractor_router)
     app.include_router(papers_router)
     app.include_router(exams_router)
@@ -200,6 +217,9 @@ def create_app(database_url: str | None = None) -> FastAPI:
     from app.api.routes.auth import router as auth_router
 
     app.include_router(auth_router)
+    from app.api.routes.audit import router as audit_router
+
+    app.include_router(audit_router)
     app.include_router(web_router)
     # M5-03 抓取预检频率限制（per-IP 固定窗口，内存实现，无 DB 也可用）
     app.state.fetch_limiter = RateLimiter(settings.fetch_rate_limit_per_minute)

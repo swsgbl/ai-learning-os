@@ -431,7 +431,26 @@ class SearchQueryRow(Base):
     result_count: Mapped[int] = mapped_column(Integer, default=0)
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     results: Mapped[list[Any]] = mapped_column(JSON, default=list)
+    # M9-04: 搜索记录归属发起用户（泄漏修复——原全局可读）
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AuditLogRow(Base):
+    """M9-04 治理审计：license 变更 / DAG 发布 / 草稿审核 / 角色提升留痕。"""
+
+    __tablename__ = "audit_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    actor_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    actor_username: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    action: Mapped[str] = mapped_column(String(64), index=True)
+    target_type: Mapped[str] = mapped_column(String(64))
+    target_id: Mapped[str] = mapped_column(String(128))
+    before: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    after: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    request_id: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
 
 
 class CourseImportDraftRow(Base):
@@ -529,4 +548,6 @@ class UserRow(Base):
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
     username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
     password_hash: Mapped[str] = mapped_column(String(128))
+    # M9-04: 角色——默认 learner；admin 仅经安全运维 CLI 提升（无默认管理员账号）
+    role: Mapped[str] = mapped_column(String(16), default="learner", server_default="learner")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

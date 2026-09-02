@@ -12,6 +12,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
+from app.api.routes.auth import current_is_admin, current_owner_id
 from app.domain.query_planner import build_query_plan, parse_query_slots
 from app.domain.result_ranker import rank_and_dedup
 from app.search.providers import ProviderUnavailable
@@ -207,6 +208,7 @@ async def execute_search(payload: SearchRequest, request: Request) -> SearchOut:
         result_count=len(results),
         duration_ms=duration_ms,
         results=results,
+        owner_id=current_owner_id(request),  # M9-04: 搜索记录归属发起者
     )
     return SearchOut(
         query_id=record["id"],
@@ -225,6 +227,11 @@ async def get_search_record(query_id: int, request: Request) -> SearchRecordOut:
     repo = request.app.state.search_queries
     if repo is None:
         raise HTTPException(status_code=503, detail="Search requires a database")
+    # M9-04 归属门：auth on 时本人可读，admin 可读全部（治理审计），他人 404
+    if not await current_is_admin(request):
+        owner = current_owner_id(request)
+        if owner is not None and await repo.get_owner(query_id) != owner:
+            raise HTTPException(status_code=404, detail="搜索记录不存在")
     record = await repo.get(query_id)
     if record is None:
         raise HTTPException(status_code=404, detail="搜索记录不存在")
