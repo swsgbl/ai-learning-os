@@ -387,4 +387,7 @@ def test_compose_livekit_ports_bound_to_loopback_by_default() -> None:
     )
     # APP_ENV 支持部署覆盖（fail-closed 校验的入口）
     assert compose["services"]["api"]["environment"]["APP_ENV"] == "${AIOS_APP_ENV:-docker}"
-    assert compose["services"]["api"]["environment"]["AIOS_BIND_IP"] == "${AIOS_BIND_IP:-127.0.0.1}"
+    env = compose["services"]["api"]["environment"]
+    assert env.get("HOST_BIND_IP") == "${AIOS_BIND_IP:-127.0.0.1}", (
+        "宿主绑定意图必须以 HOST_BIND_IP 传入 API 容器（对齐 settings.host_bind_ip）"
+    )
