@@ -3,9 +3,10 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from app.api.routes.auth import require_user
 from app.api.routes.citation_eval import router as citation_eval_router
 from app.api.routes.concepts import router as concepts_router
 from app.api.routes.course_workflow import router as course_workflow_router
@@ -48,6 +49,7 @@ from app.repositories.resources import ResourceRepository
 from app.repositories.search_queries import SearchQueryRepository
 from app.repositories.sources import SourceRepository
 from app.repositories.student_state import StudentStateRepository
+from app.repositories.users import UserRepository
 from app.repositories.variant_question_drafts import VariantQuestionDraftRepository
 from app.repositories.voice_answer_events import VoiceAnswerEventRepository
 from app.repositories.voice_sessions import VoiceSessionRepository
@@ -89,6 +91,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
             eval_runs = EvalRunRepository(sessionmaker)
             paper_question_drafts = PaperQuestionDraftRepository(sessionmaker)
             resources = ResourceRepository(sessionmaker)
+            users = UserRepository(sessionmaker)
             objects = make_object_store(settings)
             parsers = make_default_registry()
             chunks = ChunkRepository(sessionmaker)
@@ -120,6 +123,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         app.state.paper_question_drafts = paper_question_drafts if resolved_url else None
         app.state.search_registry = search_registry if resolved_url else None
         app.state.resources = resources if resolved_url else None
+        app.state.users = users if resolved_url else None
         app.state.objects = objects if resolved_url else None
         app.state.parsers = parsers if resolved_url else None
         app.state.chunks = chunks if resolved_url else None
@@ -135,6 +139,9 @@ def create_app(database_url: str | None = None) -> FastAPI:
         version="0.1.0",
         description="Server-authoritative exam and learning APIs.",
         lifespan=lifespan,
+        # M9-01 认证门禁：AUTH_SECRET 配置后全业务路径要求 Bearer token；
+        # 未配置时依赖内部放行（status 如实透出 auth_enabled=false）
+        dependencies=[Depends(require_user)],
     )
     app.add_middleware(
         CORSMiddleware,
@@ -172,6 +179,9 @@ def create_app(database_url: str | None = None) -> FastAPI:
     from app.api.routes.version import router as version_router
 
     app.include_router(version_router)
+    from app.api.routes.auth import router as auth_router
+
+    app.include_router(auth_router)
     app.include_router(web_router)
     # M5-03 抓取预检频率限制（per-IP 固定窗口，内存实现，无 DB 也可用）
     app.state.fetch_limiter = RateLimiter(settings.fetch_rate_limit_per_minute)

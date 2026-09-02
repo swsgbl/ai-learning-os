@@ -41,6 +41,16 @@ alembic -c services/api/alembic.ini upgrade head
   `DATABASE_URL` 属于 alembic / API 运行时，混入 pytest 会把「无 DB 503」
   测试翻成 DB 路径导致断言失败。
 
+## 认证（M9-01）
+
+- `AUTH_SECRET` 未配置 = 认证关闭，`GET /api/v1/auth/status` 如实透出 `auth_enabled=false`；
+- 配置后（compose 已注入 dev 值）全业务路径要求 `Authorization: Bearer <token>`，
+  `register/login/status` 与 `/health`、`/api/v1/version`、`/docs` 豁免；
+- 端点：`POST /api/v1/auth/register`（重复 409）、`POST /api/v1/auth/login`（失败统一
+  「用户名或密码错误」防枚举）、`GET /api/v1/auth/me`；JWT HS256，默认 24h 过期。
+- 生产部署用部署 secret 覆盖 `AIOS_AUTH_SECRET`；密码只存 bcrypt 哈希（72 字节上限）。
+- 数据归属拆分（资源/考试/语音按 user_id 隔离）是 M9-02 演进项，当前认证是全局门禁而非租户隔离。
+
 ## 对象存储
 
 - compose 的 api 服务注入 `S3_ENDPOINT/S3_BUCKET/S3_ACCESS_KEY/S3_SECRET_KEY`

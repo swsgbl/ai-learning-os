@@ -39,10 +39,14 @@ def test_version_sources_in_sync() -> None:
     )
     assert web_pkg["version"] == version
     changelog = (REPO_ROOT / "docs" / "CHANGELOG.md").read_text(encoding="utf-8")
-    m = [ln for ln in changelog.splitlines() if ln.startswith("## [")]
-    assert m, "CHANGELOG 无版本条目"
-    top = m[0]
-    assert top.startswith(f"## [{version}]"), f"CHANGELOG 顶部 {top!r} != VERSION {version!r}"
+    heads = [ln for ln in changelog.splitlines() if ln.startswith("## [")]
+    assert heads, "CHANGELOG 无版本条目"
+    # Keep a Changelog：[Unreleased] 是未发布变更节而非版本条目，守卫跳过它
+    released = [ln for ln in heads if not ln.startswith("## [Unreleased]")]
+    assert released, "CHANGELOG 无已发布版本条目"
+    assert released[0].startswith(f"## [{version}]"), (
+        f"CHANGELOG 已发布顶部 {released[0]!r} != VERSION {version!r}"
+    )
 
 
 def test_read_version_rejects_bad_format(tmp_path: Path) -> None:

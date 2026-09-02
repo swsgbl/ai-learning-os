@@ -511,3 +511,14 @@ class EvalRunRow(Base):
     agreement: Mapped[float | None] = mapped_column(nullable=True)
     report: Mapped[dict] = mapped_column(JSON)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class UserRow(Base):
+    """M9-01 用户：本地用户名密码账户。密码只存 bcrypt 哈希。"""
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    username: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    password_hash: Mapped[str] = mapped_column(String(128))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

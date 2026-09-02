@@ -26,7 +26,10 @@ docker compose -f infra/docker-compose.yml --profile local up -d --build
 基础服务（postgres/redis/minio/api/web）不挂 profile 恒启动；livekit（语音基础设施）
 挂在 local/hybrid/cloud 三个命名 profile 下。
 
-验证真实可用（全服务 healthy + 关键端点 + 上传对象重启 API 后仍可读）：
+登录/注册由 API 提供（`POST /api/v1/auth/register` / `login`，compose 已注入 dev AUTH_SECRET，
+业务端点需 Bearer token；生产部署覆盖 `AIOS_AUTH_SECRET`）。
+
+验证真实可用（全服务 healthy + 关键端点 + 认证 + 上传对象重启 API 后仍可读）：
 
 ```bash
 bash infra/smoke_docker.sh

@@ -63,6 +63,10 @@ services:
       LIVEKIT_URL: ws://livekit:7880
       LIVEKIT_API_KEY: devkey
       LIVEKIT_API_SECRET: ailos-local-dev-secret-0f4c9a1e7b2d
+      # M9-01: 认证开关 —— 生产部署用部署 secret 覆盖 AUTH_SECRET；
+      # 本地 dev 值仅用于开发栈（与 LIVEKIT_API_SECRET 同款占位约定）
+      AUTH_SECRET: ${AIOS_AUTH_SECRET:-aios-local-dev-secret-7d21b9e4c8a3}
+      AUTH_TOKEN_EXPIRE_MINUTES: ${AIOS_AUTH_TOKEN_EXPIRE_MINUTES:-1440}
       # M7-01: profile 分离 local/hybrid/cloud —— AIOS_VOICE_MODE 插值注入语音隐私路由
       VOICE_MODE: ${AIOS_VOICE_MODE:-local}
     ports:

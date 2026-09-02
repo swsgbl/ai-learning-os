@@ -3,6 +3,14 @@
 All notable changes to the AI Learning OS project are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow semver.
 
+## [Unreleased]
+
+### Added
+- M9-01 多用户与认证基座：users 表（alembic 0022）+ bcrypt 密码哈希 + JWT（HS256）
+  + register/login/me/status 端点 + 全业务路径 Bearer 门禁；
+  AUTH_SECRET 未配置 = 认证关闭且 status 如实透出（存量客户端零破坏）
+- M8-00 冒烟脚本与 Docker CI 门禁
+
 ## [0.1.0] - 2026-09-02
 
 ### Added — Foundation (M0)
