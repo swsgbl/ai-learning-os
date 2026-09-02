@@ -1,5 +1,9 @@
 name: ai-learning-os
 
+# M9-05: 所有端口默认只绑 127.0.0.1（本机使用）。
+# 需要 LAN/外网访问时：AIOS_BIND_IP=0.0.0.0 且必须同时设置强 AUTH_SECRET
+# 与 APP_ENV=production（API 启动 fail-closed 校验），见 docs/DEVELOPMENT.md。
+
 services:
   postgres:
     image: postgres:17-alpine
@@ -8,7 +12,7 @@ services:
       POSTGRES_PASSWORD: aios
       POSTGRES_DB: ai_learning_os
     ports:
-      - "5433:5432"
+      - "${AIOS_BIND_IP:-127.0.0.1}:5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -20,7 +24,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "${AIOS_BIND_IP:-127.0.0.1}:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -34,8 +38,8 @@ services:
       MINIO_ROOT_USER: aios
       MINIO_ROOT_PASSWORD: aios12345
     ports:
-      - "9000:9000"
-      - "9001:9001"
+      - "${AIOS_BIND_IP:-127.0.0.1}:9000:9000"
+      - "${AIOS_BIND_IP:-127.0.0.1}:9001:9001"
     volumes:
       - minio-data:/data
     healthcheck:
@@ -72,7 +76,7 @@ services:
       # M7-01: profile 分离 local/hybrid/cloud —— AIOS_VOICE_MODE 插值注入语音隐私路由
       VOICE_MODE: ${AIOS_VOICE_MODE:-local}
     ports:
-      - "8000:8000"
+      - "${AIOS_BIND_IP:-127.0.0.1}:8000:8000"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
       interval: 10s
@@ -94,7 +98,7 @@ services:
     volumes:
       - ./livekit/livekit.yaml:/etc/livekit/livekit.yaml:ro
     ports:
-      - "7880:7880"
+      - "${AIOS_BIND_IP:-127.0.0.1}:7880:7880"
       - "7881:7881"
       - "7882-7892:7882-7892/udp"
     healthcheck:
@@ -116,7 +120,7 @@ services:
       # 会绑到特定接口导致 healthcheck 127.0.0.1 拒连 —— 显式绑全接口
       HOSTNAME: 0.0.0.0
     ports:
-      - "${AIOS_WEB_PORT:-3000}:3000"
+      - "${AIOS_BIND_IP:-127.0.0.1}:${AIOS_WEB_PORT:-3000}:3000"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1"]
       interval: 10s

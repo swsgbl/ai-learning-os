@@ -123,34 +123,9 @@ def _run_admin(args) -> int:
     无默认管理员：首个 admin 必须由持有数据库访问权的运维显式提升。
     提升/降级均写审计（actor=cli，request_id 随机标识）。
     """
-    import uuid
 
     action = args.action
     repo = _make_users_repo(getattr(args, "db_url", None))
-
-    async def _audit(actor_id: str | None, actor_name: str, act: str,
-                     target: str, before: dict | None, after: dict | None) -> None:
-        from datetime import UTC, datetime
-
-        from sqlalchemy import insert
-
-        from app.db.orm import AuditLogRow
-
-        audit = _make_audit_repo(getattr(args, "db_url", None))
-        async with audit._sessionmaker() as session, session.begin():
-            await session.execute(
-                insert(AuditLogRow).values(
-                    actor_id=actor_id,
-                    actor_username=actor_name,
-                    action=act,
-                    target_type="user",
-                    target_id=target,
-                    before=before,
-                    after=after,
-                    request_id=f"cli-{uuid.uuid4().hex[:12]}",
-                    created_at=datetime.now(UTC),
-                )
-            )
 
     async def run() -> int:
         if action == "list":
@@ -171,28 +146,31 @@ def _run_admin(args) -> int:
         if current.role == target_role:
             print(f"{username} 已是 {target_role}，无需变更")
             return 0
-        updated = await repo.set_role(username, target_role)
-        assert updated is not None
-        await _audit(
-            updated.id, username, f"role.{action}", username,
-            {"role": current.role}, {"role": target_role},
+        import uuid as _uuid
+
+        updated = await repo.set_role(
+            username,
+            target_role,
+            audit={
+                "action": f"role.{action}",
+                "target_type": "user",
+                "target_id": username,
+                "request_id": f"cli-{_uuid.uuid4().hex[:12]}",
+                "actor_id": updated_id_of(current),
+                "actor_username": "cli-operator",
+                "before": {"role": current.role},
+                "after": {"role": target_role},
+            },
         )
+        assert updated is not None
         print(f"{username}: {current.role} -> {target_role}")
         return 0
 
     return asyncio.run(run())
 
 
-def _make_audit_repo(db_url: str | None):
-    from app.core.config import get_settings
-    from app.db.session import create_engine, make_sessionmaker
-    from app.repositories.audit import AuditRepository
-
-    resolved = db_url or os.environ.get("DATABASE_URL") or get_settings().database_url
-    if not resolved:
-        print("需要数据库：用 --db-url 或环境变量 DATABASE_URL 指定")
-        raise SystemExit(2)
-    return AuditRepository(make_sessionmaker(create_engine(resolved)))
+def updated_id_of(record):
+    return record.id
 
 
 def _run_release_check(args) -> int:

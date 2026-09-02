@@ -5,10 +5,10 @@ import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.orm import ChunkRow, EvidenceRow
+from app.db.orm import ChunkRow, EvidenceRow, ResourceRow
 from app.parsing.chunking import Chunk
 from app.repositories.memory import utc_now
 
@@ -90,18 +90,30 @@ class ChunkRepository:
                 for row in rows
             ]
 
-    async def search_text(self, query: str, limit: int = 10) -> list[dict]:
-        """M5-01 本地语料检索：chunk 文本 contains 匹配（按资源+序号稳定排序）。"""
+    async def search_text(
+        self, query: str, limit: int = 10, owner: str | None = None
+    ) -> list[dict]:
+        """M5-01 本地语料检索：chunk 文本 contains 匹配（按资源+序号稳定排序）。
+
+        M9-05 语料边界：owner 传入（auth on）时只返回「该用户自有资源 +
+        access_state=public 的公共语料」；unknown/NULL/他人私有资源绝不进入结果。
+        owner=None（auth off 本地模式 / 部署级视图）保持现状不过滤。
+        """
         pattern = f"%{query.strip().lower()}%"
+        query_obj = select(ChunkRow).join(
+            ResourceRow, ChunkRow.resource_id == ResourceRow.id
+        )
+        if owner is not None:
+            query_obj = query_obj.where(
+                or_(ResourceRow.owner_id == owner, ResourceRow.access_state == "public")
+            )
+        query_obj = (
+            query_obj.where(func.lower(ChunkRow.text).like(pattern))
+            .order_by(ChunkRow.resource_id, ChunkRow.chunk_index)
+            .limit(limit)
+        )
         async with self._sessionmaker() as session:
-            rows = (
-                await session.execute(
-                    select(ChunkRow)
-                    .where(func.lower(ChunkRow.text).like(pattern))
-                    .order_by(ChunkRow.resource_id, ChunkRow.chunk_index)
-                    .limit(limit)
-                )
-            ).scalars().all()
+            rows = (await session.execute(query_obj)).scalars().all()
             return [
                 {
                     "resource_id": row.resource_id,

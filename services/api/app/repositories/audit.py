@@ -69,3 +69,25 @@ class AuditRepository:
                 }
                 for row in rows
             ]
+
+
+def audit_insert_values(payload: dict, *, clock: Callable[[], datetime]) -> dict:
+    """把审计 payload 标准化为 AuditLogRow insert 值（M9-05 同事务审计共用）。
+
+    必需键：action/target_type/target_id/request_id；可选：actor_id/actor_username/
+    before/after。缺 request_id 视为构造错误（审计必须可关联请求）。
+    """
+    missing = {"action", "target_type", "target_id", "request_id"} - payload.keys()
+    if missing:
+        raise ValueError(f"审计 payload 缺字段: {sorted(missing)}")
+    return {
+        "actor_id": payload.get("actor_id"),
+        "actor_username": payload.get("actor_username"),
+        "action": payload["action"],
+        "target_type": payload["target_type"],
+        "target_id": payload["target_id"],
+        "before": payload.get("before"),
+        "after": payload.get("after"),
+        "request_id": payload["request_id"],
+        "created_at": clock(),
+    }

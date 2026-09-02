@@ -12,7 +12,12 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from app.api.routes.auth import audit_from_request, require_admin
+from app.api.routes.auth import (
+    build_audit_payload,
+    current_is_admin,
+    current_owner_id,
+    require_admin,
+)
 from app.domain.variant_generator import generate_variant_draft
 
 router = APIRouter(prefix="/api/v1/questions/variant-drafts", tags=["questions"])
@@ -87,6 +92,17 @@ def _repo(request: Request):
     return repo
 
 
+async def _require_draft_readable(request: Request, draft_id: str) -> None:
+    """M9-05 草稿读取门：auth on 时普通用户只能读自己的（他人/无主 404）。"""
+    if await current_is_admin(request):
+        return
+    owner = current_owner_id(request)
+    if owner is not None:
+        draft_owner = await _repo(request).get_owner(draft_id)
+        if draft_owner != owner:
+            raise HTTPException(status_code=404, detail="变式草稿不存在")
+
+
 @router.post("", response_model=VariantDraftOut, status_code=201)
 async def create_variant_draft(payload: GenerateVariantRequest, request: Request) -> VariantDraftOut:
     """解保持变换生成变式草稿；0 变式题明示（不虚报），全部进审核队列。"""
@@ -104,18 +120,22 @@ async def create_variant_draft(payload: GenerateVariantRequest, request: Request
         variants=draft["variants"],
         variant_count=draft["variant_count"],
         generation_note=draft["generation_note"],
+        owner_id=current_owner_id(request),  # M9-05: 草稿归属发起者
     )
     return VariantDraftOut(**record)
 
 
 @router.get("", response_model=list[VariantDraftOut])
 async def list_variant_drafts(request: Request, status: str | None = None) -> list[VariantDraftOut]:
-    """审核队列：status 过滤（pending_review/approved/rejected），缺省全部。"""
-    return [VariantDraftOut(**item) for item in await _repo(request).list_by_status(status)]
+    """审核队列；M9-05 auth on 时普通用户只见自己的草稿（admin/本地模式见全部）。"""
+    owner = None if await current_is_admin(request) else current_owner_id(request)
+    records = await _repo(request).list_by_status(status, owner)
+    return [VariantDraftOut(**r) for r in records]
 
 
 @router.get("/{draft_id}", response_model=VariantDraftOut)
 async def get_variant_draft(draft_id: str, request: Request) -> VariantDraftOut:
+    await _require_draft_readable(request, draft_id)
     record = await _repo(request).get(draft_id)
     if record is None:
         raise HTTPException(status_code=404, detail="变式草稿不存在")
@@ -139,12 +159,12 @@ class ReviewRequest(BaseModel):
 async def approve_variant_draft(draft_id: str, payload: ReviewRequest, request: Request) -> VariantDraftOut:
     """人工通过：pending_review -> approved；终态重复 409。"""
     await require_admin(request)  # M9-04: 草稿审核是全局治理动作
-    record = await _repo(request).review(draft_id, "approved", payload.note)
-    await audit_from_request(
+    audit = await build_audit_payload(
         request, action="variant_generation.approve", target_type="variant_draft",
         target_id=draft_id, before={"status": "pending_review"},
         after={"status": "approved"},
     )
+    record = await _repo(request).review(draft_id, "approved", payload.note, audit)
     return _terminal_guard(record)
 
 
@@ -152,10 +172,10 @@ async def approve_variant_draft(draft_id: str, payload: ReviewRequest, request: 
 async def reject_variant_draft(draft_id: str, payload: ReviewRequest, request: Request) -> VariantDraftOut:
     """人工驳回：pending_review -> rejected；终态重复 409。"""
     await require_admin(request)  # M9-04: 草稿审核是全局治理动作
-    record = await _repo(request).review(draft_id, "rejected", payload.note)
-    await audit_from_request(
+    audit = await build_audit_payload(
         request, action="variant_generation.reject", target_type="variant_draft",
         target_id=draft_id, before={"status": "pending_review"},
         after={"status": "rejected"},
     )
+    record = await _repo(request).review(draft_id, "rejected", payload.note, audit)
     return _terminal_guard(record)

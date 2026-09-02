@@ -10,7 +10,12 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.api.routes.auth import audit_from_request, require_admin
+from app.api.routes.auth import (
+    build_audit_payload,
+    current_is_admin,
+    current_owner_id,
+    require_admin,
+)
 from app.domain.course_importer import NotAdmissible, build_import_draft
 
 router = APIRouter(prefix="/api/v1/courses", tags=["courses"])
@@ -50,7 +55,19 @@ def _resource(request: Request, resource_id: str):
     repo = request.app.state.resources
     if repo is None:
         raise HTTPException(status_code=503, detail="Course import requires a database")
-    return repo.get(resource_id)
+    # M9-05: 归属感知读取 —— Bob 用 Alice 资源创建导入草稿 = 404
+    return repo.get_owned(resource_id, current_owner_id(request))
+
+
+async def _require_draft_readable(request: Request, draft_id: str) -> None:
+    """M9-05 草稿读取门：auth on 时普通用户只能读自己的（他人/无主 404）。"""
+    if await current_is_admin(request):
+        return
+    owner = current_owner_id(request)
+    if owner is not None:
+        draft_owner = await _repo(request).get_owner(draft_id)
+        if draft_owner != owner:
+            raise HTTPException(status_code=404, detail="导入草稿不存在")
 
 
 @router.post("/import-drafts", response_model=ImportDraftOut, status_code=201)
@@ -76,17 +93,20 @@ async def create_import_draft(payload: ImportDraftRequest, request: Request) -> 
     except NotAdmissible as cause:
         raise HTTPException(status_code=403, detail=str(cause)) from cause
 
-    return ImportDraftOut(**await repo.create(draft))
+    return ImportDraftOut(**await repo.create(draft, owner_id=current_owner_id(request)))
 
 
 @router.get("/import-drafts", response_model=list[ImportDraftOut])
 async def list_import_drafts(request: Request, status: str | None = None) -> list[ImportDraftOut]:
-    """审核队列：status 过滤（pending_review/approved/rejected），缺省全部。"""
-    return [ImportDraftOut(**item) for item in await _repo(request).list_by_status(status)]
+    """审核队列；M9-05 auth on 时普通用户只见自己的草稿（admin/本地模式见全部）。"""
+    owner = None if await current_is_admin(request) else current_owner_id(request)
+    records = await _repo(request).list_by_status(status, owner)
+    return [ImportDraftOut(**r) for r in records]
 
 
 @router.get("/import-drafts/{draft_id}", response_model=ImportDraftOut)
 async def get_import_draft(draft_id: str, request: Request) -> ImportDraftOut:
+    await _require_draft_readable(request, draft_id)
     record = await _repo(request).get(draft_id)
     if record is None:
         raise HTTPException(status_code=404, detail="草稿不存在")
@@ -97,12 +117,12 @@ async def get_import_draft(draft_id: str, request: Request) -> ImportDraftOut:
 async def approve_draft(draft_id: str, payload: ReviewRequest, request: Request) -> ImportDraftOut:
     """人工通过：pending_review -> approved；终态重复 409。"""
     await require_admin(request)  # M9-04: 草稿审核是全局治理动作
-    record = await _repo(request).review(draft_id, "approved", payload.note)
-    await audit_from_request(
+    audit = await build_audit_payload(
         request, action="course_import.approve", target_type="import_draft",
         target_id=draft_id, before={"status": "pending_review"},
         after={"status": "approved"},
     )
+    record = await _repo(request).review(draft_id, "approved", payload.note, audit)
     if record == "MISSING":
         raise HTTPException(status_code=404, detail="草稿不存在")
     if record == "TERMINAL":
@@ -114,12 +134,12 @@ async def approve_draft(draft_id: str, payload: ReviewRequest, request: Request)
 async def reject_draft(draft_id: str, note: ReviewRequest, request: Request) -> ImportDraftOut:
     """人工驳回：pending_review -> rejected；终态重复 409。"""
     await require_admin(request)  # M9-04: 草稿审核是全局治理动作
-    record = await _repo(request).review(draft_id, "rejected", note.note)
-    await audit_from_request(
+    audit = await build_audit_payload(
         request, action="course_import.reject", target_type="import_draft",
         target_id=draft_id, before={"status": "pending_review"},
         after={"status": "rejected"},
     )
+    record = await _repo(request).review(draft_id, "rejected", note.note, audit)
     if record == "MISSING":
         raise HTTPException(status_code=404, detail="草稿不存在")
     if record == "TERMINAL":

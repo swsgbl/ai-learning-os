@@ -73,25 +73,33 @@ def _current_user_id(request: Request) -> str:
 
 
 async def require_user(request: Request) -> None:
-    """app 级门禁依赖：认证开启时业务路径必须带有效 token；豁免路径集中在此。"""
+    """app 级门禁依赖：认证开启时业务路径必须带有效 token；豁免路径集中在此。
+
+    M9-05: token 验签后还确认用户仍存在（deleted/ghost fail-closed）。
+    """
     if not get_settings().auth_secret:
         return
     path = request.url.path
-    exempt = (
-        path in (
-            "/health",
-            "/docs",
-            "/redoc",
-            "/openapi.json",
-            "/api/v1/version",
-            "/api/v1/auth/status",
-            "/api/v1/auth/register",
-            "/api/v1/auth/login",
-        )
+    exempt = path in (
+        "/health",
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+        "/api/v1/version",
+        "/api/v1/auth/status",
+        "/api/v1/auth/register",
+        "/api/v1/auth/login",
     )
     if exempt:
         return
-    _current_user_id(request)
+    user_id = _current_user_id(request)
+    repo = getattr(request.app.state, "users", None)
+    if repo is not None and await repo.get_role(user_id) is None:
+        raise HTTPException(
+            status_code=401,
+            detail="用户不存在或已删除",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
 
 @router.post("/register", response_model=UserOut, status_code=201)
@@ -185,7 +193,7 @@ async def require_admin(request: Request) -> None:
         raise HTTPException(status_code=403, detail="需要管理员权限")
 
 
-async def audit_from_request(
+async def build_audit_payload(
     request: Request,
     *,
     action: str,
@@ -193,32 +201,29 @@ async def audit_from_request(
     target_id: str,
     before=None,
     after=None,
-) -> None:
-    """M9-04 治理动作审计：actor/request id 从请求上下文取；失败不阻塞主流程。"""
-    import logging
+) -> dict | None:
+    """M9-05: 构造审计 payload（不写库）——由仓储 mutation 在业务同一事务内落库。
 
-    audit = getattr(request.app.state, "audit", None)
-    if audit is None:
-        return
+    审计与业务同事务 = 写入失败整体回滚（fail-closed），不再吞异常。
+    无审计仓储（内存模式）返回 None。
+    """
+    if getattr(request.app.state, "audit", None) is None:
+        return None
     owner = current_owner_id(request)
     username = None
     if owner:
         user = await request.app.state.users.get(owner)
         username = user.username if user else None
-    try:
-        await audit.record(
-            action=action,
-            target_type=target_type,
-            target_id=target_id,
-            request_id=getattr(request.state, "request_id", "unknown"),
-            actor_id=owner,
-            actor_username=username,
-            before=before,
-            after=after,
-        )
-    except Exception:
-        logging.getLogger(__name__).exception("audit record failed: %s %s", action, target_id)
-
+    return {
+        "action": action,
+        "target_type": target_type,
+        "target_id": target_id,
+        "request_id": getattr(request.state, "request_id", "unknown"),
+        "actor_id": owner,
+        "actor_username": username,
+        "before": before,
+        "after": after,
+    }
 
 @router.get("/status", response_model=AuthStatusOut)
 async def status() -> AuthStatusOut:

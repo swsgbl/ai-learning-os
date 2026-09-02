@@ -190,7 +190,9 @@ async def execute_search(payload: SearchRequest, request: Request) -> SearchOut:
         provider = by_name[name].provider
         assert provider is not None
         try:
-            found = await provider.search(payload.query, payload.limit)
+            found = await provider.search(
+                payload.query, payload.limit, owner=current_owner_id(request)
+            )
         except ProviderUnavailable as cause:
             skipped.append({"provider": name, "reason": str(cause)})
             continue

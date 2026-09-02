@@ -12,8 +12,9 @@ from uuid import uuid4
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.orm import ConceptDagVersionRow, ConceptEdgeRow, ConceptRow
+from app.db.orm import AuditLogRow, ConceptDagVersionRow, ConceptEdgeRow, ConceptRow
 from app.domain.concept_dag import ConceptDag, ConceptEdge, ConceptNode, validate_dag
+from app.repositories.audit import audit_insert_values
 from app.repositories.memory import utc_now
 
 
@@ -36,7 +37,11 @@ class ConceptDagRepository:
         self._clock = clock
 
     async def publish(
-        self, nodes: tuple[ConceptNode, ...], edges: tuple[ConceptEdge, ...], note: str = ""
+        self,
+        nodes: tuple[ConceptNode, ...],
+        edges: tuple[ConceptEdge, ...],
+        note: str = "",
+        audit: dict | None = None,
     ) -> ConceptDag:
         """校验并发布新版本（不可变快照）；返回带版本号的完整图。"""
         validate_dag(nodes, edges)
@@ -91,6 +96,9 @@ class ConceptDagRepository:
                         concept_id=edge.concept_id,
                     )
                 )
+            if audit is not None:
+                # M9-05: 审计与发布同事务（失败即整体回滚）
+                session.add(AuditLogRow(**audit_insert_values(audit, clock=self._clock)))
         return ConceptDag(
             version=version, note=note, nodes=nodes, edges=edges, created_at=now.isoformat()
         )

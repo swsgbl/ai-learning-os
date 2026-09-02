@@ -463,6 +463,7 @@ class CourseImportDraftRow(Base):
     __tablename__ = "course_import_drafts"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     title: Mapped[str] = mapped_column(String(512))
     status: Mapped[str] = mapped_column(String(24), default="pending_review", index=True)
     source_resource_id: Mapped[str] = mapped_column(String(64))
@@ -482,6 +483,7 @@ class PaperQuestionDraftRow(Base):
     __tablename__ = "paper_question_drafts"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     resource_id: Mapped[str] = mapped_column(String(64))
     status: Mapped[str] = mapped_column(String(24), default="pending_review", index=True)
     questions: Mapped[list[Any]] = mapped_column(JSON, default=list)
@@ -498,6 +500,7 @@ class CourseGenerationDraftRow(Base):
     __tablename__ = "course_generation_drafts"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     goal: Mapped[str] = mapped_column(String(512))
     status: Mapped[str] = mapped_column(String(24), default="pending_review", index=True)
     dag_version: Mapped[int] = mapped_column()
@@ -516,6 +519,7 @@ class VariantQuestionDraftRow(Base):
     __tablename__ = "variant_question_drafts"
 
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
     status: Mapped[str] = mapped_column(String(32), default="pending_review", index=True)
     variants: Mapped[dict] = mapped_column(JSON)
     variant_count: Mapped[int] = mapped_column(Integer)
