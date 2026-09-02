@@ -9,14 +9,13 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-**M9-04 管理员授权、治理审计与泄漏修复已完成**（feature/M9-04-admin-audit 分支）：
+**M9-05 私有语料与草稿归属修复 + 审计事务完整性已完成**（feature/M9-05-ownership-audit 分支）：
 
-- **角色模型**：users.role 默认 learner；无默认管理员账号——首个 admin 由持有 DB 访问权的运维经 `cli admin promote|demote|list` 提升/降级/列出（可重复执行、幂等明示、每次变更写审计）；角色实时读库（撤销即时生效）。
-- **治理门禁**：12 个全局治理端点 admin-only（source 登记/verify/license 改判、概念图发布、课程生成/导入、变式、试卷抽取草稿 approve/reject）——learner 403，门禁先于 404 不暴露存在性；个人数据 owner-scoped（他人 404）。
-- **搜索泄漏修复**：search_queries 加 owner_id（0024），record 归属发起者；读取本人/admin、他人 404（B 读 A 的 query_id 404 测试固化）。
-- **治理审计**：audit_log 表（actor/action/target/before/after/request id/时间，0024）；license 变更、DAG 发布、四类草稿审核、角色提升全留痕；`GET /api/v1/audit` learner 403；request id 中间件（X-Request-ID 响应头可关联）。
-- **部署安全**：生产 AUTH_SECRET fail-closed（未配置/<32 字节/公开默认占位值拒绝启动）；CORS 与 AIOS_WEB_PORT 联动（AIOS_CORS_ORIGINS 可覆盖，冒烟 preflight 实证 3100→3100）；.gitattributes 固定 *.sh LF。
-- **证据**：本地全量 pytest 699 passed 2 skipped（690→699 +9）；迁移 0024 真实 PG up/down/up ✓；npm typecheck/lint/build 绿；Docker 冒烟 ALL PASSED（6 服务 healthy + auth 开启 + register/login/me + Web / 与 /login + CORS preflight + 上传重启读回 + api 日志零 traceback）；治理链路真跑（注册→cli promote→审计落库→admin 读 /audit 200→demote 复位）；远端 CI run <see below>。
+- **私有语料边界**：ChunkRepository.search_text owner/public 过滤（join resources：自有 OR access_state=public）；LocalCorpusProvider 与 course_workflow 生成管线全部传入请求上下文；**admin 普通搜索同样不读他人私有**（治理读取是显式通道）；auth off 保持现状。
+- **四类草稿归属**（0025 迁移；资源关联型经 resources.owner_id 回填，generation/variant 历史 NULL 行 auth on 仅 admin 可治理读取）：create 写 owner；list/get owner-scoped（他人 404，list 不可见）；courses.py 与 paper_extractor.py 创建改用 get_owned（Bob 用 Alice 资源 = 404）。
+- **审计事务完整性**：全部治理 mutation（四类 review、source create/verify/license、DAG publish、CLI 角色变更）业务与 audit **同一事务**；MISSING/TERMINAL/权限失败不写成功审计（after 不伪造）；audit 写入失败整体回滚（fail-closed，回归测试以 exploding AuditLogRow 实证回滚）。
+- **部署加固**：compose 全端口默认绑 127.0.0.1（AIOS_BIND_IP 可覆盖，LAN 暴露必须强 secret + APP_ENV=production）；request id 只接受 ≤64 字符 [A-Za-z0-9-_]，非法重生成；require_user 对 deleted/ghost user fail-closed 401。
+- **证据**：本地全量 pytest 706 passed 2 skipped（699→706 +7 Alice/Bob 回归）；0025 真实 PG up/down/up（current==head==0025_draft_ownership）；npm typecheck/lint/build 绿；Docker 冒烟 ALL PASSED（6 服务 healthy + preflight + 上传重启读回 + api 端口绑定 127.0.0.1 实测 + 零 traceback）。
 
 ## 已完成任务
 
@@ -87,6 +86,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 | M9-02 数据归属拆分 | c253483, merge 7da4736 | 本地全量 pytest 690 passed 2 skipped（+7 隔离测试：资源/考试/语音跨用户 404、dedup 不跨用户、auth off 零破坏、归属门全端点、student 聚合收缩）；alembic 0023 双方言（PG 内省式摘除旧约束建复合唯一，SQLite 跳过约束 ALTER）；迁移真实 PG up/down/up ✓；Docker 冒烟 auth+归属强制下 ALL PASSED；远端 CI run 33592745666 三 job 全绿 | 下一步：云语音/搜索 provider key 接入（可选） | 2026-09-02 |
 | M9-03 Web 登录/注册 UI | 9ece2c6, merge 5297d6a | typecheck/lint/build 全绿；Docker 冒烟 ALL PASSED（/login 200 + SSR 表单验证）；auth 三态徽章 + 401 引导登录 + auth_enabled=false 如实「本地模式」；远端 CI run 33595956195 三 job 全绿 | 下一步：按需演进 | 2026-09-02 |
 | M9-04 管理员授权/治理审计/泄漏修复 | fb26cc4, merge 5715f53 | 本地全量 pytest 699 passed 2 skipped（+9：治理 403/admin 可用/搜索跨用户 404/auth off 回归/审计内容与权限/CLI promote-demote-list 真跑/CORS 渲染/AUTH_SECRET fail-closed）；0024 双方言迁移（role+search owner+audit_log）真实 PG roundtrip ✓；治理链路真跑（cli promote→审计→admin 读 200→demote）；Docker 冒烟 ALL PASSED 含 CORS preflight；api 日志零 traceback | 下一步：按需演进（云 provider key / LLM 冒烟待 key） | 2026-09-02 |
+| M9-05 私有语料/草稿归属/审计事务 | {feat}, merge {merge} | 本地全量 pytest 706 passed 2 skipped（+7 Alice/Bob 回归：私有 marker 不泄漏/公共可见/admin 搜索不越界/草稿归属/MISSING+重复审核无成功审计/审计失败回滚/auth off 兼容）；0025 迁移真实 PG roundtrip current==head；compose 绑定 127.0.0.1 实测；日志零 traceback | 下一步：按需演进 | 2026-09-02 |
 
 | M6-05 Security suite | 07a8373, merge a6980c4 | pytest 606 passed（含真实 PG 5433，基线 591→606 +15）：五类安全面集中回归 15 测——SSRF（云元数据端点 169.254.169.254 拒绝、DNS 解析到私网 10.x/172.16 拒绝、域层 check_url_safety 理由可见）、sandbox escape（sympy 字符白名单：__import__/open/dunder 全部进复核不执行、mcq+math 双入口验证）、注入（SQL 元字符 id 四路由 404/int 路径 422 类型拒绝、后续请求存活；SQL 元字符答案 fail-closed 判错；恶意文件名上传 storage_key 内容寻址三段式 uploads/{2hex}/{64hex} 无用户路径成分；坏 JSON parse 显式 422 安全降级不 500）、密钥泄露（voice/search providers 视图无 sk-/AKIA/ghp_/xoxb/PEM 形态；.env.example+compose+livekit.yaml 仓库配置扫描无生产密钥形态——dev 占位值合法）、越权（交卷后建语音会话 409 答案封存、跨会话 event_id 复用 409 状态不扰动——M4-05 套件级守卫、终态草稿 approve→reject 与 reject→approve 双向 409）；真实服务冒烟 6 项 PASS（uvicorn 8026+PG：file 协议 403、元数据 IP 403 带原因、metadata.google.internal 解析失败拒绝、SQLi id 404、交卷后语音 409「考试状态 submitted 不允许语音作答」、providers 无密钥形态） | 下一步 M6-06 | 2026-09-01 |
 | M6-04 Prompt injection suite | b3130fe, merge d6f1632 | pytest 591 passed（含真实 PG 5433，基线 576→591 +15）：四类不变量回归套件 15 测——license 状态向量（恶意文档正文惰性落库 license 保持 UNKNOWN + 复用门禁 403 原因可见；未 verify 来源带注入文档上传 403 不存正文、来源状态不变）、审核队列向量（文档自称「自动通过」无效，唯一离队路径=人工 approve 端点、重复审核 409）、语音注入向量（探针固化 5 案：裸注入/英文注入/时间注入→unknown、答案+注入→槽位优先 choose B、成绩注入→含糊澄清；API 层 unknown 不应用 FSM 状态不变、含糊只进澄清环且不落半成品答案、注入尾巴交卷/改分零效果）、时间向量（答题载荷伪造 end_at/started_at/remaining_seconds/admin_override 被 pydantic 丢弃、服务端时间不动；提交载荷注入字段幂等收敛同一 submission、duration 服务端时钟）、成绩向量（注入答案判 0 分、正确字母+注入尾巴 fail-closed 判错不猜、report 分数只来自服务端判定）、检索面（注入文本 snippet 逐字惰性透传、重复查询恒同无副作用）；真实服务冒烟 8 项 PASS（真实 PG 主库全链路：上传 UNKNOWN→parse→门禁 403「资源授权状态 UNKNOWN 不可复用」→搜索惰性→语音注入 fsm_applied=false→伪造时间被丢弃 end_at 不动→注入提交幂等→注入答案 0 分/正常答案满分/报告 1.0 分服务端判定） | 下一步 M6-05 | 2026-09-01 |
@@ -107,6 +107,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 - [x] M9-02 数据归属拆分（✅ 2026-09-02——resources/exam_sessions/voice_transcripts owner_id + 三域读取隔离 + dedup 归属作用域，远端 CI 全绿实证）
 - [x] M9-03 Web 登录/注册 UI（✅ 2026-09-02——登录注册页/三态认证徽章/401 引导/本地模式如实透出，远端 CI 全绿实证）
 - [x] M9-04 管理员授权、治理审计与泄漏修复（✅ 2026-09-02——12 治理端点 admin-only + audit_log + search owner 泄漏修复 + AUTH_SECRET fail-closed + CORS 端口联动 + .gitattributes）
+- [x] M9-05 私有语料与草稿归属修复 + 审计事务完整性（✅ 2026-09-02——语料边界/四类草稿归属/同事务审计 fail-closed/端口绑定 127.0.0.1/ghost user fail-closed）
 
 ## 阻塞与风险
 
@@ -195,10 +196,11 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 | 67 | Web 认证 UI 的诚实镜像：前端必须尊重后端 auth_enabled 披露（关认证显示「本地模式」而非假表单）；认证三态（本地模式/匿名/已登录）在导航栏如实透出；token 存 localStorage 是单机自托管取舍（cookie/BFF 演进项已记录） | M9-03「Web 登录/注册 UI」 | 2026-09-02 |
 | 68 | 角色与治理：users.role 默认 learner、无默认管理员（首个 admin 由 DB 运维经 CLI 显式提升——不写死账号密码）；角色实时读库不缓存进 token（撤销即时生效）；12 个全局治理端点 admin-only 且门禁先于 404（不暴露存在性）；治理动作全量写 audit_log（actor/action/target/before/after/request id），audit 读取仅 admin；生产 AUTH_SECRET fail-closed（≥32 字节、禁公开默认值），非生产配置了短 secret 也明确报错 | M9-04「管理员授权、治理审计与泄漏修复」 | 2026-09-02 |
 | 69 | 迁移约束名跨环境不同（unnamed 建表 → PG 自动名 vs 存量卷历史名），跨环境迁移用 PG catalog 内省摘除旧约束（M9-02）；SQLite 跳过约束 ALTER（测试库由 ORM create_all 生成）——双方言迁移的通用模式 | M9-04 期间 0023/0024 复盘 | 2026-09-02 |
+| 70 | 语料边界与审计事务：本地语料检索按「自有 + access_state=public」过滤（admin 普通搜索同样不越界，治理读取走显式通道）；四类草稿 create/list/get owner-scoped，资源关联草稿经 resources.owner_id 回填、无锚历史行 NULL=auth on 仅 admin 治理读取；治理 mutation 的审计与业务同事务（audit 写失败整体回滚 fail-closed，MISSING/TERMINAL/权限失败不写成功审计）；compose 默认绑 127.0.0.1，对外暴露必须强 secret + production fail-closed | M9-05「私有语料与草稿归属修复 + 审计事务完整性」 | 2026-09-02 |
 
 ## 下一任务
 
-M7-06 完成（版本真相源 + /version 端点 + CHANGELOG + db-rollback fail-closed CLI + AIOS_IMAGE_TAG 应用回滚锚点 + README runbook；ADR 61）。**M7 6/6 收官，M0-M7 全部里程碑交付完成**——backlog 无剩余任务。M9-04 已完成（角色授权 + 治理审计 + 泄漏修复，远端 CI 全绿）。**M9 诚实边界（截至 M9-04）**：治理动作已 admin-only 且全留痕；但草稿创建侧仍全局共享（无 owner 列）、papers 公共无归属、token 存 localStorage、审计无哈希链——这些是已知边界而非"完整多用户系统"。后续可选：云语音/搜索 provider key、LLM 真实端点冒烟（待 key）、草稿创建侧归属。
+M7-06 完成（版本真相源 + /version 端点 + CHANGELOG + db-rollback fail-closed CLI + AIOS_IMAGE_TAG 应用回滚锚点 + README runbook；ADR 61）。**M7 6/6 收官，M0-M7 全部里程碑交付完成**——backlog 无剩余任务。M9-04 已完成（角色授权 + 治理审计 + 泄漏修复，远端 CI 全绿）。**M9 诚实边界（截至 M9-04）**：治理动作已 admin-only 且全留痕；但草稿创建侧仍全局共享（无 owner 列）、papers 公共无归属、token 存 localStorage、审计无哈希链——这些是已知边界而非"完整多用户系统"。M9-05 已完成（私有语料边界 + 四类草稿归属 + 同事务审计）。**M9 诚实边界（截至 M9-05）**：papers 公共无归属、generation/variant 历史草稿 NULL 归属（auth on 仅 admin 可读）、token 存 localStorage、审计无哈希链、Web 治理界面未做。后续可选：云 provider key、LLM 真实端点冒烟（待 key）。
 
 ## 追加：M0 收尾验证（compose 全栈）
 

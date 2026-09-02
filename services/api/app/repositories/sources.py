@@ -8,7 +8,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.orm import SourceRow
+from app.db.orm import AuditLogRow, SourceRow
 from app.domain.license import (
     REUSE_ADMISSION,
     LicenseState,
@@ -17,6 +17,7 @@ from app.domain.license import (
     assert_transition,
 )
 from app.domain.source import SourceRecord
+from app.repositories.audit import audit_insert_values
 from app.repositories.memory import utc_now
 from app.repositories.seed_sources import seed_sources
 
@@ -44,7 +45,7 @@ class SourceRepository:
                 session.add(self._row(record))
             return 6
 
-    async def create(self, record: SourceRecord) -> SourceRecord:
+    async def create(self, record: SourceRecord, audit: dict | None = None) -> SourceRecord:
         # id 与 name 均有唯一约束；冲突显式转 ValueError（路由层映射 409），
         # 不让 IntegrityError 冒泡成 500。预检 + 约束兜底双保险（并发窗口）。
         async with self._sessionmaker() as session, session.begin():
@@ -62,6 +63,8 @@ class SourceRepository:
                 raise ValueError(
                     "source id/name already exists (concurrent insert)"
                 ) from cause
+            if audit is not None:
+                session.add(AuditLogRow(**audit_insert_values(audit, clock=self._clock)))
         return record
 
     async def get(self, source_id: str) -> SourceRecord | None:
@@ -82,15 +85,19 @@ class SourceRepository:
             rows = (await session.execute(query)).scalars().all()
             return [self._record(row) for row in rows]
 
-    async def mark_verified(self, source_id: str) -> SourceRecord | None:
+    async def mark_verified(self, source_id: str, audit: dict | None = None) -> SourceRecord | None:
         async with self._sessionmaker() as session, session.begin():
             row = await session.get(SourceRow, source_id)
             if not row:
                 return None
             row.last_verified_at = _to_db(self._clock())
+            if audit is not None:
+                session.add(AuditLogRow(**audit_insert_values(audit, clock=self._clock)))
             return self._record(row)
 
-    async def set_license_state(self, source_id: str, target: LicenseState) -> SourceRecord | None:
+    async def set_license_state(
+        self, source_id: str, target: LicenseState, audit: dict | None = None
+    ) -> SourceRecord | None:
         """带状态机校验的 license 认定；非法迁移抛 ValueError。"""
         async with self._sessionmaker() as session, session.begin():
             row = await session.get(SourceRow, source_id)
@@ -100,6 +107,8 @@ class SourceRepository:
             assert_transition(current, target)
             row.license_state = target.value
             row.last_verified_at = _to_db(self._clock())
+            if audit is not None:
+                session.add(AuditLogRow(**audit_insert_values(audit, clock=self._clock)))
             return self._record(row)
 
     @staticmethod

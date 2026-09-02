@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.api.routes.auth import audit_from_request, require_admin
+from app.api.routes.auth import build_audit_payload, require_admin
 from app.domain.concept_dag import (
     ConceptDag,
     ConceptEdge,
@@ -137,13 +137,11 @@ async def publish_dag(payload: PublishDagRequest, request: Request) -> ConceptDa
         ConceptEdge(prerequisite_id=edge.prerequisite_id, concept_id=edge.concept_id)
         for edge in payload.edges
     )
+    audit = await build_audit_payload(
+        request, action="dag.publish", target_type="concept_dag", target_id="publish",
+    )
     try:
-        dag = await _repo(request).publish(nodes, edges, payload.note)
+        dag = await _repo(request).publish(nodes, edges, payload.note, audit)
     except DagValidationError as cause:
         raise HTTPException(status_code=422, detail=str(cause)) from cause
-    await audit_from_request(
-        request, action="dag.publish", target_type="concept_dag",
-        target_id=f"v{dag.version}",
-        after={"version": dag.version, "nodes": len(dag.nodes), "edges": len(dag.edges)},
-    )
     return _dag_out(dag)

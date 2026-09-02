@@ -10,7 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.orm import UserRow
+from app.db.orm import AuditLogRow, UserRow
+from app.repositories.audit import audit_insert_values
 
 
 class UserRecord(BaseModel):
@@ -80,8 +81,10 @@ class UserRepository:
             row = await session.get(UserRow, user_id)
             return row.role if row else None
 
-    async def set_role(self, username: str, role: str) -> UserRecord | None:
-        """按用户名设角色（admin CLI 专用）；返回更新后记录，用户不存在返回 None。"""
+    async def set_role(
+        self, username: str, role: str, audit: dict | None = None
+    ) -> UserRecord | None:
+        """按用户名设角色（admin CLI 专用）；audit 同事务写入（M9-05）。"""
         async with self._sessionmaker() as session, session.begin():
             row = (
                 await session.scalars(select(UserRow).where(UserRow.username == username))
@@ -89,6 +92,8 @@ class UserRepository:
             if row is None:
                 return None
             row.role = role
+            if audit is not None:
+                session.add(AuditLogRow(**audit_insert_values(audit, clock=self._clock)))
             return UserRecord(
                 id=row.id, username=row.username, role=row.role, created_at=row.created_at
             )

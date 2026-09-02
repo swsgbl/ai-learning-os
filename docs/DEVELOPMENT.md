@@ -62,7 +62,17 @@ alembic -c services/api/alembic.ini upgrade head
 `audit_log`：actor、action、target、before/after、时间、request id（响应头
 X-Request-ID 可关联）。读取 `GET /api/v1/audit` 仅 admin（auth off 本地模式可读）。
 
-### M9 里程碑边界（如实陈述，2026-09-02）
+### M9 里程碑边界（如实陈述，2026-09-02，M9-05 后更新）
+
+- 已交付：认证基座、三域归属隔离、Web 登录 UI、角色授权+治理审计、
+  **私有语料边界（search/course generation 只见自有+public 语料）**、
+  **四类草稿 owner 归属（create/list/get）**、**审计与业务同事务（fail-closed）**；
+- 已知边界：generation/variant 草稿的历史 NULL 归属行 auth on 时仅 admin 可治理读取；
+  papers 为公共题库无归属；token 存 localStorage（无 BFF/cookie 刷新机制）；
+  审计无防篡改哈希链；Web 侧草稿治理界面未做（API 能力已就绪）。
+- 部署绑定：所有端口默认 127.0.0.1；LAN/外网需 `AIOS_BIND_IP=0.0.0.0` 且必须同时
+  设强 AUTH_SECRET + APP_ENV=production（启动 fail-closed），否则不要对外暴露。
+
 
 - M9-01 认证基座、M9-02 三域归属隔离、M9-03 Web 登录 UI、M9-04 角色授权+治理审计已交付；
 - **已知边界（非完整多用户系统）**：部分草稿类实体（课程生成/导入、变式、试卷抽取）

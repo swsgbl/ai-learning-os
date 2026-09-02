@@ -7,7 +7,7 @@ from typing import Literal
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.api.routes.auth import audit_from_request, require_admin
+from app.api.routes.auth import build_audit_payload, require_admin
 from app.domain.license import LicenseState, TrustTier
 
 router = APIRouter(prefix="/api/v1/sources", tags=["sources"])
@@ -75,14 +75,14 @@ async def create_source(payload: SourceCreate, request: Request) -> SourceOut:
         license_state=payload.license_state,
         notes=payload.notes,
     )
+    audit = await build_audit_payload(
+        request, action="source.create", target_type="source", target_id=record.id,
+        after={"license_state": record.license_state.value, "trust_tier": record.trust_tier},
+    )
     try:
-        created = await _repo(request).create(record)
+        created = await _repo(request).create(record, audit)
     except ValueError as cause:
         raise HTTPException(status_code=409, detail=str(cause)) from cause
-    await audit_from_request(
-        request, action="source.create", target_type="source", target_id=created.id,
-        after={"license_state": created.license_state.value, "trust_tier": created.trust_tier},
-    )
     return _source_out(created)
 
 
@@ -100,10 +100,13 @@ async def verify_source(source_id: str, request: Request) -> SourceOut:
     record = await _repo(request).mark_verified(source_id)
     if not record:
         raise HTTPException(status_code=404, detail="来源不存在")
-    await audit_from_request(
+    audit = await build_audit_payload(
         request, action="source.verify", target_type="source", target_id=source_id,
         after={"verified": True},
     )
+    record = await _repo(request).mark_verified(source_id, audit)
+    if not record:
+        raise HTTPException(status_code=404, detail="来源不存在")
     return _source_out(record)
 
 
@@ -116,17 +119,17 @@ async def set_license_state(payload: LicenseStateUpdate, source_id: str, request
     """人工认定/改判 license 状态；非法迁移返回 409（M1-02 状态机）。"""
     await require_admin(request)  # M9-04: license 改判是全局治理动作
     previous = await _repo(request).get(source_id)
+    audit = await build_audit_payload(
+        request, action="source.license_change", target_type="source", target_id=source_id,
+        before={"license_state": previous.license_state.value} if previous else None,
+        after={"license_state": payload.state.value},
+    )
     try:
-        record = await _repo(request).set_license_state(source_id, payload.state)
+        record = await _repo(request).set_license_state(source_id, payload.state, audit)
     except ValueError as cause:
         raise HTTPException(status_code=409, detail=str(cause)) from cause
     if not record:
         raise HTTPException(status_code=404, detail="来源不存在")
-    await audit_from_request(
-        request, action="source.license_change", target_type="source", target_id=source_id,
-        before={"license_state": previous.license_state.value} if previous else None,
-        after={"license_state": record.license_state.value},
-    )
     return _source_out(record)
 
 

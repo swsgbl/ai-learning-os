@@ -11,7 +11,12 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from app.api.routes.auth import audit_from_request, require_admin
+from app.api.routes.auth import (
+    build_audit_payload,
+    current_is_admin,
+    current_owner_id,
+    require_admin,
+)
 from app.domain.paper_extractor import extract_questions
 
 router = APIRouter(prefix="/api/v1/papers/import-drafts", tags=["papers"])
@@ -63,11 +68,24 @@ def _deps(request: Request):
     return chunks, resources
 
 
+async def _require_draft_readable(request: Request, draft_id: str) -> None:
+    """M9-05 草稿读取门：auth on 时普通用户只能读自己的（他人/无主 404）。"""
+    if await current_is_admin(request):
+        return
+    owner = current_owner_id(request)
+    if owner is not None:
+        draft_owner = await _repo(request).get_owner(draft_id)
+        if draft_owner != owner:
+            raise HTTPException(status_code=404, detail="试卷抽取草稿不存在")
+
+
 @router.post("", response_model=PaperDraftOut, status_code=201)
 async def create_paper_draft(payload: ExtractRequest, request: Request) -> PaperDraftOut:
     """从已解析资源抽取题目草稿；未解析 409 带原因（不虚报）。"""
     chunks, resources = _deps(request)
-    resource = await resources.get(payload.resource_id)
+    # M9-05: 归属感知读取 —— Bob 用 Alice 资源创建草稿 = 404
+    owner = current_owner_id(request)
+    resource = await resources.get_owned(payload.resource_id, owner)
     if resource is None:
         raise HTTPException(status_code=404, detail="资源不存在")
     if resource.parse_status != "parsed":
@@ -77,18 +95,23 @@ async def create_paper_draft(payload: ExtractRequest, request: Request) -> Paper
         )
     chunk_items = await chunks.list_chunks(payload.resource_id)
     draft = extract_questions(chunk_items)
-    record = await _repo(request).create({"resource_id": payload.resource_id, **draft})
+    record = await _repo(request).create(
+        {"resource_id": payload.resource_id, **draft}, owner_id=owner
+    )
     return PaperDraftOut(**record)
 
 
 @router.get("", response_model=list[PaperDraftOut])
 async def list_paper_drafts(request: Request, status: str | None = None) -> list[PaperDraftOut]:
-    """审核队列：status 过滤（pending_review/approved/rejected），缺省全部。"""
-    return [PaperDraftOut(**item) for item in await _repo(request).list_by_status(status)]
+    """审核队列；M9-05 auth on 时普通用户只见自己的草稿（admin/本地模式见全部）。"""
+    owner = None if await current_is_admin(request) else current_owner_id(request)
+    records = await _repo(request).list_by_status(status, owner)
+    return [PaperDraftOut(**r) for r in records]
 
 
 @router.get("/{draft_id}", response_model=PaperDraftOut)
 async def get_paper_draft(draft_id: str, request: Request) -> PaperDraftOut:
+    await _require_draft_readable(request, draft_id)
     record = await _repo(request).get(draft_id)
     if record is None:
         raise HTTPException(status_code=404, detail="草稿不存在")
@@ -108,12 +131,12 @@ def _terminal_guard(record: dict | str | None) -> PaperDraftOut:
 async def approve_paper_draft(draft_id: str, payload: ReviewRequest, request: Request) -> PaperDraftOut:
     """人工通过：pending_review -> approved；终态重复 409。"""
     await require_admin(request)  # M9-04: 草稿审核是全局治理动作
-    record = await _repo(request).review(draft_id, "approved", payload.note)
-    await audit_from_request(
+    audit = await build_audit_payload(
         request, action="paper_extractor.approve", target_type="paper_draft",
         target_id=draft_id, before={"status": "pending_review"},
         after={"status": "approved"},
     )
+    record = await _repo(request).review(draft_id, "approved", payload.note, audit)
     return _terminal_guard(record)
 
 
@@ -121,10 +144,10 @@ async def approve_paper_draft(draft_id: str, payload: ReviewRequest, request: Re
 async def reject_paper_draft(draft_id: str, payload: ReviewRequest, request: Request) -> PaperDraftOut:
     """人工驳回：pending_review -> rejected；终态重复 409。"""
     await require_admin(request)  # M9-04: 草稿审核是全局治理动作
-    record = await _repo(request).review(draft_id, "rejected", payload.note)
-    await audit_from_request(
+    audit = await build_audit_payload(
         request, action="paper_extractor.reject", target_type="paper_draft",
         target_id=draft_id, before={"status": "pending_review"},
         after={"status": "rejected"},
     )
+    record = await _repo(request).review(draft_id, "rejected", payload.note, audit)
     return _terminal_guard(record)

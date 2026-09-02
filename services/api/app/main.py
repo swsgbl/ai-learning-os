@@ -177,12 +177,19 @@ def create_app(database_url: str | None = None) -> FastAPI:
 
     @app.middleware("http")
     async def request_id_middleware(request: Request, call_next):
-        """M9-04: 每请求 request id（透传上游 X-Request-ID 或生成），审计留痕用。"""
+        """M9-04: 每请求 request id（可透传上游 X-Request-ID），审计留痕用。
+
+        M9-05: 客户端值只接受 ≤64 字符的 [A-Za-z0-9-_]，非法/超长一律重新生成
+        （防日志注入与超大 header 滥用）。
+        """
+        import re as _re
         import uuid
 
-        request.state.request_id = (
-            request.headers.get("X-Request-ID") or f"req-{uuid.uuid4().hex[:12]}"
-        )
+        incoming = request.headers.get("X-Request-ID") or ""
+        if _re.fullmatch(r"[A-Za-z0-9_-]{1,64}", incoming):
+            request.state.request_id = incoming
+        else:
+            request.state.request_id = f"req-{uuid.uuid4().hex[:12]}"
         response = await call_next(request)
         response.headers["X-Request-ID"] = request.state.request_id
         return response

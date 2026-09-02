@@ -12,7 +12,12 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field, field_validator
 
-from app.api.routes.auth import audit_from_request, require_admin
+from app.api.routes.auth import (
+    build_audit_payload,
+    current_is_admin,
+    current_owner_id,
+    require_admin,
+)
 from app.domain.course_workflow import (
     NoCompetencyMatch,
     generate_course_plan,
@@ -93,6 +98,17 @@ def _deps(request: Request):
     return dag_repo, chunks
 
 
+async def _require_draft_readable(request: Request, draft_id: str) -> None:
+    """M9-05 草稿读取门：auth on 时普通用户只能读自己的（他人/无主 404）。"""
+    if await current_is_admin(request):
+        return
+    owner = current_owner_id(request)
+    if owner is not None:
+        draft_owner = await _repo(request).get_owner(draft_id)
+        if draft_owner != owner:
+            raise HTTPException(status_code=404, detail="课程生成草稿不存在")
+
+
 @router.post("", response_model=GenerationDraftOut, status_code=201)
 async def create_generation_draft(payload: GenerateRequest, request: Request) -> GenerationDraftOut:
     """八阶段管线生成课程方案草稿；DAG 未发布 409、无概念匹配 422（不虚报空课程）。"""
@@ -106,7 +122,11 @@ async def create_generation_draft(payload: GenerateRequest, request: Request) ->
     nodes_by_id = {node.id: node for node in dag.nodes}
     resources_by_concept: dict[str, list[dict]] = {}
     for concept_id in closure:
-        rows = await chunks.search_text(nodes_by_id[concept_id].canonical_name, limit=5)
+        # M9-05: 语料边界 —— auth on 只检索自有+public 资源（他人私有绝不进入）
+        owner = current_owner_id(request)
+        rows = await chunks.search_text(
+            nodes_by_id[concept_id].canonical_name, limit=5, owner=owner
+        )
         items: list[dict] = []
         seen_rids: set[str] = set()
         for row in rows:
@@ -130,18 +150,21 @@ async def create_generation_draft(payload: GenerateRequest, request: Request) ->
         "plan": plan,
         "chapter_count": len(plan["outline"]),
         "generation_note": plan["generation_note"],
-    })
+    }, owner_id=current_owner_id(request))  # M9-05: 草稿归属发起者
     return GenerationDraftOut(**record)
 
 
 @router.get("", response_model=list[GenerationDraftOut])
 async def list_generation_drafts(request: Request, status: str | None = None) -> list[GenerationDraftOut]:
-    """审核队列：status 过滤（pending_review/approved/rejected），缺省全部。"""
-    return [GenerationDraftOut(**item) for item in await _repo(request).list_by_status(status)]
+    """审核队列；M9-05 auth on 时普通用户只见自己的草稿（admin/本地模式见全部）。"""
+    owner = None if await current_is_admin(request) else current_owner_id(request)
+    records = await _repo(request).list_by_status(status, owner)
+    return [GenerationDraftOut(**r) for r in records]
 
 
 @router.get("/{draft_id}", response_model=GenerationDraftOut)
 async def get_generation_draft(draft_id: str, request: Request) -> GenerationDraftOut:
+    await _require_draft_readable(request, draft_id)
     record = await _repo(request).get(draft_id)
     if record is None:
         raise HTTPException(status_code=404, detail="课程生成草稿不存在")
@@ -161,12 +184,12 @@ def _terminal_guard(record: dict | str | None) -> GenerationDraftOut:
 async def approve_generation_draft(draft_id: str, payload: ReviewRequest, request: Request) -> GenerationDraftOut:
     """人工通过：pending_review -> approved；终态重复 409。"""
     await require_admin(request)  # M9-04: 草稿审核是全局治理动作
-    record = await _repo(request).review(draft_id, "approved", payload.note)
-    await audit_from_request(
+    audit = await build_audit_payload(
         request, action="course_generation.approve", target_type="generation_draft",
         target_id=draft_id, before={"status": "pending_review"},
         after={"status": "approved"},
     )
+    record = await _repo(request).review(draft_id, "approved", payload.note, audit)
     return _terminal_guard(record)
 
 
@@ -174,10 +197,10 @@ async def approve_generation_draft(draft_id: str, payload: ReviewRequest, reques
 async def reject_generation_draft(draft_id: str, payload: ReviewRequest, request: Request) -> GenerationDraftOut:
     """人工驳回：pending_review -> rejected；终态重复 409。"""
     await require_admin(request)  # M9-04: 草稿审核是全局治理动作
-    record = await _repo(request).review(draft_id, "rejected", payload.note)
-    await audit_from_request(
+    audit = await build_audit_payload(
         request, action="course_generation.reject", target_type="generation_draft",
         target_id=draft_id, before={"status": "pending_review"},
         after={"status": "rejected"},
     )
+    record = await _repo(request).review(draft_id, "rejected", payload.note, audit)
     return _terminal_guard(record)

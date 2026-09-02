@@ -50,8 +50,9 @@ class LocalCorpusProvider:
     def __init__(self, chunks: ChunkRepository) -> None:
         self._chunks = chunks
 
-    async def search(self, query: str, limit: int) -> list[dict]:
-        rows = await self._chunks.search_text(query, limit)
+    async def search(self, query: str, limit: int, owner: str | None = None) -> list[dict]:
+        """M9-05 语料边界：owner（auth on）= 自有 + public；None = 本地模式不过滤。"""
+        rows = await self._chunks.search_text(query, limit, owner=owner)
         return [
             {
                 "title": f"{row['resource_id']}#chunk-{row['chunk_index']}",
