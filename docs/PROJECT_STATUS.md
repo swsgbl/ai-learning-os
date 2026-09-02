@@ -9,13 +9,13 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-**M9-02 数据归属拆分已完成**（feature/M9-02-ownership 分支，commit c253483，merge 7da4736）：
+**M9-03 Web 登录/注册 UI 已完成**（feature/M9-03-web-auth-ui 分支，commit 9ece2c6，merge 5297d6a）：
 
-- **归属模型**：resources / exam_sessions / voice_transcripts 三表加 owner_id（alembic 0023，双方言）；answer_events/submissions/voice_* 经父实体归属（无新列），归属校验集中在 require_exam 一处收口（answers/submit/submission/report/learning-events/voice 全链路共用）；voice session 经 session→exam→owner 链式锚定。
-- **语义矩阵（ADR 66）**：auth off = 写入 NULL、读取不过滤（本地调试模式，存量 683 测试零破坏）；auth on = 写入 owner=me、读取严格 ==me，他人/无主行 404 不暴露存在性。
-- **dedup 归属作用域**：resources 去重从全局唯一改为 (owner_id, content_hash) 复合唯一——跨用户同内容各自保留，杜绝「B 通过 dedup 读到 A 的对象」这一隐蔽泄漏路径。
-- **跨环境稳的迁移**：约束名跨环境不同（CI 全新库=PG 自动名，存量卷=历史名），采用 PG catalog 内省后摘除再建复合唯一；SQLite 跳过约束 ALTER（测试库由 ORM create_all 生成）。
-- **证据**：本地全量 pytest 690 passed 2 skipped（683→690，+7 隔离测试；开发中真实抓住 submit 端点绕过归属门的泄漏并修复）；迁移 0023 真实 PG up/down/up ✓（终态复合唯一 uq_resources_owner_content）；Docker 冒烟 ALL PASSED（auth+归属强制下上传→重启→读回 200）；远端 CI run 33592745666 三 job 全绿。
+- **认证客户端**（lib/auth.ts）：token 持久化（localStorage——单机自托管取舍，cookie/BFF 属后续演进）+ probeAuth() **尊重后端 auth_enabled 披露**——后端关认证时前端不虚装登录可用。
+- **/login 页**：登录/注册双 tab；客户端镜像服务端校验契约（用户名 pattern/密码长度）；注册自动登录；后端 auth_enabled=false 时页面如实显示「本地模式」而非假表单。
+- **AppShell 认证徽章**：三态如实透出——本地模式徽标（disabled）/ 登录按钮（anonymous）/ 用户名+退出（authenticated）。
+- **api.ts**：自动注入 Bearer；401 自动引导登录页。
+- **证据**：typecheck/lint/build 全绿；Docker 冒烟 ALL PASSED（Web /login 200 + SSR 表单元素验证：登录注册 tab、用户名 label、pattern 校验属性全渲染）；远端 CI run 33595956195 三 job 全绿。多用户体系（后端认证 + 数据隔离 + 前端 UI）完整闭环。
 
 ## 已完成任务
 
@@ -84,6 +84,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 | M9-01 多用户与认证基座 | 03e7db4, merge 9dc7575 + fbbe170 | 本地全量 pytest 673 passed 2 skipped（+16 auth：status 两态如实、门禁两态、伪造/过期 token 401、register/login/me 闭环、防枚举同文案、幽灵用户 401、输入边界、bcrypt 盐与损坏哈希）；迁移 0022 真实 PG roundtrip；Docker 冒烟认证全链路 PASSED；CI flaky 根因修复（ParseWorker 仅池化后端启动，StaticPool 事务交错是 SQLite 替身架构不匹配）；远端 CI run 33587138302 三 job 全绿 | 下一步：M9-02 数据归属拆分（可选） | 2026-09-02 |
 | M10-01 LLM 接入 | fa11f97, merge 1734f4e | 本地全量 pytest 683 passed 2 skipped（+10 fake-transport LLM 测：协议/失败映射/围栏/编造 evidence/装配两态/端到端 fail-closed）；OpenAI 兼容 gateway + rubric LLM judge（默认关闭，fail-closed 进复核，服务端覆写留痕）；infra/smoke_llm.sh 真实端点冒烟（无 key 明确失败不虚报，key 由用户提供后执行）；远端 CI run 33588403700 三 job 全绿 | 下一步：M9-02 数据归属拆分（可选） | 2026-09-02 |
 | M9-02 数据归属拆分 | c253483, merge 7da4736 | 本地全量 pytest 690 passed 2 skipped（+7 隔离测试：资源/考试/语音跨用户 404、dedup 不跨用户、auth off 零破坏、归属门全端点、student 聚合收缩）；alembic 0023 双方言（PG 内省式摘除旧约束建复合唯一，SQLite 跳过约束 ALTER）；迁移真实 PG up/down/up ✓；Docker 冒烟 auth+归属强制下 ALL PASSED；远端 CI run 33592745666 三 job 全绿 | 下一步：云语音/搜索 provider key 接入（可选） | 2026-09-02 |
+| M9-03 Web 登录/注册 UI | 9ece2c6, merge 5297d6a | typecheck/lint/build 全绿；Docker 冒烟 ALL PASSED（/login 200 + SSR 表单验证）；auth 三态徽章 + 401 引导登录 + auth_enabled=false 如实「本地模式」；远端 CI run 33595956195 三 job 全绿 | 下一步：按需演进 | 2026-09-02 |
 
 | M6-05 Security suite | 07a8373, merge a6980c4 | pytest 606 passed（含真实 PG 5433，基线 591→606 +15）：五类安全面集中回归 15 测——SSRF（云元数据端点 169.254.169.254 拒绝、DNS 解析到私网 10.x/172.16 拒绝、域层 check_url_safety 理由可见）、sandbox escape（sympy 字符白名单：__import__/open/dunder 全部进复核不执行、mcq+math 双入口验证）、注入（SQL 元字符 id 四路由 404/int 路径 422 类型拒绝、后续请求存活；SQL 元字符答案 fail-closed 判错；恶意文件名上传 storage_key 内容寻址三段式 uploads/{2hex}/{64hex} 无用户路径成分；坏 JSON parse 显式 422 安全降级不 500）、密钥泄露（voice/search providers 视图无 sk-/AKIA/ghp_/xoxb/PEM 形态；.env.example+compose+livekit.yaml 仓库配置扫描无生产密钥形态——dev 占位值合法）、越权（交卷后建语音会话 409 答案封存、跨会话 event_id 复用 409 状态不扰动——M4-05 套件级守卫、终态草稿 approve→reject 与 reject→approve 双向 409）；真实服务冒烟 6 项 PASS（uvicorn 8026+PG：file 协议 403、元数据 IP 403 带原因、metadata.google.internal 解析失败拒绝、SQLi id 404、交卷后语音 409「考试状态 submitted 不允许语音作答」、providers 无密钥形态） | 下一步 M6-06 | 2026-09-01 |
 | M6-04 Prompt injection suite | b3130fe, merge d6f1632 | pytest 591 passed（含真实 PG 5433，基线 576→591 +15）：四类不变量回归套件 15 测——license 状态向量（恶意文档正文惰性落库 license 保持 UNKNOWN + 复用门禁 403 原因可见；未 verify 来源带注入文档上传 403 不存正文、来源状态不变）、审核队列向量（文档自称「自动通过」无效，唯一离队路径=人工 approve 端点、重复审核 409）、语音注入向量（探针固化 5 案：裸注入/英文注入/时间注入→unknown、答案+注入→槽位优先 choose B、成绩注入→含糊澄清；API 层 unknown 不应用 FSM 状态不变、含糊只进澄清环且不落半成品答案、注入尾巴交卷/改分零效果）、时间向量（答题载荷伪造 end_at/started_at/remaining_seconds/admin_override 被 pydantic 丢弃、服务端时间不动；提交载荷注入字段幂等收敛同一 submission、duration 服务端时钟）、成绩向量（注入答案判 0 分、正确字母+注入尾巴 fail-closed 判错不猜、report 分数只来自服务端判定）、检索面（注入文本 snippet 逐字惰性透传、重复查询恒同无副作用）；真实服务冒烟 8 项 PASS（真实 PG 主库全链路：上传 UNKNOWN→parse→门禁 403「资源授权状态 UNKNOWN 不可复用」→搜索惰性→语音注入 fsm_applied=false→伪造时间被丢弃 end_at 不动→注入提交幂等→注入答案 0 分/正常答案满分/报告 1.0 分服务端判定） | 下一步 M6-05 | 2026-09-01 |
@@ -102,6 +103,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 - [x] M9-01 多用户与认证基座（✅ 2026-09-02——users/bcrypt/JWT/全局 Bearer 门禁 + CI flaky 根因修复，远端 CI 全绿实证）
 - [x] M10-01 LLM 接入（✅ 2026-09-02——OpenAI 兼容 gateway + rubric LLM judge fail-closed，默认关闭；真实端点冒烟待用户提供 key，远端 CI 全绿实证）
 - [x] M9-02 数据归属拆分（✅ 2026-09-02——resources/exam_sessions/voice_transcripts owner_id + 三域读取隔离 + dedup 归属作用域，远端 CI 全绿实证）
+- [x] M9-03 Web 登录/注册 UI（✅ 2026-09-02——登录注册页/三态认证徽章/401 引导/本地模式如实透出，远端 CI 全绿实证）
 
 ## 阻塞与风险
 
@@ -187,10 +189,11 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 | 64 | SQLite 测试替身不运行常驻后台任务：StaticPool 单连接上后台事务与请求事务交错（慢 runner 随机「刚写读不到」），worker 后台循环仅在池化后端启动；替身的行为覆盖由裸装配单元测试（手动 run_once）承担 | M9-01 期间 CI API job 间歇红根因 | 2026-09-02 |
 | 65 | LLM 接入三原则：key 边界（endpoint/key/model 仅部署槽位，不入库不入码不入日志，真实端点冒烟无 key 明确失败不虚报）；fail-closed（LLM 任何失败 → judge None → essay 进复核三态，模型缺席绝不产生分数；模型自报的 judge_model/prompt_hash 一律服务端覆写）；默认关闭（RUBRIC_JUDGE=keyword 确定性判分是默认态，llm 是显式选配——LLM 只在槽位处替换确定性实现，不改变管线语义）；已知取舍：判分管线同步、gateway 同步 httpx（单用户本地版可接受，并发化后续演进） | M10-01「真实 LLM 接入」 | 2026-09-02 |
 | 66 | 归属语义矩阵 fail-safe：auth off 写 NULL 读不过滤（本地调试=现状），auth on 严格 owner==me、他人/无主行 404 不暴露存在性（与防枚举文案惯例一致）；dedup 必须作用域化（全局内容去重 = 对象泄漏通道）；answer_events/submissions/voice_* 经父实体归属不加列，归属校验单点收口（require_exam），voice 经 session→exam→owner 链式锚定；迁移约束操作跨环境用 catalog 内省（约束名跨环境不同），SQLite 分支跳过约束 ALTER（测试库由 ORM create_all 生成） | M9-02「数据归属拆分」 | 2026-09-02 |
+| 67 | Web 认证 UI 的诚实镜像：前端必须尊重后端 auth_enabled 披露（关认证显示「本地模式」而非假表单）；认证三态（本地模式/匿名/已登录）在导航栏如实透出；token 存 localStorage 是单机自托管取舍（cookie/BFF 演进项已记录） | M9-03「Web 登录/注册 UI」 | 2026-09-02 |
 
 ## 下一任务
 
-M7-06 完成（版本真相源 + /version 端点 + CHANGELOG + db-rollback fail-closed CLI + AIOS_IMAGE_TAG 应用回滚锚点 + README runbook；ADR 61）。**M7 6/6 收官，M0-M7 全部里程碑交付完成**——backlog 无剩余任务。M9-02 已完成（三域数据归属隔离，远端 CI 全绿）。后续演进方向（非 backlog 承诺）：云语音/搜索 provider key 接入、Web 端登录/注册 UI（后端已就绪）。
+M7-06 完成（版本真相源 + /version 端点 + CHANGELOG + db-rollback fail-closed CLI + AIOS_IMAGE_TAG 应用回滚锚点 + README runbook；ADR 61）。**M7 6/6 收官，M0-M7 全部里程碑交付完成**——backlog 无剩余任务。M9-03 已完成（Web 登录/注册 UI，远端 CI 全绿）——多用户体系（认证/隔离/UI）完整闭环。后续演进方向（非 backlog 承诺）：云语音/搜索 provider key 接入、LLM 真实端点冒烟（待 key）。
 
 ## 追加：M0 收尾验证（compose 全栈）
 
