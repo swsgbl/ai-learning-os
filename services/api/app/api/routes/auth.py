@@ -137,6 +137,18 @@ async def me(request: Request) -> UserOut:
     return UserOut(id=user.id, username=user.username, created_at=user.created_at.isoformat())
 
 
+def current_owner_id(request: Request) -> str | None:
+    """M9-02 归属上下文：auth on -> 当前用户 id；auth off -> None（无主模式）。
+
+    语义（ADR 66）：None owner 写入 NULL、读取不过滤（本地调试=现状）；
+    有 owner 写入 me、读取严格 ==me（NULL 行不可见，他人资源 404 不暴露存在性）。
+    """
+    secret = get_settings().auth_secret
+    if not secret:
+        return None
+    return _current_user_id(request) or None
+
+
 @router.get("/status", response_model=AuthStatusOut)
 async def status() -> AuthStatusOut:
     """认证开关如实透出——不虚报受保护状态（前端据此决定是否展示登录）。"""

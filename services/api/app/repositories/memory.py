@@ -38,6 +38,7 @@ class MemoryRepository:
     ) -> None:
         self._papers = {paper.id: paper for paper in seed_papers()}
         self._exams: dict[str, ExamSessionRecord] = {}
+        self._exam_owners: dict[str, str] = {}
         self._submissions: dict[str, SubmissionRecord] = {}
         self._clock = clock
         self._rubric_judge = rubric_judge
@@ -49,7 +50,7 @@ class MemoryRepository:
     async def get_paper(self, paper_id: str) -> Paper | None:
         return self._papers.get(paper_id)
 
-    async def create_exam(self, paper: Paper, mode: str) -> ExamSessionRecord:
+    async def create_exam(self, paper: Paper, mode: str, owner_id: str | None = None) -> ExamSessionRecord:
         now = self._clock()
         record = ExamSessionRecord(
             exam_id=f"exam_{uuid4().hex}",
@@ -62,8 +63,13 @@ class MemoryRepository:
         )
         assert_transition(ExamStatus.CREATED, ExamStatus.ACTIVE)
         record = replace(record, status=ExamStatus.ACTIVE)
+        if owner_id is not None:
+            self._exam_owners[record.exam_id] = owner_id
         self._exams[record.exam_id] = record
         return record
+
+    async def get_exam_owner(self, exam_id: str) -> str | None:
+        return self._exam_owners.get(exam_id)
 
     async def get_exam(self, exam_id: str) -> ExamSessionRecord | None:
         record = self._exams.get(exam_id)

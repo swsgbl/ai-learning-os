@@ -67,7 +67,9 @@ async def start_exam(paper_id: str, payload: StartExamRequest, request: Request)
     paper = await request.app.state.repository.get_paper(paper_id)
     if not paper:
         raise HTTPException(status_code=404, detail="试卷不存在")
-    record = await request.app.state.repository.create_exam(paper, payload.mode)
+    # M9-02: 认证开启时考试归属开启者；auth off 记 NULL（本地调试模式）
+    owner = current_owner_id(request)
+    record = await request.app.state.repository.create_exam(paper, payload.mode, owner)
     return exam_out(record, paper)
 
 
@@ -75,6 +77,7 @@ async def start_exam(paper_id: str, payload: StartExamRequest, request: Request)
 from fastapi import Body
 from pydantic import BaseModel, ValidationError
 
+from app.api.routes.auth import current_owner_id
 from app.domain.questions import PaperSpec as PaperSpecModel
 from app.repositories.paper_importer import import_papers as _run_import
 

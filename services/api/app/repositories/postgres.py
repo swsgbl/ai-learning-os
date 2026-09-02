@@ -178,7 +178,7 @@ class PostgresRepository:
                 return None
             return await self._paper_record(session, row)
 
-    async def create_exam(self, paper: Paper, mode: str) -> ExamSessionRecord:
+    async def create_exam(self, paper: Paper, mode: str, owner_id: str | None = None) -> ExamSessionRecord:
         now = self._clock()
         record = ExamSessionRecord(
             exam_id=f"exam_{uuid4().hex}",
@@ -201,9 +201,16 @@ class PostgresRepository:
                     status=record.status.value,
                     started_at=_to_db(record.started_at),
                     end_at=_to_db(record.end_at),
+                    owner_id=owner_id,
                 )
             )
         return record
+
+    async def get_exam_owner(self, exam_id: str) -> str | None:
+        """M9-02 归属查询（轻量；require_exam 层校验用）。"""
+        async with self._sessionmaker() as session:
+            row = await session.get(ExamSessionRow, exam_id)
+            return row.owner_id if row else None
 
     async def get_exam(self, exam_id: str) -> ExamSessionRecord | None:
         async with self._sessionmaker() as session, session.begin():

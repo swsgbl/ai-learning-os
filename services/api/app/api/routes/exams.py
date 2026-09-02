@@ -4,6 +4,7 @@ import json
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.api.routes.auth import current_owner_id
 from app.api.routes.papers import exam_out
 from app.api.schemas import (
     AnglesOut,
@@ -31,6 +32,13 @@ router = APIRouter(prefix="/api/v1/exams", tags=["exams"])
 
 
 async def require_exam(request: Request, exam_id: str):
+    """考试读取门（M9-02）：auth on 时他人/无主考试 404——answers/submit/report/
+    learning-events 与 voice 域全部经此校验，归属一处收口。"""
+    owner = current_owner_id(request)
+    if owner is not None:
+        exam_owner = await request.app.state.repository.get_exam_owner(exam_id)
+        if exam_owner != owner:
+            raise HTTPException(status_code=404, detail="考试不存在")
     record = await request.app.state.repository.get_exam(exam_id)
     if not record:
         raise HTTPException(status_code=404, detail="考试不存在")
@@ -67,6 +75,7 @@ async def save_answer(exam_id: str, payload: SaveAnswerRequest, request: Request
 
 @router.post("/{exam_id}/submit", response_model=SubmissionOut)
 async def submit_exam(exam_id: str, _payload: SubmitRequest, request: Request) -> SubmissionOut:
+    await require_exam(request, exam_id)  # M9-02 归属门
     try:
         submission = await request.app.state.repository.submit(exam_id)
     except KeyError as cause:
@@ -78,6 +87,7 @@ async def submit_exam(exam_id: str, _payload: SubmitRequest, request: Request) -
 
 @router.get("/{exam_id}/submission", response_model=SubmissionOut)
 async def get_submission(exam_id: str, request: Request) -> SubmissionOut:
+    await require_exam(request, exam_id)  # M9-02 归属门
     submission = await request.app.state.repository.get_submission(exam_id)
     if not submission:
         raise HTTPException(status_code=404, detail="审阅报告尚未生成")
@@ -87,6 +97,7 @@ async def get_submission(exam_id: str, request: Request) -> SubmissionOut:
 @router.get("/{exam_id}/report", response_model=ReportOut)
 async def get_report(exam_id: str, request: Request) -> ReportOut:
     """M2-11 考试报告：总分、题分、概念分、错题、解析、补救任务和证据链接。"""
+    await require_exam(request, exam_id)  # M9-02 归属门
     submission = await request.app.state.repository.get_submission(exam_id)
     if not submission:
         raise HTTPException(status_code=404, detail="审阅报告尚未生成")

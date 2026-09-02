@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.api.routes.auth import current_owner_id
 from app.api.schemas import ConceptStateOut, StudentStatesOut
 from app.domain.learning_events import LearningEventStream, derive_learning_events
 from app.domain.student_state import ConceptState, derive_concept_states, weak_concepts
@@ -63,7 +64,12 @@ async def all_learning_streams(request: Request) -> list[LearningEventStream]:
     student_repo: StudentStateRepository = request.app.state.student_state
     rubric_judge = getattr(request.app.state, "rubric_judge", None)
     streams = []
+    owner = current_owner_id(request)  # M9-02: 「全部考试」在 auth on 时收缩为「我的全部」
     for exam_id in await student_repo.list_exam_ids():
+        if owner is not None and (
+            await request.app.state.repository.get_exam_owner(exam_id) != owner
+        ):
+            continue
         record = await request.app.state.repository.get_exam(exam_id)
         if record is None:
             continue
