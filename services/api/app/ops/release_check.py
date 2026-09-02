@@ -22,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
+from app.ops.version import REPO_ROOT  # M8-00: 同源探测，兼容容器布局
 
 # 验收九字面 -> 检查项 id 的映射（测试用它守卫「无漏项」）
 ACCEPTANCE_COVERAGE = {

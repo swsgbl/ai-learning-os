@@ -9,6 +9,14 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M8-00 发布真实性修复（进行中，fix/m8-00-release-reality 分支）**——M7 收官后审计发现三个发布阻断点，本轮只修真实性不开发新功能：
+
+1. **CI 环境污染**：ci.yml job 级 env 同时注入 AIOS_PG_TEST_URL 与 DATABASE_URL，pytest 被翻成 DB 路径，26 个「无 DB 503」断言失败（远端最新 run 红）。修复：job 级只留 AIOS_PG_TEST_URL，pytest 步骤显式屏蔽 DATABASE_URL，migration 步骤单独注入。
+2. **API 容器启动崩溃**：version.py 固定 parents[4] 在容器 /app 布局越界（IndexError），且 Dockerfile 未复制 VERSION。修复：Dockerfile COPY VERSION 到 /app；version.py 向上探测布局，缺失给明确 RuntimeError；alembic_dir 双布局探测。
+3. **对象存储静默回退内存**：compose 起 MinIO 但 api 无 S3_*，MemoryObjectStore 重启丢对象。修复：compose 注入 S3_* 连 minio + depends_on minio healthy；MinioObjectStore 启动幂等建 bucket；infra/smoke_docker.sh 全栈 healthy + 端点 + 上传→重启→读回冒烟；CI 新增真实 docker compose 构建/启动门禁 job。
+验收门：本地全部测试通过 + Docker 全 healthy 无 traceback + /api/v1/version=0.1.0 + 对象重启可读 + 远端 CI 绿（PROJECT_STATUS 完成记录在远端 CI 绿与 Docker 冒烟真实通过后回填）。
+
+
 M7-06 Versioning and rollback 已实现完成（feature/M7-06-versioning-rollback 分支：版本真相源仓库根 VERSION（0.1.0）+ app/ops/version.py（read_version 语义化版本校验 lru_cache、git_commit 短 hash 如实降级、alembic_state 经 sys.executable -m alembic current/heads、build_version_info not_available 诚实降级）+ GET /api/v1/version 端点 + docs/CHANGELOG.md（Keep a Changelog 0.1.0 M0-M7 全 Added+Security）+ CLI `python -m app.ops.cli version --json` + `db-rollback --steps N [--yes]`（默认 dry-run 只打印计划不碰库；--yes 才执行 alembic downgrade -N；steps<1 或 current 未知 fail-closed 退出码 2）+ compose AIOS_IMAGE_TAG 应用回滚锚点（aios/api|web:${AIOS_IMAGE_TAG:-local}，回滚=旧 tag + up -d --no-build）+ README「版本与回滚」runbook 节；tests/test_versioning_rollback.py 9 测——三真相源同步守卫（VERSION==web package.json==CHANGELOG 顶部）、非法格式拒绝、端点四字段、诚实降级、dry-run 绝不执行子进程、--yes 精确 argv 执行+状态回读、非法输入拒绝、compose AIOS_IMAGE_TAG 渲染、README runbook 同源守卫）
 
 ## 已完成任务

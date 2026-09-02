@@ -12,7 +12,23 @@ import sys
 from functools import lru_cache
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
+
+def _locate_version_file() -> Path:
+    """向上查找 VERSION：源码仓库布局（repo 根）与容器布局（/app/VERSION）都兼容。
+
+    M8-00：固定 parents[4] 在容器 /app 下越界（IndexError 导致 API 容器
+    启动失败）；找不到 VERSION 时抛明确 RuntimeError，不允许含混失败。
+    """
+    for parent in Path(__file__).resolve().parents:
+        candidate = parent / "VERSION"
+        if candidate.is_file():
+            return candidate
+    raise RuntimeError(
+        "VERSION 文件未找到：期望位于源码仓库根或容器 /app 目录（version 打包缺失）"
+    )
+
+
+REPO_ROOT = _locate_version_file().parent
 VERSION_FILE = REPO_ROOT / "VERSION"
 
 _SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+$")
@@ -42,9 +58,17 @@ def git_commit(repo_root: Path | None = None) -> str | None:
     return proc.stdout.strip() or None
 
 
+def _alembic_dir() -> Path:
+    """alembic.ini 所在目录：源码布局在 services/api，容器布局就在 /app。"""
+    for candidate in (REPO_ROOT / "services" / "api", REPO_ROOT):
+        if (candidate / "alembic.ini").is_file():
+            return candidate
+    return REPO_ROOT / "services" / "api"  # 兜底：subprocess 如实报错
+
+
 def alembic_state(api_dir: Path | None = None) -> dict:
     """{current, head}；两值相等即迁移已就位。可注入 alembic 可执行。"""
-    root = api_dir or (REPO_ROOT / "services" / "api")
+    root = api_dir or _alembic_dir()
 
     def _run(cmd: str) -> str:
         proc = subprocess.run(

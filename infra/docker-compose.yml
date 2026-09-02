@@ -55,6 +55,11 @@ services:
       CORS_ORIGINS: http://localhost:3000,http://127.0.0.1:3000
       DATABASE_URL: postgresql+asyncpg://aios:aios@postgres:5432/ai_learning_os
       REDIS_URL: redis://redis:6379/0
+      # M8-00: 对象存储必配 MinIO —— 缺省回退 MemoryObjectStore 会重启丢对象
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: aios-objects
+      S3_ACCESS_KEY: aios
+      S3_SECRET_KEY: aios12345
       LIVEKIT_URL: ws://livekit:7880
       LIVEKIT_API_KEY: devkey
       LIVEKIT_API_SECRET: ailos-local-dev-secret-0f4c9a1e7b2d
@@ -72,6 +77,9 @@ services:
       postgres:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      # M8-00: MinIO 未就绪就起 API，首笔上传会撞连接拒绝
+      minio:
         condition: service_healthy
 
   livekit:

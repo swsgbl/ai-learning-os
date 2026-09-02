@@ -26,6 +26,12 @@ docker compose -f infra/docker-compose.yml --profile local up -d --build
 基础服务（postgres/redis/minio/api/web）不挂 profile 恒启动；livekit（语音基础设施）
 挂在 local/hybrid/cloud 三个命名 profile 下。
 
+验证真实可用（全服务 healthy + 关键端点 + 上传对象重启 API 后仍可读）：
+
+```bash
+bash infra/smoke_docker.sh
+```
+
 语音隐私路由按 profile 切换（`AIOS_VOICE_MODE` 插值注入 VOICE_MODE）：
 
 ```bash
@@ -67,7 +73,6 @@ docker tag aios/web:local aios/web:v0.1.0
 AIOS_IMAGE_TAG=v0.1.0 docker compose -f infra/docker-compose.yml up -d --no-build
 ```
 
-## 本地启动
 ## 本地启动
 
 ```powershell

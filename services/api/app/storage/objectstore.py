@@ -32,16 +32,35 @@ class MemoryObjectStore:
 class MinioObjectStore:
     """S3 兼容实现（MinIO / AWS S3），凭据来自 settings。"""
 
-    def __init__(self, endpoint: str, bucket: str, access_key: str, secret_key: str) -> None:
-        import boto3  # 延迟导入：无 S3 配置的环境不强制依赖
+    def __init__(
+        self,
+        endpoint: str,
+        bucket: str,
+        access_key: str,
+        secret_key: str,
+        client=None,
+    ) -> None:
+        # M8-00: client 可注入（单测用假 client 验证 bucket 初始化）
+        if client is not None:
+            self._client = client
+        else:
+            import boto3  # 延迟导入：无 S3 配置的环境不强制依赖
 
+            self._client = boto3.client(
+                "s3",
+                endpoint_url=endpoint,
+                aws_access_key_id=access_key,
+                aws_secret_access_key=secret_key,
+            )
         self._bucket = bucket
-        self._client = boto3.client(
-            "s3",
-            endpoint_url=endpoint,
-            aws_access_key_id=access_key,
-            aws_secret_access_key=secret_key,
-        )
+        self._ensure_bucket()
+
+    def _ensure_bucket(self) -> None:
+        """幂等：bucket 不存在则创建。MinIO 全新卷不含 bucket，缺此步首笔上传即失败。"""
+        try:
+            self._client.head_bucket(Bucket=self._bucket)
+        except self._client.exceptions.ClientError:  # 与 exists() 同款异常面
+            self._client.create_bucket(Bucket=self._bucket)
 
     def put(self, key: str, data: bytes, content_type: str | None = None) -> None:
         extra = {"ContentType": content_type} if content_type else None
