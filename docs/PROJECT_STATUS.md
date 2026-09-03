@@ -9,6 +9,17 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M10-03 生产数据与安全基线已完成本阶段验收**（feature/M10-03-production-data-security；试卷归属基线提交 `2027d16`，Web cookie 收尾 `8149a65`，数据盘点/清理 `47052ae`）：
+
+- **试卷归属与可见性**：`papers.owner_id` 迁移到 `0026_paper_owner`；auth on 时列表/开考/选题/学习计划统一按「系统公共卷 + 当前用户自有卷」过滤，admin 不放大他人私有卷；跨用户开考 404，不暴露存在性。auth off 继续写 NULL，保持本地单用户语义。
+- **Web 认证安全升级**：浏览器登录态改为 `aios_auth` HttpOnly cookie，默认 `SameSite=Lax`、`Path=/`；compose 透传 `AIOS_AUTH_COOKIE_SECURE/SAMESITE`，`SameSite=None` 必须搭配 Secure，否则启动失败。Web 不再读取/保存 `access_token`，登录后清理 legacy `aios_token`，所有请求 `credentials: include`。Bearer 保留给 CLI/API；cookie 与 Bearer 共用验签、过期、幽灵用户路径，admin 角色仍实时读库。`/auth/logout` 幂等清 cookie；CORS 显式允许 credentials 且通配符 `*` fail-closed（收尾自查发现：Starlette 在 credentials 模式下会把 `*` 反射成任意 Origin+凭据放行，已在 Settings 层拒绝，含直接单元测试）。
+- **生产数据盘点/清理**：新增 `python -m app.ops.cli data-inventory` 与 `acceptance-clean`。inventory 只读、缺 DB fail-closed；清理默认 dry-run，必须 `--yes`，只按显式用户名前缀匹配 learner（默认 `smoke_` / `voice_smoke_`），拒绝 `*` / `%`；admin 即使匹配也跳过；删除按预收集精确行 ID 单数据库事务执行，数量不一致整体回滚；audit append-only 保留；对象存储只删「仅被本次待删数据引用」的 key，共享 key 不删。
+- **真实生产库清理结果**：默认验收清理实际删除 28 个 learner、15 resources / chunks / evidence；本轮候选 key 均为共享或不独占，`unique_object_keys_eligible_for_delete=0`，因此未删 MinIO 对象。清理后 inventory：users 11（admin 3 / learner 8）、acceptance_candidates 0、papers 746（system seed 2 / non-seed NULL owner 744 / private owned 0）、resources 17、exams 1851、voice transcripts 83、pending drafts 7、stored audio 0、failed parse jobs 0。744 张历史无归属卷与 7 个待审草稿保留为人工审阅项，禁止被验收清理自动删除。
+- **验证**：API 全量 `726 passed / 24 skipped`（新增认证 cookie、CORS 通配符 fail-closed、试卷归属、数据清理测试；含共享 storage_key 不删/独占 key 才删的直接单元测试）；ruff 全绿；Web typecheck/lint/build 全绿；真实 PG 试卷归属 `6 passed`，空库 Alembic `upgrade head -> downgrade 0025 -> upgrade head` 全成功；Docker local 栈 api/web/postgres/redis/minio/livekit 全 healthy；真实 Chromium 回归 **21/21 PASS**（HttpOnly cookie、localStorage 无 token、刷新仍登录、退出清 cookie、匿名受保护请求数 0、角色入口差异）；清理与浏览器验收后 API 日志无 traceback/error。收尾复验注记：api 容器曾被以缺省 env 重建导致 CORS 丢失 3010 联动（web 端口漂移风险实证），按 `AIOS_WEB_PORT=3010` 重建后复跑 Chromium 回归仍 21/21 PASS，登录 preflight 实测 `access-control-allow-credentials: true` + 精确 origin 反射。
+- **本阶段剩余生产风险**：744 张非 seed `owner_id=NULL` 历史公共卷需要人工分类（保留公共、归属迁移或导出后删除）；generation/variant 历史草稿 NULL 归属仍需治理；审计哈希链未做；TURN 未内置，对称 NAT 场景仍需外部 coturn；云语音/检索/LLM provider 真实 key 冒烟尚未执行（key 只进部署 secret/env，不入库不入码）。
+
+## 前一任务（M10-02 Web 治理与学习工作台整合）
+
 **M10-02 Web 治理与学习工作台整合已完成合并**（feature/M10-02-web-governance-workbench，PR #4；最终 head `74c4568`，merge `d725c454`）：
 
 - **auth/me 角色披露**：UserOut 增 role（learner/admin），register/me 均返回；角色实时读库语义保持（promote 后旧 token 不重签立即透出 admin）；auth off 时 me 仍 401（无用户上下文不虚构）。前端仅用 role 渲染治理入口——安全边界仍在后端 require_admin（learner 强访队列/审计 API 403，页面只给无泄露提示）。
@@ -23,7 +34,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 - **类型与 client**：四类草稿/audit/planner/student state/用户资料 TypeScript 类型补齐；ApiError(status) 区分 403/409；draftEndpoints 工厂覆盖四类同构端点；全部请求经统一 API client，组件零直连。
 - **证据**：本地全量 pytest **731 passed 1 skipped**（725→732 +7：me role 4 测 + 治理页面 API 契约 3 测；唯一 skip 为 AIOS_COMPOSE_SMOKE 门控由远端 CI 覆盖；PG 5433/MinIO 9000 真实服务）；ruff 全绿；npm typecheck/lint/build 全绿（10 路由）；**Docker 栈真实浏览器 17 项检查全 PASS（13.2s）**——learner 10 项（首页聚合/导航无治理入口/governance 403 无泄露/工作台 seeded planner·states·papers 渲染/一键跳考并成功创建服务端会话）+ admin 7 项（治理入口/五 tab/待审队列/详情元数据/approve+队列刷新/终态不可再审提示/审计回查）；api 容器日志零 traceback；**远端终局证据**——PR #4 最终 head run **33721688962 三 job 全绿**（Web 1m7s / API 2m35s / Docker compose build+healthy+smoke 2m19s），merge `d725c454` 后 main run **33721967556 三 job 全绿**（Web 1m14s / API 2m27s / Docker 2m26s）。
 
-## 前一任务（M9-08 收尾）
+## 更早任务（M9-08 收尾）
 
 **M9-08 局域网语音连通性与 LiveKit 部署收尾已完成**（feature/M9-08-public-voice-networking，PR #3 CI 绿后合并）：
 
@@ -225,10 +236,13 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 | 72 | 部署拓扑边界：AIOS_BIND_IP 只影响边缘服务（api/web/livekit），postgres/redis/minio 数据面固定 loopback（公开绑定时数据面永不暴露）；LiveKit 凭据必须同源可配置（API env 与 server --keys 同一组变量，服务端不绑仓库占位 yaml）；Web 的 API 地址是构建期产物（NEXT_PUBLIC_API_BASE_URL build arg，改值必须 rebuild）；公开绑定第四道门：CORS localhost-only 拒绝启动（AIOS_CORS_ORIGINS 必须含实际 Web origin） | M9-07「安全可用部署拓扑与回归修复」 | 2026-09-03 |
 | 73 | 语音公开链路的诚实性：token ws_url 必须是浏览器可达地址（compose LIVEKIT_URL 语义修正——浏览器地址而非容器内部地址，smoke_voice 真实验证暴露的静默泄漏）；公开绑定时 PUBLIC_LIVEKIT_URL fail-closed（缺失/容器内部地址拒绝启动，不静默降级）；CORS 本地源判定 urlsplit 精确 host（子串误判消除）；语音连通只能由真实客户端证明（livekit.rtc 连接+数据通道），health 200 不构成语音可用证据 | M9-08「局域网语音连通性与 LiveKit 部署收尾」 | 2026-09-03 |
 | 74 | Web 治理与工作台的角色边界：auth/me 披露 role 仅驱动入口渲染（前端隐藏不是安全边界，admin-only 语义全在后端 require_admin，learner 强访 API 403 且页面无泄露提示）；四类草稿端点同构，前端用配置投影（摘要/元数据/详情函数）泛化一个队列组件而非复制四份；审核动作后切「全部」过滤器保持刚审草稿可见（终态确认上下文不消失）；SPA 登录后 AppShell 需随路由重探认证状态（mount 一次探测是 M9-03 遗留缺陷，治理入口可见性依赖它暴露）；首页只做轻聚合（数字+入口），完整工作台留在 /progress，未登录不发会触发 401 强跳的请求 | M10-02「Web 治理与学习工作台整合」 | 2026-09-03 |
+| 75 | 浏览器登录态的载体边界：Web 不持有 JWT（localStorage 只保留展示用 username，legacy token 登录后清理），认证用 API 设置的 HttpOnly cookie；SameSite=Lax 是默认 CSRF 边界，`SameSite=None` 必须强制 Secure；CORS 必须精确 allowlist + credentials，不能用 `*` 换便利；Bearer 只保留给 CLI/API 客户端 | M10-03「Web 认证安全升级」 | 2026-09-03 |
+| 76 | 生产数据清理必须窄作用域、可计划、可回滚：先只读 inventory，再默认 dry-run；只按显式字面量前缀匹配 learner，admin 跳过；删除集是预收集精确行 ID，行数不一致即回滚；对象存储只删独占 key；系统 seed、普通用户、审计与无归属历史内容不进入自动删除集，留给人工分类 | M10-03「生产数据盘点与验收清理」 | 2026-09-03 |
+| 77 | 两类「配置放行面」会随能力升级变成漏洞：CORS 开 allow_credentials 后 `*` 从无害宽松变成任意 Origin+凭据放行（Starlette 会反射 Origin），必须在 Settings 层 fail-closed 拒绝通配符；重建单个 compose 容器必须带上栈原始 AIOS_* env（如 AIOS_WEB_PORT），否则 CORS 端口联动静默丢失、Web 登录跨域失败且服务自身 healthy 不报警 | M10-03「Web 认证安全升级」收尾自查 | 2026-09-03 |
 
 ## 下一任务
 
-M10-03 生产化数据与安全基线已启动，优先收敛 M10-02 留下的生产阻塞项：持久 PG 验收 seed 数据盘点与安全清理策略、papers 公共无归属、generation/variant 历史草稿 NULL 归属、token localStorage 安全升级、TURN/公网语音真实拓扑、云 provider 与 LLM 真实端点 key 冒烟（key 只进部署 secret/env）。M10-02 已完成合并（PR #4 最终 head run 33721688962、main run 33721967556 均三 job 全绿）。**M9 诚实边界（截至 M10-02，已更新）**：papers 公共无归属、generation/variant 历史草稿 NULL 归属（auth on 仅 admin 可读）、token 存 localStorage、审计无哈希链、**TURN 未内置**（对称 NAT 场景需自建 coturn，文档已说明）；~~Web 治理界面未做~~（M10-02 已交付 /governance + 工作台）。**M10-02 验证边界（如实）**：本地全量 pytest 唯一 skip 为 AIOS_COMPOSE_SMOKE 门控的全栈冒烟（由远端 CI Docker 门禁 job 覆盖，本地未重复跑）；浏览器验证截图存于本机临时目录未入库（截图证据以文字断言清单记录，可复现脚本流程已验证）；验证用 web 端口 3010（主机 3000 被其他项目占用，CORS 已联动）。
+M10-04 生产数据治理与公网语音收尾：先给 744 张非 seed NULL owner 试卷做只读分类报告（来源/时间/题量/是否被历史考试引用）与显式迁移 CLI（保留公共、归属指定用户、导出后删除三条路径，均默认 dry-run）；再补 generation/variant 历史草稿归属治理；随后做审计哈希链或 WORM 策略、外部 coturn 部署模板、云语音/检索/LLM provider 真实端点 key 冒烟。阶段约束继续：key 不入库不入码、生产清理不整表删除、Web 不直连 provider、UI 变更必须真实浏览器验收。
 
 ## 追加：M0 收尾验证（compose 全栈）
 

@@ -44,9 +44,12 @@ alembic -c services/api/alembic.ini upgrade head
 ## 认证与角色（M9-01 / M9-04）
 
 - `AUTH_SECRET` 未配置 = 认证关闭（本地单用户模式），`GET /api/v1/auth/status` 如实透出；
-- 配置后全业务路径要求 Bearer token；**治理动作（source 登记/verify/license 改判、
+- 配置后全业务路径要求 Bearer token 或浏览器 HttpOnly cookie；**治理动作（source 登记/verify/license 改判、
   概念图发布、课程生成/导入、变式、试卷抽取草稿的 approve/reject、审计读取）仅 admin**：
   learner 返回 403（门禁先于 404，不暴露存在性）；
+- Web 登录态：`POST /auth/login` 设置 `aios_auth` HttpOnly cookie（默认
+  `SameSite=Lax`；HTTPS 反代部署设置 `AIOS_AUTH_COOKIE_SECURE=true`）。页面
+  JavaScript 不保存 JWT；CLI/API 仍使用 Bearer token。
 - 个人数据（私有资源、考试、语音会话、搜索记录）严格 owner-scoped（他人 404）；
 - 角色：`role` 默认 learner，无默认管理员账号——首个 admin 由持有数据库访问权的
   运维经 CLI 提升：`python -m app.ops.cli admin promote|demote|list <username> --db-url ...`；
@@ -62,25 +65,27 @@ alembic -c services/api/alembic.ini upgrade head
 `audit_log`：actor、action、target、before/after、时间、request id（响应头
 X-Request-ID 可关联）。读取 `GET /api/v1/audit` 仅 admin（auth off 本地模式可读）。
 
-### M9 里程碑边界（如实陈述，2026-09-02，M9-05 后更新）
+### 安全边界（M10-03 后更新）
 
 - 已交付：认证基座、三域归属隔离、Web 登录 UI、角色授权+治理审计、
-  **私有语料边界（search/course generation 只见自有+public 语料）**、
-  **四类草稿 owner 归属（create/list/get）**、**审计与业务同事务（fail-closed）**；
-- 已知边界：generation/variant 草稿的历史 NULL 归属行 auth on 时仅 admin 可治理读取；
-  papers 为公共题库无归属；token 存 localStorage（无 BFF/cookie 刷新机制）；
-  审计无防篡改哈希链；Web 侧草稿治理界面未做（API 能力已就绪）。
+  私有语料与四类草稿归属、试卷 owner 可见性、Web HttpOnly cookie、治理工作台；
+- 已知边界：generation/variant 草稿与 744 张历史试卷仍待人工归属分类；
+  审计无防篡改哈希链；TURN 未内置；云 provider/LLM 真实 key 冒烟未执行。
 - 部署绑定：所有端口默认 127.0.0.1；LAN/外网需 `AIOS_BIND_IP=0.0.0.0` 且必须同时
   设强 AUTH_SECRET + APP_ENV=production（启动 fail-closed），否则不要对外暴露。
 
 
 - `AUTH_SECRET` 未配置 = 认证关闭，`GET /api/v1/auth/status` 如实透出 `auth_enabled=false`；
-- 配置后（compose 已注入 dev 值）全业务路径要求 `Authorization: Bearer <token>`，
-  `register/login/status` 与 `/health`、`/api/v1/version`、`/docs` 豁免；
+- 配置后（compose 已注入 dev 值）CLI/API 使用 `Authorization: Bearer <token>`，
+  浏览器使用 `aios_auth` HttpOnly cookie；`register/login/status/logout` 与
+  `/health`、`/api/v1/version`、`/docs` 豁免；
 - 端点：`POST /api/v1/auth/register`（重复 409）、`POST /api/v1/auth/login`（失败统一
   「用户名或密码错误」防枚举）、`GET /api/v1/auth/me`；JWT HS256，默认 24h 过期。
 - 生产部署用部署 secret 覆盖 `AIOS_AUTH_SECRET`；密码只存 bcrypt 哈希（72 字节上限）。
-- 数据归属（M9-02 资源/考试/语音 + M9-05 四类草稿与私有语料边界）已落地：个人数据严格 owner-scoped；当前真实边界见上方「M9 里程碑边界」。
+- HTTPS 反代部署同时设置 `AIOS_AUTH_COOKIE_SECURE=true`；`AIOS_AUTH_COOKIE_SAMESITE=none`
+  仅用于跨站部署且会强制 Secure；`CORS_ORIGINS` 拒绝通配符 `*`（credentials 模式下
+  `*` 会被反射成任意 Origin+凭据放行，启动即报错）。
+- 数据归属（M9-02 资源/考试/语音 + M9-05 四类草稿与私有语料边界）已落地：个人数据严格 owner-scoped；当前真实边界见上方「安全边界」。
 
 ## LLM 接入（M10-01）
 
