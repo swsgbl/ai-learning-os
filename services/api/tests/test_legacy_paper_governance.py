@@ -5,8 +5,9 @@ dry-run 不落盘不修改、--yes 缺失拒绝执行、无效 ID 整体拒绝�
 事务回滚、assign-owner 成功与审计（含事务内目标用户复核失败回滚）、
 keep-public 仅记录决策（含陈旧行计划失败不写审计）、export-delete
 拒绝被引用卷、未引用卷导出后删除、完整归档校验（同 ID 内容损坏/malformed
-paper.id 不抛异常）、既有归档拒绝覆盖（含 dangling symlink）、writer
-OSError 稳定失败不删库、同数量换内容在删除事务被拒绝。
+paper.id 不抛异常、无效 UTF-8 归档返回 problems 不抛异常）、既有归档
+拒绝覆盖（含 dangling symlink）、writer OSError 稳定失败不删库、同数量
+换内容在删除事务被拒绝。
 """
 from __future__ import annotations
 
@@ -664,6 +665,57 @@ def test_export_validation_failure_keeps_database_untouched(
     assert _fetch(db_url, AuditLogRow) == []
 
 
+def test_export_delete_invalid_utf8_archive_keeps_database(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """归档被写成无效 UTF-8：返回稳定失败计划（exit_code 1），DB 原样保留。
+
+    CLI 只捕获 RuntimeError；validate_export_file 对无效 UTF-8 必须计入
+    problems 而不是抛 UnicodeDecodeError（ValueError 子类），否则整条
+    export-delete 链路 traceback 而非稳定失败。
+    """
+    db_url = _make_db(tmp_path)
+    export = tmp_path / "artifacts" / "export.jsonl"
+
+    def invalid_utf8_writer(path, records):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"\xff\xfe\n")
+
+    monkeypatch.setattr(legacy, "_write_export_file", invalid_utf8_writer)
+    report = asyncio.run(
+        run_legacy_migrate(
+            db_url, "export-delete", ["pap_unref"], execute=True, export_path=export
+        )
+    )
+    assert report["executed"] is False
+    assert report["exit_code"] == 1
+    assert any("无法按 UTF-8 读取" in p for p in report["export_validation_problems"])
+    assert "导出校验失败" in report["failure"]
+    assert export.read_bytes() == b"\xff\xfe\n"
+    assert _fetch(db_url, PaperRow, PaperRow.id == "pap_unref")
+    assert _fetch(db_url, QuestionRow, QuestionRow.paper_id == "pap_unref")
+    assert _fetch(db_url, AuditLogRow) == []
+
+    # 经 CLI 入口同样稳定：退出码 1、报告含导出校验问题，不 traceback。
+    code = cli_module._run_legacy_paper_migrate(
+        _migrate_args(
+            "export-delete",
+            db_url=db_url,
+            paper_id=["pap_unref"],
+            export=str(tmp_path / "artifacts" / "export-cli.jsonl"),
+            yes=True,
+        )
+    )
+    assert code == 1
+    body = json.loads(capsys.readouterr().out.split("\n[失败]")[0])
+    assert body["executed"] is False
+    assert body["exit_code"] == 1
+    assert any("无法按 UTF-8 读取" in p for p in body["export_validation_problems"])
+    assert _fetch(db_url, PaperRow, PaperRow.id == "pap_unref")
+    assert _fetch(db_url, QuestionRow, QuestionRow.paper_id == "pap_unref")
+    assert _fetch(db_url, AuditLogRow) == []
+
+
 def test_export_delete_tampered_content_same_ids_keeps_database(tmp_path, monkeypatch):
     """同 ID 集合但题干/答案被损坏：完整归档校验失败，DB 原样保留。"""
     db_url = _make_db(tmp_path)
@@ -928,6 +980,17 @@ def test_validate_export_file_malformed_paper_ids_never_raise(tmp_path) -> None:
     assert any("缺少 paper 对象" in p for p in problems)
     assert any("不是试卷记录对象" in p for p in problems)
     assert any("缺少 1 张试卷" in p for p in problems)
+
+
+def test_validate_export_file_invalid_utf8_returns_problem(tmp_path) -> None:
+    """无效 UTF-8 归档：直接返回 problems（含明确文案），不抛 UnicodeDecodeError。"""
+    expected = [{"paper": {"id": "pap_a"}, "questions": []}]
+    invalid = tmp_path / "invalid-utf8.jsonl"
+    invalid.write_bytes(b"\xff\xfe\n")
+    problems = validate_export_file(invalid, expected)
+    assert any("无法按 UTF-8 读取" in problem for problem in problems)
+    # 文件级读取失败即整体不可信：不进入逐行解析，也不误报缺行。
+    assert len(problems) == 1
 
 
 def test_cli_export_delete_via_ids_file(tmp_path, capsys) -> None:

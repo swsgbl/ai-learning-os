@@ -535,7 +535,8 @@ def validate_export_file(
     以内存 snapshot 为期望值：逐行解析后与期望记录做确定性全等比较（paper
     全字段 + questions 全字段，JSON canonical 比较），并继续校验 paper ID 精确
     集合与缺行/重复/错行。malformed paper.id（非字符串、空值、不可哈希对象等）
-    一律计入 problems，绝不抛未捕获 TypeError。
+    一律计入 problems，绝不抛未捕获 TypeError；文件级失败（IO OSError、
+    内容非合法 UTF-8）同样返回 problems 而非异常。
     """
     problems: list[str] = []
     seen: list[str] = []
@@ -547,6 +548,10 @@ def validate_export_file(
             expected[paper["id"]] = record
     try:
         text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as cause:
+        # UnicodeDecodeError 是 ValueError 子类（非 OSError）：无效 UTF-8
+        # 的归档视为不可信证据，稳定计入 problems，绝不抛异常逃逸到 CLI。
+        return [f"导出文件无法按 UTF-8 读取（可能损坏或被篡改）: {cause}"]
     except OSError as cause:
         return [f"无法读取导出文件: {cause}"]
     for number, line in enumerate(text.splitlines(), start=1):
