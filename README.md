@@ -78,6 +78,26 @@ python -m app.ops.cli acceptance-clean --db-url ... --yes          # 执行（le
 admin 与普通用户、系统 seed 卷、无归属历史数据、append-only 审计不进入删除集；
 对象存储只删「仅被待删行引用」的 key（共享 key 保留）。
 
+**历史无归属试卷治理**（M10-04 第一切片；报告只读；迁移默认 dry-run，必须 `--yes`）：
+
+```bash
+python -m app.ops.cli legacy-paper-report --db-url ...                # 只读摘要（不含生产 ID）
+python -m app.ops.cli legacy-paper-report --db-url ... --json         # 完整明细 JSON（stdout）
+python -m app.ops.cli legacy-paper-report --db-url ... --output artifacts/legacy-report.json
+python -m app.ops.cli legacy-paper-migrate keep-public --db-url ... --paper-id pap_xxx            # dry-run 计划
+python -m app.ops.cli legacy-paper-migrate assign-owner --db-url ... --to <用户名或ID> --paper-id pap_xxx --yes
+python -m app.ops.cli legacy-paper-migrate export-delete --db-url ... --paper-id pap_xxx --export artifacts/legacy-export.jsonl --yes
+```
+
+报告范围是 `owner_id IS NULL` 且非 seed 的历史公共卷；每卷给出题量/总分/是否被历史
+考试引用/引用次数/最近引用时间与建议路径（keep_public/assign_owner/export_review）。
+papers 表没有时间戳列，创建/更新时间如实为 null，时间证据以考试引用时间派生。
+迁移只接受精确 paper ID（`--paper-id` 可重复或 `--ids-file`，拒绝 `*`/`%`），未知 ID
+整体拒绝；assign-owner 只迁报告确认的行，事务内复核行数与行状态，不符即回滚；
+export-delete 先导出 JSONL 并校验可解析、ID 集合一致才删库，被历史考试引用的卷一律
+拒绝删除（人工处理，不级联删考试）；keep-public 只写审计决策不改试卷。报告/导出文件
+含生产 ID，只能写入 gitignore 的 `artifacts/`、`temp/` 目录（其他路径退出码 2）。
+
 **应用回滚**：compose 以 `AIOS_IMAGE_TAG` 为镜像锚点，发布时固化 tag，回滚即旧 tag 重启：
 
 ```bash

@@ -9,6 +9,17 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M10-04 第一切片：历史无归属试卷只读分类报告与安全迁移 CLI 已完成并验证**（feature/M10-04-legacy-paper-governance，分支未合并；**生产迁移未执行**——只做了只读复核与 dry-run 冒烟）：
+
+- **只读分类报告**：`python -m app.ops.cli legacy-paper-report [--json] [--output PATH]`。范围 `owner_id IS NULL 且 source != 'AI Learning OS seed'`；默认人类可读摘要（不含生产 paper ID），`--json` 全量明细；`--output` 写文件强制落在 gitignore 的 artifacts/temp 目录（直接父目录名 artifacts/temp，或 `git check-ignore` 判定忽略；Windows `%TEMP%` 是任意路径祖先，不能按祖先名放行），其他路径退出码 2；缺 DB fail-closed 退出码 2；报告对数据库零写入。每卷含 paper_id/标题/来源/题量/总分/是否被历史考试引用/引用考试数/首次与最近引用时间/建议路径；汇总含总数、被引用/未引用、题量分桶、来源分布、建议路径统计、最近引用月份分布。papers 表无 created_at/updated_at 列（schema 事实），创建/更新时间如实输出 null 并附说明，时间证据以 `exam_sessions.started_at` 派生。
+- **建议路径规则（确定性）**：被历史考试引用→keep_public；未引用且有题→assign_owner；未引用空卷→export_review。
+- **安全迁移 CLI**：`legacy-paper-migrate {keep-public,assign-owner,export-delete}`，默认 dry-run 只打印计划、`--yes` 才执行。只接受精确 paper ID（`--paper-id` 可重复 / `--ids-file` 每行一个，`#` 注释与空行忽略；拒绝 `*`/`%` 与超长），**未知 ID 整体拒绝**（退出码 1，陈旧清单 fail-closed）；seed 卷与已归属卷跳过并给原因。assign-owner：`--to` 精确匹配已存在用户名或用户 ID（不支持模糊），事务内 FOR UPDATE 锁行复核 owner/source 与行数（PG 生效，SQLite 忽略由库级锁兜底），不一致整体回滚；before/after 同事务写审计（action `ops.legacy_paper.assign_owner`）。export-delete：必须 `--export` JSONL（路径同 artifacts/temp 约束），先导出后校验（逐行可解析、paper ID 集合精确一致、无重复），校验失败退出码 1 不删任何行；删除事务内复查考试引用（>0 抛错回滚，**不级联删考试**）、题目/试卷删除行数与计划一致否则回滚，审计同事务；只删选中试卷的 questions+papers 行，资源/共享数据不动。keep-public：`--yes` 只写审计决策（`papers_modified=0`），不篡改试卷内容。
+- **生产库只读复核（未执行任何迁移）**：`legacy-paper-report` 对生产库输出：总数 **744**、被引用 742、未引用 2、题目总数 1397、来源全部 `imported`、建议 keep_public=742 / assign_owner=2 / export_review=0、最近引用月份 2026-08=133 / 2026-09=609 / unreferenced=2；与 psql 只读交叉验证一致（744/1397/2；月份 CTE 口径 133/609）。生产 dry-run 冒烟：keep-public 单卷计划 exit 0；export-delete 对被引用卷标记 blocked 且不落盘。744 与 M10-03 台账预期一致。
+- **验证**：全量 pytest **746 passed / 24 skipped**（新增 `test_legacy_paper_governance.py` 19 项：报告分类与汇总、引用统计、报告只读、CLI fail-closed、`--output` 路径安全、dry-run 不落盘不修改、`--yes` 缺失不执行、无效 ID 整体拒绝、行数不一致事务回滚、assign-owner 成功+审计、用户名/ID 解析与未知用户拒绝、keep-public 仅审计、export-delete 拒绝被引用卷、未引用卷导出后删除、导出校验失败不删库、validate_export_file 单元、ids-file、main 分发）；`uv run ruff check services/api` 全绿。
+- **未覆盖/后续切片**：生产迁移尚未执行（工具就绪，744 张分类待人工决策后逐批 `--yes`）；generation/variant 历史草稿归属治理；审计哈希链或 WORM；外部 coturn 部署模板；云语音/检索/LLM provider 真实端点 key 冒烟。
+
+## 前一任务（M10-03 生产数据与安全基线）
+
 **M10-03 生产数据与安全基线已完成本阶段验收**（feature/M10-03-production-data-security；试卷归属基线提交 `2027d16`，Web cookie 收尾 `8149a65`，数据盘点/清理 `47052ae`）：
 
 - **试卷归属与可见性**：`papers.owner_id` 迁移到 `0026_paper_owner`；auth on 时列表/开考/选题/学习计划统一按「系统公共卷 + 当前用户自有卷」过滤，admin 不放大他人私有卷；跨用户开考 404，不暴露存在性。auth off 继续写 NULL，保持本地单用户语义。
@@ -18,7 +29,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 - **验证**：API 全量 `726 passed / 24 skipped`（新增认证 cookie、CORS 通配符 fail-closed、试卷归属、数据清理测试；含共享 storage_key 不删/独占 key 才删的直接单元测试）；ruff 全绿；Web typecheck/lint/build 全绿；真实 PG 试卷归属 `6 passed`，空库 Alembic `upgrade head -> downgrade 0025 -> upgrade head` 全成功；Docker local 栈 api/web/postgres/redis/minio/livekit 全 healthy；真实 Chromium 回归 **21/21 PASS**（HttpOnly cookie、localStorage 无 token、刷新仍登录、退出清 cookie、匿名受保护请求数 0、角色入口差异）；清理与浏览器验收后 API 日志无 traceback/error。收尾复验注记：api 容器曾被以缺省 env 重建导致 CORS 丢失 3010 联动（web 端口漂移风险实证），按 `AIOS_WEB_PORT=3010` 重建后复跑 Chromium 回归仍 21/21 PASS，登录 preflight 实测 `access-control-allow-credentials: true` + 精确 origin 反射。
 - **本阶段剩余生产风险**：744 张非 seed `owner_id=NULL` 历史公共卷需要人工分类（保留公共、归属迁移或导出后删除）；generation/variant 历史草稿 NULL 归属仍需治理；审计哈希链未做；TURN 未内置，对称 NAT 场景仍需外部 coturn；云语音/检索/LLM provider 真实 key 冒烟尚未执行（key 只进部署 secret/env，不入库不入码）。
 
-## 前一任务（M10-02 Web 治理与学习工作台整合）
+## 更早任务（M10-02 Web 治理与学习工作台整合）
 
 **M10-02 Web 治理与学习工作台整合已完成合并**（feature/M10-02-web-governance-workbench，PR #4；最终 head `74c4568`，merge `d725c454`）：
 
@@ -239,10 +250,11 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 | 75 | 浏览器登录态的载体边界：Web 不持有 JWT（localStorage 只保留展示用 username，legacy token 登录后清理），认证用 API 设置的 HttpOnly cookie；SameSite=Lax 是默认 CSRF 边界，`SameSite=None` 必须强制 Secure；CORS 必须精确 allowlist + credentials，不能用 `*` 换便利；Bearer 只保留给 CLI/API 客户端 | M10-03「Web 认证安全升级」 | 2026-09-03 |
 | 76 | 生产数据清理必须窄作用域、可计划、可回滚：先只读 inventory，再默认 dry-run；只按显式字面量前缀匹配 learner，admin 跳过；删除集是预收集精确行 ID，行数不一致即回滚；对象存储只删独占 key；系统 seed、普通用户、审计与无归属历史内容不进入自动删除集，留给人工分类 | M10-03「生产数据盘点与验收清理」 | 2026-09-03 |
 | 77 | 两类「配置放行面」会随能力升级变成漏洞：CORS 开 allow_credentials 后 `*` 从无害宽松变成任意 Origin+凭据放行（Starlette 会反射 Origin），必须在 Settings 层 fail-closed 拒绝通配符；重建单个 compose 容器必须带上栈原始 AIOS_* env（如 AIOS_WEB_PORT），否则 CORS 端口联动静默丢失、Web 登录跨域失败且服务自身 healthy 不报警 | M10-03「Web 认证安全升级」收尾自查 | 2026-09-03 |
+| 78 | 历史数据治理先工具后决策：只读报告必须逐行携带引用证据与确定性建议路径（schema 缺时间戳就如实 null 不编造，以派生引用时间做时间分布）；迁移 CLI 只收精确 ID——未知 ID 整体拒绝（陈旧清单 fail-closed，宁可不干活也不缩小/扩大爆炸半径）、默认 dry-run、事务内 FOR UPDATE 复核行数与行状态、删除前置「导出+回读校验」（JSONL 逐行可解析 + ID 集合精确一致 + 无重复）、被引用数据一律拒绝自动删除（人工处理，不级联删考试）；含生产 ID 的报告/导出文件只允许写 gitignore 目录——判定只看直接父目录名（artifacts/temp）或 `git check-ignore`，Windows `%TEMP%` 是任意路径的祖先，按祖先名放行会让护栏失效 | M10-04 第一切片「历史试卷治理」 | 2026-09-03 |
 
 ## 下一任务
 
-M10-04 生产数据治理与公网语音收尾：先给 744 张非 seed NULL owner 试卷做只读分类报告（来源/时间/题量/是否被历史考试引用）与显式迁移 CLI（保留公共、归属指定用户、导出后删除三条路径，均默认 dry-run）；再补 generation/variant 历史草稿归属治理；随后做审计哈希链或 WORM 策略、外部 coturn 部署模板、云语音/检索/LLM provider 真实端点 key 冒烟。阶段约束继续：key 不入库不入码、生产清理不整表删除、Web 不直连 provider、UI 变更必须真实浏览器验收。
+M10-04 生产数据治理与公网语音收尾（第一切片已交付，见「当前任务」）：用 `legacy-paper-report` / `legacy-paper-migrate` 对 744 张历史卷做人工决策并分批执行（生产执行需运维逐批精确 ID + 显式 `--yes`，导出文件留档）；再补 generation/variant 历史草稿归属治理；随后做审计哈希链或 WORM 策略、外部 coturn 部署模板、云语音/检索/LLM provider 真实端点 key 冒烟。阶段约束继续：key 不入库不入码、生产清理不整表删除、Web 不直连 provider、UI 变更必须真实浏览器验收。
 
 ## 追加：M0 收尾验证（compose 全栈）
 

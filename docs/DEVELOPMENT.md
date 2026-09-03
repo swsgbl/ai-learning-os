@@ -69,7 +69,9 @@ X-Request-ID 可关联）。读取 `GET /api/v1/audit` 仅 admin（auth off 本�
 
 - 已交付：认证基座、三域归属隔离、Web 登录 UI、角色授权+治理审计、
   私有语料与四类草稿归属、试卷 owner 可见性、Web HttpOnly cookie、治理工作台；
-- 已知边界：generation/variant 草稿与 744 张历史试卷仍待人工归属分类；
+- 已知边界：generation/variant 草稿与 744 张历史试卷仍待人工归属分类
+  （M10-04 第一切片已交付 `legacy-paper-report` 只读分类报告与
+  `legacy-paper-migrate` 安全迁移 CLI，生产迁移待人工决策后显式 `--yes` 执行）；
   审计无防篡改哈希链；TURN 未内置；云 provider/LLM 真实 key 冒烟未执行。
 - 部署绑定：所有端口默认 127.0.0.1；LAN/外网需 `AIOS_BIND_IP=0.0.0.0` 且必须同时
   设强 AUTH_SECRET + APP_ENV=production（启动 fail-closed），否则不要对外暴露。
@@ -86,6 +88,19 @@ X-Request-ID 可关联）。读取 `GET /api/v1/audit` 仅 admin（auth off 本�
   仅用于跨站部署且会强制 Secure；`CORS_ORIGINS` 拒绝通配符 `*`（credentials 模式下
   `*` 会被反射成任意 Origin+凭据放行，启动即报错）。
 - 数据归属（M9-02 资源/考试/语音 + M9-05 四类草稿与私有语料边界）已落地：个人数据严格 owner-scoped；当前真实边界见上方「安全边界」。
+
+## 生产数据治理（M10-03 / M10-04）
+
+- 只读盘点与验收清理：`python -m app.ops.cli data-inventory` / `acceptance-clean`
+  （见 M10-03；清理默认 dry-run、精确行 ID 单事务、append-only 审计保留）。
+- 历史无归属试卷（`owner_id IS NULL` 非 seed）：`legacy-paper-report` 只读分类
+  （缺 DB fail-closed；默认摘要不含生产 paper ID；`--output` 强制 gitignore 的
+  artifacts/temp 目录）；`legacy-paper-migrate {keep-public,assign-owner,export-delete}`
+  默认 dry-run、`--yes` 才执行，只收精确 paper ID（未知 ID 整体拒绝），事务内
+  复核行数/行状态、before/after 同事务写审计；export-delete 先导出校验 JSONL
+  才删库，被历史考试引用的卷一律拒绝（人工处理，不级联删考试）。
+- 边界：CLI 不提供按标题/来源模糊批量操作；报告/导出文件含生产 ID 只写 gitignore
+  目录；生产执行必须运维逐批显式 `--yes`。
 
 ## LLM 接入（M10-01）
 
