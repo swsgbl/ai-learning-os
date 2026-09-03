@@ -26,8 +26,9 @@ docker compose -f infra/docker-compose.yml --profile local up -d --build
 基础服务（postgres/redis/minio/api/web）不挂 profile 恒启动；livekit（语音基础设施）
 挂在 local/hybrid/cloud 三个命名 profile 下。
 
-登录/注册由 API 提供（`POST /api/v1/auth/register` / `login`，compose 已注入 dev AUTH_SECRET，
-业务端点需 Bearer token；生产部署覆盖 `AIOS_AUTH_SECRET`）。
+登录/注册由 API 提供（`POST /api/v1/auth/register` / `login`，compose 已注入 dev AUTH_SECRET）。
+浏览器登录态走 HttpOnly cookie；CLI/API 客户端仍使用 Bearer token。生产部署覆盖
+`AIOS_AUTH_SECRET`，HTTPS 反代同时设置 `AIOS_AUTH_COOKIE_SECURE=true`。
 
 验证真实可用（全服务 healthy + 关键端点 + 认证 + 上传对象重启 API 后仍可读）：
 

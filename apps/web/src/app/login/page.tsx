@@ -25,7 +25,7 @@ export default function LoginPage() {
 
   useEffect(() => {
     // 后端未配置 AUTH_SECRET 时如实告知（不虚装登录可用）
-    fetch(`${API_BASE}/api/v1/auth/status`, { cache: "no-store" })
+    fetch(`${API_BASE}/api/v1/auth/status`, { cache: "no-store", credentials: "include" })
       .then((r) => r.json())
       .then((b: { auth_enabled: boolean }) => setDisabledMode(!b.auth_enabled))
       .catch(() => setError("无法连接学习服务"));
@@ -40,6 +40,7 @@ export default function LoginPage() {
       const res = await fetch(`${API_BASE}${path}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ username, password }),
       });
       if (!res.ok) {
@@ -51,14 +52,13 @@ export default function LoginPage() {
         const login = await fetch(`${API_BASE}/api/v1/auth/login`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          credentials: "include",
           body: JSON.stringify({ username, password }),
         });
         if (!login.ok) throw new Error("注册成功，请登录");
-        const token = (await login.json()) as { access_token: string };
-        saveSession(token.access_token, username);
+        saveSession(username);
       } else {
-        const body = (await res.json()) as { access_token: string };
-        saveSession(body.access_token, username);
+        saveSession(username);
       }
       router.push("/");
     } catch (cause) {

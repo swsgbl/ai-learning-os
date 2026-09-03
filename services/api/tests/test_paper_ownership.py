@@ -93,14 +93,37 @@ def _sqlite_client() -> TestClient:
     return TestClient(create_app(SQLITE_URL))
 
 
+def _file_client(db_path) -> TestClient:
+    return TestClient(create_app(f"sqlite+aiosqlite:///{db_path}"))
+
+
+def _promote(db_path, username: str) -> None:
+    import asyncio
+
+    from app.db.session import create_engine, make_sessionmaker
+    from app.repositories.users import UserRepository
+
+    async def run() -> None:
+        repo = UserRepository(make_sessionmaker(create_engine(f"sqlite+aiosqlite:///{db_path}")))
+        assert await repo.set_role(username, "admin") is not None
+
+    asyncio.run(run())
+
+
 # --- 可见性主链路（SQLite 替身 = PostgresRepository 同一路径）---
 
 
-def test_imported_paper_is_private_to_owner(auth_on) -> None:
-    with _sqlite_client() as client:
+def test_imported_paper_is_private_to_owner(auth_on, tmp_path) -> None:
+    db_path = tmp_path / "paper-owner-list.db"
+    with _file_client(db_path) as client:
         alice = User(client, "alice_paper_m1003")
         bob = User(client, "bob_paper_m1003")
         admin = User(client, "admin_paper_m1003")
+
+        assert client.get("/api/v1/auth/me", headers=admin.headers).json()["role"] == "learner"
+        assert client.get("/api/v1/audit", headers=admin.headers).status_code == 403
+        _promote(db_path, "admin_paper_m1003")
+        assert client.get("/api/v1/auth/me", headers=admin.headers).json()["role"] == "admin"
 
         paper_id = _import(client, alice.headers)
         bob_list = client.get("/api/v1/papers", headers=bob.headers).json()
@@ -119,11 +142,13 @@ def test_imported_paper_is_private_to_owner(auth_on) -> None:
         assert {paper["id"] for paper in admin_list} == {paper["id"] for paper in bob_list}
 
 
-def test_exam_creation_on_foreign_private_paper_is_404(auth_on) -> None:
-    with _sqlite_client() as client:
+def test_exam_creation_on_foreign_private_paper_is_404(auth_on, tmp_path) -> None:
+    db_path = tmp_path / "paper-owner-exam.db"
+    with _file_client(db_path) as client:
         alice = User(client, "alice_exam_m1003")
         bob = User(client, "bob_exam_m1003")
         admin = User(client, "admin_exam_m1003")
+        _promote(db_path, "admin_exam_m1003")
         paper_id = _import(client, alice.headers)
 
         for headers in (bob.headers, admin.headers):

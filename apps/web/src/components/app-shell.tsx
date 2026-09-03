@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/api";
-import { clearSession, probeAuth, type AuthState } from "@/lib/auth";
+import { logout, probeAuth, type AuthState } from "@/lib/auth";
 
 const BASE_NAV: Array<{ href: string; label: string; icon: LucideIcon }> = [
   { href: "/", label: "首页", icon: Home },
@@ -105,8 +105,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   // 退出必须立即生效：同步置 anonymous 让徽章/治理入口当场消失（不等下一次
   // 路由探测），并跳登录页离开可能含私有数据的工作台/治理页
-  const handleLogout = () => {
-    clearSession();
+  const handleLogout = async () => {
+    await logout(API_BASE);
     setAuth({ mode: "anonymous" });
     router.push("/login");
   };

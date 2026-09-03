@@ -6,6 +6,7 @@
 - 配置后业务路径必须 Bearer token（register/login/status/version/health/docs
   豁免），坏 token/过期 token/缺 token 一律 401；
 - 登录失败统一文案防用户名枚举；密码只存 bcrypt 哈希（72 字节上限显式拒绝）。
+- M10-03 起浏览器登录态走 HttpOnly cookie；Bearer 仍保留给 CLI/API 客户端。
 """
 from __future__ import annotations
 
@@ -96,6 +97,21 @@ def test_enabled_gate_rejects_forged_and_expired_tokens(auth_on) -> None:
         assert stale.status_code == 401
 
 
+def test_cors_preflight_allows_credentials_for_configured_local_origin(auth_on) -> None:
+    """Web 与 API 跨端口：credentials cookie 必须由显式 CORS allowlist 放行。"""
+    with TestClient(create_app(SQLITE_URL)) as client:
+        response = client.options(
+            "/api/v1/auth/me",
+            headers={
+                "Origin": "http://127.0.0.1:3010",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+        assert response.status_code == 200
+        assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:3010"
+        assert response.headers["access-control-allow-credentials"] == "true"
+
+
 # --- 注册 / 登录 / me 闭环 ---
 
 
@@ -119,6 +135,70 @@ def test_register_login_me_roundtrip(auth_on) -> None:
         assert me.status_code == 200
         assert me.json()["username"] == "learner"
         assert me.json()["id"] == body["id"]
+
+
+def test_login_sets_http_only_cookie_and_cookie_authenticates_requests(auth_on) -> None:
+    with TestClient(create_app(SQLITE_URL)) as client:
+        _register(client)
+        login = _login(client)
+
+        cookie = login.headers["set-cookie"].lower()
+        assert "aios_auth=" in cookie
+        assert "httponly" in cookie
+        assert "samesite=lax" in cookie
+        assert "path=/" in cookie
+
+        me = client.get("/api/v1/auth/me")
+        assert me.status_code == 200, me.text
+        assert me.json()["username"] == "learner"
+
+        papers = client.get("/api/v1/papers")
+        assert papers.status_code == 200, papers.text
+
+
+def test_invalid_auth_cookie_is_rejected_like_invalid_bearer(auth_on) -> None:
+    with TestClient(create_app(SQLITE_URL)) as client:
+        client.cookies.set("aios_auth", "not-a-real-jwt")
+        assert client.get("/api/v1/auth/me").status_code == 401
+        assert client.get("/api/v1/papers").status_code == 401
+
+
+def test_logout_clears_cookie_and_requires_login_again(auth_on) -> None:
+    with TestClient(create_app(SQLITE_URL)) as client:
+        _register(client)
+        _login(client)
+        assert client.get("/api/v1/auth/me").status_code == 200
+
+        logout = client.post("/api/v1/auth/logout")
+        assert logout.status_code == 204
+        assert "aios_auth=" in logout.headers["set-cookie"].lower()
+        assert "max-age=0" in logout.headers["set-cookie"].lower()
+        assert client.get("/api/v1/auth/me").status_code == 401
+        assert client.get("/api/v1/papers").status_code == 401
+
+
+def test_auth_cookie_same_site_none_requires_secure(monkeypatch: pytest.MonkeyPatch) -> None:
+    from app.core.config import Settings
+
+    monkeypatch.setenv("AUTH_COOKIE_SAMESITE", "none")
+    monkeypatch.delenv("AUTH_COOKIE_SECURE", raising=False)
+    with pytest.raises(ValueError, match="AUTH_COOKIE_SECURE=true"):
+        Settings(_env_file=None)
+
+
+def test_cors_wildcard_origin_rejected_under_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """M10-03 allow_credentials=True 后，"*" 会被反射成任意 Origin + 凭据放行 → 启动即拒。"""
+    from app.core.config import Settings
+
+    for bad in ("*", "http://localhost:3000,*", "https://*.example.com"):
+        monkeypatch.setenv("CORS_ORIGINS", bad)
+        with pytest.raises(ValueError, match="CORS_ORIGINS 不允许通配符"):
+            Settings(_env_file=None)
+    monkeypatch.setenv("CORS_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
+    assert Settings(_env_file=None).cors_origin_list == [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+    ]
 
 
 def test_login_fails_with_identical_message_for_wrong_password_and_missing_user(auth_on) -> None:
@@ -235,6 +315,19 @@ def test_me_reflects_admin_role_immediately_after_promote(auth_on, tmp_path) -> 
         assert client.get("/api/v1/auth/me", headers=headers).json()["role"] == "learner"
         _promote(tmp_path / "me_role.db", "learner")
         assert client.get("/api/v1/auth/me", headers=headers).json()["role"] == "admin"
+
+
+def test_cookie_admin_role_controls_governance_after_promote(auth_on, tmp_path) -> None:
+    """治理授权实时读库：旧 cookie 不重签，但提升后立即可用、 learner 先 403。"""
+    with _me_role_client(tmp_path) as client:
+        _register(client)
+        _login(client)
+        assert client.get("/api/v1/audit").status_code == 403
+        _promote(tmp_path / "me_role.db", "learner")
+        me = client.get("/api/v1/auth/me")
+        assert me.status_code == 200
+        assert me.json()["role"] == "admin"
+        assert client.get("/api/v1/audit").status_code == 200
 
 
 def test_me_role_off_semantics_unchanged(auth_off) -> None:

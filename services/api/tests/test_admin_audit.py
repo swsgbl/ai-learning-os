@@ -320,6 +320,15 @@ def test_compose_cors_follows_web_port() -> None:
     assert "${AIOS_WEB_PORT:-3000}" in cors, "自定义 Web 端口时 CORS 默认联动"
 
 
+def test_compose_exposes_auth_cookie_switches() -> None:
+    """HTTPS 部署必须能把 Secure/SameSite 传入 API 容器。"""
+    with open(COMPOSE_FILE, encoding="utf-8") as fh:
+        compose = yaml.safe_load(fh)
+    env = compose["services"]["api"]["environment"]
+    assert env["AUTH_COOKIE_SECURE"] == "${AIOS_AUTH_COOKIE_SECURE:-false}"
+    assert env["AUTH_COOKIE_SAMESITE"] == "${AIOS_AUTH_COOKIE_SAMESITE:-lax}"
+
+
 # --- M9-06 公开暴露 fail-closed（四类路径） ---
 
 

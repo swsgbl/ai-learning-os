@@ -84,6 +84,10 @@ services:
       # 本地 dev 值仅用于开发栈（与 LIVEKIT_API_SECRET 同款占位约定）
       AUTH_SECRET: ${AIOS_AUTH_SECRET:-aios-local-dev-secret-7d21b9e4c8a3}
       AUTH_TOKEN_EXPIRE_MINUTES: ${AIOS_AUTH_TOKEN_EXPIRE_MINUTES:-1440}
+      # M10-03: Web 登录态 HttpOnly cookie；HTTPS 反代部署设置
+      # AIOS_AUTH_COOKIE_SECURE=true（SameSite=None 时强制 Secure）
+      AUTH_COOKIE_SECURE: ${AIOS_AUTH_COOKIE_SECURE:-false}
+      AUTH_COOKIE_SAMESITE: ${AIOS_AUTH_COOKIE_SAMESITE:-lax}
       # M7-01: profile 分离 local/hybrid/cloud —— AIOS_VOICE_MODE 插值注入语音隐私路由
       VOICE_MODE: ${AIOS_VOICE_MODE:-local}
     ports:
