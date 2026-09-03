@@ -9,6 +9,18 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M10-06 审计链库外锚定已完成并验证**（分支未合并；**生产主库未执行 0027、未创建任何锚点**——本切片只交付锚定工具与 runbook，实现与全部测试只用临时 SQLite，零生产连接、零生产写入、不虚报已锚定）：
+
+- **动机（M10-04 如实声明的边界）**：库内哈希链可检测行级篡改/漏记，但持数据库写权限者可整链重算且重算后自洽。锚定把链头（sequence + head_hash）定期写到**库外** append-only JSONL 锚文件并自身成链；重算/回退后的 DB 链在既有锚点 sequence 上的 entry_hash 必然对不上，交叉核对即可发现。
+- **锚文件格式**：每行一个 JSON 对象，字段固定且无敏感信息（schema_version/algorithm/sequence/head_hash/anchored_at/previous_anchor_hash/anchor_hash）；anchor_hash = sha256(canonical JSON of 其余六字段)——与 DB 链同源 canonical 规则（`app.domain.audit_chain.canonical_json_bytes`），首锚 previous=64 个 0，锚文件自身成链；新建文件 0600（POSIX；Windows 无 POSIX 权限位=默认 ACL，文档如实声明）。
+- **CLI**：`python -m app.ops.cli audit-chain-anchor --db-url ... --anchor-file <path> [--yes | --verify-only] [--json]`（`app/ops/audit_chain_anchor.py`）。默认 dry-run 不落盘，`--yes` 才追加（O_APPEND 单行写入 + fsync，失败 ftruncate 回截不留半行），`--verify-only` 只做「DB 链 + 锚文件链 + head 交叉一致」校验；退出码对齐 verifier：valid/up-to-date/anchored/dry-run=0、invalid=1、缺参/symlink/目录/父目录缺失/连接失败=2；对数据库零写入。
+- **追加前防线（顺序执行，任一失败拒绝且不落盘）**：① `audit-chain-verify` 全量重算 valid；② 既有锚文件完整校验（UTF-8/JSONL/字段集/类型/anchor_hash 重算/锚链链接/sequence 严格递增；partial line、空行、非 JSON、残缺 UTF-8、schema/algorithm 变体均 invalid **不自动修复**）；③ 每个历史锚点 (sequence, head_hash) 与当前 DB 同 sequence entry_hash 交叉核对（sequence=0 对 genesis 常量）——DB 整链重算（同 sequence 不同 hash）或回退（锚点 sequence 不在链中）拒绝；④ DB head == 最后锚点则 up-to-date 不重复追加。
+- **并发边界（不引入后台服务/文件锁）**：锚定读取在单一连接、单一事务快照内完成 verify + 交叉核对 + head 提取——verifier 重构拆出 `load_chain_snapshot(conn)`（同一连接读三组行，PG 连接提升 REPEATABLE READ、SQLite 显式事务快照）与 `verify_chain_snapshot`（纯校验），`verify_audit_chain` 行为不变（既有 27 项测试全过）；测试以引擎计数锁定锚定全流程只建一个引擎。残余可检测风险：两操作员同时向同一锚文件追加会造成 previous_anchor_hash 断链，被下一次校验 fail-closed 拒绝（runbook 要求串行执行）。
+- **如实声明的边界**：本机锚文件是可变文件系统对象（持主机写权限者可连锚文件一起重写），只是操作见证；对持库写权限者的防御依赖**另行归档到 WORM/对象锁/离线介质**（复制与介质由运维负责，工具不代管不虚报）。锚文件被截掉整行时剩余部分自洽、无法与「从未锚定」区分——权威见证是 WORM 副本（文档声明；DB 侧重算/回退仍被交叉核对拦截）。
+- **文档**：DEVELOPMENT.md 审计节新增「库外锚定（M10-06）」与锚定 runbook（0027 迁移 valid 后、恢复服务前必须创建 initial anchor 并归档；定期锚定节奏；恢复/审查流程与 problems 定位口径；Windows 0600 语义；并发边界），迁移 runbook 增补第 4 步「初始锚定」；安全边界条目同步。
+- **验证**：新增 `tests/test_audit_chain_anchor.py` **23 项**（22 passed / 1 skipped——skip 为 POSIX 0600 权限位，Windows 不适用；symlink 拒绝在本机实际执行）：initial anchor 单行 canonical + anchor_hash 独立重算、追加审计后第二锚成链、same head up-to-date 双模式不追加、空库 genesis 锚、verify-only 三链校验与可锚定提示、--yes 与 --verify-only 互斥、DB 链 invalid 拒绝、**DB 整链重算后 verify valid 但锚定拒绝（核心价值）**、DB sequence 回退拒绝、内部 hash 自洽的伪造锚行靠交叉核对拦截、篡改矩阵（head_hash/anchor_hash/previous 断链/重复锚点/字段集增删/schema/algorithm/anchored_at）、partial line/无尾换行/无效 UTF-8/空行/非 JSON/非对象、整行截断语义（自洽即接受+文档边界）、symlink（含 dangling）/目录/父目录缺失 exit 2、写入中途失败回截无半行、单引擎单快照、CLI exit 0/1/2 + --json 结构 + 人类摘要 + main 分发、marker 零泄漏（报告/摘要/锚文件三处）；受影响套件（audit_chain + anchor + admin_audit + m905 + draft_ownership + legacy_paper + data_hygiene）**140 passed / 1 skipped**。
+- **生产执行边界**：生产 0027 迁移 + 首次锚定留待运维按 DEVELOPMENT.md「审计」节 runbook 执行（迁移 valid 后立即 initial anchor 并归档 WORM，再恢复服务）；本切片零生产连接。
+
 **M10-05 外部 coturn 部署模板已完成并验证**（分支未合并；模板为**独立 compose 文件**，主栈 local/hybrid/cloud 任一 profile 默认渲染均不含 coturn、现有启动行为零变化；**生产外部网络验收未覆盖**——无真实公网 IP/域名/证书，只验证了配置渲染与本机隔离监听，不虚报 TURN 可用性）：
 
 - **交付物**：`infra/coturn/{docker-compose.coturn.yml, entrypoint.sh, .env.example, turnserver.conf.example}` + `docs/COTURN_DEPLOYMENT.md`（部署/防火墙/LiveKit 联动/分级验证）+ `services/api/tests/test_coturn_template.py`（67 项，含门控冒烟）。

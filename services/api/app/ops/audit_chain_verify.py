@@ -12,8 +12,14 @@
 正文或任何可能承载敏感值的字段内容。本命令对数据库零写入。
 
 可检测：行内容篡改、entry 篡改/删除、sequence 断裂、head/state 漂移。
-不可检测（持数据库写权限者的整链重算）：抵御需外部备份/对象锁等
-存储层锚定，不在本模块范围（docs/DEVELOPMENT.md 同步说明）。
+不可检测（持数据库写权限者的整链重算）：抵御需库外锚定（M10-06
+`app/ops/audit_chain_anchor.py` 把 head_hash 记录到库外 append-only
+锚文件），见 docs/DEVELOPMENT.md。
+
+M10-06：读取与校验拆开——`load_chain_snapshot(conn)` 在**同一个连接**
+（调用方可包显式事务拿一致快照）上读三组行，`verify_chain_snapshot`
+做纯校验。锚定工具复用二者，保证「verify 结论 + 锚点交叉核对 + head
+提取」来自同一份快照，消除多连接间的竞态（docs 并发边界说明）。
 """
 from __future__ import annotations
 
@@ -22,6 +28,7 @@ from collections.abc import Mapping
 from typing import Any
 
 import sqlalchemy as sa
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.db.orm import AuditChainEntryRow, AuditChainStateRow, AuditLogRow
 from app.db.session import create_engine
@@ -38,54 +45,68 @@ _MAX_PROBLEMS = 50
 _REQUIRED_TABLES = ("audit_log", "audit_chain_entries", "audit_chain_state")
 
 
-async def verify_audit_chain(db_url: str) -> dict[str, Any]:
-    """对 db_url 只读校验哈希链，返回 report dict（不抛业务异常）。"""
+async def load_chain_snapshot(conn: AsyncConnection) -> dict[str, Any]:
+    """在给定连接上一次读取三组行（含表存在性检查）。
+
+    调用方可在同一连接外包显式事务（`async with conn.begin()`；PG 可再
+    提升隔离级别到 REPEATABLE READ）获得一致快照；三条 SELECT 读取期间
+    数据不漂移是锚定工具交叉核对正确性的前提。对数据库零写入。
+    """
+    missing_tables = [
+        name
+        for name in _REQUIRED_TABLES
+        if not await conn.run_sync(
+            lambda sync_conn, n=name: sa.inspect(sync_conn).has_table(n)
+        )
+    ]
+    if missing_tables:
+        return {
+            "missing_tables": missing_tables,
+            "audit_rows": [],
+            "entries": [],
+            "states": [],
+        }
+    # core 连接上 ORM-entity select 不物化实体（scalars 只给主键值），
+    # 统一取 RowMapping：audit_hash_values 按 Mapping 提取，与迁移
+    # 脚本读回形态一致。
+    audit_rows = (
+        await conn.execute(sa.select(AuditLogRow).order_by(AuditLogRow.id))
+    ).mappings().all()
+    entries = (
+        await conn.execute(
+            sa.select(AuditChainEntryRow).order_by(AuditChainEntryRow.sequence)
+        )
+    ).mappings().all()
+    states = (
+        await conn.execute(
+            sa.select(AuditChainStateRow).order_by(AuditChainStateRow.id)
+        )
+    ).mappings().all()
+    return {
+        "missing_tables": [],
+        "audit_rows": list(audit_rows),
+        "entries": list(entries),
+        "states": list(states),
+    }
+
+
+def verify_chain_snapshot(snapshot: Mapping[str, Any]) -> dict[str, Any]:
+    """对 load_chain_snapshot 的结果做纯校验（无 IO），返回 report。"""
     problems: list[str] = []
     report: dict[str, Any] = {
         "algorithm": AUDIT_CHAIN_ALGORITHM,
         "entries": 0,
         "audit_rows": 0,
     }
-    engine = create_engine(db_url)
-    try:
-        async with engine.connect() as conn:
-            missing_tables = [
-                name
-                for name in _REQUIRED_TABLES
-                if not await conn.run_sync(
-                    lambda sync_conn, n=name: sa.inspect(sync_conn).has_table(n)
-                )
-            ]
-            if missing_tables:
-                problems.append(
-                    "表缺失: " + ", ".join(missing_tables)
-                    + "（0027_audit_chain 未执行或库不是本应用Schema）"
-                )
-                return _finish(report, problems)
-
-            # core 连接上 ORM-entity select 不物化实体（scalars 只给主键值），
-            # 统一取 RowMapping：audit_hash_values 按 Mapping 提取，与迁移
-            # 脚本读回形态一致。
-            audit_rows = (
-                await conn.execute(
-                    sa.select(AuditLogRow).order_by(AuditLogRow.id)
-                )
-            ).mappings().all()
-            entries = (
-                await conn.execute(
-                    sa.select(AuditChainEntryRow).order_by(
-                        AuditChainEntryRow.sequence
-                    )
-                )
-            ).mappings().all()
-            states = (
-                await conn.execute(
-                    sa.select(AuditChainStateRow).order_by(AuditChainStateRow.id)
-                )
-            ).mappings().all()
-    finally:
-        await engine.dispose()
-
+    if snapshot["missing_tables"]:
+        problems.append(
+            "表缺失: " + ", ".join(snapshot["missing_tables"])
+            + "（0027_audit_chain 未执行或库不是本应用Schema）"
+        )
+        return _finish(report, problems)
+    audit_rows = snapshot["audit_rows"]
+    entries = snapshot["entries"]
+    states = snapshot["states"]
     report["entries"] = len(entries)
     report["audit_rows"] = len(audit_rows)
     _verify_pairing(audit_rows, entries, problems)
@@ -93,6 +114,17 @@ async def verify_audit_chain(db_url: str) -> dict[str, Any]:
     _verify_hashes(audit_rows, entries, problems)
     _verify_state(states, entries, problems)
     return _finish(report, problems)
+
+
+async def verify_audit_chain(db_url: str) -> dict[str, Any]:
+    """对 db_url 只读校验哈希链，返回 report dict（不抛业务异常）。"""
+    engine = create_engine(db_url)
+    try:
+        async with engine.connect() as conn:
+            snapshot = await load_chain_snapshot(conn)
+    finally:
+        await engine.dispose()
+    return verify_chain_snapshot(snapshot)
 
 
 def _verify_pairing(

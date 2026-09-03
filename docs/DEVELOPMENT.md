@@ -91,8 +91,9 @@ X-Request-ID 可关联）。读取 `GET /api/v1/audit` 仅 admin（auth off 本�
   失败=2。输出只含 audit_id/sequence 与原因，不含 before/after 正文。
 - 边界（如实声明）：哈希链可检测篡改与漏记（改行内容、删 entry、跳号、
   head 漂移），**不等于数字签名，也不是存储级 WORM**——持有数据库写权限
-  的攻击者理论上可整链重算；抵御整链重算需外部备份 / 对象锁等存储层锚定
-  （把 head_hash 定期记录到库外），不在本切片范围。
+  的攻击者理论上可整链重算；抵御整链重算靠**库外锚定**（M10-06，见下节：
+  把 head_hash 定期记录到库外 append-only 锚文件并交叉核对，锚文件须
+  另行归档到 WORM/对象锁/离线介质）。
 - 迁移 `0027_audit_chain`：对既有 `audit_log` 按 id 升序一次性建链
   （与应用层同源算法），downgrade 只删两张新表不动审计数据。
   **生产主库（5433/ai_learning_os）尚未执行 0027**——生产库的链表与
@@ -119,21 +120,93 @@ X-Request-ID 可关联）。读取 `GET /api/v1/audit` 仅 admin（auth off 本�
 3. **迁移后验证（放行门禁）**：`python -m app.ops.cli audit-chain-verify
    --db-url <生产URL>` 必须 **valid 且 exit 0** 才恢复服务；INVALID
    保持停机排查原因，不带病恢复。
-4. **恢复后观察**：确认新审计写入正常（治理动作落 audit_log 且链
+4. **初始锚定（M10-06，恢复服务前）**：verifier valid 后立即对空/
+   存量链创建 initial anchor（命令与归档要求见下「库外锚定」节的
+   锚定 runbook 第 1 步），锚文件归档到 WORM/对象锁/离线介质后再
+   恢复服务——否则存量链头仍无库外见证。
+5. **恢复后观察**：确认新审计写入正常（治理动作落 audit_log 且链
    sequence 前进），并复跑一次 verifier 确认仍 valid。
-5. **downgrade 仅作应急方案**：必须先停写入、先备份、获得明确审批后
+6. **downgrade 仅作应急方案**：必须先停写入、先备份、获得明确审批后
    才执行；它使生产回到无链形态，事后需重新走本 runbook 建链。
+
+### 库外锚定（M10-06）
+
+哈希链 + verifier 是库内自证：持数据库写权限者可整链重算且重算后自洽。
+锚定把每个时刻的链头（sequence + head_hash）写到**数据库之外**的
+append-only JSONL 锚文件，锚文件自身成链；既有锚点与重算后 DB 链在同
+sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回滚。
+
+- **锚文件格式**：每行一个 JSON 对象，字段固定且不含任何敏感信息——
+  schema_version、algorithm、sequence、head_hash、anchored_at、
+  previous_anchor_hash、anchor_hash。anchor_hash = sha256(canonical
+  JSON of 其余六字段)（与 DB 链同源 canonical 规则），首锚
+  previous_anchor_hash = 64 个 0，逐锚链接。新建文件权限 0600（POSIX
+  语义；**Windows 无 POSIX 权限位**，等效默认 ACL——锚内容本就无敏感
+  值，机密性不依赖文件权限，完整性依赖 WORM 副本）。
+- **CLI**：`python -m app.ops.cli audit-chain-anchor --db-url ...
+  --anchor-file <path> [--yes | --verify-only] [--json]`
+  （`app/ops/audit_chain_anchor.py`）。默认 dry-run 只打印将追加的锚行；
+  `--yes` 才落盘（O_APPEND 单行写入 + fsync，失败回截不留半行）；
+  `--verify-only` 只做「DB 链 + 锚文件链 + 两者 head 交叉一致」校验。
+  退出码与 verifier 对齐：valid/up-to-date/anchored/dry-run=0、
+  invalid=1、缺 `--db-url`/锚文件路径问题（symlink、目录、父目录缺失，
+  不自动创建）/连接失败=2。锚定对数据库零写入。
+- **追加前防线**（顺序执行，任一失败拒绝且不落盘）：① verifier 全量
+  重算当前库必须 valid；② 既有锚文件完整解析校验（UTF-8、JSONL、字段
+  集合、类型、anchor_hash 重算、锚链链接、sequence 严格递增；partial
+  line、空行、非 JSON、残缺 UTF-8 均 invalid **不自动修复**）；③ 每个
+  历史锚点 (sequence, head_hash) 与当前 DB 同 sequence 的 entry_hash
+  交叉核对（sequence=0 对 genesis 常量）——DB 整链重算（同 sequence
+  不同 hash）或回退（锚点 sequence 不在当前链中）一律拒绝；④ DB head
+  与最后锚点相同则 up-to-date，不重复追加。
+- **并发边界**：锚定读取在**单一连接、单一事务快照**内完成 verify +
+  交叉核对 + head 提取（PG 连接提升 REPEATABLE READ；SQLite 走显式
+  事务的库级快照；verifier 相应拆出 `load_chain_snapshot` /
+  `verify_chain_snapshot` 供同一快照复用），不存在「verifier 一条
+  连接、锚定义一条连接」的竞态（测试锁定全流程只建一个引擎）。不引入
+  后台服务与文件锁：两名操作员同时向同一锚文件追加会立刻造成
+  previous_anchor_hash 断链，被下一次校验 fail-closed 发现（可检测；
+  锚定操作按 runbook 串行执行）。
+- **锚文件必须另行归档到 WORM/对象锁/离线介质**：本机锚文件是可变
+  文件系统对象，持主机写权限者可连锚文件一起重写——它只是「操作
+  见证」，单独不构成对持库写权限者的防御。归档介质（对象锁桶、S3
+  版本化、一次性写入介质、离线保管）与复制动作由运维负责，工具不
+  代管、也不虚报「已锚定到 WORM」。
+
+#### 锚定 runbook（生产首次与定期）
+
+1. **首次（0027 迁移后立即）**：上方迁移 runbook 第 4 步——verifier
+   valid 后、恢复服务前，先 dry-run 复核将写的锚行，再执行
+   `python -m app.ops.cli audit-chain-anchor --db-url <生产URL>
+   --anchor-file <运维保管路径>/audit-anchor.jsonl --yes`；随后立即
+   把锚文件复制到 WORM/对象锁/离线介质并登记介质位置与最后锚点
+   anchor_hash。空库锚 sequence=0（genesis）同样有效。
+2. **定期锚定**：建议每周一次、每次重大治理动作后、或审计增量超过
+   阈值时执行：先 `--verify-only`（三链一致 exit 0），再 dry-run、
+   `--yes` 追加，然后更新归档副本。锚定不锁库不阻塞业务——锚的是
+   读取时刻的链头，锚定窗口内新增审计只会让下次锚定继续前进。
+3. **恢复/审查流程**：怀疑审计被篡改时，取**WORM/离线副本**（只读）
+   作为锚文件运行 `--verify-only`：exit 0 = DB 链与全部历史锚点交叉
+   一致；exit 1 按 problems 定位——「锚点 sequence=N 在当前 DB 链中
+   不存在」= DB 回退；「head_hash 与当前 DB entry_hash 不匹配」=
+   整链重算或该位置被重写；锚链「不链接/重算不匹配」= 锚文件本身
+   被动过。发现不一致按事故处理：保全 DB 与锚文件证据、比对历史
+   备份与归档锚点、追溯时间窗，**不在可疑状态下继续追加锚点**。
+4. **当前生产状态（如实声明）**：生产主库未执行 0027、未创建任何
+   锚点；本切片只交付工具与流程文档，不执行生产锚定。
 
 ### 安全边界（M10-03 后更新）
 
 - 已交付：认证基座、三域归属隔离、Web 登录 UI、角色授权+治理审计、
   私有语料与四类草稿归属、试卷 owner 可见性、Web HttpOnly cookie、治理工作台、
-  审计防篡改哈希链（M10-04；生产主库迁移待执行，见上）；
+  审计防篡改哈希链与库外锚定工具（M10-04/M10-06；生产主库迁移与首次
+  锚定待执行，见上）；
 - 已知边界：744 张历史试卷与 generation/variant 历史无归属草稿仍待人工归属决策
   （M10-04 已交付 `legacy-paper-report`/`legacy-paper-migrate` 与
   `draft-owner-report`/`draft-owner-migrate` 只读报告 + 默认 dry-run 迁移 CLI，
   生产迁移待人工决策后显式 `--yes` 执行）；
-  哈希链不抵御持库写权限者的整链重算（非签名、非存储级 WORM，见上）；
+  哈希链整链重算的抵御依赖库外锚定 + WORM/离线归档（M10-06 工具已交付，
+  生产未锚定；非数字签名，见上）；
   TURN 未内置；云 provider/LLM 真实 key 冒烟未执行。
 - 部署绑定：所有端口默认 127.0.0.1；LAN/外网需 `AIOS_BIND_IP=0.0.0.0` 且必须同时
   设强 AUTH_SECRET + APP_ENV=production（启动 fail-closed），否则不要对外暴露。

@@ -477,6 +477,54 @@ def _run_audit_chain_verify(args) -> int:
     return 0 if report["valid"] else 1
 
 
+def _run_audit_chain_anchor(args) -> int:
+    """python -m app.ops.cli audit-chain-anchor --db-url URL --anchor-file PATH
+    [--yes | --verify-only] [--json]
+
+    M10-06 审计链库外锚定：默认 dry-run 只打印将追加的锚行；--yes 才落盘
+    （单行追加 + fsync）；--verify-only 只做「DB 链 + 锚文件链 + head 交叉
+    一致」校验。追加前 DB 链必须 verify valid、锚文件必须完整自洽、全部
+    历史锚点必须命中当前 DB 同 sequence 的 entry_hash（整链重算/回退拒绝）。
+    退出码 valid/up-to-date/anchored/dry-run=0，invalid=1，缺参/路径/连接
+    失败=2。锚文件每行只含 schema/algorithm/sequence/hash/时间，无敏感值。
+    """
+    import json as _json
+
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from app.ops.audit_chain_anchor import (
+        AnchorInputError,
+        format_anchor_summary,
+        run_anchor,
+    )
+
+    db_url = _db_url_of(args)
+    if not db_url:
+        print("缺少 --db-url 或 DATABASE_URL，拒绝锚定（fail-closed）")
+        return 2
+    try:
+        report = asyncio.run(
+            run_anchor(
+                db_url,
+                args.anchor_file,
+                execute=args.yes,
+                verify_only=args.verify_only,
+            )
+        )
+    except AnchorInputError as cause:
+        print(f"锚定输入无效（参数或锚文件路径）: {cause}")
+        return 2
+    except (SQLAlchemyError, OSError, ValueError) as cause:
+        # 连接失败/无效 URL/磁盘 IO 等：输入环境问题，非链结论
+        print(f"锚定执行失败: {type(cause).__name__}: {cause}")
+        return 2
+    if getattr(args, "as_json", False):
+        print(_json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(format_anchor_summary(report))
+    return 0 if report["valid"] else 1
+
+
 async def _run_license_report(args) -> int:
     """license-report 子命令：输出四区段授权清单 JSON（无 DB 时含说明段）。"""
     import json as _json
@@ -681,6 +729,30 @@ def main() -> None:
     p_av.add_argument(
         "--json", dest="as_json", action="store_true", help="输出完整 JSON 报告"
     )
+    p_an = sub.add_parser(
+        "audit-chain-anchor",
+        help=(
+            "审计链库外锚定（M10-06；默认 dry-run，--yes 追加，"
+            "--verify-only 仅校验；valid=0 / invalid=1 / 参数或路径错误=2）"
+        ),
+    )
+    p_an.add_argument("--db-url", default=None)
+    p_an.add_argument(
+        "--anchor-file",
+        required=True,
+        help="append-only JSONL 锚文件路径（拒绝 symlink/目录；父目录必须已存在）",
+    )
+    p_an.add_argument(
+        "--yes", action="store_true", help="真正追加锚行（默认 dry-run 不落盘）"
+    )
+    p_an.add_argument(
+        "--verify-only",
+        action="store_true",
+        help="只做 DB 链 + 锚文件链 + head 交叉一致校验，不追加（与 --yes 互斥）",
+    )
+    p_an.add_argument(
+        "--json", dest="as_json", action="store_true", help="输出完整 JSON 报告"
+    )
     p_ad = sub.add_parser("admin", help="角色运维：promote/demote/list（M9-04）")
     p_ad.add_argument("action", choices=["promote", "demote", "list"])
     p_ad.add_argument("username", nargs="?", default=None)
@@ -710,6 +782,8 @@ def main() -> None:
         raise SystemExit(_run_db_rollback(args))
     if args.command == "audit-chain-verify":
         raise SystemExit(_run_audit_chain_verify(args))
+    if args.command == "audit-chain-anchor":
+        raise SystemExit(_run_audit_chain_anchor(args))
     if args.command == "admin":
         if args.action != "list" and not args.username:
             print("promote/demote 需要用户名")
