@@ -9,7 +9,7 @@ const NAME_KEY = "aios_username";
 export type AuthState =
   | { mode: "disabled" } // API 未配置 AUTH_SECRET：本地模式，如实透出
   | { mode: "anonymous" } // 需要登录但本地无凭据
-  | { mode: "authenticated"; token: string; username: string };
+  | { mode: "authenticated"; token: string; username: string; role?: "learner" | "admin" };
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -34,6 +34,7 @@ export function clearSession() {
 export interface MeInfo {
   id: string;
   username: string;
+  role?: "learner" | "admin"; // M10-02: 旧 API 无此字段时视为 learner
 }
 
 /** 认证探测：后端开关（auth_enabled）优先，其次本地 token 有效性。 */
@@ -54,5 +55,5 @@ export async function probeAuth(apiBase: string): Promise<AuthState> {
     return { mode: "anonymous" };
   }
   const user = (await me.json()) as MeInfo;
-  return { mode: "authenticated", token, username: user.username };
+  return { mode: "authenticated", token, username: user.username, role: user.role };
 }

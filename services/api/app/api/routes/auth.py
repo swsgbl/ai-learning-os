@@ -35,6 +35,7 @@ class CredentialsIn(BaseModel):
 class UserOut(BaseModel):
     id: str
     username: str
+    role: str  # learner | admin（M10-02：前端据此渲染治理入口；安全边界仍在 require_admin）
     created_at: str
 
 
@@ -112,7 +113,10 @@ async def register(payload: CredentialsIn, request: Request) -> UserOut:
     except ValueError as cause:
         raise HTTPException(status_code=409, detail=str(cause)) from cause
     return UserOut(
-        id=user.id, username=user.username, created_at=user.created_at.isoformat()
+        id=user.id,
+        username=user.username,
+        role=user.role,
+        created_at=user.created_at.isoformat(),
     )
 
 
@@ -142,7 +146,12 @@ async def me(request: Request) -> UserOut:
     user = await _user_repo(request).get(user_id)
     if user is None:
         raise HTTPException(status_code=401, detail="用户不存在或已删除")
-    return UserOut(id=user.id, username=user.username, created_at=user.created_at.isoformat())
+    return UserOut(
+        id=user.id,
+        username=user.username,
+        role=user.role,
+        created_at=user.created_at.isoformat(),
+    )
 
 
 def current_owner_id(request: Request) -> str | None:
