@@ -66,6 +66,18 @@ python -m app.ops.cli backup --out backup-dir/       # 回滚前先备份
 python -m app.ops.cli db-rollback --steps 1 --yes    # 真正执行 alembic downgrade -1
 ```
 
+**生产数据盘点与验收清理**（M10-03；inventory 只读；清理默认 dry-run，必须 `--yes`）：
+
+```bash
+python -m app.ops.cli data-inventory --db-url ...    # 只读：用户/试卷/资源/语音/草稿/审计风险盘点
+python -m app.ops.cli acceptance-clean --db-url ...                # dry-run：按用户名前缀列出待删计划
+python -m app.ops.cli acceptance-clean --db-url ... --yes          # 执行（learner 精确行 ID 单事务删除）
+```
+
+清理只按显式字面量前缀（默认 `smoke_` / `voice_smoke_`，拒绝 `*`/`%`）匹配 learner 账号；
+admin 与普通用户、系统 seed 卷、无归属历史数据、append-only 审计不进入删除集；
+对象存储只删「仅被待删行引用」的 key（共享 key 保留）。
+
 **应用回滚**：compose 以 `AIOS_IMAGE_TAG` 为镜像锚点，发布时固化 tag，回滚即旧 tag 重启：
 
 ```bash

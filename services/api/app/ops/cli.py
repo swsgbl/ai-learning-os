@@ -12,6 +12,12 @@ import sys
 from pathlib import Path
 
 from app.ops.backup import MinioBackupSource, run_backup, run_restore
+from app.ops.data_hygiene import (
+    DEFAULT_ACCEPTANCE_MARKERS,
+    build_data_inventory,
+    run_acceptance_clean,
+    validate_markers,
+)
 from app.ops.version import alembic_state
 
 
@@ -64,6 +70,39 @@ def _run_version(args) -> int:
     else:
         for k, v in info.items():
             print(f"{k}: {v}")
+    return 0
+
+
+def _run_data_inventory(args) -> int:
+    """python -m app.ops.cli data-inventory：只读生产数据/风险盘点。"""
+    import json as _json
+
+    db_url = _db_url_of(args)
+    if not db_url:
+        print("缺少 --db-url 或 DATABASE_URL，拒绝盘点（fail-closed）")
+        return 2
+    print(_json.dumps(asyncio.run(build_data_inventory(db_url)), ensure_ascii=False, indent=2))
+    return 0
+
+
+def _run_acceptance_clean(args) -> int:
+    """python -m app.ops.cli acceptance-clean：默认 dry-run 的窄范围验收清理。"""
+    import json as _json
+
+    db_url = _db_url_of(args)
+    if not db_url:
+        print("缺少 --db-url 或 DATABASE_URL，拒绝清理（fail-closed）")
+        return 2
+    markers = tuple(args.marker or DEFAULT_ACCEPTANCE_MARKERS)
+    try:
+        validate_markers(markers)
+    except ValueError as cause:
+        print(f"验收标记无效: {cause}")
+        return 2
+    report = asyncio.run(run_acceptance_clean(db_url, markers, execute=args.yes))
+    print(_json.dumps(report, ensure_ascii=False, indent=2))
+    if report.get("object_store", {}).get("errors"):
+        return 1
     return 0
 
 
@@ -305,6 +344,19 @@ def main() -> None:
     p_rc.add_argument("--local-only", action="store_true", help="跳过 live 项（不依赖运行中服务）")
     p_v = sub.add_parser("version", help="版本 + git + alembic 状态")
     p_v.add_argument("--json", dest="as_json", action="store_true")
+    p_di = sub.add_parser("data-inventory", help="生产数据与风险只读盘点")
+    p_di.add_argument("--db-url", default=None)
+    p_ac = sub.add_parser(
+        "acceptance-clean", help="验收标记数据清理（默认 dry-run，必须 --yes 才执行）"
+    )
+    p_ac.add_argument("--db-url", default=None)
+    p_ac.add_argument(
+        "--marker",
+        action="append",
+        default=None,
+        help="显式验收用户名前缀，可重复；缺省 smoke_/voice_smoke_，不支持通配符",
+    )
+    p_ac.add_argument("--yes", action="store_true", help="真正执行（默认仅输出计划）")
     p_db = sub.add_parser("db-rollback", help="数据库回滚（默认 dry-run，--yes 执行）")
     p_db.add_argument("--steps", type=int, default=1)
     p_db.add_argument("--yes", action="store_true", help="真正执行（破坏性操作显式确认）")
@@ -321,6 +373,10 @@ def main() -> None:
         raise SystemExit(_run_release_check(args))
     if args.command == "version":
         raise SystemExit(_run_version(args))
+    if args.command == "data-inventory":
+        raise SystemExit(_run_data_inventory(args))
+    if args.command == "acceptance-clean":
+        raise SystemExit(_run_acceptance_clean(args))
     if args.command == "db-rollback":
         raise SystemExit(_run_db_rollback(args))
     if args.command == "admin":

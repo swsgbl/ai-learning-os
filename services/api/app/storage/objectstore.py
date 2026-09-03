@@ -12,6 +12,8 @@ class ObjectStore(Protocol):
 
     def exists(self, key: str) -> bool: ...
 
+    def delete(self, key: str) -> None: ...
+
 
 class MemoryObjectStore:
     """测试与无 S3 配置时的内存实现（进程生命周期内持久）。"""
@@ -27,6 +29,9 @@ class MemoryObjectStore:
 
     def exists(self, key: str) -> bool:
         return key in self._objects
+
+    def delete(self, key: str) -> None:
+        self._objects.pop(key, None)
 
 
 class MinioObjectStore:
@@ -77,6 +82,9 @@ class MinioObjectStore:
             return True
         except self._client.exceptions.ClientError:
             return False
+
+    def delete(self, key: str) -> None:
+        self._client.delete_object(Bucket=self._bucket, Key=key)
 
 
 def make_object_store(settings) -> ObjectStore:
