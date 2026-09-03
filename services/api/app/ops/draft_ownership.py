@@ -30,14 +30,13 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.db.orm import (
-    AuditLogRow,
     CourseGenerationDraftRow,
     ResourceRow,
     UserRow,
     VariantQuestionDraftRow,
 )
 from app.db.session import create_engine
-from app.repositories.audit import audit_insert_values
+from app.domain.audit_chain import append_audit
 
 KIND_COURSE_GENERATION = "course-generation"
 KIND_VARIANT_QUESTION = "variant-question"
@@ -584,31 +583,28 @@ async def run_draft_migrate(
                             f"更新行数 {result.rowcount} 与计划 {len(eligible)} "
                             "不一致，事务回滚"
                         )
-                    session.add(
-                        AuditLogRow(
-                            **audit_insert_values(
-                                {
-                                    **_audit_base(
-                                        "ops.draft_owner.assign_owner",
-                                        kind,
-                                        eligible,
-                                    ),
-                                    "before": {
-                                        "kind": kind,
-                                        "owner_id": None,
-                                        "draft_ids": eligible,
-                                    },
-                                    "after": {
-                                        "kind": kind,
-                                        "owner_id": target["id"],
-                                        "username": target["username"],
-                                        "draft_ids": eligible,
-                                        "drafts_modified": result.rowcount,
-                                    },
-                                },
-                                clock=lambda: datetime.now(UTC),
-                            )
-                        )
+                    await append_audit(
+                        session,
+                        {
+                            **_audit_base(
+                                "ops.draft_owner.assign_owner",
+                                kind,
+                                eligible,
+                            ),
+                            "before": {
+                                "kind": kind,
+                                "owner_id": None,
+                                "draft_ids": eligible,
+                            },
+                            "after": {
+                                "kind": kind,
+                                "owner_id": target["id"],
+                                "username": target["username"],
+                                "draft_ids": eligible,
+                                "drafts_modified": result.rowcount,
+                            },
+                        },
+                        clock=lambda: datetime.now(UTC),
                     )
                 plan.update(
                     {
@@ -628,28 +624,25 @@ async def run_draft_migrate(
                 # 审计必须与事实一致：先锁定并复核 eligible 行仍存在且
                 # owner 仍为 NULL，陈旧计划整体回滚、不写审计。
                 await _lock_and_verify(session, kind, eligible)
-                session.add(
-                    AuditLogRow(
-                        **audit_insert_values(
-                            {
-                                **_audit_base(
-                                    "ops.draft_owner.keep_unowned", kind, eligible
-                                ),
-                                "before": {
-                                    "kind": kind,
-                                    "owner_id": None,
-                                    "draft_ids": eligible,
-                                },
-                                "after": {
-                                    "kind": kind,
-                                    "decision": "keep_unowned",
-                                    "draft_ids": eligible,
-                                    "drafts_modified": 0,
-                                },
-                            },
-                            clock=lambda: datetime.now(UTC),
-                        )
-                    )
+                await append_audit(
+                    session,
+                    {
+                        **_audit_base(
+                            "ops.draft_owner.keep_unowned", kind, eligible
+                        ),
+                        "before": {
+                            "kind": kind,
+                            "owner_id": None,
+                            "draft_ids": eligible,
+                        },
+                        "after": {
+                            "kind": kind,
+                            "decision": "keep_unowned",
+                            "draft_ids": eligible,
+                            "drafts_modified": 0,
+                        },
+                    },
+                    clock=lambda: datetime.now(UTC),
                 )
             plan.update(
                 {

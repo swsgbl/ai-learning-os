@@ -8,7 +8,8 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.orm import AuditLogRow, SourceRow
+from app.db.orm import SourceRow
+from app.domain.audit_chain import append_audit
 from app.domain.license import (
     REUSE_ADMISSION,
     LicenseState,
@@ -17,7 +18,6 @@ from app.domain.license import (
     assert_transition,
 )
 from app.domain.source import SourceRecord
-from app.repositories.audit import audit_insert_values
 from app.repositories.memory import utc_now
 from app.repositories.seed_sources import seed_sources
 
@@ -64,7 +64,7 @@ class SourceRepository:
                     "source id/name already exists (concurrent insert)"
                 ) from cause
             if audit is not None:
-                session.add(AuditLogRow(**audit_insert_values(audit, clock=self._clock)))
+                await append_audit(session, audit, clock=self._clock)
         return record
 
     async def get(self, source_id: str) -> SourceRecord | None:
@@ -92,7 +92,7 @@ class SourceRepository:
                 return None
             row.last_verified_at = _to_db(self._clock())
             if audit is not None:
-                session.add(AuditLogRow(**audit_insert_values(audit, clock=self._clock)))
+                await append_audit(session, audit, clock=self._clock)
             return self._record(row)
 
     async def set_license_state(
@@ -108,7 +108,7 @@ class SourceRepository:
             row.license_state = target.value
             row.last_verified_at = _to_db(self._clock())
             if audit is not None:
-                session.add(AuditLogRow(**audit_insert_values(audit, clock=self._clock)))
+                await append_audit(session, audit, clock=self._clock)
             return self._record(row)
 
     @staticmethod

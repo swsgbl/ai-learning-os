@@ -42,7 +42,7 @@ from app.db.orm import (
     VoiceTranscriptRow,
 )
 from app.db.session import create_engine
-from app.repositories.audit import audit_insert_values
+from app.domain.audit_chain import append_audit
 
 DEFAULT_ACCEPTANCE_MARKERS = ("smoke_", "voice_smoke_")
 _DRAFT_MODELS = {
@@ -571,12 +571,8 @@ async def run_acceptance_clean(
                     "before": {"planned": plan["counts"]},
                     "after": {"deleted": deleted},
                 }
-                session.add(
-                    AuditLogRow(
-                        **audit_insert_values(
-                            audit, clock=lambda: datetime.now(UTC)
-                        )
-                    )
+                await append_audit(
+                    session, audit, clock=lambda: datetime.now(UTC)
                 )
 
             object_report = await _delete_objects(plan["object_keys"])

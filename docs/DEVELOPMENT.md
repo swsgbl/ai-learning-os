@@ -63,21 +63,54 @@ alembic -c services/api/alembic.ini upgrade head
 - CORS 与 Web 端口联动：`AIOS_WEB_PORT` 自定义时默认跟随，`AIOS_CORS_ORIGINS` 可完整覆盖
   （冒烟验证 preflight 一致性）。
 
-## 审计（M9-04）
+## 审计（M9-04 / M10-04）
 
 治理动作（license 变更、DAG 发布、四类草稿 approve/reject、角色提升/降级）写
 `audit_log`：actor、action、target、before/after、时间、request id（响应头
 X-Request-ID 可关联）。读取 `GET /api/v1/audit` 仅 admin（auth off 本地模式可读）。
 
+### 防篡改哈希链（M10-04）
+
+- 算法：SHA-256。每条审计在写入事务内追加 `audit_chain_entries`
+  （`audit_id` PK + FK ON DELETE RESTRICT、`sequence` 全局唯一从 1 连续、
+  `previous_hash`、`entry_hash`、`algorithm=sha256`），entry_hash =
+  sha256(canonical JSON of `previous_hash + sequence + audit 稳定字段`)；
+  canonical JSON 为 sort-keys + 紧凑分隔符 + UTF-8，datetime 统一 UTC
+  恒定微秒位——同值恒同哈希，跨 SQLite/PG 读回一致。
+- 唯一写入入口：`app.domain.audit_chain.append_audit(session, payload, clock)`
+  ——同事务内 FOR UPDATE 锁 `audit_chain_state` 单行（缺失时原子初始化
+  genesis）分配 sequence、插入 audit 行并 flush、算 entry_hash、写 entry、
+  推进 state；任一步失败随调用方事务整体回滚（fail-closed，并发不双初始化
+  不断链）。生产代码禁止直接构造 `AuditLogRow` 绕链（静态守卫测试）。
+  payload 的 before/after 递归扫描敏感键（password/token/secret/api_key 等
+  变体），命中即拒绝写入——secret 不入日志也不入哈希。
+- 验证（只读，零写入）：`python -m app.ops.cli audit-chain-verify --db-url ...`
+  （`--json` 出完整报告）。全量重算比对：entries 与 audit_log 一一对应、
+  sequence 连续、genesis previous_hash=64 个 0、previous/entry hash 链接、
+  state head 与 algorithm。退出码：valid=0、invalid=1、缺 --db-url/连接
+  失败=2。输出只含 audit_id/sequence 与原因，不含 before/after 正文。
+- 边界（如实声明）：哈希链可检测篡改与漏记（改行内容、删 entry、跳号、
+  head 漂移），**不等于数字签名，也不是存储级 WORM**——持有数据库写权限
+  的攻击者理论上可整链重算；抵御整链重算需外部备份 / 对象锁等存储层锚定
+  （把 head_hash 定期记录到库外），不在本切片范围。
+- 迁移 `0027_audit_chain`：对既有 `audit_log` 按 id 升序一次性建链
+  （与应用层同源算法），downgrade 只删两张新表不动审计数据。
+  **生产主库（5433/ai_learning_os）尚未执行 0027**——生产库的链表与
+  state 需运维在发布窗口显式 `alembic upgrade head` 后建立；执行前的
+  生产审计仍为 append-only 无链形态，`audit-chain-verify` 会如实报告
+  表缺失（exit 1）而非误报有效。
+
 ### 安全边界（M10-03 后更新）
 
 - 已交付：认证基座、三域归属隔离、Web 登录 UI、角色授权+治理审计、
-  私有语料与四类草稿归属、试卷 owner 可见性、Web HttpOnly cookie、治理工作台；
+  私有语料与四类草稿归属、试卷 owner 可见性、Web HttpOnly cookie、治理工作台、
+  审计防篡改哈希链（M10-04；生产主库迁移待执行，见上）；
 - 已知边界：744 张历史试卷与 generation/variant 历史无归属草稿仍待人工归属决策
   （M10-04 已交付 `legacy-paper-report`/`legacy-paper-migrate` 与
   `draft-owner-report`/`draft-owner-migrate` 只读报告 + 默认 dry-run 迁移 CLI，
   生产迁移待人工决策后显式 `--yes` 执行）；
-  审计无防篡改哈希链；TURN 未内置；云 provider/LLM 真实 key 冒烟未执行。
+  哈希链不抵御持库写权限者的整链重算（非签名、非存储级 WORM，见上）；
+  TURN 未内置；云 provider/LLM 真实 key 冒烟未执行。
 - 部署绑定：所有端口默认 127.0.0.1；LAN/外网需 `AIOS_BIND_IP=0.0.0.0` 且必须同时
   设强 AUTH_SECRET + APP_ENV=production（启动 fail-closed），否则不要对外暴露。
 

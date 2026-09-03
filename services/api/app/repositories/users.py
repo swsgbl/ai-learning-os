@@ -10,8 +10,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.orm import AuditLogRow, UserRow
-from app.repositories.audit import audit_insert_values
+from app.db.orm import UserRow
+from app.domain.audit_chain import append_audit
 
 
 class UserRecord(BaseModel):
@@ -93,7 +93,7 @@ class UserRepository:
                 return None
             row.role = role
             if audit is not None:
-                session.add(AuditLogRow(**audit_insert_values(audit, clock=self._clock)))
+                await append_audit(session, audit, clock=self._clock)
             return UserRecord(
                 id=row.id, username=row.username, role=row.role, created_at=row.created_at
             )

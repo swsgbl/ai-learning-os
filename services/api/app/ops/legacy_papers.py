@@ -30,9 +30,9 @@ from typing import Any
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.orm import AuditLogRow, ExamSessionRow, PaperRow, QuestionRow, UserRow
+from app.db.orm import ExamSessionRow, PaperRow, QuestionRow, UserRow
 from app.db.session import create_engine
-from app.repositories.audit import audit_insert_values
+from app.domain.audit_chain import append_audit
 
 SEED_SOURCE = "AI Learning OS seed"
 MIGRATION_PATHS = ("keep-public", "assign-owner", "export-delete")
@@ -706,26 +706,23 @@ async def run_legacy_migrate(
                             raise RuntimeError(
                                 f"行 {row.id} 状态与计划不一致（owner/source 已变化），事务回滚"
                             )
-                    session.add(
-                        AuditLogRow(
-                            **audit_insert_values(
-                                {
-                                    **_audit_base(
-                                        "ops.legacy_paper.keep_public", eligible
-                                    ),
-                                    "before": {
-                                        "owner_id": None,
-                                        "paper_ids": eligible,
-                                    },
-                                    "after": {
-                                        "decision": "keep_public",
-                                        "paper_ids": eligible,
-                                        "papers_modified": 0,
-                                    },
-                                },
-                                clock=lambda: datetime.now(UTC),
-                            )
-                        )
+                    await append_audit(
+                        session,
+                        {
+                            **_audit_base(
+                                "ops.legacy_paper.keep_public", eligible
+                            ),
+                            "before": {
+                                "owner_id": None,
+                                "paper_ids": eligible,
+                            },
+                            "after": {
+                                "decision": "keep_public",
+                                "paper_ids": eligible,
+                                "papers_modified": 0,
+                            },
+                        },
+                        clock=lambda: datetime.now(UTC),
                     )
                 plan.update(
                     {
@@ -791,24 +788,21 @@ async def run_legacy_migrate(
                         raise RuntimeError(
                             f"更新行数 {result.rowcount} 与计划 {len(eligible)} 不一致，事务回滚"
                         )
-                    session.add(
-                        AuditLogRow(
-                            **audit_insert_values(
-                                {
-                                    **_audit_base(
-                                        "ops.legacy_paper.assign_owner", eligible
-                                    ),
-                                    "before": {"owner_id": None, "paper_ids": eligible},
-                                    "after": {
-                                        "owner_id": target["id"],
-                                        "username": target["username"],
-                                        "paper_ids": eligible,
-                                        "updated": result.rowcount,
-                                    },
-                                },
-                                clock=lambda: datetime.now(UTC),
-                            )
-                        )
+                    await append_audit(
+                        session,
+                        {
+                            **_audit_base(
+                                "ops.legacy_paper.assign_owner", eligible
+                            ),
+                            "before": {"owner_id": None, "paper_ids": eligible},
+                            "after": {
+                                "owner_id": target["id"],
+                                "username": target["username"],
+                                "paper_ids": eligible,
+                                "updated": result.rowcount,
+                            },
+                        },
+                        clock=lambda: datetime.now(UTC),
                     )
                 plan.update(
                     {
@@ -970,26 +964,23 @@ async def run_legacy_migrate(
                         f"试卷删除行数 {deleted_papers.rowcount} 与计划 "
                         f"{len(eligible)} 不一致，事务回滚"
                     )
-                session.add(
-                    AuditLogRow(
-                        **audit_insert_values(
-                            {
-                                **_audit_base(
-                                    "ops.legacy_paper.export_delete", eligible
-                                ),
-                                "before": {
-                                    "paper_ids": eligible,
-                                    "question_counts": question_counts,
-                                },
-                                "after": {
-                                    "deleted_papers": deleted_papers.rowcount,
-                                    "deleted_questions": deleted_questions.rowcount,
-                                    "export_path": str(export_path),
-                                },
-                            },
-                            clock=lambda: datetime.now(UTC),
-                        )
-                    )
+                await append_audit(
+                    session,
+                    {
+                        **_audit_base(
+                            "ops.legacy_paper.export_delete", eligible
+                        ),
+                        "before": {
+                            "paper_ids": eligible,
+                            "question_counts": question_counts,
+                        },
+                        "after": {
+                            "deleted_papers": deleted_papers.rowcount,
+                            "deleted_questions": deleted_questions.rowcount,
+                            "export_path": str(export_path),
+                        },
+                    },
+                    clock=lambda: datetime.now(UTC),
                 )
             plan.update(
                 {

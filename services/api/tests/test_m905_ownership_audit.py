@@ -291,11 +291,10 @@ def test_audit_failure_rolls_back_business_mutation(stack, auth_on, monkeypatch)
 
     from app.repositories import course_import_drafts as draft_repo_mod
 
-    class _ExplodingRow:  # 构造即炸 = 审计写入失败
-        def __init__(self, *a, **kw):
-            raise RuntimeError("audit storage broken")
+    async def exploding_append(session, payload, *, clock):  # 审计写入失败
+        raise RuntimeError("audit storage broken")
 
-    monkeypatch.setattr(draft_repo_mod, "AuditLogRow", _ExplodingRow)
+    monkeypatch.setattr(draft_repo_mod, "append_audit", exploding_append)
     failed = False
     try:
         client.post(f"/api/v1/courses/import-drafts/{draft_id}/approve",

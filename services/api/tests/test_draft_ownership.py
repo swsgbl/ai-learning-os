@@ -734,10 +734,10 @@ def test_audit_failure_rolls_back_business_update(tmp_path, monkeypatch) -> None
     """审计写入失败 → 同事务业务更新一并回滚（fail-closed）。"""
     db_url = _make_db(tmp_path)
 
-    def broken_audit(payload, *, clock):
+    async def broken_audit(session, payload, *, clock):
         raise RuntimeError("audit sink down")
 
-    monkeypatch.setattr(ownership, "audit_insert_values", broken_audit)
+    monkeypatch.setattr(ownership, "append_audit", broken_audit)
     with pytest.raises(RuntimeError, match="audit sink down"):
         asyncio.run(
             run_draft_migrate(

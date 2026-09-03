@@ -443,6 +443,40 @@ class _nullcontext:
         return False
 
 
+def _run_audit_chain_verify(args) -> int:
+    """python -m app.ops.cli audit-chain-verify [--db-url URL] [--json]
+
+    M10-04 治理审计哈希链只读校验：全量重算 entries/state 与 audit_log 的
+    一一对应、sequence 连续性、genesis/previous/entry hash、head 一致性。
+    valid 退出 0，invalid 退出 1，缺 --db-url/连接失败退出 2。
+    输出不含 before/after 正文与任何敏感值；对数据库零写入。
+    """
+    import json as _json
+
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from app.ops.audit_chain_verify import (
+        format_verify_summary,
+        run_verify,
+    )
+
+    db_url = _db_url_of(args)
+    if not db_url:
+        print("缺少 --db-url 或 DATABASE_URL，拒绝校验（fail-closed）")
+        return 2
+    try:
+        report = run_verify(db_url)
+    except (SQLAlchemyError, OSError, ValueError) as cause:
+        # 连接失败/无效 URL 等：参数环境问题，非链结论
+        print(f"数据库连接失败: {type(cause).__name__}: {cause}")
+        return 2
+    if getattr(args, "as_json", False):
+        print(_json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(format_verify_summary(report))
+    return 0 if report["valid"] else 1
+
+
 async def _run_license_report(args) -> int:
     """license-report 子命令：输出四区段授权清单 JSON（无 DB 时含说明段）。"""
     import json as _json
@@ -639,6 +673,14 @@ def main() -> None:
     p_db = sub.add_parser("db-rollback", help="数据库回滚（默认 dry-run，--yes 执行）")
     p_db.add_argument("--steps", type=int, default=1)
     p_db.add_argument("--yes", action="store_true", help="真正执行（破坏性操作显式确认）")
+    p_av = sub.add_parser(
+        "audit-chain-verify",
+        help="治理审计哈希链只读校验（valid=0 / invalid=1 / 参数或连接错误=2）",
+    )
+    p_av.add_argument("--db-url", default=None)
+    p_av.add_argument(
+        "--json", dest="as_json", action="store_true", help="输出完整 JSON 报告"
+    )
     p_ad = sub.add_parser("admin", help="角色运维：promote/demote/list（M9-04）")
     p_ad.add_argument("action", choices=["promote", "demote", "list"])
     p_ad.add_argument("username", nargs="?", default=None)
@@ -666,6 +708,8 @@ def main() -> None:
         raise SystemExit(_run_acceptance_clean(args))
     if args.command == "db-rollback":
         raise SystemExit(_run_db_rollback(args))
+    if args.command == "audit-chain-verify":
+        raise SystemExit(_run_audit_chain_verify(args))
     if args.command == "admin":
         if args.action != "list" and not args.username:
             print("promote/demote 需要用户名")

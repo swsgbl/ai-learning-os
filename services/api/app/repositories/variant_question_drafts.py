@@ -8,8 +8,8 @@ from datetime import datetime
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.orm import AuditLogRow, VariantQuestionDraftRow
-from app.repositories.audit import audit_insert_values
+from app.db.orm import VariantQuestionDraftRow
+from app.domain.audit_chain import append_audit
 from app.repositories.memory import utc_now
 
 _TERMINAL = {"approved", "rejected"}
@@ -93,7 +93,7 @@ class VariantQuestionDraftRepository:
             row.reviewed_at = now
             if audit is not None:
                 # M9-05: 审计与业务变更同事务 —— 审计写入失败即整体回滚（fail-closed）
-                session.add(AuditLogRow(**audit_insert_values(audit, clock=self._clock)))
+                await append_audit(session, audit, clock=self._clock)
         return await self.get(draft_id)
 
     def _view(self, row: VariantQuestionDraftRow) -> dict:

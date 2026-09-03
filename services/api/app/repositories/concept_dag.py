@@ -12,9 +12,9 @@ from uuid import uuid4
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.db.orm import AuditLogRow, ConceptDagVersionRow, ConceptEdgeRow, ConceptRow
+from app.db.orm import ConceptDagVersionRow, ConceptEdgeRow, ConceptRow
+from app.domain.audit_chain import append_audit
 from app.domain.concept_dag import ConceptDag, ConceptEdge, ConceptNode, validate_dag
-from app.repositories.audit import audit_insert_values
 from app.repositories.memory import utc_now
 
 
@@ -98,7 +98,7 @@ class ConceptDagRepository:
                 )
             if audit is not None:
                 # M9-05: 审计与发布同事务（失败即整体回滚）
-                session.add(AuditLogRow(**audit_insert_values(audit, clock=self._clock)))
+                await append_audit(session, audit, clock=self._clock)
         return ConceptDag(
             version=version, note=note, nodes=nodes, edges=edges, created_at=now.isoformat()
         )
