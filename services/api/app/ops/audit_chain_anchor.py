@@ -14,7 +14,9 @@ sha256(canonical JSON of 其余六字段)——与 DB 链同源的 canonical 规
 
 安全边界（docs/DEVELOPMENT.md 审计节同步维护）：
 - 本工具只保证「追加前完整校验 + 单行原子追加 + fsync +（新建时，
-  支持目录 fsync 的 POSIX 平台）父目录 fsync」；
+  支持目录 fsync 的 POSIX 平台）父目录 fsync」；三步任一失败都进入
+  同一失败回截保护区（ftruncate 回原大小 + 尽力 fsync），报失败时
+  锚行不在盘上，重跑不会误判 up-to-date；
 - 打开/创建语义可区分（不盲开 O_CREAT）：既有文件以 O_WRONLY|O_APPEND
   打开，POSIX 平台附带 O_NOFOLLOW 在 open 处即拒绝 symlink；文件不存在
   才以 O_CREAT|O_EXCL 排他新建（0600），并发窗口内路径被抢先创建/替换
@@ -391,10 +393,16 @@ def append_anchor_line(path: Path, line: bytes) -> None:
     新建（0600，POSIX 语义；Windows 无 POSIX 权限位=默认 ACL，见 docs）。
     POSIX 打开带 O_NOFOLLOW 在内核处拒绝 symlink；Windows 无该旗标，
     靠前置 symlink 拒绝 + 打开后 fstat 常规文件复核，其间仍有残余
-    swap 竞态（docs 如实声明）。新建文件写入并 fsync 成功后，在支持
-    目录 fsync 的平台同步父目录。写入异常时尽力 ftruncate 回原大小
-    恢复，仍失败则上抛——残缺文件会被下一次校验按 partial line
-    拒绝，fail-closed。
+    swap 竞态（docs 如实声明）。
+
+    失败回截保护区：写入、文件 fsync、新建后的父目录 fsync 三步任一
+    抛 OSError，都尽力 ftruncate 回 original_size 并尽力 fsync 持久化
+    回截——报失败时锚行必须不在盘上，否则操作员重跑会看到 up-to-date，
+    状态二义。父目录 fsync 失败同样回截（新建文件回到 0 字节空文件=
+    合法初始状态；不 unlink：删除目录项又需要目录 fsync，而它正在失败）。
+    回截或回截后的 fsync 也失败时仍上抛**原始** OSError，不虚构成功——
+    该残余灾难路径（截断未持久化/crash 后状态未知）由下一次完整校验按
+    partial line/锚链问题 fail-closed 或人工排查处理。
     """
     try:
         fd = _open_existing(path)
@@ -412,14 +420,15 @@ def append_anchor_line(path: Path, line: bytes) -> None:
                 written = os.write(fd, view)
                 view = view[written:]
             os.fsync(fd)
+            if created:
+                _fsync_parent_directory(path)
         except OSError:
             try:
-                os.ftruncate(fd, original_size)  # 去掉已写入的半行
+                os.ftruncate(fd, original_size)  # 去掉已写入的锚行
+                os.fsync(fd)  # 尽力持久化回截（次生失败不掩盖原始错误）
             except OSError:
-                pass  # 不掩盖原始错误；残缺行由下次校验 fail-closed 拒绝
+                pass
             raise
-        if created:
-            _fsync_parent_directory(path)
     finally:
         os.close(fd)
 

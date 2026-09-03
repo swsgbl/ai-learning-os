@@ -18,6 +18,10 @@
    排他新建后 symlink 复核（Windows CRT O_EXCL 跟随链接）；新建成功
    后 fsync 父目录（仅新建调用；EINVAL=文件系统能力跳过、其余 OSError
    上抛、无目录 fd 能力平台跳过）；失败场景一律不污染锚文件；
+4c. 失败回截保护区（Codex 审核返工）：写入/文件 fsync/新建后的父目录
+   fsync 任一失败都回截——新建文件父目录 fsync EIO 后锚行不在盘上
+   （重跑不误判 up-to-date）、既有文件 fsync EIO 回原字节、回截本身
+   失败仍上抛原始错误不虚构成功（均注入模拟故障，不依赖真实磁盘错误）；
 5. 并发边界：verify 与交叉核对共用单连接单事务快照（引擎计数=1）；
 6. CLI：exit 0/1/2、--json 结构、人类摘要、main 分发、--yes 与
    --verify-only 互斥、无 secret 泄漏（marker 字符串）。
@@ -895,6 +899,88 @@ def test_parent_directory_fsync_capability_boundaries(tmp_path, monkeypatch) -> 
         anchor_module._fsync_parent_directory(tmp_path / "a.jsonl")
     assert closed == [7, 7]  # 抛错路径同样关闭 fd
     assert opened and opened[0][0] == tmp_path
+
+
+# --- 4c. 失败回截保护区（返工：目录 fsync 失败也在保护区内） -----------------
+
+
+def test_new_file_parent_dir_fsync_eio_truncates_anchor_line(
+    tmp_path, monkeypatch
+) -> None:
+    """回归（Codex 审核实证）：新建锚文件后父目录 fsync EIO——锚行已
+    写入并 fsync，但持久化承诺未达成而上抛；此前目录 fsync 在回截
+    保护区之外，锚行留在盘上，CLI exit 2 后重跑误判 up-to-date（状态
+    二义）。现在必须回截：锚行不在盘上（新建文件回 0 字节空文件=合法
+    初始状态，不 unlink——删除目录项又需目录 fsync，而它正在失败）。
+    """
+
+    def eio_dir_fsync(path):
+        raise OSError(errno.EIO, "simulated directory fsync I/O error")
+
+    monkeypatch.setattr(anchor_module, "_fsync_parent_directory", eio_dir_fsync)
+    anchor_path = tmp_path / "anchor.jsonl"
+    with pytest.raises(OSError) as exc_info:
+        append_anchor_line(anchor_path, b'{"x":1}\n')
+    assert exc_info.value.errno == errno.EIO
+    assert anchor_path.read_bytes() == b""  # 锚行不存在
+
+    # 环境恢复后重跑：正常追加一行，不会因残留锚行误判 up-to-date
+    monkeypatch.undo()
+    append_anchor_line(anchor_path, b'{"x":1}\n')
+    assert anchor_path.read_bytes() == b'{"x":1}\n'
+
+
+def test_existing_file_fsync_eio_rolls_back_to_original_bytes(
+    tmp_path, monkeypatch
+) -> None:
+    """既有文件：写入成功但文件 fsync EIO（磁盘 IO 故障形态）-> 回截到
+    原字节，不留新增行。同一 mock 使回截后的 fsync 也失败——原始 EIO
+    仍上抛，不虚构成功。
+    """
+    anchor_path = tmp_path / "anchor.jsonl"
+    original = b'{"kept":true}\n'
+    anchor_path.write_bytes(original)
+
+    def eio_fsync(fd):
+        raise OSError(errno.EIO, "simulated file fsync I/O error")
+
+    monkeypatch.setattr(anchor_module.os, "fsync", eio_fsync)
+    with pytest.raises(OSError) as exc_info:
+        append_anchor_line(anchor_path, b'{"new":1}\n')
+    assert exc_info.value.errno == errno.EIO
+    assert anchor_path.read_bytes() == original  # 新增行被回截
+
+
+def test_rollback_failure_does_not_mask_original_error(
+    tmp_path, monkeypatch
+) -> None:
+    """写入失败（ENOSPC）且回截 ftruncate 也失败（EIO）：上抛的必须是
+    **原始** ENOSPC，绝不用次生错误或虚构成功替代。半行残留属如实声明
+    的残余灾难路径，由下次完整校验按 partial line fail-closed。
+    """
+    anchor_path = tmp_path / "anchor.jsonl"
+    anchor_path.write_bytes(b'{"kept":true}\n')
+    real_write = os.write
+    calls: list[int] = []
+
+    def flaky_write(fd, data):
+        calls.append(fd)
+        if len(calls) == 1:
+            view = memoryview(data)
+            half = len(data) // 2
+            real_write(fd, view[:half])
+            return half  # 先写半行
+        raise OSError(errno.ENOSPC, "simulated disk full")
+
+    monkeypatch.setattr(anchor_module.os, "write", flaky_write)
+
+    def failing_ftruncate(fd, length):
+        raise OSError(errno.EIO, "simulated ftruncate failure")
+
+    monkeypatch.setattr(anchor_module.os, "ftruncate", failing_ftruncate)
+    with pytest.raises(OSError) as exc_info:
+        append_anchor_line(anchor_path, b'{"x":1}\n')
+    assert exc_info.value.errno == errno.ENOSPC  # 原始错误，非次生 EIO
 
 
 # --- 5. 并发边界：单连接单事务快照 -------------------------------------------

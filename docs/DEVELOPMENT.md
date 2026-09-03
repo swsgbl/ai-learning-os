@@ -146,8 +146,10 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
 - **CLI**：`python -m app.ops.cli audit-chain-anchor --db-url ...
   --anchor-file <path> [--yes | --verify-only] [--json]`
   （`app/ops/audit_chain_anchor.py`）。默认 dry-run 只打印将追加的锚行；
-  `--yes` 才落盘（O_APPEND 单行写入 + fsync，失败回截不留半行；打开/
-  创建区分与持久化能力边界见下条）；
+  `--yes` 才落盘（O_APPEND 单行写入 + fsync；写入/文件 fsync/新建后
+  父目录 fsync 任一失败都回截原大小并尽力 fsync 持久化回截——报失败
+  时锚行不在盘上，重跑不会误判 up-to-date；打开/创建区分与持久化
+  能力边界见下条）；
   `--verify-only` 只做「DB 链 + 锚文件链 + 两者 head 交叉一致」校验。
   退出码与 verifier 对齐：valid/up-to-date/anchored/dry-run=0、
   invalid=1、缺 `--db-url`/锚文件路径问题（symlink、目录、父目录缺失，
@@ -178,7 +180,11 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   会跟随 dangling symlink，新建后另复核路径本身不是链接。新建文件
   写入并 fsync 成功后，在支持目录 fsync 的 POSIX 平台 fsync 父目录
   （使目录项在 crash 后尽量持久；个别文件系统返回 EINVAL 视为能力
-  不支持而跳过，其余 IO 错误上抛不虚报）；**Windows 无法打开目录 fd，
+  不支持而跳过，其余 IO 错误不虚报——上抛前先回截已写锚行：新建
+  文件回到 0 字节空文件=合法初始状态，不 unlink，删除目录项又需
+  目录 fsync 而它正在失败；回截或回截后的 fsync 也失败时仍上抛
+  **原始** OSError 不虚构成功，该残余灾难路径由下次完整校验按
+  partial line fail-closed 或人工排查处理）；**Windows 无法打开目录 fd，
   跳过父目录同步**——如实声明，不虚报已持久。Windows 亦无 O_NOFOLLOW：
   前置 symlink 拒绝与打开后 fstat 常规文件复核之间仍存在 symlink
   swap 残余竞态窗口（POSIX 已由 O_NOFOLLOW 消除）；锚行本就无敏感值
