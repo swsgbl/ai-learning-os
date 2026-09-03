@@ -85,6 +85,108 @@ def _run_data_inventory(args) -> int:
     return 0
 
 
+def _run_legacy_paper_report(args) -> int:
+    """python -m app.ops.cli legacy-paper-report：历史无归属试卷只读分类报告。
+
+    默认输出人类可读摘要（不含生产 paper ID）；--json 输出完整明细；
+    --output 写文件时强制落在 gitignore 的 artifacts/temp 目录（防误提交
+    生产 ID 清单）。任何路径都不修改数据库。
+    """
+    import json as _json
+
+    from app.ops.legacy_papers import (
+        build_legacy_paper_report,
+        format_report_summary,
+        is_safe_artifact_path,
+    )
+
+    db_url = _db_url_of(args)
+    if not db_url:
+        print("缺少 --db-url 或 DATABASE_URL，拒绝生成报告（fail-closed）")
+        return 2
+    if args.output and not is_safe_artifact_path(args.output):
+        print(
+            f"拒绝写入 {args.output}：报告含生产 paper ID，只能写入 gitignore 的 "
+            "artifacts/ 或 temp/ 目录"
+        )
+        return 2
+    report = asyncio.run(build_legacy_paper_report(db_url))
+    if args.output:
+        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.output).write_text(
+            _json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"报告已写入: {args.output}")
+    if args.as_json:
+        print(_json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(format_report_summary(report))
+    return 0
+
+
+def _run_legacy_paper_migrate(args) -> int:
+    """python -m app.ops.cli legacy-paper-migrate <path>：历史试卷安全迁移。
+
+    keep-public / assign-owner / export-delete 三路径，默认 dry-run 只打印
+    计划；--yes 才执行。只接受精确 paper ID（--paper-id 可重复或 --ids-file），
+    未知 ID 整体拒绝；export-delete 必须先导出校验 JSONL 才删库，被历史
+    考试引用的卷一律拒绝删除（人工处理）。
+    """
+    import json as _json
+
+    from app.ops.legacy_papers import (
+        is_safe_artifact_path,
+        resolve_paper_ids,
+        run_legacy_migrate,
+    )
+
+    db_url = _db_url_of(args)
+    if not db_url:
+        print("缺少 --db-url 或 DATABASE_URL，拒绝迁移（fail-closed）")
+        return 2
+    try:
+        paper_ids = resolve_paper_ids(args.paper_id, args.ids_file)
+    except (OSError, ValueError) as cause:
+        print(f"试卷 ID 解析失败: {cause}")
+        return 2
+    export_path = None
+    if args.path == "export-delete":
+        if not args.export:
+            print("export-delete 需要 --export <jsonl 路径>（导出校验通过才删库）")
+            return 2
+        if not is_safe_artifact_path(args.export):
+            print(
+                f"拒绝导出到 {args.export}：导出含生产数据，只能写入 gitignore 的 "
+                "artifacts/ 或 temp/ 目录"
+            )
+            return 2
+        export_path = Path(args.export)
+    if args.path == "assign-owner" and not args.to:
+        print("assign-owner 需要 --to <已存在用户名或用户 ID>")
+        return 2
+    try:
+        report = asyncio.run(
+            run_legacy_migrate(
+                db_url,
+                args.path,
+                paper_ids,
+                execute=args.yes,
+                owner_ref=args.to,
+                export_path=export_path,
+            )
+        )
+    except RuntimeError as cause:
+        print(f"执行失败（事务已回滚）: {cause}")
+        return 1
+    print(_json.dumps(report, ensure_ascii=False, indent=2))
+    if not args.yes:
+        print("[dry-run] 未修改数据库；确认计划后加 --yes 执行。")
+    elif report.get("failure"):
+        print(f"[失败] {report['failure']}")
+    return int(report.get("exit_code", 0))
+
+
+
 def _run_acceptance_clean(args) -> int:
     """python -m app.ops.cli acceptance-clean：默认 dry-run 的窄范围验收清理。"""
     import json as _json
@@ -346,6 +448,44 @@ def main() -> None:
     p_v.add_argument("--json", dest="as_json", action="store_true")
     p_di = sub.add_parser("data-inventory", help="生产数据与风险只读盘点")
     p_di.add_argument("--db-url", default=None)
+    p_lp = sub.add_parser(
+        "legacy-paper-report",
+        help="历史无归属试卷只读分类报告（M10-04；默认人类可读摘要，不含生产 ID）",
+    )
+    p_lp.add_argument("--db-url", default=None)
+    p_lp.add_argument(
+        "--json", dest="as_json", action="store_true", help="输出完整 JSON 明细（含 paper_id）"
+    )
+    p_lp.add_argument(
+        "--output",
+        default=None,
+        help="写 JSON 报告到文件（必须位于 gitignore 的 artifacts/temp 目录）",
+    )
+    p_lm = sub.add_parser(
+        "legacy-paper-migrate",
+        help="历史试卷安全迁移（keep-public/assign-owner/export-delete；默认 dry-run，--yes 执行）",
+    )
+    p_lm.add_argument(
+        "path", choices=["keep-public", "assign-owner", "export-delete"]
+    )
+    p_lm.add_argument("--db-url", default=None)
+    p_lm.add_argument(
+        "--paper-id", action="append", default=None, help="精确试卷 ID，可重复提供"
+    )
+    p_lm.add_argument(
+        "--ids-file", default=None, help="每行一个试卷 ID 的文件（空行与 # 注释忽略）"
+    )
+    p_lm.add_argument(
+        "--to", default=None, help="assign-owner 目标用户（精确用户名或用户 ID，必须已存在）"
+    )
+    p_lm.add_argument(
+        "--export",
+        default=None,
+        help="export-delete 的 JSONL 导出路径（必须位于 gitignore 的 artifacts/temp 目录）",
+    )
+    p_lm.add_argument(
+        "--yes", action="store_true", help="真正执行（默认仅输出计划，不修改数据库）"
+    )
     p_ac = sub.add_parser(
         "acceptance-clean", help="验收标记数据清理（默认 dry-run，必须 --yes 才执行）"
     )
@@ -375,6 +515,10 @@ def main() -> None:
         raise SystemExit(_run_version(args))
     if args.command == "data-inventory":
         raise SystemExit(_run_data_inventory(args))
+    if args.command == "legacy-paper-report":
+        raise SystemExit(_run_legacy_paper_report(args))
+    if args.command == "legacy-paper-migrate":
+        raise SystemExit(_run_legacy_paper_migrate(args))
     if args.command == "acceptance-clean":
         raise SystemExit(_run_acceptance_clean(args))
     if args.command == "db-rollback":

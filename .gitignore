@@ -19,3 +19,7 @@ logs/
 .pytest-root*
 .pytest-tmp*
 services/api/.pytest-*
+
+# M10-04 治理报告/导出（含生产 ID 清单，禁止提交）
+artifacts/
+temp/
