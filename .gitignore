@@ -14,3 +14,8 @@ logs/
 *.db
 *.sqlite3
 .verify/
+
+# pytest 自定义 basetemp（M9-08 本地验证残留）
+.pytest-root*
+.pytest-tmp*
+services/api/.pytest-*

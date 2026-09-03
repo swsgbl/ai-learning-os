@@ -149,7 +149,8 @@ async def issue_voice_token(payload: VoiceTokenRequest, request: Request) -> Voi
         identity=token.identity,
         role=payload.role,
         expires_at=token.expires_at.isoformat(),
-        ws_url=settings.livekit_url or "ws://127.0.0.1:7880",
+        # M9-08: 浏览器可达地址优先（公开模式 AIOS_PUBLIC_LIVEKIT_URL），绝不返回容器内部地址
+        ws_url=settings.public_livekit_url or settings.livekit_url or "ws://127.0.0.1:7880",
     )
 
 
