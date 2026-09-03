@@ -2,13 +2,17 @@
 
 覆盖：报告分类/引用统计/汇总、报告只读、CLI fail-closed 与输出路径安全、
 dry-run 不落盘不修改、--yes 缺失拒绝执行、无效 ID 整体拒绝、行数不一致
-事务回滚、assign-owner 成功与审计、keep-public 仅记录决策、export-delete
-拒绝被引用卷、未引用卷导出后删除、导出校验失败不删库。
+事务回滚、assign-owner 成功与审计（含事务内目标用户复核失败回滚）、
+keep-public 仅记录决策（含陈旧行计划失败不写审计）、export-delete
+拒绝被引用卷、未引用卷导出后删除、完整归档校验（同 ID 内容损坏/malformed
+paper.id 不抛异常）、既有归档拒绝覆盖（含 dangling symlink）、writer
+OSError 稳定失败不删库、同数量换内容在删除事务被拒绝。
 """
 from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 import sys
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -496,6 +500,36 @@ def test_assign_owner_accepts_user_id_and_rejects_unknown_user(tmp_path) -> None
     assert len(_fetch(db_url, AuditLogRow)) == 1  # 仅第一次成功迁移写审计
 
 
+def test_assign_owner_target_user_vanishing_in_transaction_rolls_back(
+    tmp_path, monkeypatch
+) -> None:
+    """解析与写入事务之间的并发窗口：目标用户在事务复核时消失 → 回滚不审计。"""
+    db_url = _make_db(tmp_path)
+    original = legacy._resolve_target_user
+    calls = {"count": 0}
+
+    async def vanishing_user(session, reference, *, for_update=False):
+        calls["count"] += 1
+        if for_update:
+            return None  # 事务内复核：目标用户已被并发删除
+        return await original(session, reference)
+
+    monkeypatch.setattr(legacy, "_resolve_target_user", vanishing_user)
+    with pytest.raises(RuntimeError, match="事务复核"):
+        asyncio.run(
+            run_legacy_migrate(
+                db_url,
+                "assign-owner",
+                ["pap_unref"],
+                execute=True,
+                owner_ref="alice_gov",
+            )
+        )
+    assert calls["count"] == 2  # 事务外解析 + 事务内锁定复核
+    assert _fetch(db_url, PaperRow, PaperRow.id == "pap_unref")[0].owner_id is None
+    assert _fetch(db_url, AuditLogRow) == []
+
+
 def test_keep_public_records_decision_without_touching_papers(tmp_path) -> None:
     db_url = _make_db(tmp_path)
     report = asyncio.run(
@@ -511,6 +545,32 @@ def test_keep_public_records_decision_without_touching_papers(tmp_path) -> None:
     assert audits[0].action == "ops.legacy_paper.keep_public"
     assert audits[0].after["decision"] == "keep_public"
     assert audits[0].after["papers_modified"] == 0
+
+
+def test_keep_public_stale_plan_rolls_back_without_audit(tmp_path, monkeypatch) -> None:
+    """陈旧行计划（行已消失/状态漂移）：审计不得与事实不符 → 回滚不写审计。"""
+    db_url = _make_db(tmp_path)
+    original = legacy._load_states
+
+    async def stale_states(session, paper_ids):
+        states = await original(session, paper_ids)
+        states["pap_ghost"] = {
+            "title": "ghost",
+            "source": "imported",
+            "owner_id": None,
+            "exam_count": 0,
+        }
+        return states
+
+    monkeypatch.setattr(legacy, "_load_states", stale_states)
+    with pytest.raises(RuntimeError, match="不一致"):
+        asyncio.run(
+            run_legacy_migrate(
+                db_url, "keep-public", ["pap_ref", "pap_ghost"], execute=True
+            )
+        )
+    assert _fetch(db_url, PaperRow, PaperRow.id == "pap_ref")[0].owner_id is None
+    assert _fetch(db_url, AuditLogRow) == []
 
 
 # --- export-delete ----------------------------------------------------------
@@ -604,39 +664,270 @@ def test_export_validation_failure_keeps_database_untouched(
     assert _fetch(db_url, AuditLogRow) == []
 
 
+def test_export_delete_tampered_content_same_ids_keeps_database(tmp_path, monkeypatch):
+    """同 ID 集合但题干/答案被损坏：完整归档校验失败，DB 原样保留。"""
+    db_url = _make_db(tmp_path)
+    export = tmp_path / "artifacts" / "export.jsonl"
+
+    def tampering_writer(path, records):
+        tampered = json.loads(json.dumps(records, ensure_ascii=False))
+        for record in tampered:
+            if record["paper"]["id"] == "pap_unref":
+                record["paper"]["title"] = "tampered title"
+                record["questions"][0]["answer"] = "A"
+                record["questions"][0]["explanation"] = "tampered"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in tampered),
+            encoding="utf-8",
+        )
+
+    monkeypatch.setattr(legacy, "_write_export_file", tampering_writer)
+    report = asyncio.run(
+        run_legacy_migrate(
+            db_url, "export-delete", ["pap_unref"], execute=True, export_path=export
+        )
+    )
+    assert report["executed"] is False
+    assert report["exit_code"] == 1
+    assert any("内容与快照不一致" in p for p in report["export_validation_problems"])
+    # ID 集合一致：不得误报缺少/多出/重复。
+    assert not any(
+        "缺少" in p or "多出" in p or "重复" in p
+        for p in report["export_validation_problems"]
+    )
+    assert _fetch(db_url, PaperRow, PaperRow.id == "pap_unref")
+    assert _fetch(db_url, QuestionRow, QuestionRow.paper_id == "pap_unref")
+    assert _fetch(db_url, AuditLogRow) == []
+
+
+def test_export_delete_refuses_to_overwrite_existing_archive(tmp_path) -> None:
+    """既有归档是历史证据：拒绝覆盖、不改 DB、原文件字节不动。"""
+    db_url = _make_db(tmp_path)
+    export = tmp_path / "artifacts" / "export.jsonl"
+    export.parent.mkdir(parents=True)
+    export.write_text("既有历史证据\n", encoding="utf-8")
+
+    report = asyncio.run(
+        run_legacy_migrate(
+            db_url, "export-delete", ["pap_unref"], execute=True, export_path=export
+        )
+    )
+    assert report["executed"] is False
+    assert report["exit_code"] == 1
+    assert "拒绝覆盖" in report["failure"]
+    assert export.read_text(encoding="utf-8") == "既有历史证据\n"
+    assert _fetch(db_url, PaperRow, PaperRow.id == "pap_unref")
+    assert _fetch(db_url, QuestionRow, QuestionRow.paper_id == "pap_unref")
+    assert _fetch(db_url, AuditLogRow) == []
+
+
+def test_export_delete_refuses_to_overwrite_dangling_symlink(tmp_path) -> None:
+    """dangling symlink 也是“已存在”：拒绝且绝不透过链接写目标文件。"""
+    db_url = _make_db(tmp_path)
+    export = tmp_path / "artifacts" / "export.jsonl"
+    export.parent.mkdir(parents=True)
+    try:
+        export.symlink_to(tmp_path / "nowhere.jsonl")
+    except OSError as cause:
+        pytest.skip(f"本环境无法创建 symlink: {cause}")
+
+    report = asyncio.run(
+        run_legacy_migrate(
+            db_url, "export-delete", ["pap_unref"], execute=True, export_path=export
+        )
+    )
+    assert report["executed"] is False
+    assert report["exit_code"] == 1
+    assert "拒绝覆盖" in report["failure"]
+    assert export.is_symlink() and not export.exists()
+    assert not (tmp_path / "nowhere.jsonl").exists()
+    assert _fetch(db_url, PaperRow, PaperRow.id == "pap_unref")
+    assert _fetch(db_url, AuditLogRow) == []
+
+
+def test_export_writer_oserror_fails_closed_without_db_changes(
+    tmp_path, monkeypatch
+) -> None:
+    """导出 IO 失败（如磁盘满）→ 稳定失败计划，不删任何行、不写成功审计。"""
+    db_url = _make_db(tmp_path)
+    export = tmp_path / "artifacts" / "export.jsonl"
+
+    def no_space_writer(path, records):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(legacy, "_write_export_file", no_space_writer)
+    report = asyncio.run(
+        run_legacy_migrate(
+            db_url, "export-delete", ["pap_unref"], execute=True, export_path=export
+        )
+    )
+    assert report["executed"] is False
+    assert report["exit_code"] == 1
+    assert "写入失败" in report["failure"]
+    assert not export.exists()
+    assert _fetch(db_url, PaperRow, PaperRow.id == "pap_unref")
+    assert _fetch(db_url, QuestionRow, QuestionRow.paper_id == "pap_unref")
+    assert _fetch(db_url, AuditLogRow) == []
+
+
+def test_export_writer_losing_create_race_fails_closed(tmp_path, monkeypatch) -> None:
+    """排他创建竞态（对手抢先建档）→ FileExistsError 稳定失败，不删库。"""
+    db_url = _make_db(tmp_path)
+    export = tmp_path / "artifacts" / "export.jsonl"
+
+    def racing_writer(path, records):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("对手已抢先建档\n", encoding="utf-8")
+        raise FileExistsError(f"导出文件已存在: {path}")
+
+    monkeypatch.setattr(legacy, "_write_export_file", racing_writer)
+    report = asyncio.run(
+        run_legacy_migrate(
+            db_url, "export-delete", ["pap_unref"], execute=True, export_path=export
+        )
+    )
+    assert report["executed"] is False
+    assert report["exit_code"] == 1
+    assert "拒绝覆盖" in report["failure"]
+    assert export.read_text(encoding="utf-8") == "对手已抢先建档\n"
+    assert _fetch(db_url, PaperRow, PaperRow.id == "pap_unref")
+    assert _fetch(db_url, QuestionRow, QuestionRow.paper_id == "pap_unref")
+    assert _fetch(db_url, AuditLogRow) == []
+
+
+def test_export_delete_rejects_same_count_content_swap(tmp_path, monkeypatch) -> None:
+    """导出校验通过后、删除事务前题目被同数量换内容 → 复查不一致整体回滚。"""
+    db_url = _make_db(tmp_path)
+    db_file = tmp_path / "legacy-governance.db"
+    export = tmp_path / "artifacts" / "export.jsonl"
+    original_validate = legacy.validate_export_file
+
+    def swap_stem_during_validation(path, records):
+        problems = original_validate(path, records)
+        assert problems == []  # 归档本身完好，问题在库里
+        # 模拟校验后、删除事务前的同数量内容替换（rowcount 巧合相等）。
+        conn = sqlite3.connect(db_file)
+        try:
+            conn.execute(
+                "UPDATE questions SET stem = ? WHERE id = ?",
+                ("tampered-after-export", "q_unref"),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        return problems
+
+    monkeypatch.setattr(legacy, "validate_export_file", swap_stem_during_validation)
+    # rowcount 巧合相等（1==1），拒绝必须来自内容复查而非行数校验。
+    with pytest.raises(RuntimeError, match="已验证导出档案不一致"):
+        asyncio.run(
+            run_legacy_migrate(
+                db_url,
+                "export-delete",
+                ["pap_unref"],
+                execute=True,
+                export_path=export,
+            )
+        )
+    # 删除被拒绝：试卷与题目原样保留（外部改动如实保留），无审计。
+    questions = _fetch(db_url, QuestionRow, QuestionRow.paper_id == "pap_unref")
+    assert len(questions) == 1
+    assert questions[0].stem == "tampered-after-export"
+    assert _fetch(db_url, PaperRow, PaperRow.id == "pap_unref")
+    assert _fetch(db_url, AuditLogRow) == []
+
+
 def test_validate_export_file_detects_problems(tmp_path) -> None:
+    record_a = {"paper": {"id": "pap_a"}, "questions": []}
+    record_b = {"paper": {"id": "pap_b"}, "questions": []}
     good = tmp_path / "good.jsonl"
     good.write_text(
-        json.dumps({"paper": {"id": "pap_a"}, "questions": []})
-        + "\n"
-        + json.dumps({"paper": {"id": "pap_b"}, "questions": []})
-        + "\n",
+        json.dumps(record_a, ensure_ascii=False) + "\n"
+        + json.dumps(record_b, ensure_ascii=False) + "\n",
         encoding="utf-8",
     )
-    assert validate_export_file(good, ["pap_a", "pap_b"]) == []
+    assert validate_export_file(good, [record_a, record_b]) == []
 
     broken = tmp_path / "broken.jsonl"
     broken.write_text("oops\n", encoding="utf-8")
-    assert validate_export_file(broken, ["pap_a"])
+    assert validate_export_file(broken, [record_a])
 
     mismatch = tmp_path / "mismatch.jsonl"
     mismatch.write_text(
-        json.dumps({"paper": {"id": "pap_b"}, "questions": []}) + "\n",
-        encoding="utf-8",
+        json.dumps(record_b, ensure_ascii=False) + "\n", encoding="utf-8"
     )
-    problems = validate_export_file(mismatch, ["pap_a"])
+    problems = validate_export_file(mismatch, [record_a])
     assert any("缺少" in problem for problem in problems)
     assert any("多出" in problem for problem in problems)
 
     duplicate = tmp_path / "duplicate.jsonl"
     duplicate.write_text(
-        json.dumps({"paper": {"id": "pap_a"}, "questions": []})
-        + "\n"
-        + json.dumps({"paper": {"id": "pap_a"}, "questions": []})
+        json.dumps(record_a, ensure_ascii=False) + "\n"
+        + json.dumps(record_a, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    assert any("重复" in problem for problem in validate_export_file(duplicate, [record_a]))
+
+
+def test_validate_export_file_detects_tampered_content_same_ids(tmp_path) -> None:
+    """同 paper ID 但题干/答案被损坏：完整归档校验必须失败（不只看 ID 集合）。"""
+    expected = [
+        {
+            "exported_at": "2026-09-03T00:00:00+00:00",
+            "paper": {"id": "pap_a", "title": "原卷", "owner_id": None},
+            "questions": [
+                {
+                    "id": "q1",
+                    "stem": "1+1=?",
+                    "answer": "B",
+                    "explanation": "arithmetic",
+                    "options": [{"key": "A", "text": "1"}],
+                    "score": 1.5,
+                }
+            ],
+        }
+    ]
+    tampered_file = tmp_path / "tampered.jsonl"
+    tampered = json.loads(json.dumps(expected, ensure_ascii=False))
+    tampered[0]["paper"]["title"] = "损坏标题"
+    tampered[0]["questions"][0]["answer"] = "A"
+    tampered[0]["questions"][0]["explanation"] = "损坏解释"
+    tampered_file.write_text(
+        json.dumps(tampered[0], ensure_ascii=False) + "\n", encoding="utf-8"
+    )
+    problems = validate_export_file(tampered_file, expected)
+    assert any("内容与快照不一致" in problem for problem in problems)
+    detail = next(p for p in problems if "内容与快照不一致" in p)
+    assert "paper.title" in detail
+    assert "questions" in detail
+    # ID 集合本身一致：不得误报缺少/多出。
+    assert not any("缺少" in p or "多出" in p for p in problems)
+
+
+def test_validate_export_file_malformed_paper_ids_never_raise(tmp_path) -> None:
+    """malformed paper.id（非字符串/空值/不可哈希对象）→ problems，不抛 TypeError。"""
+    expected = [{"paper": {"id": "pap_a"}, "questions": []}]
+    malformed = tmp_path / "malformed.jsonl"
+    malformed.write_text(
+        "\n".join(
+            [
+                json.dumps({"paper": {"id": {"nested": "dict"}}}),
+                json.dumps({"paper": {"id": None}}),
+                json.dumps({"paper": {"id": ""}}),
+                json.dumps({"paper": {"id": ["unhashable"]}}),
+                json.dumps({"paper": []}),
+                json.dumps(["not", "an", "object"]),
+            ]
+        )
         + "\n",
         encoding="utf-8",
     )
-    assert any("重复" in problem for problem in validate_export_file(duplicate, ["pap_a"]))
+    problems = validate_export_file(malformed, expected)
+    assert len([p for p in problems if "paper.id 非法" in p]) == 4
+    assert any("缺少 paper 对象" in p for p in problems)
+    assert any("不是试卷记录对象" in p for p in problems)
+    assert any("缺少 1 张试卷" in p for p in problems)
 
 
 def test_cli_export_delete_via_ids_file(tmp_path, capsys) -> None:
@@ -662,4 +953,3 @@ def test_cli_export_delete_via_ids_file(tmp_path, capsys) -> None:
         "pap_owned",
         "pap_ref",
     }
-

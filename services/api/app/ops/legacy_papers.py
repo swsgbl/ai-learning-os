@@ -8,10 +8,18 @@ operation so a stale list cannot silently shrink or widen the blast radius),
 re-verify row state inside the executing transaction, and refuse to delete
 papers referenced by historical exams. Every executed path appends an audit
 row in the same transaction (append-only semantics preserved).
+
+export-delete is additionally evidence-first: the JSONL archive is created
+exclusively (never overwrites an existing file, symlinks included), validated
+as a full archive against the in-memory pre-export snapshot (deterministic
+JSON equality of paper + questions fields, exact ID set, no missing/duplicate/
+tampered lines), and the delete transaction re-verifies that the question rows
+it is about to delete still match the verified archive byte-for-byte.
 """
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import uuid
 from collections.abc import Sequence
@@ -341,18 +349,22 @@ async def _load_states(
 
 
 async def _resolve_target_user(
-    session: AsyncSession, reference: str
+    session: AsyncSession, reference: str, *, for_update: bool = False
 ) -> dict[str, str] | None:
-    """Exact match on user id or username; never fuzzy."""
-    row = (
-        await session.scalars(select(UserRow).where(UserRow.id == reference))
-    ).first()
+    """Exact match on user id or username; never fuzzy.
+
+    for_update=True 在当前事务内锁定用户行（PG FOR UPDATE；SQLite 忽略由库级
+    锁兜底），供写事务在更新 papers 前复核目标用户仍然存在，消除“解析成功后
+    目标被并发删除”的窗口。
+    """
+
+    def _stmt(where: Any) -> Any:
+        statement = select(UserRow).where(where)
+        return statement.with_for_update() if for_update else statement
+
+    row = (await session.scalars(_stmt(UserRow.id == reference))).first()
     if row is None:
-        row = (
-            await session.scalars(
-                select(UserRow).where(UserRow.username == reference)
-            )
-        ).first()
+        row = (await session.scalars(_stmt(UserRow.username == reference))).first()
     if row is None:
         return None
     return {"id": row.id, "username": row.username, "role": row.role}
@@ -366,6 +378,48 @@ def _audit_base(action: str, ids: Sequence[str]) -> dict[str, Any]:
         "request_id": f"cli-{uuid.uuid4().hex[:12]}",
         "actor_id": "cli-operator",
         "actor_username": "cli-operator",
+    }
+
+
+def _paper_payload(paper: PaperRow, questions: Sequence[QuestionRow]) -> dict[str, Any]:
+    """导出记录的确定性内容部分（不含 exported_at 时间戳）。
+
+    导出快照与删除事务内的复查共用此函数，保证“档案内容”与“即将删除的
+    内容”按同一形态比较。
+    """
+    return {
+        "paper": {
+            "id": paper.id,
+            "title": paper.title,
+            "subtitle": paper.subtitle,
+            "source": paper.source,
+            "university": paper.university,
+            "year": paper.year,
+            "subject": paper.subject,
+            "difficulty": paper.difficulty,
+            "duration_minutes": paper.duration_minutes,
+            "tags": paper.tags,
+            "origin_url": paper.origin_url,
+            "license": paper.license,
+            "owner_id": paper.owner_id,
+        },
+        "questions": [
+            {
+                "id": question.id,
+                "paper_id": question.paper_id,
+                "question_type": question.question_type,
+                "stem": question.stem,
+                "options": question.options,
+                "answer": question.answer,
+                "explanation": question.explanation,
+                "angles": question.angles,
+                "knowledge": question.knowledge,
+                "score": question.score,
+                "difficulty": question.difficulty,
+                "sort_order": question.sort_order,
+            }
+            for question in questions
+        ],
     }
 
 
@@ -386,7 +440,8 @@ async def _snapshot_for_export(
             await session.execute(
                 select(QuestionRow)
                 .where(QuestionRow.paper_id.in_(list(paper_ids)))
-                .order_by(QuestionRow.paper_id, QuestionRow.sort_order)
+                # 末位追加 id，保证同 sort_order 行的顺序也确定。
+                .order_by(QuestionRow.paper_id, QuestionRow.sort_order, QuestionRow.id)
             )
         )
         .scalars()
@@ -402,55 +457,94 @@ async def _snapshot_for_export(
         lines.append(
             {
                 "exported_at": datetime.now(UTC).isoformat(),
-                "paper": {
-                    "id": paper.id,
-                    "title": paper.title,
-                    "subtitle": paper.subtitle,
-                    "source": paper.source,
-                    "university": paper.university,
-                    "year": paper.year,
-                    "subject": paper.subject,
-                    "difficulty": paper.difficulty,
-                    "duration_minutes": paper.duration_minutes,
-                    "tags": paper.tags,
-                    "origin_url": paper.origin_url,
-                    "license": paper.license,
-                    "owner_id": paper.owner_id,
-                },
-                "questions": [
-                    {
-                        "id": question.id,
-                        "paper_id": question.paper_id,
-                        "question_type": question.question_type,
-                        "stem": question.stem,
-                        "options": question.options,
-                        "answer": question.answer,
-                        "explanation": question.explanation,
-                        "angles": question.angles,
-                        "knowledge": question.knowledge,
-                        "score": question.score,
-                        "difficulty": question.difficulty,
-                        "sort_order": question.sort_order,
-                    }
-                    for question in grouped[paper.id]
-                ],
+                **_paper_payload(paper, grouped[paper.id]),
             }
         )
     return lines, counts
 
 
+def _canonical(value: Any) -> str:
+    """确定性 JSON 形态：键排序 + 紧凑分隔，供全等比较。"""
+    return json.dumps(
+        value, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+
+
+def _expected_payload_canon(records: Sequence[dict[str, Any]]) -> dict[str, str]:
+    """导出记录（含 exported_at）→ 每张卷归档内容的 canonical 形态。"""
+    canon: dict[str, str] = {}
+    for record in records:
+        paper_id = record.get("paper", {}).get("id")
+        if isinstance(paper_id, str):
+            canon[paper_id] = _canonical(
+                {"paper": record.get("paper"), "questions": record.get("questions")}
+            )
+    return canon
+
+
 def _write_export_file(path: Path, records: Sequence[dict[str, Any]]) -> None:
+    """排他创建导出档案；目标已存在（含 symlink / dangling symlink）一律拒绝。
+
+    - O_CREAT|O_EXCL 保证绝不覆盖既有文件；POSIX 另加 O_NOFOLLOW 防 symlink
+      竞态。Windows CRT 的 O_EXCL 会跟随 symlink 建到目标路径，故创建后再
+      复核路径本身不是符号链接（是则视为已存在，fail-closed 拒绝写入）。
+    - 写入后 fsync：删除事务提交前归档证据必须已落盘。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
+    if os.path.lexists(path):
+        raise FileExistsError(f"导出文件已存在，拒绝覆盖历史证据: {path}")
     payload = "".join(
         json.dumps(record, ensure_ascii=False) + "\n" for record in records
     )
-    path.write_text(payload, encoding="utf-8")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    handle = os.fdopen(os.open(path, flags), "w", encoding="utf-8", newline="\n")
+    try:
+        if os.path.islink(path):
+            raise FileExistsError(
+                f"导出路径在创建时是符号链接，拒绝写入（Windows 竞态兜底）: {path}"
+            )
+        handle.write(payload)
+        handle.flush()
+        os.fsync(handle.fileno())
+    finally:
+        handle.close()
 
 
-def validate_export_file(path: Path, expected_ids: Sequence[str]) -> list[str]:
-    """Re-read the JSONL export; return problems (empty list = trustworthy)."""
+def _record_diff(expected: dict[str, Any], actual: dict[str, Any]) -> list[str]:
+    """比较两份导出记录的差异字段（exported_at 时间戳除外全等）。"""
+    diffs: list[str] = []
+    exp_paper = expected.get("paper")
+    act_paper = actual.get("paper")
+    if not isinstance(exp_paper, dict) or not isinstance(act_paper, dict):
+        return ["paper"]
+    for field in sorted(set(exp_paper) | set(act_paper)):
+        if _canonical(exp_paper.get(field)) != _canonical(act_paper.get(field)):
+            diffs.append(f"paper.{field}")
+    if _canonical(expected.get("questions")) != _canonical(actual.get("questions")):
+        diffs.append("questions")
+    return diffs
+
+
+def validate_export_file(
+    path: Path, expected_records: Sequence[dict[str, Any]]
+) -> list[str]:
+    """回读导出 JSONL 做「完整归档校验」；返回 problems（空列表 = 可信）。
+
+    以内存 snapshot 为期望值：逐行解析后与期望记录做确定性全等比较（paper
+    全字段 + questions 全字段，JSON canonical 比较），并继续校验 paper ID 精确
+    集合与缺行/重复/错行。malformed paper.id（非字符串、空值、不可哈希对象等）
+    一律计入 problems，绝不抛未捕获 TypeError。
+    """
     problems: list[str] = []
     seen: list[str] = []
+    parsed: dict[str, dict[str, Any]] = {}
+    expected: dict[str, dict[str, Any]] = {}
+    for record in expected_records:
+        paper = record.get("paper")
+        if isinstance(paper, dict) and isinstance(paper.get("id"), str):
+            expected[paper["id"]] = record
     try:
         text = path.read_text(encoding="utf-8")
     except OSError as cause:
@@ -460,19 +554,40 @@ def validate_export_file(path: Path, expected_ids: Sequence[str]) -> list[str]:
             continue
         try:
             record = json.loads(line)
-            seen.append(record["paper"]["id"])
-        except (json.JSONDecodeError, KeyError, TypeError) as cause:
-            problems.append(f"第 {number} 行无法解析为试卷记录: {cause}")
-    expected = set(expected_ids)
-    actual = set(seen)
-    if len(seen) != len(actual):
+        except json.JSONDecodeError as cause:
+            problems.append(f"第 {number} 行无法解析为 JSON: {cause}")
+            continue
+        if not isinstance(record, dict):
+            problems.append(f"第 {number} 行不是试卷记录对象")
+            continue
+        paper = record.get("paper")
+        if not isinstance(paper, dict):
+            problems.append(f"第 {number} 行缺少 paper 对象")
+            continue
+        paper_id = paper.get("id")
+        if not isinstance(paper_id, str) or not paper_id:
+            problems.append(
+                f"第 {number} 行 paper.id 非法（必须是非空字符串）: {paper_id!r}"
+            )
+            continue
+        seen.append(paper_id)
+        parsed.setdefault(paper_id, record)
+    if len(seen) != len(set(seen)):
         problems.append("导出文件存在重复 paper 记录")
-    missing = sorted(expected - actual)
-    extra = sorted(actual - expected)
+    expected_ids = set(expected)
+    actual_ids = set(seen)
+    missing = sorted(expected_ids - actual_ids)
+    extra = sorted(actual_ids - expected_ids)
     if missing:
         problems.append(f"导出缺少 {len(missing)} 张试卷: {missing[:5]}")
     if extra:
         problems.append(f"导出多出 {len(extra)} 张试卷: {extra[:5]}")
+    for paper_id in sorted(expected_ids & actual_ids):
+        diffs = _record_diff(expected[paper_id], parsed[paper_id])
+        if diffs:
+            problems.append(
+                f"试卷 {paper_id} 导出内容与快照不一致: {', '.join(diffs[:5])}"
+            )
     return problems
 
 
@@ -564,6 +679,28 @@ async def run_legacy_migrate(
             if path == "keep-public":
                 await session.rollback()
                 async with session.begin():
+                    # 审计必须与事实一致：先锁定并复核 eligible 行仍存在且
+                    # owner/source 与计划一致，陈旧计划整体回滚、不写审计。
+                    rows = (
+                        (
+                            await session.execute(
+                                select(PaperRow)
+                                .where(PaperRow.id.in_(eligible))
+                                .with_for_update()
+                            )
+                        )
+                        .scalars()
+                        .all()
+                    )
+                    if len(rows) != len(eligible):
+                        raise RuntimeError(
+                            f"锁定行数 {len(rows)} 与计划 {len(eligible)} 不一致，事务回滚"
+                        )
+                    for row in rows:
+                        if row.owner_id is not None or row.source == SEED_SOURCE:
+                            raise RuntimeError(
+                                f"行 {row.id} 状态与计划不一致（owner/source 已变化），事务回滚"
+                            )
                     session.add(
                         AuditLogRow(
                             **audit_insert_values(
@@ -609,6 +746,15 @@ async def run_legacy_migrate(
                     return plan
                 await session.rollback()
                 async with session.begin():
+                    # 同一事务内锁定并复核目标用户仍存在，消除“解析成功后
+                    # 目标被并发删除”的窗口；目标消失整体回滚、不写审计。
+                    target = await _resolve_target_user(
+                        session, owner_ref or "", for_update=True
+                    )
+                    if target is None:
+                        raise RuntimeError(
+                            f"目标用户 {owner_ref} 在事务复核时不存在，事务回滚"
+                        )
                     rows = (
                         (
                             await session.execute(
@@ -671,11 +817,49 @@ async def run_legacy_migrate(
                 )
                 return plan
 
-            # export-delete：先导出并校验，校验通过才进入删除事务。
+            # export-delete：先排他导出并做完整归档校验，校验通过才进入删除
+            # 事务；删除事务内再次证明“即将删除的题目 == 已验证档案”。
             assert export_path is not None
+            if os.path.lexists(export_path):
+                plan.update(
+                    {
+                        "executed": False,
+                        "export_path": str(export_path),
+                        "failure": (
+                            f"导出文件已存在，拒绝覆盖历史证据（未删除任何数据库行）: "
+                            f"{export_path}"
+                        ),
+                        "exit_code": 1,
+                    }
+                )
+                return plan
             records, question_counts = await _snapshot_for_export(session, eligible)
-            _write_export_file(export_path, records)
-            problems = validate_export_file(export_path, eligible)
+            expected_payloads = _expected_payload_canon(records)
+            # 结束快照读事务：写文件/校验期间不持有任何库级锁。
+            await session.rollback()
+            try:
+                _write_export_file(export_path, records)
+            except FileExistsError as cause:
+                plan.update(
+                    {
+                        "executed": False,
+                        "export_path": str(export_path),
+                        "failure": f"导出文件已存在，拒绝覆盖（未删除任何数据库行）: {cause}",
+                        "exit_code": 1,
+                    }
+                )
+                return plan
+            except OSError as cause:
+                plan.update(
+                    {
+                        "executed": False,
+                        "export_path": str(export_path),
+                        "failure": f"导出文件写入失败，未删除任何数据库行: {cause}",
+                        "exit_code": 1,
+                    }
+                )
+                return plan
+            problems = validate_export_file(export_path, records)
             if problems:
                 plan.update(
                     {
@@ -688,7 +872,6 @@ async def run_legacy_migrate(
                 )
                 return plan
             planned_questions = sum(question_counts.values())
-            await session.rollback()
             async with session.begin():
                 rows = (
                     (
@@ -719,6 +902,51 @@ async def run_legacy_migrate(
                     raise RuntimeError(
                         f"仍有 {references} 条考试引用选中试卷，拒绝删除（不得级联删考试）"
                     )
+                # 复查当前题目快照与已验证导出档案一致：精确 ID 集合 + 完整记录
+                # 全等。同数量换内容（行数巧合相等）也必须被拒绝。
+                current_questions = (
+                    (
+                        await session.execute(
+                            select(QuestionRow)
+                            .where(QuestionRow.paper_id.in_(eligible))
+                            .order_by(
+                                QuestionRow.paper_id,
+                                QuestionRow.sort_order,
+                                QuestionRow.id,
+                            )
+                            .with_for_update()
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                grouped: dict[str, list[QuestionRow]] = {pid: [] for pid in eligible}
+                for question in current_questions:
+                    grouped.setdefault(question.paper_id, []).append(question)
+                current_payloads = {
+                    row.id: _canonical(_paper_payload(row, grouped.get(row.id, [])))
+                    for row in rows
+                }
+                if set(current_payloads) != set(eligible):
+                    raise RuntimeError(
+                        "当前试卷/题目集合与导出档案不一致，事务回滚（拒绝删除）"
+                    )
+                current_question_ids = {question.id for question in current_questions}
+                expected_question_ids = {
+                    question["id"]
+                    for record in records
+                    for question in record.get("questions") or []
+                }
+                if current_question_ids != expected_question_ids:
+                    raise RuntimeError(
+                        "当前题目 ID 集合与导出档案不一致，事务回滚（拒绝删除）"
+                    )
+                for paper_id in eligible:
+                    if current_payloads[paper_id] != expected_payloads[paper_id]:
+                        raise RuntimeError(
+                            f"试卷 {paper_id} 当前内容与已验证导出档案不一致，"
+                            "事务回滚（拒绝删除）"
+                        )
                 deleted_questions = await session.execute(
                     delete(QuestionRow).where(QuestionRow.paper_id.in_(eligible))
                 )
@@ -772,4 +1000,3 @@ async def run_legacy_migrate(
             return plan
     finally:
         await engine.dispose()
-

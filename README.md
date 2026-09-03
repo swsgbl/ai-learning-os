@@ -93,10 +93,14 @@ python -m app.ops.cli legacy-paper-migrate export-delete --db-url ... --paper-id
 考试引用/引用次数/最近引用时间与建议路径（keep_public/assign_owner/export_review）。
 papers 表没有时间戳列，创建/更新时间如实为 null，时间证据以考试引用时间派生。
 迁移只接受精确 paper ID（`--paper-id` 可重复或 `--ids-file`，拒绝 `*`/`%`），未知 ID
-整体拒绝；assign-owner 只迁报告确认的行，事务内复核行数与行状态，不符即回滚；
-export-delete 先导出 JSONL 并校验可解析、ID 集合一致才删库，被历史考试引用的卷一律
-拒绝删除（人工处理，不级联删考试）；keep-public 只写审计决策不改试卷。报告/导出文件
-含生产 ID，只能写入 gitignore 的 `artifacts/`、`temp/` 目录（其他路径退出码 2）。
+整体拒绝；assign-owner 只迁报告确认的行，事务内先锁定目标用户再复核行数与行状态，
+不符即回滚；export-delete 排他创建导出档案（目标已存在，含 dangling symlink，一律
+拒绝覆盖、不动 DB），回读做完整归档校验（与导出前内存快照逐字段确定性全等、paper
+ID 精确集合、无缺行/重复/错行，IO 失败稳定退出码 1 不删库），删除事务内再次证明
+即将删除的题目与已验证档案完全一致（同数量换内容也拒绝），被历史考试引用的卷一律
+拒绝删除（人工处理，不级联删考试）；keep-public 在审计事务内复核行事实后才写决策，
+不改试卷。报告/导出文件含生产 ID，只能写入 gitignore 的 `artifacts/`、`temp/`
+目录（其他路径退出码 2）。
 
 **应用回滚**：compose 以 `AIOS_IMAGE_TAG` 为镜像锚点，发布时固化 tag，回滚即旧 tag 重启：
 
