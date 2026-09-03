@@ -187,6 +187,96 @@ def _run_legacy_paper_migrate(args) -> int:
 
 
 
+def _run_draft_owner_report(args) -> int:
+    """python -m app.ops.cli draft-owner-report：generation/variant 历史无归属
+    草稿只读报告（M10-04 下一切片）。
+
+    范围仅 owner_id IS NULL 的历史草稿；默认人类可读摘要（不含生产
+    draft_id），--json 全量明细；--output 复用 legacy 报告的 artifacts/temp
+    路径护栏。报告对数据库零写入，不猜归属（多 owner/NULL/缺失一律
+    manual_review）。
+    """
+    import json as _json
+
+    from app.ops.draft_ownership import (
+        build_draft_owner_report,
+        format_draft_owner_report_summary,
+    )
+    from app.ops.legacy_papers import is_safe_artifact_path
+
+    db_url = _db_url_of(args)
+    if not db_url:
+        print("缺少 --db-url 或 DATABASE_URL，拒绝生成报告（fail-closed）")
+        return 2
+    if args.output and not is_safe_artifact_path(args.output):
+        print(
+            f"拒绝写入 {args.output}：报告含生产 draft ID，只能写入 gitignore 的 "
+            "artifacts/ 或 temp/ 目录"
+        )
+        return 2
+    report = asyncio.run(
+        build_draft_owner_report(db_url, [args.kind] if args.kind else None)
+    )
+    if args.output:
+        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.output).write_text(
+            _json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"报告已写入: {args.output}")
+    if args.as_json:
+        print(_json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(format_draft_owner_report_summary(report))
+    return 0
+
+
+def _run_draft_owner_migrate(args) -> int:
+    """python -m app.ops.cli draft-owner-migrate <path>：历史草稿归属安全迁移。
+
+    assign-owner / keep-unowned 两路径，默认 dry-run 只打印计划；--yes 才
+    执行。--kind 必填且只接受该 kind 的精确草稿 ID（--draft-id 可重复或
+    --ids-file），未知 ID 或属于另一 kind 的 ID 整体拒绝；只处理
+    owner_id IS NULL 的行，不改 status、不改业务 JSON、不删数据；执行事务
+    内 FOR UPDATE 复核目标用户/行状态/行数，审计与更新同事务。
+    """
+    import json as _json
+
+    from app.ops.draft_ownership import resolve_draft_ids, run_draft_migrate
+
+    db_url = _db_url_of(args)
+    if not db_url:
+        print("缺少 --db-url 或 DATABASE_URL，拒绝迁移（fail-closed）")
+        return 2
+    try:
+        draft_ids = resolve_draft_ids(args.draft_id, args.ids_file)
+    except (OSError, ValueError) as cause:
+        print(f"草稿 ID 解析失败: {cause}")
+        return 2
+    if args.path == "assign-owner" and not args.to:
+        print("assign-owner 需要 --to <已存在用户名或用户 ID>")
+        return 2
+    try:
+        report = asyncio.run(
+            run_draft_migrate(
+                db_url,
+                args.kind,
+                args.path,
+                draft_ids,
+                execute=args.yes,
+                owner_ref=args.to,
+            )
+        )
+    except RuntimeError as cause:
+        print(f"执行失败（事务已回滚）: {cause}")
+        return 1
+    print(_json.dumps(report, ensure_ascii=False, indent=2))
+    if not args.yes:
+        print("[dry-run] 未修改数据库；确认计划后加 --yes 执行。")
+    elif report.get("failure"):
+        print(f"[失败] {report['failure']}")
+    return int(report.get("exit_code", 0))
+
+
 def _run_acceptance_clean(args) -> int:
     """python -m app.ops.cli acceptance-clean：默认 dry-run 的窄范围验收清理。"""
     import json as _json
@@ -486,6 +576,55 @@ def main() -> None:
     p_lm.add_argument(
         "--yes", action="store_true", help="真正执行（默认仅输出计划，不修改数据库）"
     )
+    p_dr = sub.add_parser(
+        "draft-owner-report",
+        help=(
+            "generation/variant 历史无归属草稿只读报告（M10-04；默认人类可读"
+            "摘要，不含生产 draft_id）"
+        ),
+    )
+    p_dr.add_argument("--db-url", default=None)
+    p_dr.add_argument(
+        "--kind",
+        choices=["course-generation", "variant-question"],
+        default=None,
+        help="只报一类草稿（缺省两类都报）",
+    )
+    p_dr.add_argument(
+        "--json", dest="as_json", action="store_true", help="输出完整 JSON 明细（含 draft_id）"
+    )
+    p_dr.add_argument(
+        "--output",
+        default=None,
+        help="写 JSON 报告到文件（必须位于 gitignore 的 artifacts/temp 目录）",
+    )
+    p_dm = sub.add_parser(
+        "draft-owner-migrate",
+        help=(
+            "历史草稿归属安全迁移（assign-owner/keep-unowned；默认 dry-run，"
+            "--yes 执行）"
+        ),
+    )
+    p_dm.add_argument("path", choices=["assign-owner", "keep-unowned"])
+    p_dm.add_argument(
+        "--kind",
+        required=True,
+        choices=["course-generation", "variant-question"],
+        help="草稿类型（course-generation / variant-question，必填）",
+    )
+    p_dm.add_argument("--db-url", default=None)
+    p_dm.add_argument(
+        "--draft-id", action="append", default=None, help="精确草稿 ID，可重复提供"
+    )
+    p_dm.add_argument(
+        "--ids-file", default=None, help="每行一个草稿 ID 的文件（空行与 # 注释忽略）"
+    )
+    p_dm.add_argument(
+        "--to", default=None, help="assign-owner 目标用户（精确用户名或用户 ID，必须已存在）"
+    )
+    p_dm.add_argument(
+        "--yes", action="store_true", help="真正执行（默认仅输出计划，不修改数据库）"
+    )
     p_ac = sub.add_parser(
         "acceptance-clean", help="验收标记数据清理（默认 dry-run，必须 --yes 才执行）"
     )
@@ -519,6 +658,10 @@ def main() -> None:
         raise SystemExit(_run_legacy_paper_report(args))
     if args.command == "legacy-paper-migrate":
         raise SystemExit(_run_legacy_paper_migrate(args))
+    if args.command == "draft-owner-report":
+        raise SystemExit(_run_draft_owner_report(args))
+    if args.command == "draft-owner-migrate":
+        raise SystemExit(_run_draft_owner_migrate(args))
     if args.command == "acceptance-clean":
         raise SystemExit(_run_acceptance_clean(args))
     if args.command == "db-rollback":

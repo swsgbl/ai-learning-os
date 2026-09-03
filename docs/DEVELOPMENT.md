@@ -73,9 +73,10 @@ X-Request-ID 可关联）。读取 `GET /api/v1/audit` 仅 admin（auth off 本�
 
 - 已交付：认证基座、三域归属隔离、Web 登录 UI、角色授权+治理审计、
   私有语料与四类草稿归属、试卷 owner 可见性、Web HttpOnly cookie、治理工作台；
-- 已知边界：generation/variant 草稿与 744 张历史试卷仍待人工归属分类
-  （M10-04 第一切片已交付 `legacy-paper-report` 只读分类报告与
-  `legacy-paper-migrate` 安全迁移 CLI，生产迁移待人工决策后显式 `--yes` 执行）；
+- 已知边界：744 张历史试卷与 generation/variant 历史无归属草稿仍待人工归属决策
+  （M10-04 已交付 `legacy-paper-report`/`legacy-paper-migrate` 与
+  `draft-owner-report`/`draft-owner-migrate` 只读报告 + 默认 dry-run 迁移 CLI，
+  生产迁移待人工决策后显式 `--yes` 执行）；
   审计无防篡改哈希链；TURN 未内置；云 provider/LLM 真实 key 冒烟未执行。
 - 部署绑定：所有端口默认 127.0.0.1；LAN/外网需 `AIOS_BIND_IP=0.0.0.0` 且必须同时
   设强 AUTH_SECRET + APP_ENV=production（启动 fail-closed），否则不要对外暴露。
@@ -105,6 +106,17 @@ X-Request-ID 可关联）。读取 `GET /api/v1/audit` 仅 admin（auth off 本�
   才删库，被历史考试引用的卷一律拒绝（人工处理，不级联删考试）。
 - 边界：CLI 不提供按标题/来源模糊批量操作；报告/导出文件含生产 ID 只写 gitignore
   目录；生产执行必须运维逐批显式 `--yes`。
+- 历史无归属草稿（generation/variant，`owner_id IS NULL`，无资源外键锚）：
+  `draft-owner-report [--kind course-generation|variant-question]`（缺省两类都报）
+  只读报告——引用从业务 JSON 重构（`plan.lessons[].resources[].resource_id` /
+  `variants[].evidence.resource_id`），仅当全部引用资源存在且同属唯一非 NULL
+  owner 时建议 assign_owner（并给出该 owner），无引用/NULL owner/多 owner/资源
+  缺失一律 manual_review，不自动猜测；默认摘要不含生产 draft_id，`--output`
+  同 artifacts/temp 护栏。`draft-owner-migrate {assign-owner,keep-unowned}
+  --kind <必填>` 默认 dry-run、`--yes` 才执行，只收精确 draft ID（未知或属于
+  另一 kind 的 ID 整体拒绝），只改 owner_id（keep-unowned 零修改、只写审计
+  决策），事务内 FOR UPDATE 复核目标用户与行状态，审计与更新同事务；
+  生产未执行任何迁移（M10-04 第三切片）。
 
 ## LLM 接入（M10-01）
 
