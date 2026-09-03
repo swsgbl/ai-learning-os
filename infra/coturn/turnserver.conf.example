@@ -1,0 +1,37 @@
+# M10-05 coturn 配置展示示例——仅文档用途，不会被容器挂载或使用。
+#
+# 真实配置由 infra/coturn/entrypoint.sh 在容器内运行时生成（/run/aios-turnserver.conf）：
+# static-auth-secret 只经部署 env 注入（.env / 部署 secret），绝不写进本文件或仓库任何文件。
+# 各参数的部署含义、防火墙要求与 LiveKit 联动见 docs/COTURN_DEPLOYMENT.md。
+
+# STUN/TURN listening 端口（宿主映射 UDP+TCP，防火墙两者都放行）
+listening-port=3478
+
+# 对外通告地址——必须显式给出，不允许静默猜测（1:1 NAT 可写 PUBLIC/PRIVATE 形式）
+external-ip=<宿主公网/局域网 IP>
+
+# relay 端口段（宿主映射 UDP+TCP；须与主栈 LiveKit 媒体面 UDP 7882-7892 错开）
+min-port=50000
+max-port=50099
+
+realm=ai-learning-os
+fingerprint
+
+# TURN REST 时间受限凭据（username=过期时间戳，password=base64(HMAC-SHA1(secret, username))）——
+# 与 LiveKit turn.secret 同一 secret、同算法，浏览器经 LiveKit 通告的 iceServers 免手工配置
+lt-cred-mech
+static-auth-secret=<部署 secret，仅经 env 注入，不入库>
+
+# 加固：拒 relay 到组播目标。当前 coturn 版本已移除 no-tlsv1/no-tlsv1_1/
+# no-loopback-peers/no-cli 选项（写入只产生 Bad configuration format 告警）——
+# 新版本默认等价防护：旧 TLS 禁用、loopback relay 目标拒绝、未设 cli-password 时 CLI 关闭
+no-multicast-peers
+
+# TLS（可选）：启用时 cert/pkey 必须是容器内真实存在的文件（entrypoint 校验），
+# 且证书域名须与 LiveKit turn.domain 一致——不做假 TLS 声明
+#tls-listening-port=5349
+#cert=/etc/coturn/tls/cert.pem
+#pkey=/etc/coturn/tls/key.pem
+
+# 排障：详细日志（COTURN_VERBOSE=true 时由 entrypoint 自动追加）
+#verbose

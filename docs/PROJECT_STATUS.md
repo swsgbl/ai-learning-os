@@ -9,6 +9,16 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M10-05 外部 coturn 部署模板已完成并验证**（分支未合并；模板为**独立 compose 文件**，主栈 local/hybrid/cloud 任一 profile 默认渲染均不含 coturn、现有启动行为零变化；**生产外部网络验收未覆盖**——无真实公网 IP/域名/证书，只验证了配置渲染与本机隔离监听，不虚报 TURN 可用性）：
+
+- **交付物**：`infra/coturn/{docker-compose.coturn.yml, entrypoint.sh, .env.example, turnserver.conf.example}` + `docs/COTURN_DEPLOYMENT.md`（部署/防火墙/LiveKit 联动/分级验证）+ `services/api/tests/test_coturn_template.py`（26 项）。
+- **fail-closed 两层**：① compose `:?` 插值——`COTURN_STATIC_AUTH_SECRET` / `COTURN_EXTERNAL_IP` 缺失时 `config/up/down/logs` 全部直接失败、无默认值兜底；② entrypoint 二道校验——占位/常见弱值/仓库开发占位 secret、secret 长度 <32、占位或 loopback external-ip（loopback 仅本机监听冒烟可显式 `COTURN_ALLOW_LOOPBACK_EXTERNAL=true` 豁免）、relay 段/listening 口与主栈 LiveKit UDP 7882-7892 同机冲突（跨机部署 `COTURN_ALLOW_LIVEKIT_PORT_OVERLAP=true` 豁免）、relay 段倒置/超宽(>2000)/特权端口/非数字、`COTURN_TLS_ENABLED=true` 但证书文件不存在（**不做假 TLS 声明**）——一律拒绝启动。
+- **显式无猜测**：external-ip 必填（1:1 NAT 支持 PUBLIC/PRIVATE 形式）；relay 段默认 50000-50099（UDP+TCP，与 7882-7892 错开，compose 端口映射与 coturn min/max-port 同源 env 插值不会漂移）；listening 3478 UDP+TCP；TLS 5349 TCP 仅启用时真正监听（未启用时端口映射后无服务，非假 TLS）；secret 只经部署 env（`.env` 不入库 / 部署 secret）注入，运行时在容器内生成 `/tmp/aios-turnserver.conf`（600 权限）。`COTURN_CONFIG_ONLY=true` 打印脱敏配置用于排障/测试。
+- **容器实测校准**（真启动发现并修正，非纸面设计）：官方镜像以非 root 运行（`/run` 不可写 → 改 `/tmp`）；当前 coturn/coturn 已移除 `no-tlsv1`/`no-tlsv1_1`/`no-loopback-peers`/`no-cli` 选项（写入只产生 Bad configuration format 告警，新版默认等价防护），生成配置只保留仍有效的 `no-multicast-peers`；`:?` 插值先于一切子命令——`down`/`logs` 同样需要必填变量（文档已注明）。
+- **与 LiveKit/API 配合（API 零改动）**：iceServers 由 LiveKit 按 server config `turn` 段经 signal join 下发给浏览器；LiveKit 用 `turn.secret` 现算 TURN REST 时间受限凭据，coturn `static-auth-secret` 同算法校验——两处 secret 同值即可，浏览器端零配置。livekit-public.yaml 默认仍 `turn.enabled=false`，仅加注释说明部署副本如何追加 turn 段（secret 只进部署 env，不入库；不设 `udp_port`——那是 LiveKit 内嵌 TURN 开关）。
+- **验证**：聚焦 `test_coturn_template.py` **25 passed / 1 skipped**（skip 为门控冒烟）；门控冒烟 `AIOS_COTURN_SMOKE=1` **已执行通过**（隔离：随机测试 secret、loopback 豁免、仅绑 127.0.0.1、relay 段缩至 50000-50009、独立 project `ai-learning-os-coturn` 结束 down 无残留）——容器真实启动、**STUN Binding 请求得到 0x0101 响应且 transaction id 匹配**（UDP 3478 协议级探测）、日志无 Bad configuration format；全量 pytest 不设 `AIOS_PG_TEST_URL` **847 passed / 25 skipped**（SQLite 路径零 PG 连接），指向隔离库 `ai_learning_os_test` **869 passed / 3 skipped**（真实 PG 路径）；`uv run ruff check services/api` 全绿；`git diff --check` 干净。
+- **未覆盖（生产外部网络验收，留待运维执行）**：真实公网 IP/域名/证书下 TURN/TLS 中继验收（trickle-ice 出 relay 候选）、真实对称 NAT/禁 UDP 出站环境浏览器语音经 TURN 的端到端验证、LiveKit `turn.enabled` 生产联动实测——验证步骤见 docs/COTURN_DEPLOYMENT.md 第 5.2 节；本机监听冒烟不构成 TURN 可用性验收。
+
 **M10-04 第一切片：历史无归属试卷只读分类报告与安全迁移 CLI 已完成并验证**（feature/M10-04-legacy-paper-governance，分支未合并；**生产迁移未执行**——只做了只读复核与 dry-run 冒烟；含独立审查修复：export-delete 完整归档校验、排他创建禁覆盖、删除事务快照复核、assign-owner/keep-public 事务内复核）：
 
 - **只读分类报告**：`python -m app.ops.cli legacy-paper-report [--json] [--output PATH]`。范围 `owner_id IS NULL 且 source != 'AI Learning OS seed'`；默认人类可读摘要（不含生产 paper ID），`--json` 全量明细；`--output` 写文件强制落在 gitignore 的 artifacts/temp 目录（直接父目录名 artifacts/temp，或 `git check-ignore` 判定忽略；Windows `%TEMP%` 是任意路径祖先，不能按祖先名放行），其他路径退出码 2；缺 DB fail-closed 退出码 2；报告对数据库零写入。每卷含 paper_id/标题/来源/题量/总分/是否被历史考试引用/引用考试数/首次与最近引用时间/建议路径；汇总含总数、被引用/未引用、题量分桶、来源分布、建议路径统计、最近引用月份分布。papers 表无 created_at/updated_at 列（schema 事实），创建/更新时间如实输出 null 并附说明，时间证据以 `exam_sessions.started_at` 派生。

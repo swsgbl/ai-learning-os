@@ -3,8 +3,15 @@
 # 纯局域网（无外网出口）请保持 use_external_ip=false 并显式设
 # AIOS_LIVEKIT_EXTERNAL_IP=<LAN_IP>（compose --node-ip 优先级更高）。
 # TURN/STUN 拓扑：默认仅 ICE/STUN 语义（LiveKit 内置 ICE），UDP 7882-7892 为
-# 媒体面端口；对称 NAT/严格防火墙场景需自建 TURN（coturn），防火墙放行
-# TCP 7880/7881 + UDP 7882-7892。
+# 媒体面端口；对称 NAT/严格防火墙场景用外部 coturn 部署模板（M10-05，
+# infra/coturn/，独立 compose 不并入主栈；见 docs/COTURN_DEPLOYMENT.md），防火墙
+# 放行 TCP 7880/7881 + UDP 7882-7892。需要 LiveKit 向浏览器通告 TURN 时在
+# **部署副本**（secret 只进部署 env，不入库）追加 turn 段并保持两处 secret 同值：
+# turn:
+#   enabled: true
+#   domain: <turn 公网域名（证书 CN 匹配）>
+#   tls_port: 5349          # 与 COTURN_TLS_PORT 一致；不设 udp_port（那是内嵌 TURN 开关）
+#   secret: <与 COTURN_STATIC_AUTH_SECRET 同值——绝不提交仓库>
 port: 7880
 bind_addresses:
   - "0.0.0.0"

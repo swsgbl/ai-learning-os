@@ -224,7 +224,10 @@ localhost-only CORS / **缺 PUBLIC_LIVEKIT_URL 或其仍是容器内部地址**�
   公网机器用 `AIOS_LIVEKIT_CONFIG=/etc/livekit/livekit-public.yaml`
   （`use_external_ip: true` 自动探测）；
 - 防火墙：放行 TCP 7880(signal)/7881(rtc-tcp) + **UDP 7882-7892(媒体)**；
-  对称 NAT/严格防火墙需自建 TURN（coturn），本项目默认未含 TURN 服务；
+  对称 NAT/严格防火墙需 TURN——M10-05 提供外部 coturn 部署模板
+  （`infra/coturn/`，独立 compose 文件不并入主栈、主栈默认渲染不含 coturn；
+  fail-closed：必填 secret/external-ip 缺失直接拒绝启动），部署/防火墙/
+  与 LiveKit 生产联动/验证见 docs/COTURN_DEPLOYMENT.md；
 - 语音连通性验证（真实 livekit.rtc 客户端：token 鉴权 → Room.connect → CONN_CONNECTED
   → 数据通道）：
   `AIOS_MODE=local bash infra/smoke_voice.sh` /

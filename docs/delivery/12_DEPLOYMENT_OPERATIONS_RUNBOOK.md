@@ -95,6 +95,9 @@ Browser WebRTC
 1. LiveKit Cloud/自托管 LiveKit 均通过同一 adapter 接入。
 2. ASR、LLM、TTS 分别配置 provider，不绑定单一厂商 SDK。
 3. 每次云端调用记录 destination、data classification、model、latency 和 cost。
+4. 对称 NAT/严格防火墙客户端需 TURN 中继：外部 coturn 部署模板见
+   `infra/coturn/` 与 docs/COTURN_DEPLOYMENT.md（独立 compose，不并入主栈；
+   必填 secret/external-ip 缺失 fail-closed 拒绝启动）。
 
 ## 5. 内容与检索治理
 

@@ -1,0 +1,54 @@
+name: ai-learning-os-coturn
+
+# M10-05 外部 coturn（TURN/STUN）部署模板 —— 独立 compose 文件，绝不并入
+# infra/docker-compose.yml 主栈：local/hybrid/cloud 任一 profile 的默认渲染都不含 coturn。
+# 适用场景：对称 NAT/严格防火墙下浏览器 WebRTC 直连失败，需 TURN 中继。
+#
+# fail-closed 设计（两层）：
+# 1. compose 层：必需变量用 :? 插值语法——COTURN_STATIC_AUTH_SECRET /
+#    COTURN_EXTERNAL_IP 缺失时 `docker compose config/up` 直接失败，无默认值兜底；
+# 2. entrypoint 层：entrypoint.sh 再拒绝占位/弱 secret、loopback external-ip、
+#    relay 段与 LiveKit UDP 7882-7892 冲突、启用 TLS 但证书缺失等形态。
+#
+# 变量来源：本目录 .env（复制 .env.example，已被 .gitignore 忽略）或部署 secret 注入。
+# 部署/防火墙/与 LiveKit 生产联动/验证方法：docs/COTURN_DEPLOYMENT.md。
+
+services:
+  coturn:
+    image: ${COTURN_IMAGE:-coturn/coturn:latest}
+    restart: unless-stopped
+    environment:
+      # 必填（fail-closed）：真实 secret 只经部署 env 注入，绝不写进仓库文件
+      COTURN_STATIC_AUTH_SECRET: ${COTURN_STATIC_AUTH_SECRET:?必须在 .env 或环境提供 COTURN_STATIC_AUTH_SECRET（openssl rand -hex 32），缺失即拒绝启动}
+      COTURN_EXTERNAL_IP: ${COTURN_EXTERNAL_IP:?必须提供宿主对外可达 IP（COTURN_EXTERNAL_IP），缺失即拒绝启动——不允许静默猜测}
+      # 可选（与 infra/coturn/.env.example 默认一致）
+      COTURN_BIND_IP: ${COTURN_BIND_IP:-0.0.0.0}
+      COTURN_LISTEN_PORT: ${COTURN_LISTEN_PORT:-3478}
+      COTURN_TLS_PORT: ${COTURN_TLS_PORT:-5349}
+      COTURN_RELAY_PORT_START: ${COTURN_RELAY_PORT_START:-50000}
+      COTURN_RELAY_PORT_END: ${COTURN_RELAY_PORT_END:-50099}
+      COTURN_REALM: ${COTURN_REALM:-ai-learning-os}
+      COTURN_TLS_ENABLED: ${COTURN_TLS_ENABLED:-false}
+      COTURN_CERT_FILE: ${COTURN_CERT_FILE:-/etc/coturn/tls/cert.pem}
+      COTURN_PKEY_FILE: ${COTURN_PKEY_FILE:-/etc/coturn/tls/key.pem}
+      COTURN_VERBOSE: ${COTURN_VERBOSE:-false}
+      COTURN_ALLOW_LOOPBACK_EXTERNAL: ${COTURN_ALLOW_LOOPBACK_EXTERNAL:-false}
+      COTURN_ALLOW_LIVEKIT_PORT_OVERLAP: ${COTURN_ALLOW_LIVEKIT_PORT_OVERLAP:-false}
+    volumes:
+      # fail-closed 校验 + 运行时生成配置（secret 不落仓库/镜像，配置写在容器 /tmp 且 600）
+      - ./entrypoint.sh:/usr/local/bin/aios-coturn-entrypoint.sh:ro
+      # TLS 启用时取消注释并放证书到 ./tls/（容器内路径与 COTURN_CERT_FILE 一致）。
+      # 不启用 TLS 时保持注释——不做假 TLS 声明，entrypoint 会校验文件真实存在。
+      # - ${COTURN_TLS_CERT_DIR:-./tls}:/etc/coturn/tls:ro
+    entrypoint: ["/bin/sh", "/usr/local/bin/aios-coturn-entrypoint.sh"]
+    ports:
+      # listening（STUN/TURN UDP+TCP）——防火墙放行两者
+      - "${COTURN_BIND_IP:-0.0.0.0}:${COTURN_LISTEN_PORT:-3478}:${COTURN_LISTEN_PORT:-3478}/udp"
+      - "${COTURN_BIND_IP:-0.0.0.0}:${COTURN_LISTEN_PORT:-3478}:${COTURN_LISTEN_PORT:-3478}/tcp"
+      # TLS listening（TCP）。仅 COTURN_TLS_ENABLED=true 时 coturn 真正监听；
+      # 未启用时该映射后无服务进程，连接即被拒（不是假 TLS）。
+      - "${COTURN_BIND_IP:-0.0.0.0}:${COTURN_TLS_PORT:-5349}:${COTURN_TLS_PORT:-5349}/tcp"
+      # relay 端口段（UDP 媒体中继为主，TCP 兜底）——范围跟随 env，单一来源；
+      # 默认 50000-50099，与主栈 LiveKit UDP 7882-7892 错开（entrypoint 硬检查同机冲突）
+      - "${COTURN_BIND_IP:-0.0.0.0}:${COTURN_RELAY_PORT_START:-50000}-${COTURN_RELAY_PORT_END:-50099}:${COTURN_RELAY_PORT_START:-50000}-${COTURN_RELAY_PORT_END:-50099}/udp"
+      - "${COTURN_BIND_IP:-0.0.0.0}:${COTURN_RELAY_PORT_START:-50000}-${COTURN_RELAY_PORT_END:-50099}:${COTURN_RELAY_PORT_START:-50000}-${COTURN_RELAY_PORT_END:-50099}/tcp"
