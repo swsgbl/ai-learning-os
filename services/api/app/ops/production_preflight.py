@@ -18,19 +18,25 @@
    窗口执行）；post-migration 必须 current == head（否则 fail）。current
    缺失/未知 revision、脚本目录多 head 一律 fail；
 3. audit-chain：复用 audit_chain_verify 的 load/verify snapshot 语义。
-   pre-migration 允许 0027 链表缺失（pending_migration，迁移建链前的预期
-   形态）；post-migration 链表缺失或校验 invalid 都 fail；
+   pre-migration 只允许「audit_chain_entries 与 audit_chain_state 同时缺失
+   且 audit_log 存在」这一种缺失形态算 pending_migration（0026 -> 0027 的
+   正常未迁移形态；0024 建 audit_log、0027 原子建两张链表）；仅缺一张
+   链表、audit_log 缺失或三表全缺不对应任何迁移可达形态（schema 部分
+   损坏/连错库/库早于 0024），一律 fail；post-migration 任何链表缺失或
+   校验 invalid 都 fail；
 4. audit-anchor：pre-migration 未锚定是 expected_pending；post-migration
    提供锚文件时只跑 verify-only（up-to-date=pass / head 超前=pending /
    invalid=fail），未提供或文件不存在输出 not_configured（按 runbook 人工
-   完成锚定 + WORM 归档）；
+   完成锚定 + WORM 归档）。锚定交叉核对消费主流程的同一份链快照，不另开
+   数据库连接；
 5. legacy-governance：历史治理聚合计数（无归属非 seed 卷、generation/
    variant NULL owner 草稿）——计数 > 0 即 pending（人工决策项，绝不包装成
    pass），只输出聚合计数不输出任何生产 ID。
 
-退出码：无 fail=0；存在 fail=1；输入/锚文件路径/数据库连接错误=2（与
-audit-chain-verify/anchor CLI 同口径）。pending / not_configured 不计入
-fail——它们是「生产仍需人工决策/执行」的如实提示，人类摘要必须写明。
+退出码：无 fail=0；存在 fail=1；输入/锚文件路径/数据库连接/Alembic 脚本
+目录解析/报告写入失败=2（与 audit-chain-verify/anchor CLI 同口径）。
+pending / not_configured 不计入 fail——它们是「生产仍需人工决策/执行」的
+如实提示，人类摘要必须写明。
 """
 from __future__ import annotations
 
@@ -192,9 +198,16 @@ async def _check_alembic(conn, phase: str) -> dict[str, Any]:
 
 # --- 检查 3：审计哈希链（复用 load/verify snapshot） --------------------------
 
+#: 0026 -> 0027 正常未迁移形态**唯一**允许的链表缺失集合：两张链表由 0027
+#: 原子创建（audit_log 由 0024 更早建好）。仅缺其一/audit_log 缺失/三表全缺
+#: 都不是任何迁移可达形态，pre-migration 也一律 fail（schema 部分损坏或
+#: 连错库；三表全缺=库早于 0024，不是本 runbook 的 preflight 起点）。
+_PRE_MIGRATION_EXPECTED_MISSING = frozenset({"audit_chain_entries", "audit_chain_state"})
 
-def _check_audit_chain(phase: str, snapshot: dict[str, Any]) -> dict[str, Any]:
-    verify_report = verify_chain_snapshot(snapshot)
+
+def _check_audit_chain(
+    phase: str, snapshot: dict[str, Any], verify_report: dict[str, Any]
+) -> dict[str, Any]:
     data = {
         "valid": verify_report["valid"],
         "entries": verify_report["entries"],
@@ -203,14 +216,31 @@ def _check_audit_chain(phase: str, snapshot: dict[str, Any]) -> dict[str, Any]:
     }
     title = "治理审计哈希链只读校验（audit-chain-verify 语义）"
     if snapshot["missing_tables"]:
-        if phase == PHASE_PRE_MIGRATION:
+        missing = list(snapshot["missing_tables"])
+        if (
+            phase == PHASE_PRE_MIGRATION
+            and set(missing) == _PRE_MIGRATION_EXPECTED_MISSING
+        ):
             return _check(
                 "audit-chain",
                 title,
                 STATUS_PENDING,
                 "pending_migration: 0027_audit_chain 未执行（链表缺失: "
-                f"{', '.join(snapshot['missing_tables'])}）——迁移前预期形态，"
+                f"{', '.join(missing)}）——迁移前预期形态，"
                 "迁移建链后必须 audit-chain-verify valid 才恢复服务",
+                data,
+            )
+        if phase == PHASE_PRE_MIGRATION:
+            return _check(
+                "audit-chain",
+                title,
+                STATUS_FAIL,
+                "链表缺失形态非法: " + ", ".join(missing)
+                + "——合法的未迁移形态只有 audit_chain_entries 与 "
+                "audit_chain_state 同时缺失且 audit_log 存在（0024 建 "
+                "audit_log、0027 原子建两链表）；部分缺失、audit_log 缺失"
+                "或三表全缺不对应任何迁移可达形态（schema 部分损坏或库早于"
+                " 0024），先停下排查",
                 data,
             )
         return _check(
@@ -244,7 +274,10 @@ def _check_audit_chain(phase: str, snapshot: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _check_anchor(
-    db_url: str, phase: str, anchor_path: Path | None
+    snapshot: dict[str, Any],
+    verify_report: dict[str, Any],
+    phase: str,
+    anchor_path: Path | None,
 ) -> dict[str, Any]:
     title = "审计链库外锚定状态（verify-only，绝不写锚文件）"
     if anchor_path is None:
@@ -281,8 +314,16 @@ async def _check_anchor(
             "audit-chain-anchor --yes 创建并归档 WORM（本工具不自动创建）",
             {"anchor_file": str(anchor_path), "anchors": 0},
         )
-    # 只跑 verify-only：DB 链 + 锚文件链 + head 交叉一致（对锚文件零写入）
-    report = await run_anchor(db_url, anchor_path, verify_only=True)
+    # 只跑 verify-only：DB 链 + 锚文件链 + head 交叉一致（对锚文件零写入）。
+    # 把主流程同一事务快照交给锚定校验（run_anchor 不再自建连接）——
+    # DB head 交叉核对与上面的 audit-chain 检查看到的是同一份链数据。
+    report = await run_anchor(
+        None,
+        anchor_path,
+        verify_only=True,
+        snapshot=snapshot,
+        verify_report=verify_report,
+    )
     anchors = report["anchor_file"]["anchors"]
     data = {"anchor_file": str(anchor_path), "anchors": anchors}
     if report["status"] == "up-to-date":
@@ -372,7 +413,15 @@ async def _check_legacy_governance(conn) -> dict[str, Any]:
 async def run_preflight(
     db_url: str, phase: str, *, anchor_file: str | Path | None = None
 ) -> dict[str, Any]:
-    """执行全部只读检查并汇总（连接失败抛 SQLAlchemyError 由 CLI 映射 exit 2）。"""
+    """执行全部只读检查并汇总（连接失败抛 SQLAlchemyError 由 CLI 映射 exit 2）。
+
+    全部数据库读取在**单一连接的显式只读事务**内完成（PG 提升到
+    REPEATABLE READ，SQLite 走显式事务快照——与 audit-chain-anchor 的
+    快照口径一致）：db-connect / alembic / audit-chain / legacy-governance
+    与锚定交叉核对的 DB head 消费同一份快照（`_check_anchor` 把快照交给
+    `run_anchor(verify_only=True)`，不再开第二个数据库连接）。对数据库
+    与锚文件零写入。
+    """
     if phase not in PHASES:
         raise ValueError(f"未知 phase: {phase}（可选 {PHASES}）")
     anchor_path = Path(anchor_file) if anchor_file else None
@@ -385,14 +434,18 @@ async def run_preflight(
     engine = create_engine(db_url)
     try:
         async with engine.connect() as conn:
-            checks.append(await _check_database(conn, db_url))
-            checks.append(await _check_alembic(conn, phase))
-            # 单连接读链快照：audit-chain 检查与（可能的）锚定交叉核对同源语义
-            checks.append(_check_audit_chain(phase, await load_chain_snapshot(conn)))
-            checks.append(await _check_legacy_governance(conn))
+            if conn.dialect.name == "postgresql":
+                conn.execution_options(isolation_level="REPEATABLE READ")
+            async with conn.begin():
+                checks.append(await _check_database(conn, db_url))
+                checks.append(await _check_alembic(conn, phase))
+                snapshot = await load_chain_snapshot(conn)
+                verify_report = verify_chain_snapshot(snapshot)  # 纯校验，无 IO
+                checks.append(_check_audit_chain(phase, snapshot, verify_report))
+                checks.append(await _check_legacy_governance(conn))
     finally:
         await engine.dispose()
-    checks.append(await _check_anchor(db_url, phase, anchor_path))
+    checks.append(await _check_anchor(snapshot, verify_report, phase, anchor_path))
     return _assemble_report(phase, checks)
 
 

@@ -4,17 +4,27 @@
 1. CLI 注册与参数：缺 --db-url exit 2、--phase 必选（缺省 argparse exit 2）、
    **不存在 --yes 参数**（argparse 拒绝 exit 2——命令没有任何执行形态）、
    main 分发、--json / 人类摘要、--output artifacts/temp 路径护栏；
+1b. --output 写入失败（返工）：artifacts 父级被普通文件占用（mkdir 失败）、
+   write_text 抛 OSError（磁盘满）——均稳定 exit 2、简明错误、无 traceback、
+   不打印检查结论（不把半途报告伪装成完整结论）；
 2. phase 语义：pre-migration 链表缺失=pending（pending_migration）、
    current 落后 head=pending；post-migration 链表缺失/链 invalid/current !=
    head/未知 revision 均 fail（exit 1）；pre 与 post 全绿（exit 0）；
+2b. 链表缺失形态（返工）：pre-migration 只有「entries+state 同时缺失且
+   audit_log 存在」算 pending；仅缺其一、audit_log 缺失而链表在、三表
+   全缺（库早于 0024）一律 fail（exit 1）——不对应任何迁移可达形态；
 3. anchor：post 未提供/文件不存在=not_configured（exit 0，runbook 人工完成）、
    verify-only up-to-date=pass / head 超前=pending、verify-only **零写入**
    （锚文件字节前后不变）、锚文件有锚但 DB 链表缺失=fail、
    路径问题（父目录缺失/目录）exit 2；
+3b. 同一快照（返工）：anchor 交叉核对消费主流程事务快照——anchor 模块
+   load_verified_snapshot/create_engine 零调用、主流程恰好一个引擎；
 4. 历史治理聚合：计数精确（seed/已归属不计入）、pending 语义、
    生产 paper/draft ID 零泄漏（marker 断言 JSON 与人类摘要）；
 5. 安全边界：连接失败不回显凭据（marker 密码）、库名输出不含 URL、
    非法 phase exit 2；
+5b. Alembic 脚本目录解析失败（返工）：AlembicError / SyntaxError 稳定
+   exit 2、简明脱敏错误（不回显凭据 marker）、无 traceback、无检查结论；
 6. 只读性：全部表行数、表集合、alembic_version、SQLite 库文件字节、
    锚文件字节在 pre/post 两 phase 各跑一轮后完全不变。
 """
@@ -24,6 +34,7 @@ import asyncio
 import json
 import sys
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -367,6 +378,46 @@ def test_cli_output_path_guard(tmp_path, capsys) -> None:
     assert report["phase"] == "pre-migration"
 
 
+def test_output_write_failure_when_parent_is_file(tmp_path, capsys) -> None:
+    """artifacts 路径父级被普通文件占用（mkdir 失败）：稳定 exit 2、简明错误、
+    无 traceback、不打印检查结论（不得把未落盘的报告伪装成完整结论）。"""
+    db_url = _db_url(tmp_path)
+    _init_db(db_url, audit_rows=1, alembic_rev=_head_revision())
+    (tmp_path / "artifacts").write_text("occupied", encoding="utf-8")
+
+    assert (
+        _preflight(db_url, "pre-migration", output=tmp_path / "artifacts" / "r.json")
+        == 2
+    )
+    captured = capsys.readouterr()
+    assert "报告写入失败" in captured.out
+    assert "报告已写入" not in captured.out
+    assert "RESULT:" not in captured.out  # 检查结论摘要不落屏
+    assert captured.err == ""  # 无 traceback
+    assert not (tmp_path / "artifacts" / "r.json").exists()
+
+
+def test_output_write_failure_disk_full(tmp_path, monkeypatch, capsys) -> None:
+    """write_text 抛 OSError（模拟磁盘满）：exit 2、报告不落盘、无检查结论。"""
+
+    def boom(self, *args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    db_url = _db_url(tmp_path)
+    _init_db(db_url, audit_rows=1, alembic_rev=_head_revision())
+    target = tmp_path / "artifacts" / "r.json"
+    monkeypatch.setattr(Path, "write_text", boom)
+
+    assert _preflight(db_url, "pre-migration", output=target) == 2
+    captured = capsys.readouterr()
+    assert "报告写入失败" in captured.out
+    assert "No space left" in captured.out
+    assert "报告已写入" not in captured.out
+    assert "RESULT:" not in captured.out
+    assert captured.err == ""
+    assert not target.exists()
+
+
 def test_main_dispatches_production_preflight(tmp_path, monkeypatch, capsys) -> None:
     db_url = _db_url(tmp_path)
     _init_db(db_url, audit_rows=1, alembic_rev=_head_revision())
@@ -461,6 +512,66 @@ def test_post_migration_chain_invalid_exit_1(tmp_path, capsys) -> None:
 def test_post_migration_chain_tables_missing_exit_1(tmp_path) -> None:
     db_url = _db_url(tmp_path)
     _init_db(db_url, chain_tables=False, alembic_rev=_head_revision())
+    report = _run_json(db_url, "post-migration")
+    assert _check(report, "audit-chain")["status"] == "fail"
+    assert report["exit_code"] == 1
+
+
+def test_pre_migration_partial_chain_table_missing_fails(tmp_path) -> None:
+    """仅缺 entries 或仅缺 state 都不是迁移可达形态（0027 原子建两表）：
+    pre-migration 也 fail（exit 1），schema 部分损坏/连错库必须停下排查。"""
+    for missing in ("audit_chain_entries", "audit_chain_state"):
+        db_url = _db_url(tmp_path, f"pf-{missing}.db")
+        _init_db(db_url, audit_rows=1, alembic_rev=_head_revision())
+        _tamper(db_url, sa.text(f"DROP TABLE {missing}"))
+
+        assert _preflight(db_url, "pre-migration") == 1, missing
+        report = _run_json(db_url, "pre-migration")
+        chain = _check(report, "audit-chain")
+        assert chain["status"] == "fail", missing
+        assert chain["data"]["missing_tables"] == [missing]
+        assert missing in chain["detail"]
+        assert "不对应任何迁移可达形态" in chain["detail"]
+        assert report["exit_code"] == 1, missing
+
+
+def test_pre_migration_audit_log_missing_fails(tmp_path) -> None:
+    """audit_log 缺失而链表存在：0024 先建 audit_log、0027 后建链表，该
+    形态不可达（链表在说明 0027 执行过、audit_log 必在）——fail。"""
+    db_url = _db_url(tmp_path)
+    _init_db(db_url, audit_rows=1, alembic_rev=_head_revision())
+    _tamper(db_url, sa.text("DROP TABLE audit_log"))
+    report = _run_json(db_url, "pre-migration")
+    chain = _check(report, "audit-chain")
+    assert chain["status"] == "fail"
+    assert chain["data"]["missing_tables"] == ["audit_log"]
+    assert "不对应任何迁移可达形态" in chain["detail"]
+    assert report["exit_code"] == 1
+
+
+def test_pre_migration_all_three_chain_tables_missing_fails(tmp_path) -> None:
+    """三表全缺=库早于 0024（audit_log 建立之前）：不是本 runbook 的
+    preflight 起点（runbook 预期 current=0026），fail 而非 pending。"""
+    db_url = _db_url(tmp_path, "pf-pre0024.db")
+    _init_db(db_url, alembic_rev="0023_ownership")
+    for table in ("audit_log", "audit_chain_entries", "audit_chain_state"):
+        _tamper(db_url, sa.text(f"DROP TABLE {table}"))
+    report = _run_json(db_url, "pre-migration")
+    chain = _check(report, "audit-chain")
+    assert chain["status"] == "fail"
+    assert set(chain["data"]["missing_tables"]) == {
+        "audit_log",
+        "audit_chain_entries",
+        "audit_chain_state",
+    }
+    assert "不对应任何迁移可达形态" in chain["detail"]
+    assert report["exit_code"] == 1
+
+
+def test_post_migration_partial_chain_table_missing_fails(tmp_path) -> None:
+    db_url = _db_url(tmp_path)
+    _init_db(db_url, audit_rows=1, alembic_rev=_head_revision())
+    _tamper(db_url, sa.text("DROP TABLE audit_chain_state"))
     report = _run_json(db_url, "post-migration")
     assert _check(report, "audit-chain")["status"] == "fail"
     assert report["exit_code"] == 1
@@ -568,6 +679,58 @@ def test_anchor_bad_path_exit_2(tmp_path, capsys) -> None:
     assert _preflight(db_url, "pre-migration", anchor_file=tmp_path) == 2
 
 
+# --- 3b. 同一快照：anchor 交叉核对不开第二个数据库连接 ----------------------
+
+
+def test_anchor_check_consumes_main_snapshot(tmp_path, monkeypatch) -> None:
+    """锚定交叉核对消费主流程事务快照：anchor 模块 load_verified_snapshot
+    与 create_engine 零调用（修复前 run_anchor 会自建第二个连接），主流程
+    全程恰好一个引擎。"""
+    from app.ops import audit_chain_anchor as anchor_module
+    from app.ops import production_preflight as preflight_module
+    from app.ops.audit_chain_anchor import run_anchor
+
+    db_url = _db_url(tmp_path)
+    _init_db(db_url, audit_rows=2, alembic_rev=_head_revision())
+    anchor_path = tmp_path / "anchor.jsonl"
+    assert asyncio.run(run_anchor(db_url, anchor_path, execute=True))["status"] == (
+        "anchored"
+    )
+
+    snapshot_calls: list[str] = []
+    real_snapshot = anchor_module.load_verified_snapshot
+
+    async def spy_load_snapshot(url):
+        snapshot_calls.append(url)
+        return await real_snapshot(url)
+
+    anchor_engines: list[str] = []
+    real_anchor_engine = anchor_module.create_engine
+
+    def spy_anchor_engine(url, **kwargs):
+        anchor_engines.append(url)
+        return real_anchor_engine(url, **kwargs)
+
+    pf_engines: list[str] = []
+    real_pf_engine = preflight_module.create_engine
+
+    def spy_pf_engine(url, **kwargs):
+        pf_engines.append(url)
+        return real_pf_engine(url, **kwargs)
+
+    monkeypatch.setattr(anchor_module, "load_verified_snapshot", spy_load_snapshot)
+    monkeypatch.setattr(anchor_module, "create_engine", spy_anchor_engine)
+    monkeypatch.setattr(preflight_module, "create_engine", spy_pf_engine)
+
+    report = _run_json(db_url, "post-migration", anchor_file=anchor_path)
+    assert snapshot_calls == []  # anchor 校验未另取快照
+    assert anchor_engines == []  # anchor 路径零新引擎
+    assert pf_engines == [db_url]  # 主流程恰好一个引擎
+    anchor = _check(report, "audit-anchor")
+    assert anchor["status"] == "pass"
+    assert anchor["data"]["anchor_status"] == "up-to-date"
+
+
 # --- 4. 历史治理聚合：计数精确 + 生产 ID 零泄漏 ------------------------------
 
 
@@ -651,6 +814,43 @@ def test_redact_secrets_unit() -> None:
     assert "s3cret" not in redacted
     assert "://aios:***@127.0.0.1:5433/db" in redacted
     assert "sqlite+aiosqlite:///C:/x.db" in redacted  # 无凭据段原样保留
+
+
+# --- 5b. Alembic 脚本目录解析失败：稳定 exit 2 --------------------------------
+
+
+def test_alembic_script_parse_failure_exit_2(tmp_path, monkeypatch, capsys) -> None:
+    """脚本目录解析抛 alembic CommandError / SyntaxError（脚本损坏/语法
+    错误/目录异常）：exit 2、简明脱敏错误、无 traceback、不产生检查结论。"""
+    from alembic.util.exc import CommandError
+
+    from app.ops import production_preflight as preflight_module
+
+    db_url = _db_url(tmp_path)
+    _init_db(db_url, audit_rows=1, alembic_rev=_head_revision())
+
+    def raise_alembic():
+        raise CommandError(
+            "can't locate revision from postgresql://u:" + PASSWORD_MARKER + "@h/db"
+        )
+
+    monkeypatch.setattr(preflight_module, "_alembic_script_state", raise_alembic)
+    assert _preflight(db_url, "pre-migration") == 2
+    captured = capsys.readouterr()
+    assert "Alembic 脚本目录解析失败" in captured.out
+    assert PASSWORD_MARKER not in captured.out  # 错误信息先抹凭据再输出
+    assert "RESULT:" not in captured.out  # 未产生检查结论
+    assert captured.err == ""  # 无 traceback
+
+    def raise_syntax():
+        raise SyntaxError("invalid syntax (0027_audit_chain.py, line 40)")
+
+    monkeypatch.setattr(preflight_module, "_alembic_script_state", raise_syntax)
+    assert _preflight(db_url, "pre-migration", as_json=True) == 2
+    captured = capsys.readouterr()
+    assert "Alembic 脚本目录解析失败" in captured.out
+    assert '"checks"' not in captured.out  # as_json 也不输出半份报告
+    assert captured.err == ""
 
 
 # --- 6. 只读性：行数 / 表集合 / 库文件字节 / 锚文件字节不变 -------------------

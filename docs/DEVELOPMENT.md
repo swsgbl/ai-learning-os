@@ -279,25 +279,38 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
 
 定位：生产切换 runbook 的**防呆汇总**，不是 release-check 替代品。全部检查只读——
 不执行迁移、不写数据库、不写锚文件、不清理数据、不启动/停止服务；命令**没有任何
-执行形态（无 --yes）**。五项检查：① 连通与当前库名（PG `current_database()`，不输出
+执行形态（无 --yes）**。全部数据库读取在**单一连接的显式只读事务**内完成（PG
+提升 REPEATABLE READ，SQLite 显式事务快照——与 audit-chain-anchor 同口径）：
+db-connect / alembic / audit-chain / legacy-governance 与锚定交叉核对消费**同一份
+快照**（`run_anchor` 可接收已加载的 snapshot/verify_report，锚定校验不再开第二个
+数据库连接）。五项检查：① 连通与当前库名（PG `current_database()`，不输出
 完整 URL/凭据）；② alembic current/head 只读对账（直接查 `alembic_version` + 只读解析
 脚本目录，绝不 upgrade/downgrade）；③ 审计链（复用 audit-chain-verify 的
 load/verify snapshot 语义）；④ 库外锚定（提供锚文件且存在时只跑 anchor
-verify-only 交叉校验；绝不追加锚行）；⑤ 历史治理聚合计数（无归属非 seed 卷、
-generation/variant NULL owner 草稿——只输出计数，不输出生产 ID）。
+verify-only 交叉校验，消费主流程快照；绝不追加锚行）；⑤ 历史治理聚合计数
+（无归属非 seed 卷、generation/variant NULL owner 草稿——只输出计数，不输出
+生产 ID）。
 
 - **phase 语义（--phase 必选）**：迁移后忘带 phase 会误用 pre 的宽松语义
-  （链表缺失算 pending），故强制显式选择。pre-migration：0027 链表缺失 =
-  `pending`（pending_migration，迁移建链前预期形态）、current 落后 head =
-  `pending`、未锚定 = `pending`（expected_pending）。post-migration：链表缺失/
-  链 invalid/current != head/未知 revision 一律 `fail`；锚文件未提供或不存在 =
+  （链表缺失算 pending），故强制显式选择。pre-migration：**唯一**允许的链表
+  缺失形态是 `audit_chain_entries` 与 `audit_chain_state` **同时缺失且
+  audit_log 存在**（0024 建 audit_log、0027 原子建两张链表——0026 -> 0027 的
+  正常未迁移形态）= `pending`（pending_migration）；仅缺一张链表、audit_log
+  缺失而链表存在、三表全缺（库早于 0024，不是本 runbook 的 preflight 起点——
+  runbook 预期 current=0026）一律 `fail`——不对应任何迁移可达形态（schema 部分
+  损坏或连错库）；current 落后 head = `pending`、未锚定 = `pending`
+  （expected_pending）。post-migration：链表缺失（含部分缺失）/链 invalid/
+  current != head/未知 revision 一律 `fail`；锚文件未提供或不存在 =
   `not_configured`（按 runbook 人工完成初始锚定 + WORM 归档，本工具不自动创建）。
 - **状态与退出码**：`pass` / `pending` / `fail` / `not_configured`；无 fail=0、
-  存在 fail=1、输入/锚文件路径/数据库连接错误=2。**pending / not_configured 不
+  存在 fail=1、输入/锚文件路径/数据库连接/Alembic 脚本目录解析/报告写入失败=2
+  （Alembic 解析失败捕 `alembic.util.exc.CommandError` 基类与迁移脚本
+  `SyntaxError`；`--output` 的目录创建/写入 OSError 不打印检查结论摘要，避免
+  半途报告被误读为完整结论）。**pending / not_configured 不
   包装成 pass**——人类摘要明确写「生产切换仍需按 runbook 人工决策/执行」。报告与
-  错误信息不含完整 URL/凭据（连接错误先抹 `://user:pass@` 再输出）、不含生产
-  paper/draft ID、不含 audit before/after 正文。`--output` 复用 artifacts/temp
-  路径护栏，默认不落盘。
+  错误信息不含完整 URL/凭据（连接与 Alembic 错误先抹 `://user:pass@` 再输出）、
+  不含生产 paper/draft ID、不含 audit before/after 正文。`--output` 复用
+  artifacts/temp 路径护栏，默认不落盘。
 
 ### 生产切换 preflight runbook
 
@@ -307,9 +320,12 @@ generation/variant NULL owner 草稿——只输出计数，不输出生产 ID�
 
 1. **切换前（pre-migration）**：备份完成后运行
    `production-preflight --db-url <生产URL> --phase pre-migration`。预期：audit-chain
-   `pending_migration`（0027 未执行）、alembic `pending`（current=0026 -> head）、
-   anchor `pending`、治理计数 `pending`（如仍有待归属卷/草稿）；任何 `fail`
-   （alembic_version 异常/链表存在但 invalid/Schema 表缺失）先停下排查。
+   `pending_migration`（0027 未执行——两链表同时缺失且 audit_log 存在）、alembic
+   `pending`（current=0026 -> head）、anchor `pending`、治理计数 `pending`（如仍有
+   待归属卷/草稿）；任何 `fail`（alembic_version 异常/链表仅缺其一或 audit_log
+   缺失/三表全缺——schema 部分损坏或库早于 0024/链表存在但 invalid/Schema 表
+   缺失）先停下排查。本工具要求生产库 preflight 时点至少已在 0024 之后
+   （audit_log 存在）；runbook 预期形态是 current=0026。
 2. **人工执行切换**（preflight 绝不代劳）：按「审计」节 `0027_audit_chain`
    迁移 runbook——静默审计写入方后 `alembic upgrade head`，随后
    `audit-chain-verify` valid、人工 `audit-chain-anchor --yes` 建初始锚并归档

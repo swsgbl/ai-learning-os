@@ -23,6 +23,8 @@
    （重跑不误判 up-to-date）、既有文件 fsync EIO 回原字节、回截本身
    失败仍上抛原始错误不虚构成功（均注入模拟故障，不依赖真实磁盘错误）；
 5. 并发边界：verify 与交叉核对共用单连接单事务快照（引擎计数=1）；
+   外部快照参数（production-preflight 复用）：不建引擎、verify_report
+   不重算、与 --yes 互斥、无 db_url 且无快照拒绝；
 6. CLI：exit 0/1/2、--json 结构、人类摘要、main 分发、--yes 与
    --verify-only 互斥、无 secret 泄漏（marker 字符串）。
 """
@@ -60,7 +62,11 @@ from app.ops.audit_chain_anchor import (
     format_anchor_summary,
     run_anchor,
 )
-from app.ops.audit_chain_verify import verify_audit_chain
+from app.ops.audit_chain_verify import (
+    load_chain_snapshot,
+    verify_audit_chain,
+    verify_chain_snapshot,
+)
 
 NOW = datetime(2026, 9, 4, 8, 0, 0, 123456, tzinfo=UTC)
 LATER = NOW + timedelta(minutes=10)
@@ -189,6 +195,21 @@ def _db_state(db_url: str) -> tuple[int, str]:
 def _anchor(db_url: str, path, **kwargs) -> dict:
     kwargs.setdefault("clock", _fixed_clock(LATER))
     return asyncio.run(run_anchor(db_url, path, **kwargs))
+
+
+def _snapshot_of(db_url: str) -> tuple[dict, dict]:
+    """独立取一份链快照与 verify 报告（模拟只读消费方已加载的快照）。"""
+
+    async def run():
+        engine = create_engine(db_url)
+        try:
+            async with engine.connect() as conn:
+                snapshot = await load_chain_snapshot(conn)
+        finally:
+            await engine.dispose()
+        return snapshot, verify_chain_snapshot(snapshot)
+
+    return asyncio.run(run())
 
 
 def _lines(path: Path) -> list[dict]:
@@ -1002,6 +1023,57 @@ def test_verify_and_cross_check_share_single_engine_and_snapshot(
     report = _anchor(db_url, tmp_path / "anchor.jsonl", execute=True)
     assert report["status"] == "anchored"
     assert calls == [db_url]  # 恰好一个引擎：读取与校验共用同一快照
+
+
+def test_run_anchor_consumes_external_snapshot_without_new_engine(
+    tmp_path, monkeypatch
+) -> None:
+    """外部快照路径（production-preflight 复用）：不建引擎、不另取快照，
+    verify-only 结论与自建快照路径一致；提供的 verify_report 不被重算。"""
+    db_url = _make_db(tmp_path, rows=2)
+    anchor_path = tmp_path / "anchor.jsonl"
+    assert _anchor(db_url, anchor_path, execute=True)["status"] == "anchored"
+    snapshot, verify_report = _snapshot_of(db_url)
+
+    def no_engine(url, **kwargs):
+        raise AssertionError("外部快照路径不得新建数据库引擎")
+
+    monkeypatch.setattr(anchor_module, "create_engine", no_engine)
+
+    verify_calls: list[dict] = []
+
+    def spy_verify(snap):
+        verify_calls.append(snap)
+        return verify_chain_snapshot(snap)
+
+    monkeypatch.setattr(anchor_module, "verify_chain_snapshot", spy_verify)
+
+    report = asyncio.run(
+        run_anchor(
+            None,
+            anchor_path,
+            verify_only=True,
+            snapshot=snapshot,
+            verify_report=verify_report,
+        )
+    )
+    assert report["status"] == "up-to-date"
+    assert report["anchor_file"]["anchors"] == 1
+    assert verify_calls == []  # 提供了 verify_report 就不重算（无 IO 无重复校验）
+
+
+def test_run_anchor_external_snapshot_guardrails(tmp_path) -> None:
+    """外部快照只服务只读路径：与 --yes 互斥（落盘必须现场快照）；无
+    db_url 且未提供快照时拒绝（fail-closed，不猜测数据来源）。"""
+    db_url = _make_db(tmp_path, rows=1)
+    anchor_path = tmp_path / "anchor.jsonl"
+    snapshot, _ = _snapshot_of(db_url)
+
+    with pytest.raises(AnchorInputError, match="互斥"):
+        asyncio.run(run_anchor(None, anchor_path, execute=True, snapshot=snapshot))
+    with pytest.raises(AnchorInputError, match="--db-url"):
+        asyncio.run(run_anchor(None, anchor_path, verify_only=True))
+    assert not anchor_path.exists()  # 两种拒绝都不产生锚文件
 
 
 # --- 6. CLI：exit code / json / 摘要 / 分发 / 无泄漏 -------------------------

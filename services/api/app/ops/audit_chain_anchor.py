@@ -437,19 +437,27 @@ def append_anchor_line(path: Path, line: bytes) -> None:
 
 
 async def run_anchor(
-    db_url: str,
+    db_url: str | None,
     anchor_file: str | Path,
     *,
     execute: bool = False,
     verify_only: bool = False,
     clock: Callable[[], datetime] | None = None,
+    snapshot: Mapping[str, Any] | None = None,
+    verify_report: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """锚定主流程（默认 dry-run；execute=True 且 head 前进才落盘）。
 
     返回 report dict（status: anchored / up-to-date / dry-run / valid /
     invalid）。步骤（顺序即防线）：
     1. 路径护栏（symlink/非常规文件/父目录缺失 -> AnchorInputError）；
-    2. 单连接快照 verify DB 链，invalid 即拒绝；
+    2. DB 链快照 verify，invalid 即拒绝。默认自建单连接事务快照
+       （load_verified_snapshot）；调用方也可传入已加载的 snapshot
+       （可选附带 verify_report，缺省现场重算）——用于只读消费方
+       （如 production-preflight）让锚定交叉核对与自身主检查共享同一
+       快照，不再开第二个连接。外部快照只服务只读路径：与 execute
+       互斥（真正落盘必须基于现场单连接快照），db_url 为 None 且未
+       提供快照时 AnchorInputError；
     3. 完整解析校验既有锚文件，任何 problem 即拒绝（不自动修复）；
     4. 全部历史锚点与 DB 交叉核对（整链重算/回退拒绝）；
     5. DB head == 最后锚点 -> up-to-date 不重复追加；
@@ -458,6 +466,12 @@ async def run_anchor(
     """
     if execute and verify_only:
         raise AnchorInputError("--verify-only 与 --yes 互斥")
+    if snapshot is not None and execute:
+        raise AnchorInputError(
+            "外部快照仅用于只读校验，与 --yes 互斥（执行锚定必须现场单连接快照）"
+        )
+    if snapshot is None and db_url is None:
+        raise AnchorInputError("缺少 --db-url：未提供外部快照时必须指定数据库")
     path = Path(anchor_file)
     check_anchor_path(path)
     clock = clock or _utc_now
@@ -472,7 +486,10 @@ async def run_anchor(
         "problems": problems,
     }
 
-    snapshot, verify_report = await load_verified_snapshot(db_url)
+    if snapshot is None:
+        snapshot, verify_report = await load_verified_snapshot(db_url)
+    elif verify_report is None:
+        verify_report = verify_chain_snapshot(snapshot)
     report["db"] = {
         "valid": verify_report["valid"],
         "entries": verify_report["entries"],

@@ -532,14 +532,18 @@ def _run_production_preflight(args) -> int:
     M10-07 生产切换只读汇总预检（runbook 防呆汇总，非 release-check 替代）：
     不执行迁移、不写数据库、不写锚文件、不清理数据、不启停服务。检查项：
     连通与库名（不输出 URL/凭据）、alembic current/head 只读对账、
-    audit-chain-verify 语义（pre 允许 0027 表缺失=pending，post 必须 valid）、
-    锚定 verify-only（post 缺失=not_configured，按 runbook 人工完成，工具
-    不自动创建）、历史治理聚合计数（不输出生产 ID）。
-    退出码：无 fail=0 / 存在 fail=1 / 输入/锚路径/连接错误=2；pending 绝不
-    包装成 pass。无 --yes 参数——本命令没有任何执行形态。
+    audit-chain-verify 语义（pre 仅允许两链表同时缺失且 audit_log 存在=
+    pending_migration，任何其他缺失形态 fail；post 必须 valid）、锚定
+    verify-only（post 缺失=not_configured，按 runbook 人工完成，工具
+    不自动创建；交叉核对消费主流程同一事务快照）、历史治理聚合计数
+    （不输出生产 ID）。
+    退出码：无 fail=0 / 存在 fail=1 / 输入/锚路径/连接/Alembic 脚本解析/
+    报告写入失败=2；pending 绝不包装成 pass。无 --yes 参数——本命令没有
+    任何执行形态。
     """
     import json as _json
 
+    from alembic.util.exc import CommandError as AlembicCommandError
     from sqlalchemy.exc import SQLAlchemyError
 
     from app.ops.audit_chain_anchor import AnchorInputError
@@ -566,6 +570,15 @@ def _run_production_preflight(args) -> int:
     except AnchorInputError as cause:
         print(f"锚文件输入无效（参数或锚文件路径）: {cause}")
         return 2
+    except (AlembicCommandError, SyntaxError) as cause:
+        # 迁移脚本目录解析失败（脚本损坏/语法错误/目录异常）：输入环境
+        # 问题，非检查结论；解析不连库，但错误信息统一先抹凭据再输出。
+        # AlembicCommandError 是 alembic 全部异常的公共基类（util.exc）。
+        print(
+            "预检执行失败（Alembic 脚本目录解析失败，未产生检查结论）: "
+            + redact_secrets(f"{type(cause).__name__}: {cause}")
+        )
+        return 2
     except (SQLAlchemyError, OSError, ValueError) as cause:
         # 连接失败/无效 URL/磁盘 IO：输入环境问题，非检查结论；错误信息
         # 可能内嵌 DB URL，先抹凭据再输出。
@@ -575,10 +588,19 @@ def _run_production_preflight(args) -> int:
         )
         return 2
     if args.output:
-        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-        Path(args.output).write_text(
-            _json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
-        )
+        try:
+            Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.output).write_text(
+                _json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except OSError as cause:
+            # 目录无法创建/权限不足/磁盘满：报告未落盘，不得再打印检查
+            # 结论摘要（避免被误读为完整报告）。
+            print(
+                f"报告写入失败（路径/权限/磁盘问题，未产生报告文件）: "
+                f"{type(cause).__name__}: {cause}"
+            )
+            return 2
         print(f"报告已写入: {args.output}")
     if args.as_json:
         print(_json.dumps(report, ensure_ascii=False, indent=2))
