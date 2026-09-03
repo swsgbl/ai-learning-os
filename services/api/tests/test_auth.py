@@ -185,3 +185,59 @@ def test_password_hashes_are_salted_and_verifiable() -> None:
 def test_verify_password_survives_corrupted_hash() -> None:
     """哈希字段损坏按校验失败处理，不向调用方泄内部异常。"""
     assert not verify_password("pw", "not-a-bcrypt-hash")
+
+
+# --- M10-02 me 角色披露（前端渲染治理入口用；安全边界仍在 require_admin）---
+
+
+def _me_role_client(tmp_path):
+    """文件库 TestClient：promote 需要第二个 engine 连接，:memory: 不共享。"""
+    db_url = f"sqlite+aiosqlite:///{tmp_path/'me_role.db'}"
+    return TestClient(create_app(db_url))
+
+
+def _promote(db_path, username: str) -> None:
+    import asyncio
+
+    from app.db.session import create_engine, make_sessionmaker
+    from app.repositories.users import UserRepository
+
+    async def _do() -> None:
+        repo = UserRepository(make_sessionmaker(create_engine(f"sqlite+aiosqlite:///{db_path}")))
+        assert await repo.set_role(username, "admin") is not None
+
+    asyncio.run(_do())
+
+
+def test_me_returns_learner_role_by_default(auth_on, tmp_path) -> None:
+    with _me_role_client(tmp_path) as client:
+        _register(client)
+        token = _login(client).json()["access_token"]
+        me = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+        assert me.status_code == 200
+        assert me.json()["role"] == "learner"
+
+
+def test_register_discloses_default_learner_role(auth_on) -> None:
+    """注册响应同样带 role——新用户默认 learner。"""
+    with TestClient(create_app(SQLITE_URL)) as client:
+        reg = _register(client)
+        assert reg.status_code == 201
+        assert reg.json()["role"] == "learner"
+
+
+def test_me_reflects_admin_role_immediately_after_promote(auth_on, tmp_path) -> None:
+    """角色实时读库（M9-04）：提升后旧 token 不重签，me 立即透出 admin。"""
+    with _me_role_client(tmp_path) as client:
+        _register(client)
+        token = _login(client).json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+        assert client.get("/api/v1/auth/me", headers=headers).json()["role"] == "learner"
+        _promote(tmp_path / "me_role.db", "learner")
+        assert client.get("/api/v1/auth/me", headers=headers).json()["role"] == "admin"
+
+
+def test_me_role_off_semantics_unchanged(auth_off) -> None:
+    """auth off：me 仍要求 Bearer token（无用户上下文可披露），401 语义不变。"""
+    with TestClient(create_app(SQLITE_URL)) as client:
+        assert client.get("/api/v1/auth/me").status_code == 401
