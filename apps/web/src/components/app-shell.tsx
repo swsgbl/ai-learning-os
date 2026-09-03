@@ -23,7 +23,7 @@ const BASE_NAV: Array<{ href: string; label: string; icon: LucideIcon }> = [
   { href: "/voice", label: "语音陪练", icon: Headphones },
   { href: "/exam", label: "考场审阅", icon: BookOpen },
   { href: "/library", label: "学习库", icon: Library },
-  { href: "/progress", label: "掌握", icon: LineChart },
+  { href: "/progress", label: "工作台", icon: LineChart },
 ];
 
 // M10-02: 治理入口只对 admin / 本地模式渲染（role 来自 auth/me）。
