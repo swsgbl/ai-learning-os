@@ -105,11 +105,30 @@ def _strong_secret(value: str | None) -> bool:
 
 
 def _cors_is_local_only(cors_origins: str) -> bool:
-    """CORS 列表是否只含 localhost/127.0.0.1 源（公开服务时这是错误配置）。"""
+    """CORS 列表是否只含 localhost/127.0.0.1 源（公开服务时这是错误配置）。
+
+    M9-08: 用 urlsplit 精确解析 hostname——子串包含会把
+    https://evil-localhost.attacker.com 这类误判为本地源。
+    """
+    from urllib.parse import urlsplit
+
     origins = [o.strip() for o in cors_origins.split(",") if o.strip()]
-    return bool(origins) and all(
-        "localhost" in o or "127.0.0.1" in o for o in origins
-    )
+    if not origins:
+        return False
+    hosts = []
+    for origin in origins:
+        parts = urlsplit(origin if "//" in origin else f"//{origin}", scheme="http")
+        hosts.append((parts.hostname or "").lower())
+    return all(h in ("localhost", "127.0.0.1", "::1") for h in hosts)
+
+
+def _is_internal_livekit_url(url: str) -> bool:
+    """LiveKit 地址是否容器内部/本机专用（局域网浏览器不可达）。"""
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower()
+    return host in ("livekit", "localhost", "127.0.0.1", "::1") or not host
 
 
 def validate_exposure(
@@ -119,6 +138,7 @@ def validate_exposure(
     auth_secret: str | None,
     livekit_api_secret: str | None,
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000",
+    public_livekit_url: str | None = None,
 ) -> None:
     """M9-06/M9-07 公开暴露 fail-closed：绑定非 loopback 时全部安全前置必须满足。
 
@@ -144,4 +164,12 @@ def validate_exposure(
         raise RuntimeError(
             "公开绑定必须配置 AIOS_CORS_ORIGINS（含实际 Web origin）；"
             f"当前 CORS 仍为 localhost-only: {cors_origins!r}——拒绝以本地 CORS 对外服务"
+        )
+    # M9-08: 公开绑定时必须显式配置浏览器可达的 LiveKit 地址（不允许静默降级
+    # 到容器内部地址——局域网浏览器拿到 ws://livekit:7880 无法连接）
+    if not public_livekit_url or _is_internal_livekit_url(public_livekit_url):
+        raise RuntimeError(
+            "公开绑定必须配置 PUBLIC_LIVEKIT_URL 为局域网可达地址"
+            "（如 ws://<LAN_IP或域名>:7880）；"
+            f"当前值 {public_livekit_url!r} 缺失或为容器内部/本机地址——拒绝启动"
         )

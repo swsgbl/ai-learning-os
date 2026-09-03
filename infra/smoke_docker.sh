@@ -57,21 +57,40 @@ code=$(http_code "$WEB/login")
 [ "$code" = "200" ] || fail "Web /login -> $code"
 say "GET Web /login -> 200"
 
-# --- CORS preflight 与 Web 端口一致性（M9-04）---
-origin="http://localhost:${AIOS_WEB_PORT:-3000}"
+# --- CORS preflight 与 Web 端口一致性（M9-04/M9-08）---
+# 公开模式 CORS 不含 localhost —— 目标 origin 从 AIOS_CORS_ORIGINS 第一项取
+origin="${AIOS_CORS_ORIGINS:-}"
+origin="${origin%%,*}"
+origin="${origin:-http://localhost:${AIOS_WEB_PORT:-3000}}"
 aco=$(curl -s -m 15 -X OPTIONS -o /dev/null -D - \
   -H "Origin: $origin" -H "Access-Control-Request-Method: GET" \
   "$API/api/v1/papers" | tr -d '\015' | grep -i '^access-control-allow-origin:' | cut -d' ' -f2)
 [ "$aco" = "$origin" ] || fail "CORS preflight allow-origin=$aco 期望 $origin（AIOS_WEB_PORT 自定义时 CORS 必须一致）"
 say "CORS preflight $origin -> $aco"
 
-# --- 宿主端口绑定：默认模式全部只绑 127.0.0.1（含 LiveKit 7881/7882-7892）---
-for svc in postgres redis minio api web livekit; do
+# --- 宿主端口绑定（M9-07/M9-08 两态）：数据面（postgres/redis/minio）永远 loopback；
+# 边缘服务（api/web/livekit）默认 loopback，公开模式（AIOS_BIND_IP=0.0.0.0）可公开 ---
+DATA_SVCS="postgres redis minio"
+EDGE_SVCS="api web livekit"
+PUBLIC_MODE=false
+case "${AIOS_BIND_IP:-127.0.0.1}" in
+  0.0.0.0|::|*) if [ "${AIOS_BIND_IP:-127.0.0.1}" != "127.0.0.1" ] && [ "${AIOS_BIND_IP:-127.0.0.1}" != "::1" ]; then PUBLIC_MODE=true; fi ;;
+esac
+for svc in $DATA_SVCS; do
   cid=$($COMPOSE ps -q "$svc")
   bad=$(docker port "$cid" | grep -v '127.0.0.1' | grep -vE '^$' | head -1 || true)
-  [ -z "$bad" ] || fail "$svc 存在非 loopback 绑定: $bad"
+  [ -z "$bad" ] || fail "$svc（数据面）存在非 loopback 绑定: $bad —— 数据面永不公开"
 done
-say "all host ports bound to 127.0.0.1"
+if [ "$PUBLIC_MODE" = "true" ]; then
+  say "public mode: data services loopback-only verified; edge services may be public"
+else
+  for svc in $EDGE_SVCS; do
+    cid=$($COMPOSE ps -q "$svc")
+    bad=$(docker port "$cid" | grep -v '127.0.0.1' | grep -vE '^$' | head -1 || true)
+    [ -z "$bad" ] || fail "$svc 存在非 loopback 绑定: $bad（默认模式必须全 loopback）"
+  done
+  say "all host ports bound to 127.0.0.1 (default mode)"
+fi
 
 # --- 3. /papers 认证两态断言 ---
 case "$enabled" in

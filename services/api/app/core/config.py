@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     s3_access_key: str | None = None
     s3_secret_key: str | None = None
     livekit_url: str | None = None
+    # M9-08: 浏览器可达的 LiveKit 地址（局域网/公开模式必配，如 ws://<LAN_IP>:7880）；
+    # 未配置时 token 回退 livekit_url（容器内部地址仅容器内可用）
+    public_livekit_url: str | None = None
     livekit_api_key: str | None = None
     livekit_api_secret: str | None = None
     asr_provider: str | None = None

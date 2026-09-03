@@ -119,9 +119,23 @@ AIOS_BIND_IP=0.0.0.0 AIOS_APP_ENV=production AIOS_AUTH_SECRET='<至少 32 字节
 ```
 
 fail-closed 规则：绑定非 loopback 时任一条件缺失（非 production / 弱 secret /
-localhost-only CORS）API 拒绝启动。`AIOS_PUBLIC_API_BASE_URL` 是**构建期**注入
-Web 的 API 地址（NEXT_PUBLIC_API_BASE_URL），改值后必须 rebuild Web；
-`AIOS_CORS_ORIGINS` 必须包含实际 Web origin。语音数据面 7882-7892/udp 同步公开。
+localhost-only CORS / **缺 PUBLIC_LIVEKIT_URL 或其仍是容器内部地址**）API 拒绝启动。
+`AIOS_PUBLIC_API_BASE_URL` 是**构建期**注入 Web 的 API 地址（NEXT_PUBLIC_API_BASE_URL），
+改值后必须 rebuild Web；`AIOS_CORS_ORIGINS` 必须包含实际 Web origin。
+
+**语音（LiveKit）局域网/公开拓扑（M9-08）**：
+
+- `PUBLIC_LIVEKIT_URL`（API env）：token 返回给浏览器的 ws 地址——局域网必配
+  `ws://<LAN_IP>:7880`；本机模式留空，token 回退 `ws://127.0.0.1:7880`；
+- 媒体面通告：`AIOS_LIVEKIT_EXTERNAL_IP=<LAN_IP>` → livekit `--node-ip`（局域网必配）；
+  公网机器用 `AIOS_LIVEKIT_CONFIG=/etc/livekit/livekit-public.yaml`
+  （`use_external_ip: true` 自动探测）；
+- 防火墙：放行 TCP 7880(signal)/7881(rtc-tcp) + **UDP 7882-7892(媒体)**；
+  对称 NAT/严格防火墙需自建 TURN（coturn），本项目默认未含 TURN 服务；
+- 语音连通性验证（真实 livekit.rtc 客户端：token 鉴权 → Room.connect → CONN_CONNECTED
+  → 数据通道）：
+  `AIOS_MODE=local bash infra/smoke_voice.sh` /
+  `AIOS_MODE=public AIOS_PUBLIC_HOST=<LAN_IP> bash infra/smoke_voice.sh`。
 
 ## 本地验证
 

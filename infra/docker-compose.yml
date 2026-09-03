@@ -69,7 +69,14 @@ services:
       S3_BUCKET: aios-objects
       S3_ACCESS_KEY: aios
       S3_SECRET_KEY: aios12345
-      LIVEKIT_URL: ws://livekit:7880
+      # M9-08: 浏览器可达 LiveKit 地址 —— 公开模式必配（AIOS_BIND_IP 非 loopback
+      # 时 fail-closed 校验）；本机模式留空则 token 回退 127.0.0.1
+      # M9-08: LIVEKIT_URL 是浏览器可达地址（token ws_url）—— 本机默认 127.0.0.1；
+      # 容器内部地址 ws://livekit:7880 只服务端调用用，绝不发给浏览器
+      LIVEKIT_URL: ${AIOS_LIVEKIT_URL:-ws://127.0.0.1:7880}
+      # M9-08: 浏览器可达 LiveKit 地址 —— 公开模式必配（AIOS_BIND_IP 非 loopback
+      # 时 fail-closed 校验）；本机模式留空则 token 回退 127.0.0.1
+      PUBLIC_LIVEKIT_URL: ${AIOS_PUBLIC_LIVEKIT_URL:-}
       # M9-07: LiveKit 凭据可配置 —— API 与 livekit server 经同一组变量保持一致
       LIVEKIT_API_KEY: ${AIOS_LIVEKIT_API_KEY:-devkey}
       LIVEKIT_API_SECRET: ${AIOS_LIVEKIT_API_SECRET:-ailos-local-dev-secret-0f4c9a1e7b2d}
@@ -98,12 +105,17 @@ services:
 
   livekit:
     image: livekit/livekit-server:latest
-    # M9-07: --keys 与 API 共用同一组凭据变量（不再只能读仓库内占位 yaml）
+    # M9-07/M9-08: --keys 与 API 共用同一组凭据；config 可切换 local/public
+    # （AIOS_LIVEKIT_CONFIG，public 版 use_external_ip=true 适合公网自动探测）；
+    # --node-ip 显式通告媒体地址（局域网必配 AIOS_LIVEKIT_EXTERNAL_IP=<LAN_IP>；
+    # 本机默认 127.0.0.1 自洽）
     command: >-
-      --config /etc/livekit/livekit.yaml
+      --config ${AIOS_LIVEKIT_CONFIG:-/etc/livekit/livekit.yaml}
       --keys "${AIOS_LIVEKIT_API_KEY:-devkey}: ${AIOS_LIVEKIT_API_SECRET:-ailos-local-dev-secret-0f4c9a1e7b2d}"
+      --node-ip "${AIOS_LIVEKIT_EXTERNAL_IP:-127.0.0.1}"
     volumes:
       - ./livekit/livekit.yaml:/etc/livekit/livekit.yaml:ro
+      - ./livekit/livekit-public.yaml:/etc/livekit/livekit-public.yaml:ro
     ports:
       - "${AIOS_BIND_IP:-127.0.0.1}:7880:7880"
       - "${AIOS_BIND_IP:-127.0.0.1}:7881:7881"

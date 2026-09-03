@@ -1,0 +1,20 @@
+# M9-08 局域网/公网部署配置（与 livekit.yaml 二选一，经 AIOS_LIVEKIT_CONFIG 切换）。
+# use_external_ip=true：LiveKit 自动探测出口 IP 做 media 通告（适合有公网出口的机器）；
+# 纯局域网（无外网出口）请保持 use_external_ip=false 并显式设
+# AIOS_LIVEKIT_EXTERNAL_IP=<LAN_IP>（compose --node-ip 优先级更高）。
+# TURN/STUN 拓扑：默认仅 ICE/STUN 语义（LiveKit 内置 ICE），UDP 7882-7892 为
+# 媒体面端口；对称 NAT/严格防火墙场景需自建 TURN（coturn），防火墙放行
+# TCP 7880/7881 + UDP 7882-7892。
+port: 7880
+bind_addresses:
+  - "0.0.0.0"
+rtc:
+  tcp_port: 7881
+  port_range_start: 7882
+  port_range_end: 7892
+  use_external_ip: true
+  enable_loopback_candidate: false
+keys:
+  devkey: "ailos-local-dev-secret-0f4c9a1e7b2d"
+turn:
+  enabled: false

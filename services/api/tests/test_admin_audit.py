@@ -372,6 +372,7 @@ def test_exposure_valid_production_config_passes() -> None:
         auth_secret="prod-auth-secret-0123456789abcdef012345",
         livekit_api_secret="prod-livekit-secret-0123456789abcdef01",
         cors_origins="https://learn.example.com",
+        public_livekit_url="wss://voice.example.com",
     )
 
 

@@ -70,6 +70,7 @@ def create_app(database_url: str | None = None) -> FastAPI:
         auth_secret=settings.auth_secret,
         livekit_api_secret=settings.livekit_api_secret,
         cors_origins=settings.cors_origins,
+        public_livekit_url=settings.public_livekit_url,
     )
     resolved_url = database_url if database_url is not None else settings.database_url
     if settings.rubric_judge == "llm":

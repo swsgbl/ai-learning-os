@@ -469,3 +469,119 @@ def test_compose_web_api_base_url_build_arg(stack, auth_on) -> None:
     assert args["NEXT_PUBLIC_API_BASE_URL"] == "http://192.168.1.10:8000"
     default = render({})
     assert default["services"]["web"]["build"]["args"]["NEXT_PUBLIC_API_BASE_URL"] == "http://127.0.0.1:8000"
+
+
+# --- 7. M9-08 公开语音连通（渲染/URL/门禁/CORS 精确解析/凭据同源） ---
+
+
+def test_voice_token_public_ws_url(stack, auth_on, monkeypatch) -> None:
+    """公开模式（PUBLIC_LIVEKIT_URL 设置）：token 返回浏览器可达 ws_url。"""
+    client, _db_url = stack
+    user = User(client, "voice_pub_user")
+    monkeypatch.setenv("LIVEKIT_API_KEY", "devkey")
+    monkeypatch.setenv("LIVEKIT_API_SECRET", "devsecret-0123456789abcdef012345")
+    monkeypatch.setenv("PUBLIC_LIVEKIT_URL", "ws://192.168.1.50:7880")
+    get_settings.cache_clear()
+    try:
+        r = client.post(
+            "/api/v1/voice/token",
+            json={"room": "room-pub", "identity": "u1", "role": "student"},
+            headers=user.headers,
+        )
+        assert r.status_code == 200, r.text
+        assert r.json()["ws_url"] == "ws://192.168.1.50:7880"
+    finally:
+        get_settings.cache_clear()
+
+
+def test_voice_token_default_loopback_ws_url(stack, auth_on, monkeypatch) -> None:
+    """默认本机模式：token 返回 ws://127.0.0.1:7880（不回归）。"""
+    client, _db_url = stack
+    user = User(client, "voice_local_user")
+    monkeypatch.setenv("LIVEKIT_API_KEY", "devkey")
+    monkeypatch.setenv("LIVEKIT_API_SECRET", "devsecret-0123456789abcdef012345")
+    get_settings.cache_clear()
+    r = client.post(
+        "/api/v1/voice/token",
+        json={"room": "room-local", "identity": "u1", "role": "student"},
+        headers=user.headers,
+    )
+    assert r.status_code == 200
+    assert r.json()["ws_url"] == "ws://127.0.0.1:7880"
+
+
+def test_cors_local_detection_uses_exact_host(stack, auth_on) -> None:
+    """_cors_is_local_only 用 urlsplit 精确 host——evil-localhost 子串不误判。"""
+    from app.core.security import _cors_is_local_only
+
+    assert _cors_is_local_only("http://localhost:3000,http://127.0.0.1:3000")
+    assert not _cors_is_local_only("https://learn.example.com")
+    assert not _cors_is_local_only("https://evil-localhost.attacker.com"), (
+        "子串误判必须消除：evil-localhost.attacker.com 不是本地源"
+    )
+
+
+def test_exposure_public_binding_requires_reachable_livekit_url(stack, auth_on) -> None:
+    """公开绑定缺/误配公开 LiveKit URL：fail-closed（容器内部地址不允许）。"""
+    from app.core.security import validate_exposure
+
+    common = {
+        "host_bind_ip": "0.0.0.0", "app_env": "production",
+        "auth_secret": "prod-auth-secret-0123456789abcdef012345",
+        "livekit_api_secret": "prod-lk-secret-0123456789abcdef01",
+        "cors_origins": "https://learn.example.com",
+    }
+    with pytest.raises(RuntimeError, match="PUBLIC_LIVEKIT_URL"):
+        validate_exposure(**common, public_livekit_url=None)
+    with pytest.raises(RuntimeError, match="PUBLIC_LIVEKIT_URL"):
+        validate_exposure(**common, public_livekit_url="ws://livekit:7880")
+    with pytest.raises(RuntimeError, match="PUBLIC_LIVEKIT_URL"):
+        validate_exposure(**common, public_livekit_url="ws://127.0.0.1:7880")
+    # 合法局域网地址通过
+    validate_exposure(**common, public_livekit_url="ws://192.168.1.50:7880")
+
+
+def test_compose_public_mode_injects_public_livekit_url(stack, auth_on) -> None:
+    """公开模式渲染：API env 注入 AIOS_PUBLIC_LIVEKIT_URL（显式配置值透传）。"""
+    import json
+    import os
+    import subprocess
+
+    def render(env_extra: dict) -> dict:
+        env = {**os.environ, "AIOS_WEB_PORT": "3100", **env_extra}
+        env.pop("DATABASE_URL", None)
+        proc = subprocess.run(
+            ["docker", "compose", "-f", COMPOSE_FILE, "--profile", "local", "config", "--format", "json"],
+            capture_output=True, text=True, check=True, env=env,
+        )
+        return json.loads(proc.stdout)
+
+    rendered = render({"AIOS_PUBLIC_LIVEKIT_URL": "ws://192.168.1.50:7880"})
+    assert rendered["services"]["api"]["environment"]["PUBLIC_LIVEKIT_URL"] == "ws://192.168.1.50:7880"
+
+
+def test_compose_livekit_config_and_credentials_stay_same_source(stack, auth_on) -> None:
+    """livekit server command 与 API env 的 key/secret 同源；config 可切换 local/public。"""
+    import json
+    import os
+    import subprocess
+
+    def render(env_extra: dict) -> dict:
+        env = {**os.environ, "AIOS_WEB_PORT": "3100", **env_extra}
+        env.pop("DATABASE_URL", None)
+        proc = subprocess.run(
+            ["docker", "compose", "-f", COMPOSE_FILE, "--profile", "local", "config", "--format", "json"],
+            capture_output=True, text=True, check=True, env=env,
+        )
+        return json.loads(proc.stdout)
+
+    rendered = render({"AIOS_LIVEKIT_CONFIG": "/etc/livekit/livekit-public.yaml"})
+    livekit_cmd = " ".join(rendered["services"]["livekit"]["command"])
+    api_env = rendered["services"]["api"]["environment"]
+    assert "/etc/livekit/livekit-public.yaml" in livekit_cmd, "config 可切换到 public"
+    # 默认仍是 local config
+    default_cmd = " ".join(render({})["services"]["livekit"]["command"])
+    assert "/etc/livekit/livekit.yaml" in default_cmd
+    # 凭据同源：--keys 与 API env 同一组值
+    assert api_env["LIVEKIT_API_KEY"] in livekit_cmd
+    assert api_env["LIVEKIT_API_SECRET"] in livekit_cmd
