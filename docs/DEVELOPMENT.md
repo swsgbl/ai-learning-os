@@ -226,7 +226,9 @@ localhost-only CORS / **缺 PUBLIC_LIVEKIT_URL 或其仍是容器内部地址**�
 - 防火墙：放行 TCP 7880(signal)/7881(rtc-tcp) + **UDP 7882-7892(媒体)**；
   对称 NAT/严格防火墙需 TURN——M10-05 提供外部 coturn 部署模板
   （`infra/coturn/`，独立 compose 文件不并入主栈、主栈默认渲染不含 coturn；
-  fail-closed：必填 secret/external-ip 缺失直接拒绝启动），部署/防火墙/
+  fail-closed：必填 secret/external-ip 缺失直接拒绝启动，entrypoint 再挡端口
+  越界/自冲突/与 LiveKit 7880-7892 同机冲突、配置注入字符、无效布尔值；默认镜像
+  digest pin），部署/防火墙/
   与 LiveKit 生产联动/验证见 docs/COTURN_DEPLOYMENT.md；
 - 语音连通性验证（真实 livekit.rtc 客户端：token 鉴权 → Room.connect → CONN_CONNECTED
   → 数据通道）：

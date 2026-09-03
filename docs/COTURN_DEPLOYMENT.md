@@ -25,15 +25,25 @@ WebRTC 语音默认走 ICE/STUN 直连（LiveKit 内置 ICE，媒体面 UDP 7882
 | 防线 | 位置 | 拦截内容 |
 | --- | --- | --- |
 | 第一层 | compose `:?` 插值 | `COTURN_STATIC_AUTH_SECRET` / `COTURN_EXTERNAL_IP` 缺失 → `docker compose config/up` 直接失败，无默认值兜底 |
-| 第二层 | `infra/coturn/entrypoint.sh` | 占位/常见弱值/仓库开发占位 secret；secret 长度 < 32；external-ip 为占位或 loopback（生产）；relay 段与主栈 LiveKit UDP 7882-7892 同机冲突；启用 TLS 但证书文件不存在（**不做假 TLS 声明**） |
+| 第二层 | `infra/coturn/entrypoint.sh` | 占位/常见弱值/仓库开发占位 secret；secret 长度 < 32；secret/realm/证书路径值含换行/空白/控制字符（**配置注入防线**）；external-ip 非 IPv4（含 PUBLIC/PRIVATE 形式逐半边校验）或为占位/loopback（生产）；端口非纯数字或越界（**全部端口要求 1024-65535**——65536 这类超上限值拒绝）；relay 段倒置/超宽(>2000)；listening/TLS/relay **自身映射冲突**（即使 TLS disabled 也拒绝——compose 无条件映射 TLS TCP 端口）；与主栈 LiveKit 端口 **7880-7892**（TCP 7880 signal / TCP 7881 rtc / UDP 7882-7892 媒体）同机冲突；布尔开关无效值（`maybe`/`1`/`yes` 拒绝，不静默当 false）；启用 TLS 但证书文件不存在（**不做假 TLS 声明**） |
 
 关键取值均**显式**，不允许静默猜测：
 
-- `external-ip` 必填（coturn 对外通告地址；1:1 NAT 用 `PUBLIC/PRIVATE` 形式）；
-- relay 端口段显式（默认 **50000-50099**，与 LiveKit UDP 7882-7892 错开；范围跟随
-  env，compose 端口映射同源插值，不会出现「配置与映射不一致」）；
+- `external-ip` 必填（coturn 对外通告地址；1:1 NAT 用 `PUBLIC/PRIVATE` 形式）。
+  **本模板仅支持 IPv4 / PUBLIC-PRIVATE IPv4**——IPv6 与主机名不做校验放行
+  （本模板当前生产路径为 IPv4，见第 8 节边界声明）；
+- relay 端口段显式（默认 **50000-50099**，与主栈 LiveKit 端口 7880-7892 错开；
+  范围跟随 env，compose 端口映射同源插值，不会出现「配置与映射不一致」）；
 - listening 端口显式（默认 3478 UDP+TCP；TLS 端口默认 5349 TCP，仅
-  `COTURN_TLS_ENABLED=true` 时 coturn 才真正监听）；
+  `COTURN_TLS_ENABLED=true` 时 coturn 才真正监听，但宿主映射始终存在——
+  端口合法性/冲突校验对它一视同仁）；
+- realm 只允许字母/数字/`.`/`_`/`-`；证书/私钥路径必须是容器内绝对路径
+  （`/` 开头）且不含空白/换行；
+- 布尔开关（`COTURN_TLS_ENABLED`/`COTURN_VERBOSE`/`COTURN_CONFIG_ONLY`/
+  `COTURN_ALLOW_LOOPBACK_EXTERNAL`/`COTURN_ALLOW_LIVEKIT_PORT_OVERLAP`）
+  只接受严格 `true`/`false`，无效值拒绝启动；
+- 镜像默认 **pin 到已实测 digest**（`coturn/coturn@sha256:aa68aab...`，生产可
+  重现）——换镜像必须显式覆盖 `COTURN_IMAGE`，不要回退 `:latest`；
 - secret 只经部署 env（`.env`（不入库）或部署 secret 注入）进入容器，运行时生成
   `/tmp/aios-turnserver.conf`（600 权限；官方镜像以非 root 运行，`/run` 不可写）；
   仓库内 `turnserver.conf.example` 只是**不含 secret** 的
@@ -67,11 +77,15 @@ WebRTC 语音默认走 ICE/STUN 直连（LiveKit 内置 ICE，媒体面 UDP 7882
 cd infra/coturn
 cp .env.example .env          # .gitignore 已忽略 .env
 openssl rand -hex 32          # 输出填入 COTURN_STATIC_AUTH_SECRET（与 LiveKit turn.secret 共用）
-# 编辑 .env：COTURN_EXTERNAL_IP=<宿主公网 IP>；其余按需（默认值见 .env.example 注释）
+# 编辑 .env：COTURN_EXTERNAL_IP=<宿主公网 IPv4>；其余按需（默认值见 .env.example 注释）
 ```
 
-**生产建议**：镜像 pin 具体版本（`COTURN_IMAGE=coturn/coturn:4.6.2`），relay 段按
-并发放大（每路媒体占 1 个 relay 端口/方向；100 端口 ≈ 数十路并发语音）。
+**镜像策略**：默认已 pin 到本机实测 digest（生产可重现，`:latest` 标签会随上游
+漂移）。运维升级/换镜像时必须显式覆盖 `COTURN_IMAGE` 为新 digest——没有「隐式跟
+latest」的路径。
+
+**relay 段**按并发放大（每路媒体占 1 个 relay 端口/方向；100 端口 ≈ 数十路并发语音；
+起止均须 1024-65535、宽度 ≤ 2000）。
 
 ### 3.3 （可选，LiveKit 联动必需）启用 TLS
 
@@ -111,8 +125,10 @@ print('STUN binding response OK (type=0x0101, txid matched)')
 PY
 ```
 
-> 端口冲突提醒：与主栈 LiveKit 同机部署时，relay 段绝不可与 UDP 7882-7892 重叠
-> （entrypoint 已硬检查，跨机部署可显式 `COTURN_ALLOW_LIVEKIT_PORT_OVERLAP=true` 豁免）。
+> 端口冲突提醒：与主栈 LiveKit 同机部署时，coturn 的 listening/TLS/relay 任何端口
+> 都不得落入 LiveKit 宿主端口段 **7880-7892**（TCP 7880 signal / TCP 7881 rtc-tcp /
+> UDP 7882-7892 媒体）——entrypoint 已按协议无关区间硬检查（TCP 7880/7881 同样在拦
+> 截范围内），跨机部署可显式 `COTURN_ALLOW_LIVEKIT_PORT_OVERLAP=true` 豁免。
 
 ## 4. 与 LiveKit / API 生产环境配合
 
@@ -204,15 +220,27 @@ turn:
 | 容器启动即退出，日志 `FAIL-CLOSED` | 按 stderr 提示修改变量（占位 secret/loopback IP/端口冲突/缺证书） |
 | trickle-ice 无 `relay` 候选 | 防火墙或安全组未放行 3478/relay 段；`turns:` 时查证书域名与 `turn.domain` 一致 |
 | 语音仍走不通但 trickle-ice 有 relay | LiveKit `turn.secret` 与 coturn secret 不同值，或浏览器到 turn 域名 DNS/证书问题 |
-| 与主栈同机部署端口相撞 | relay 段/监听端口落在 7882-7892——entrypoint 已拒绝；换 50000+ 段 |
+| 与主栈同机部署端口相撞 | relay 段/listening/TLS 端口落在 LiveKit 7880-7892——entrypoint 已拒绝；换 50000+ 段 |
+| 端口自冲突被拒 | listening/TLS/relay 不得互相重叠（TLS 未启用也一样——compose 无条件映射 TLS TCP 端口），错开各角色端口 |
+| 端口越界被拒（如 `65536`） | 全部端口要求 1024-65535（TCP/UDP 合法范围），entrypoint 已拒绝 |
+| 布尔开关被拒（如 `COTURN_VERBOSE=maybe`） | 布尔只接受严格 `true`/`false`，无效值拒绝启动——改成字面 `true` 或 `false` |
+| external-ip 被拒（主机名/IPv6/格式错） | 本模板仅支持 IPv4 与 `PUBLIC/PRIVATE` IPv4 形式；IPv6 部署超出当前模板范围 |
 
-## 8. 验收边界（截至 M10-05 交付）
+## 8. 验收边界（截至 M10-05 交付 + Codex 审核返工）
 
-- **Claude 已自测**：compose 渲染与 fail-closed 矩阵、entrypoint 校验矩阵、端口冲突
-  检查、secret 不入仓库扫描，以及本机隔离监听冒烟（`AIOS_COTURN_SMOKE=1`：随机测试
-  secret + loopback 豁免 + 仅绑 127.0.0.1 + 独立 compose project，容器真实启动、
-  STUN Binding 请求得到 0x0101 响应且 transaction id 匹配、结束 down 清理）——全部
-  在隔离环境完成，未连接生产库、未触碰主栈服务。
-- **未覆盖（需生产环境人工验收）**：真实公网 IP/域名/证书下的 TURN/TLS 中继验收、
-  真实对称 NAT 环境浏览器语音经 TURN 的端到端验证、LiveKit `turn.enabled` 生产联动
-  实测。模板交付不等于 TURN 可用性已验收。
+- **已自测**（全部在本机隔离环境完成，未连接生产库、未触碰主栈服务）：compose 渲染
+  与 fail-closed 矩阵、entrypoint 校验矩阵（含端口越界/自冲突/LiveKit 7880-7892
+  全段冲突/配置注入/无效布尔）、secret 不入仓库扫描（digest pin 除外——公开镜像
+  标识），以及本机隔离监听冒烟（`AIOS_COTURN_SMOKE=1`：随机测试 secret + loopback
+  豁免 + 仅绑 127.0.0.1 + 独立 compose project，容器真实启动、STUN Binding 请求得到
+  0x0101 响应且 transaction id 匹配、结束 down 断言 exit 0 且 project 容器无残留）。
+- **Codex 审核返工**（8 项缺陷修复）：LiveKit 端口冲突检查补全 TCP 7880/7881；
+  端口上限 65535 校验（65536 拒绝）；listening/TLS/relay 自冲突无条件拒绝（TLS
+  disabled 亦然）；external-ip/realm/证书路径配置注入防线与绝对路径/IPv4 白名单；
+  布尔开关严格 true/false；默认镜像 digest pin（不再 `:latest`）；冒烟 down 断言
+  exit 0 + 容器无残留断言；文档 `/run`→`/tmp` 路径口径与 entrypoint git mode(755)
+  统一并以测试锁定。
+- **未覆盖（需生产环境人工验收，不虚报）**：真实公网 IP/域名/证书下的 TURN/TLS 中继
+  验收（trickle-ice 出 relay 候选）、真实对称 NAT 环境浏览器语音经 TURN 的端到端
+  验证、LiveKit `turn.enabled` 生产联动实测、IPv6 部署路径（本模板 external-ip 仅
+  IPv4）。**本机监听冒烟不等于 TURN 可用**——只证明配置合法且 UDP 3478 在听。

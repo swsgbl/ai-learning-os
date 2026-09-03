@@ -3,20 +3,30 @@
 覆盖矩阵：
 1. 静态断言（无 docker 依赖）：主栈 compose 不含 coturn（yaml 服务集 + 无 include +
    原文无 coturn 字样）；coturn compose 为独立 project、secret/external-ip 用 :? 插值
-   （无字面默认值）；模板文件无真实 secret 材料（32+ hex / 仓库开发占位）；
-   entrypoint.sh 为纯 LF（容器内 /bin/sh 无法执行 CRLF）；
+   （无字面默认值）；模板文件无真实 secret 材料（32+ hex / 仓库开发占位；镜像 digest
+   pin 除外——它是公开镜像标识不是 secret）；entrypoint.sh 为纯 LF（容器内 /bin/sh
+   无法执行 CRLF）且 git index mode 为 100755；默认镜像 pin digest（:latest 不得回归）；
+   模板不再引用 /run/aios-turnserver.conf（运行时实际写 /tmp）；
 2. 端口不冲突：coturn 默认端口（3478/5349/50000-50099）与主栈宿主端口
    （5433/6379/9000/9001/8000/3000/7880/7881 + LiveKit UDP 7882-7892）零交集，
-   且 entrypoint 内置 7882-7892 同机硬冲突检查；
+   entrypoint 内置 LiveKit 全端口 7880-7892（TCP 7880 signal / TCP 7881 rtc /
+   UDP 7882-7892 媒体）同机硬冲突检查；
 3. entrypoint 行为矩阵（bash 子进程直跑，COTURN_CONFIG_ONLY 打印脱敏配置）：
-   缺必填/占位 secret/弱 secret/占位与 loopback external-ip/relay 与监听端口
-   落入 7882-7892/relay 段倒置/超宽/非数字/TLS 启用缺证书 → 一律 FAIL-CLOSED；
-   合法输入 → 配置生成且 stdout 不含真实 secret；豁免开关与 TLS 真实证书路径通过；
-4. docker compose 渲染：必填变量齐全渲染成功（服务/端口/卷）；任一必填变量缺失
-   时 config 直接失败（:? 语法，无默认值兜底）；主栈 --profile local 渲染不含 coturn；
+   缺必填/占位 secret/弱 secret/占位与 loopback external-ip/external-ip 非
+   IPv4/relay 与 listening/TLS 口落入 LiveKit 7880-7892/relay 段倒置/超宽/越界
+   （<1024 或 >65535，含 65536）/端口自冲突（listening==TLS、listening/TLS 落在
+   relay 段内，即使 TLS disabled 也拒绝——compose 无条件映射 TLS TCP 端口）/
+   配置注入字符（realm/external-ip/证书路径换行、空白、非绝对路径）/
+   无效布尔值（maybe/1/yes 一律拒绝，不静默当 false）/TLS 启用缺证书
+   → 一律 FAIL-CLOSED；合法输入 → 配置生成且 stdout 不含真实 secret；
+   豁免开关与 TLS 真实证书路径通过；
+4. docker compose 渲染：必填变量齐全渲染成功（服务/端口/卷/默认 digest 镜像）；
+   任一必填变量缺失时 config 直接失败（:? 语法，无默认值兜底）；主栈
+   --profile local 渲染不含 coturn；
 5. 门控冒烟（AIOS_COTURN_SMOKE=1）：隔离环境（loopback 豁免 + 随机测试 secret +
    仅绑 127.0.0.1 + 缩小 relay 段）真启动容器，STUN Binding 探测 UDP 3478 有响应
-   后 down——只验证本机监听，不构成 TURN 可用性验收（见 docs/COTURN_DEPLOYMENT.md）。
+   后 down——必须断言 down exit 0 且独立 project 无容器残留。只验证本机监听，
+   不构成 TURN 可用性验收（见 docs/COTURN_DEPLOYMENT.md）。
 """
 from __future__ import annotations
 
@@ -44,14 +54,19 @@ ENV_EXAMPLE = COTURN_DIR / ".env.example"
 CONF_EXAMPLE = COTURN_DIR / "turnserver.conf.example"
 
 # 主栈宿主端口事实（M9-05/M9-07/M9-08）：数据面固定 loopback，边缘面跟随 AIOS_BIND_IP。
-# LiveKit 媒体面 UDP 7882-7892 是 coturn relay 段必须避开的硬边界。
-LIVEKIT_UDP_RANGE = (7882, 7892)
+# LiveKit 占 TCP 7880(signal)/7881(rtc-tcp) + UDP 7882-7892(媒体)——宿主层面即连续段
+# 7880-7892，是 coturn 所有端口（listening/TLS/relay，UDP+TCP 都映射）必须避开的硬边界。
+LIVEKIT_HOST_PORT_RANGE = (7880, 7892)
 MAIN_HOST_PORTS = {5433, 6379, 9000, 9001, 8000, 3000, 7880, 7881, *range(7882, 7893)}
 COTURN_DEFAULT_PORTS = {3478, 5349, *range(50000, 50100)}
 
-# entrypoint 校验矩阵共用的合法基线（TEST-NET-2 文档 IP，非任何真实环境）；
+# 默认镜像 pin 到本机已实测 digest（Codex 返工缺陷 6：:latest 标签漂移不可重现）
+DEFAULT_IMAGE_DIGEST = "coturn/coturn@sha256:aa68aab64a3b929d57fc2924c98ea447bf996cf8dade2508e7b71eaf23f1f14e"
+
+# entrypoint 校验矩阵共用的合法基线（TEST-NET-2/3 文档 IP，非任何真实环境）；
 # secret 每次运行随机生成——仓库与测试代码不含任何固定 secret 材料
 VALID_EXTERNAL_IP = "198.51.100.10"
+VALID_PUBLIC_PRIVATE_IPS = "203.0.113.5/10.0.0.5"
 
 
 # ---------------------------------------------------------------- 静态断言
@@ -83,8 +98,18 @@ def test_coturn_compose_is_separate_fail_closed_project() -> None:
     assert not re.search(r"\$\{COTURN_EXTERNAL_IP:-", raw)
 
 
+def test_image_defaults_to_pinned_digest() -> None:
+    """默认镜像 pin 已实测 digest；:latest 不得回归为默认（换镜像必须显式覆盖）。"""
+    compose_raw = COTURN_COMPOSE.read_text(encoding="utf-8")
+    assert DEFAULT_IMAGE_DIGEST in compose_raw, "compose 默认镜像必须是 digest pin"
+    assert "coturn/coturn:latest" not in compose_raw, "默认镜像不得回退 :latest（标签漂移不可重现）"
+    env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
+    assert f"COTURN_IMAGE={DEFAULT_IMAGE_DIGEST}" in env_example
+
+
 def test_template_files_contain_no_secret_material() -> None:
-    """infra/coturn 全部模板文件：无 32+ hex 随机串、无仓库开发占位 secret；entrypoint 纯 LF。"""
+    """infra/coturn 全部模板文件：无 32+ hex 随机串（镜像 digest pin 除外）、无仓库
+    开发占位 secret；entrypoint 纯 LF。"""
     files = sorted(p for p in COTURN_DIR.iterdir() if p.is_file())
     assert {p.name for p in files} >= {
         "docker-compose.coturn.yml",
@@ -94,7 +119,9 @@ def test_template_files_contain_no_secret_material() -> None:
     }
     for path in files:
         text = path.read_text(encoding="utf-8")
-        assert not re.search(r"[0-9a-fA-F]{32,}", text), f"{path.name} 疑似含真实 secret 材料"
+        # sha256:<64-hex> 是公开镜像内容标识（非 secret），剥离后再扫描真实 secret 材料
+        scrubbed = re.sub(r"sha256:[0-9a-fA-F]{64}", "", text)
+        assert not re.search(r"[0-9a-fA-F]{32,}", scrubbed), f"{path.name} 疑似含真实 secret 材料"
         # 精确到完整占位值：entrypoint 的拒绝分支合法引用 aios-local-dev 前缀模式本身
         assert "aios-local-dev-secret" not in text, f"{path.name} 含仓库开发占位 secret"
     assert b"\r" not in ENTRYPOINT.read_bytes(), "entrypoint.sh 必须纯 LF（容器 /bin/sh 不认 CRLF）"
@@ -102,6 +129,34 @@ def test_template_files_contain_no_secret_material() -> None:
     env_example = ENV_EXAMPLE.read_text(encoding="utf-8")
     assert re.search(r"^COTURN_STATIC_AUTH_SECRET=<", env_example, re.MULTILINE)
     assert re.search(r"^COTURN_EXTERNAL_IP=<", env_example, re.MULTILINE)
+
+
+def test_entrypoint_keeps_executable_git_mode() -> None:
+    """entrypoint.sh 的 git index mode 必须为 100755——compose 虽经 /bin/sh 调用，
+    文件本身也应带 executable bit（文件语义正确；此前报告口径与实际不一致，锁定）。"""
+    if not (REPO / ".git").exists():
+        pytest.skip("非 git checkout 环境")
+    result = subprocess.run(
+        ["git", "-C", REPO.as_posix(), "ls-files", "-s", "--", "infra/coturn/entrypoint.sh"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=30,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip(), "entrypoint.sh 不在 git index 中"
+    mode = result.stdout.split()[0]
+    assert mode == "100755", f"entrypoint.sh git mode={mode}（应为 100755，可执行语义）"
+
+
+def test_template_docs_match_runtime_conf_path() -> None:
+    """模板文件不得引用 /run/aios-turnserver.conf——运行时实际生成于容器 /tmp
+    （官方镜像非 root，/run 不可写）。"""
+    for path in (ENTRYPOINT, CONF_EXAMPLE):
+        text = path.read_text(encoding="utf-8")
+        assert "/run/aios-turnserver.conf" not in text, f"{path.name} 残留 /run 路径描述（实际为 /tmp）"
+    assert "/tmp/aios-turnserver.conf" in ENTRYPOINT.read_text(encoding="utf-8")
 
 
 def test_example_conf_documents_placeholders_and_optional_tls() -> None:
@@ -124,9 +179,11 @@ def test_default_ports_do_not_conflict_with_main_stack() -> None:
     livekit_ports = yaml.safe_load(MAIN_COMPOSE.read_text(encoding="utf-8"))["services"]["livekit"]["ports"]
     udp_ranges = [p for p in livekit_ports if isinstance(p, str) and p.endswith("/udp")]
     assert any("7882-7892:7882-7892/udp" in p for p in udp_ranges)
-    # entrypoint 内置同机硬冲突检查（7882-7892 与 relay 段/listening 口都不允许重叠）
+    # entrypoint 内置同机硬冲突检查：LiveKit 全部宿主端口（TCP 7880/7881 + UDP 7882-7892，
+    # 即连续段 7880-7892）与 relay 段/listening/TLS 口都不允许重叠
     entry = ENTRYPOINT.read_text(encoding="utf-8")
-    assert "7882" in entry and "7892" in entry
+    for port in ("7880", "7881", "7882", "7892"):
+        assert port in entry, f"entrypoint 缺少 LiveKit 端口 {port} 的冲突检查"
 
 
 # ---------------------------------------------------------------- entrypoint 行为矩阵
@@ -154,6 +211,17 @@ def _find_bash() -> str | None:
 
 def _bash_available() -> bool:
     return _find_bash() is not None
+
+
+def _msys_path(path: Path) -> str:
+    """Windows 宿主路径转 Git Bash（MSYS）形式 C:/x → /c/x。
+
+    entrypoint 的证书路径校验只接受以 / 开头的绝对 POSIX 路径（容器内语义），
+    测试宿主机上的 C:/... 需转换后在 Git Bash 中才等价。
+    """
+    text = path.as_posix()
+    match = re.match(r"^([A-Za-z]):/(.*)$", text)
+    return f"/{match.group(1).lower()}/{match.group(2)}" if match else text
 
 
 def _entrypoint_env(**overrides: str) -> dict[str, str]:
@@ -235,6 +303,15 @@ def test_entrypoint_rejects_placeholder_or_weak_secret(weak: str) -> None:
 
 
 @pytest.mark.skipif(not _bash_available(), reason="需要 bash（POSIX sh 子进程）")
+def test_entrypoint_rejects_injection_in_secret_value() -> None:
+    """secret 值含换行/空白（可向生成的配置注入额外配置行）：拒绝。"""
+    injected = _rejected(secret="a" * 40 + "\nlistening-port=1")
+    assert "COTURN_STATIC_AUTH_SECRET" in injected.stderr and "注入" in injected.stderr
+    spaced = _rejected(secret="a" * 40 + " b")
+    assert "COTURN_STATIC_AUTH_SECRET" in spaced.stderr
+
+
+@pytest.mark.skipif(not _bash_available(), reason="需要 bash（POSIX sh 子进程）")
 def test_entrypoint_rejects_placeholder_or_loopback_external_ip() -> None:
     """占位 external-ip 拒绝；127.0.0.1 需显式豁免开关（生产禁用）。"""
     placeholder = _rejected(external_ip="<宿主公网/局域网 IP>")
@@ -247,31 +324,150 @@ def test_entrypoint_rejects_placeholder_or_loopback_external_ip() -> None:
 
 
 @pytest.mark.skipif(not _bash_available(), reason="需要 bash（POSIX sh 子进程）")
-def test_entrypoint_rejects_livekit_port_overlap() -> None:
-    """relay 段/listening 口与主栈 LiveKit UDP 7882-7892 同机冲突：拒绝；跨机豁免可通过。"""
-    relay_overlap = _rejected(COTURN_RELAY_PORT_START="7882", COTURN_RELAY_PORT_END="7890")
-    assert "7882-7892" in relay_overlap.stderr or "LiveKit" in relay_overlap.stderr
-    listen_overlap = _rejected(COTURN_LISTEN_PORT="7885")
-    assert "7882-7892" in listen_overlap.stderr or "LiveKit" in listen_overlap.stderr
-    _ok_config_only(
-        COTURN_RELAY_PORT_START="7882",
-        COTURN_RELAY_PORT_END="7890",
-        COTURN_ALLOW_LIVEKIT_PORT_OVERLAP="true",  # 跨机部署显式豁免
-    )
+@pytest.mark.parametrize(
+    "bad_ip",
+    [
+        "turn.example.com",  # 主机名不是 IP
+        "999.1.1.1",  # 八位组越界
+        "1.2.3",  # 段数不足
+        "1.2.3.4.5",  # 段数超
+        "1.2.3.4\nno-multicast-peers",  # 换行注入
+        "1.2.3.4 ",  # 尾部空白
+        "203.0.113.5/not-an-ip",  # PUBLIC/PRIVATE 的 PRIVATE 半边非法
+        "not-an-ip/10.0.0.5",  # PUBLIC/PRIVATE 的 PUBLIC 半边非法
+        "2001:db8::1",  # IPv6 不支持（本模板生产路径为 IPv4）
+    ],
+)
+def test_entrypoint_rejects_malformed_external_ip(bad_ip: str) -> None:
+    """external-ip 只接受 IPv4 或 PUBLIC/PRIVATE IPv4——任意字符串/IPv6/注入拒绝。"""
+    result = _rejected(external_ip=bad_ip)
+    assert "COTURN_EXTERNAL_IP" in result.stderr
+
+
+@pytest.mark.skipif(not _bash_available(), reason="需要 bash（POSIX sh 子进程）")
+def test_entrypoint_accepts_public_private_ipv4_form() -> None:
+    """1:1 NAT 的 PUBLIC/PRIVATE IPv4 形式合法，原样写入配置。"""
+    allowed = _ok_config_only(external_ip=VALID_PUBLIC_PRIVATE_IPS)
+    assert f"external-ip={VALID_PUBLIC_PRIVATE_IPS}" in allowed.stdout
 
 
 @pytest.mark.skipif(not _bash_available(), reason="需要 bash（POSIX sh 子进程）")
 @pytest.mark.parametrize(
     ("overrides", "keyword"),
     [
-        ({"COTURN_RELAY_PORT_START": "50100", "COTURN_RELAY_PORT_END": "50099"}, "RELAY_PORT"),
-        ({"COTURN_RELAY_PORT_START": "50000", "COTURN_RELAY_PORT_END": "52000"}, "2000"),
-        ({"COTURN_RELAY_PORT_START": "1023"}, "1024"),
-        ({"COTURN_LISTEN_PORT": "34x8"}, "纯数字"),
+        # LiveKit TCP signal 7880 / rtc-tcp 7881——listening/TLS/relay 三个角色都不允许撞
+        ({"COTURN_LISTEN_PORT": "7880"}, "LiveKit"),
+        ({"COTURN_LISTEN_PORT": "7881"}, "LiveKit"),
+        ({"COTURN_TLS_PORT": "7880"}, "LiveKit"),
+        ({"COTURN_LISTEN_PORT": "7885"}, "LiveKit"),  # UDP 媒体段中部
+        # relay 段只覆盖 7880/7881、不触 7882-7892 也必须拒绝（协议无关判定）
+        ({"COTURN_RELAY_PORT_START": "7878", "COTURN_RELAY_PORT_END": "7881"}, "LiveKit"),
+        ({"COTURN_RELAY_PORT_START": "7882", "COTURN_RELAY_PORT_END": "7890"}, "LiveKit"),
+        # relay 段尾端压住 7892
+        ({"COTURN_RELAY_PORT_START": "7890", "COTURN_RELAY_PORT_END": "7900"}, "LiveKit"),
     ],
 )
-def test_entrypoint_rejects_malformed_port_config(overrides: dict[str, str], keyword: str) -> None:
-    """relay 段倒置/超宽（compose 映射开销）、特权端口、非数字端口：拒绝。"""
+def test_entrypoint_rejects_livekit_port_overlap(overrides: dict[str, str], keyword: str) -> None:
+    """coturn 任何端口角色与主栈 LiveKit 宿主端口 7880-7892 同机冲突：拒绝。"""
+    result = _rejected(**overrides)
+    assert keyword in result.stderr and "7880-7892" in result.stderr
+
+
+@pytest.mark.skipif(not _bash_available(), reason="需要 bash（POSIX sh 子进程）")
+def test_entrypoint_livekit_overlap_exempt_only_with_explicit_flag() -> None:
+    """跨机部署显式豁免可通过，且豁免只放行 LiveKit 段——端口自冲突仍拒绝。"""
+    _ok_config_only(
+        COTURN_RELAY_PORT_START="7882",
+        COTURN_RELAY_PORT_END="7890",
+        COTURN_ALLOW_LIVEKIT_PORT_OVERLAP="true",  # 跨机部署显式豁免
+    )
+    still_rejected = _rejected(
+        COTURN_TLS_PORT="3478",
+        COTURN_ALLOW_LIVEKIT_PORT_OVERLAP="true",  # 豁免救不了自冲突
+    )
+    assert "自冲突" in still_rejected.stderr
+
+
+@pytest.mark.skipif(not _bash_available(), reason="需要 bash（POSIX sh 子进程）")
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        # > 65535：超出 TCP/UDP 合法端口上限（含 65536 回归用例）
+        {"COTURN_RELAY_PORT_END": "65536"},
+        {"COTURN_RELAY_PORT_START": "65536"},
+        {"COTURN_LISTEN_PORT": "65536"},
+        {"COTURN_TLS_PORT": "65536"},
+        # < 1024：特权端口
+        {"COTURN_RELAY_PORT_START": "1023"},
+        {"COTURN_LISTEN_PORT": "1023"},
+        {"COTURN_TLS_PORT": "1023"},
+        # relay 段自身非法
+        {"COTURN_RELAY_PORT_START": "50100", "COTURN_RELAY_PORT_END": "50099"},  # 倒置
+        {"COTURN_RELAY_PORT_START": "50000", "COTURN_RELAY_PORT_END": "52000"},  # 超宽 > 2000
+        {"COTURN_LISTEN_PORT": "34x8"},  # 非数字
+    ],
+)
+def test_entrypoint_rejects_ports_outside_legal_range(overrides: dict[str, str]) -> None:
+    """端口越界（<1024 / >65535）、relay 倒置/超宽、非数字：一律拒绝。"""
+    _rejected(**overrides)
+
+
+@pytest.mark.skipif(not _bash_available(), reason="需要 bash（POSIX sh 子进程）")
+def test_entrypoint_accepts_upper_boundary_single_relay_port() -> None:
+    """合法上边界：65535 单端口 relay 段（不撞 listening/TLS/LiveKit）可通过。"""
+    allowed = _ok_config_only(COTURN_RELAY_PORT_START="65535", COTURN_RELAY_PORT_END="65535")
+    assert "min-port=65535" in allowed.stdout and "max-port=65535" in allowed.stdout
+
+
+@pytest.mark.skipif(not _bash_available(), reason="需要 bash（POSIX sh 子进程）")
+def test_entrypoint_rejects_port_self_conflicts() -> None:
+    """listening/TLS/relay 自身映射冲突拒绝——即使 TLS disabled（compose 一直映射
+    TLS TCP 端口），且与跨机豁免无关。"""
+    listen_eq_tls = _rejected(COTURN_TLS_PORT="3478")
+    assert "自冲突" in listen_eq_tls.stderr
+    listen_in_relay = _rejected(COTURN_LISTEN_PORT="50050")
+    assert "自冲突" in listen_in_relay.stderr
+    tls_in_relay = _rejected(COTURN_TLS_PORT="50050")  # TLS 默认 false 仍拒绝
+    assert "自冲突" in tls_in_relay.stderr
+    # 错开的端口组合不受影响（负向保护：合法相邻端口可通过）
+    _ok_config_only(COTURN_LISTEN_PORT="3478", COTURN_TLS_PORT="3479")
+
+
+@pytest.mark.skipif(not _bash_available(), reason="需要 bash（POSIX sh 子进程）")
+@pytest.mark.parametrize(
+    ("switch", "bad"),
+    [
+        ("COTURN_VERBOSE", "maybe"),
+        ("COTURN_TLS_ENABLED", "1"),
+        ("COTURN_ALLOW_LOOPBACK_EXTERNAL", "yes"),
+        ("COTURN_ALLOW_LIVEKIT_PORT_OVERLAP", "on"),
+    ],
+)
+def test_entrypoint_rejects_invalid_boolean_switches(switch: str, bad: str) -> None:
+    """布尔开关无效值（maybe/1/yes/on）拒绝启动，绝不静默当 false。"""
+    result = _rejected(**{switch: bad})
+    assert switch in result.stderr and "true/false" in result.stderr
+    # COTURN_CONFIG_ONLY 会被 _rejected helper 占位，单独直跑
+    config_only = _run_entrypoint(_entrypoint_env(COTURN_CONFIG_ONLY="maybe"))
+    assert config_only.returncode != 0
+    assert "COTURN_CONFIG_ONLY" in config_only.stderr
+
+
+@pytest.mark.skipif(not _bash_available(), reason="需要 bash（POSIX sh 子进程）")
+@pytest.mark.parametrize(
+    ("overrides", "keyword"),
+    [
+        ({"COTURN_REALM": "aios\nlistening-port=1"}, "COTURN_REALM"),  # 换行注入配置行
+        ({"COTURN_REALM": "my realm"}, "COTURN_REALM"),  # 空白
+        ({"COTURN_REALM": "a&b"}, "COTURN_REALM"),  # 元字符（白名单外）
+        ({"COTURN_CERT_FILE": "tls/cert.pem"}, "绝对路径"),  # 相对路径
+        ({"COTURN_CERT_FILE": "/etc/coturn/tls/my cert.pem"}, "COTURN_CERT_FILE"),  # 路径含空白
+        ({"COTURN_PKEY_FILE": "/etc/coturn/tls/key.pem\nx"}, "COTURN_PKEY_FILE"),  # 路径含换行
+        ({"COTURN_PKEY_FILE": "key.pem"}, "绝对路径"),
+    ],
+)
+def test_entrypoint_rejects_config_injection_values(overrides: dict[str, str], keyword: str) -> None:
+    """写入配置的 realm/证书路径含换行/空白/元字符/相对路径：拒绝（防配置注入）。"""
     result = _rejected(**overrides)
     assert keyword in result.stderr
 
@@ -286,8 +482,10 @@ def test_entrypoint_tls_fail_closed_without_real_cert(tmp_path: Path) -> None:
     key = tmp_path / "key.pem"
     cert.write_bytes(b"dummy")  # CONFIG_ONLY 只校验存在性，不校验证书内容
     key.write_bytes(b"dummy")
-    # MSYS bash 对 C:/... 形式路径的 [ -f ] 判定可靠（反斜杠形式可能失真）
-    cert_path, key_path = cert.as_posix(), key.as_posix()
+    # 转为 MSYS 绝对路径：entrypoint 只接受以 / 开头的容器内绝对路径语义
+    cert_path, key_path = _msys_path(cert), _msys_path(key)
+    if any(re.search(r"[^A-Za-z0-9._/-]", p) for p in (cert_path, key_path)):
+        pytest.skip(f"宿主临时目录路径含白名单外字符，无法经严格路径校验: {cert_path}")
     ok = _ok_config_only(
         COTURN_TLS_ENABLED="true",
         COTURN_CERT_FILE=cert_path,
@@ -387,7 +585,7 @@ def _entrypoint_volume(model: dict) -> dict:
 
 @pytest.mark.skipif(not _compose_available(), reason="需要 docker compose CLI")
 def test_compose_render_succeeds_with_required_vars() -> None:
-    """必填变量齐全：渲染出单服务独立 project，listening/TLS/relay 端口映射齐全。"""
+    """必填变量齐全：渲染出单服务独立 project（默认 digest 镜像），listening/TLS/relay 端口映射齐全。"""
     result = _render(
         {
             "COTURN_STATIC_AUTH_SECRET": secrets.token_hex(32),
@@ -398,7 +596,8 @@ def test_compose_render_succeeds_with_required_vars() -> None:
     model = json.loads(result.stdout)
     assert model["name"] == "ai-learning-os-coturn"
     assert set(model["services"]) == {"coturn"}
-    assert model["services"]["coturn"]["image"].startswith("coturn/coturn")
+    # 未显式覆盖 COTURN_IMAGE 时必须渲染为 digest pin 默认（可重现，非 :latest）
+    assert model["services"]["coturn"]["image"].startswith("coturn/coturn@sha256:"), model["services"]["coturn"]["image"]
     # entrypoint 挂载只读 + entrypoint 数组形式（不被镜像默认 CMD 干扰）
     volume = _entrypoint_volume(model)
     assert volume.get("read_only") is True
@@ -414,6 +613,21 @@ def test_compose_render_succeeds_with_required_vars() -> None:
     for port in model["services"]["coturn"]["ports"]:
         if isinstance(port, dict):
             assert int(port["published"]) == int(port["target"]), f"宿主/容器端口漂移: {port}"
+
+
+@pytest.mark.skipif(not _compose_available(), reason="需要 docker compose CLI")
+def test_compose_render_image_override_replaces_digest_default() -> None:
+    """显式覆盖 COTURN_IMAGE 生效（运维换镜像的唯一途径——默认不回退 :latest）。"""
+    result = _render(
+        {
+            "COTURN_STATIC_AUTH_SECRET": secrets.token_hex(32),
+            "COTURN_EXTERNAL_IP": "198.51.100.10",
+            "COTURN_IMAGE": "registry.example.com/coturn@sha256:" + "b" * 64,
+        }
+    )
+    assert result.returncode == 0, result.stderr
+    model = json.loads(result.stdout)
+    assert model["services"]["coturn"]["image"] == "registry.example.com/coturn@sha256:" + "b" * 64
 
 
 @pytest.mark.skipif(not _compose_available(), reason="需要 docker compose CLI")
@@ -488,12 +702,27 @@ def _udp_port_free(port: int) -> bool:
         sock.close()
 
 
+def _compose_down(
+    base: list[str], env: dict[str, str]
+) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        base + ["down"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=180,
+        env=env,
+        check=False,
+    )
+
+
 @pytest.mark.skipif(not _bash_available(), reason="需要 bash")
 @pytest.mark.skipif(os.environ.get("AIOS_COTURN_SMOKE") != "1", reason="需 AIOS_COTURN_SMOKE=1（本机隔离监听冒烟）")
 def test_coturn_local_listen_smoke() -> None:
     """隔离冒烟：随机测试 secret + loopback 豁免 + 仅绑 127.0.0.1 + 缩小 relay 段，
     真启动容器并做 STUN Binding 探测（UDP 3478 有响应）。不碰主栈 project 与生产库；
-    只验证「配置合法 + 服务在听」，不构成 TURN 可用性/公网中继验收。"""
+    只验证「配置合法 + 服务在听」，不构成 TURN 可用性/公网中继验收。
+    结束时 down 必须 exit 0 且独立 project 无容器残留（此前只执行不断言——Codex 返工缺陷 7）。"""
     assert _compose_available(), "需要 docker compose CLI"
     relay_ports = list(range(50000, 50010))
     needed = [3478, 5349, *relay_ports]
@@ -517,6 +746,7 @@ def test_coturn_local_listen_smoke() -> None:
         }
     )
     base = ["docker", "compose", "--env-file", env_file, "-f", str(COTURN_COMPOSE)]
+    down: subprocess.CompletedProcess[str] | None = None
     try:
         up = subprocess.run(
             base + ["up", "-d"], capture_output=True, text=True, encoding="utf-8", timeout=420, env=env, check=False,
@@ -555,8 +785,22 @@ def test_coturn_local_listen_smoke() -> None:
         assert response is not None, f"180s 内 STUN Binding 无响应；容器日志尾:\n{logs[-2000:]}"
         # 配置错误会以 Bad configuration format 告警出现在日志——冒烟不允许存在
         assert "Bad configuration format" not in logs, f"配置含镜像不识别的选项:\n{logs[-2000:]}"
+        # 主体成功后立即清理并保留结果供断言（失败路径由 finally 兜底尽力清理）
+        down = _compose_down(base, env)
     finally:
-        subprocess.run(
-            base + ["down"], capture_output=True, text=True, encoding="utf-8", timeout=120, env=env, check=False,
-        )
+        if down is None:
+            _compose_down(base, env)  # 尽力清理，不再断言——保留原始失败原因
         os.unlink(env_file)
+    # down 必须 exit 0：清理失败会让端口/容器残留，影响后续验证（不允许静默通过）
+    assert down is not None and down.returncode == 0, f"compose down 失败:\n{down.stderr if down else '未执行'}"
+    # 残留断言：只读查询独立 project 的容器标签——不触碰其他 project/服务
+    residual = subprocess.run(
+        ["docker", "ps", "-a", "--filter", "label=com.docker.compose.project=ai-learning-os-coturn", "-q"],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=60,
+        check=False,
+    )
+    assert residual.returncode == 0, residual.stderr
+    assert not residual.stdout.strip(), f"project ai-learning-os-coturn 容器残留: {residual.stdout.strip()}"

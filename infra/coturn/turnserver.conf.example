@@ -1,6 +1,6 @@
 # M10-05 coturn 配置展示示例——仅文档用途，不会被容器挂载或使用。
 #
-# 真实配置由 infra/coturn/entrypoint.sh 在容器内运行时生成（/run/aios-turnserver.conf）：
+# 真实配置由 infra/coturn/entrypoint.sh 在容器内运行时生成（/tmp/aios-turnserver.conf）：
 # static-auth-secret 只经部署 env 注入（.env / 部署 secret），绝不写进本文件或仓库任何文件。
 # 各参数的部署含义、防火墙要求与 LiveKit 联动见 docs/COTURN_DEPLOYMENT.md。
 
@@ -10,7 +10,8 @@ listening-port=3478
 # 对外通告地址——必须显式给出，不允许静默猜测（1:1 NAT 可写 PUBLIC/PRIVATE 形式）
 external-ip=<宿主公网/局域网 IP>
 
-# relay 端口段（宿主映射 UDP+TCP；须与主栈 LiveKit 媒体面 UDP 7882-7892 错开）
+# relay 端口段（宿主映射 UDP+TCP；须与主栈 LiveKit 端口 7880-7892
+# （TCP 7880 signal / TCP 7881 rtc / UDP 7882-7892 媒体）错开）
 min-port=50000
 max-port=50099
 

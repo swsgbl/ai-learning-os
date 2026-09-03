@@ -7,21 +7,26 @@ name: ai-learning-os-coturn
 # fail-closed 设计（两层）：
 # 1. compose 层：必需变量用 :? 插值语法——COTURN_STATIC_AUTH_SECRET /
 #    COTURN_EXTERNAL_IP 缺失时 `docker compose config/up` 直接失败，无默认值兜底；
-# 2. entrypoint 层：entrypoint.sh 再拒绝占位/弱 secret、loopback external-ip、
-#    relay 段与 LiveKit UDP 7882-7892 冲突、启用 TLS 但证书缺失等形态。
+# 2. entrypoint 层：entrypoint.sh 再拒绝占位/弱 secret、无效布尔值、
+#    external-ip 非 IPv4/loopback、端口越界（<1024 或 >65535）、listening/TLS/relay
+#    自冲突、与主栈 LiveKit 端口 7880-7892（TCP 7880/7881 + UDP 7882-7892）同机
+#    冲突、配置注入字符（换行/空白）、启用 TLS 但证书缺失等形态。
+#
+# 镜像默认 pin 到本机已实测 digest（生产可重现）；换镜像必须显式覆盖 COTURN_IMAGE。
 #
 # 变量来源：本目录 .env（复制 .env.example，已被 .gitignore 忽略）或部署 secret 注入。
 # 部署/防火墙/与 LiveKit 生产联动/验证方法：docs/COTURN_DEPLOYMENT.md。
 
 services:
   coturn:
-    image: ${COTURN_IMAGE:-coturn/coturn:latest}
+    # 默认 pin 到已实测 digest（不用 :latest——标签漂移不可重现）；升级时显式覆盖
+    image: ${COTURN_IMAGE:-coturn/coturn@sha256:aa68aab64a3b929d57fc2924c98ea447bf996cf8dade2508e7b71eaf23f1f14e}
     restart: unless-stopped
     environment:
       # 必填（fail-closed）：真实 secret 只经部署 env 注入，绝不写进仓库文件
       COTURN_STATIC_AUTH_SECRET: ${COTURN_STATIC_AUTH_SECRET:?必须在 .env 或环境提供 COTURN_STATIC_AUTH_SECRET（openssl rand -hex 32），缺失即拒绝启动}
       COTURN_EXTERNAL_IP: ${COTURN_EXTERNAL_IP:?必须提供宿主对外可达 IP（COTURN_EXTERNAL_IP），缺失即拒绝启动——不允许静默猜测}
-      # 可选（与 infra/coturn/.env.example 默认一致）
+      # 可选（与 infra/coturn/.env.example 默认一致）；布尔开关只接受严格 true/false
       COTURN_BIND_IP: ${COTURN_BIND_IP:-0.0.0.0}
       COTURN_LISTEN_PORT: ${COTURN_LISTEN_PORT:-3478}
       COTURN_TLS_PORT: ${COTURN_TLS_PORT:-5349}
@@ -49,6 +54,6 @@ services:
       # 未启用时该映射后无服务进程，连接即被拒（不是假 TLS）。
       - "${COTURN_BIND_IP:-0.0.0.0}:${COTURN_TLS_PORT:-5349}:${COTURN_TLS_PORT:-5349}/tcp"
       # relay 端口段（UDP 媒体中继为主，TCP 兜底）——范围跟随 env，单一来源；
-      # 默认 50000-50099，与主栈 LiveKit UDP 7882-7892 错开（entrypoint 硬检查同机冲突）
+      # 默认 50000-50099，与主栈 LiveKit 端口 7880-7892 错开（entrypoint 硬检查同机冲突）
       - "${COTURN_BIND_IP:-0.0.0.0}:${COTURN_RELAY_PORT_START:-50000}-${COTURN_RELAY_PORT_END:-50099}:${COTURN_RELAY_PORT_START:-50000}-${COTURN_RELAY_PORT_END:-50099}/udp"
       - "${COTURN_BIND_IP:-0.0.0.0}:${COTURN_RELAY_PORT_START:-50000}-${COTURN_RELAY_PORT_END:-50099}:${COTURN_RELAY_PORT_START:-50000}-${COTURN_RELAY_PORT_END:-50099}/tcp"
