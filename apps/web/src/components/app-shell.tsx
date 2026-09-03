@@ -3,23 +3,34 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { BookOpen, EyeOff, Headphones, Home, Library, LineChart, LogIn } from "lucide-react";
+import {
+  BookOpen,
+  EyeOff,
+  Headphones,
+  Home,
+  Library,
+  LineChart,
+  LogIn,
+  ShieldCheck,
+  type LucideIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/api";
 import { clearSession, probeAuth, type AuthState } from "@/lib/auth";
 
-const NAV = [
+const BASE_NAV: Array<{ href: string; label: string; icon: LucideIcon }> = [
   { href: "/", label: "首页", icon: Home },
   { href: "/voice", label: "语音陪练", icon: Headphones },
   { href: "/exam", label: "考场审阅", icon: BookOpen },
   { href: "/library", label: "学习库", icon: Library },
   { href: "/progress", label: "掌握", icon: LineChart },
-] as const;
+];
 
-function AuthBadge() {
-  const router = useRouter();
+// M10-02: 治理入口只对 admin / 本地模式渲染（role 来自 auth/me）。
+// 这只是入口可见性——安全边界在后端 require_admin，learner 直接访问 /governance
+// 会被 API 403 拦下并得到无泄露提示。
+function useAuthState(): AuthState | null {
   const [state, setState] = useState<AuthState | null>(null);
-
   useEffect(() => {
     let active = true;
     probeAuth(API_BASE)
@@ -33,6 +44,11 @@ function AuthBadge() {
       active = false;
     };
   }, []);
+  return state;
+}
+
+function AuthBadge({ state }: { state: AuthState | null }) {
+  const router = useRouter();
 
   if (!state) return null; // 探测中不闪烁
 
@@ -79,7 +95,14 @@ function AuthBadge() {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const auth = useAuthState();
   const immersive = /^\/(voice|exam)\/[^/]+/.test(pathname);
+  // 本地模式 = 单用户即治理者（后端 auth off 放行治理端点），同样显示入口
+  const governanceVisible =
+    auth?.mode === "disabled" || (auth?.mode === "authenticated" && auth.role === "admin");
+  const nav = governanceVisible
+    ? [...BASE_NAV, { href: "/governance", label: "治理", icon: ShieldCheck }]
+    : BASE_NAV;
 
   return (
     <div className="min-h-dvh bg-bg text-ink">
@@ -90,7 +113,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             <span className="hidden text-xs text-muted sm:inline">AI Learning OS</span>
           </Link>
           <nav className="hidden items-center gap-1 md:flex">
-            {NAV.map((item) => {
+            {nav.map((item) => {
               const active = item.href === "/" ? pathname === "/" : pathname === item.href || pathname.startsWith(`${item.href}/`);
               return (
                 <Link
@@ -107,15 +130,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             })}
           </nav>
           <div className="flex items-center gap-2">
-            <AuthBadge />
+            <AuthBadge state={auth} />
           </div>
         </div>
       </header>
       <main className={cn("mx-auto w-full max-w-5xl px-4 py-6", immersive ? "pb-8" : "pb-24 md:pb-10")}>{children}</main>
       {!immersive && (
         <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm md:hidden">
-          <ul className="grid grid-cols-5">
-            {NAV.map((item) => {
+          <ul className={cn("grid", governanceVisible ? "grid-cols-6" : "grid-cols-5")}>
+            {nav.map((item) => {
               const active = item.href === "/" ? pathname === "/" : pathname === item.href || pathname.startsWith(`${item.href}/`);
               const Icon = item.icon;
               return (
