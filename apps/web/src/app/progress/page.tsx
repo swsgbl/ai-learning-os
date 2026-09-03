@@ -124,7 +124,9 @@ export default function ProgressPage() {
   }, []);
 
   useEffect(() => {
-    if (auth?.mode !== "anonymous") void loadAll();
+    // 认证状态未定（null）时绝不发受保护请求——未登录访问会被 401 全局跳转
+    // 打断浏览；只有明确 disabled（本地模式）/ authenticated 才加载。
+    if (auth?.mode === "disabled" || auth?.mode === "authenticated") void loadAll();
   }, [auth, loadAll]);
 
   const grouped = plan
@@ -158,8 +160,9 @@ export default function ProgressPage() {
           </Button>
         </Card>
       )}
+      {!auth && <Card className="p-5 text-sm text-muted">正在确认访问权限……</Card>}
 
-      {auth?.mode !== "anonymous" && (
+      {(auth?.mode === "disabled" || auth?.mode === "authenticated") && (
         <>
           <section>
             <div className="mb-3 flex items-end justify-between">

@@ -29,7 +29,7 @@ const BASE_NAV: Array<{ href: string; label: string; icon: LucideIcon }> = [
 // M10-02: 治理入口只对 admin / 本地模式渲染（role 来自 auth/me）。
 // 这只是入口可见性——安全边界在后端 require_admin，learner 直接访问 /governance
 // 会被 API 403 拦下并得到无泄露提示。
-function useAuthState(): AuthState | null {
+function useAuthState(): [AuthState | null, (next: AuthState | null) => void] {
   const pathname = usePathname();
   const [state, setState] = useState<AuthState | null>(null);
   useEffect(() => {
@@ -47,12 +47,10 @@ function useAuthState(): AuthState | null {
       active = false;
     };
   }, [pathname]);
-  return state;
+  return [state, setState];
 }
 
-function AuthBadge({ state }: { state: AuthState | null }) {
-  const router = useRouter();
-
+function AuthBadge({ state, onLogout }: { state: AuthState | null; onLogout: () => void }) {
   if (!state) return null; // 探测中不闪烁
 
   if (state.mode === "disabled") {
@@ -85,10 +83,7 @@ function AuthBadge({ state }: { state: AuthState | null }) {
       <button
         type="button"
         className="text-muted hover:text-ink"
-        onClick={() => {
-          clearSession();
-          router.refresh();
-        }}
+        onClick={onLogout}
       >
         退出
       </button>
@@ -98,7 +93,8 @@ function AuthBadge({ state }: { state: AuthState | null }) {
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const auth = useAuthState();
+  const router = useRouter();
+  const [auth, setAuth] = useAuthState();
   const immersive = /^\/(voice|exam)\/[^/]+/.test(pathname);
   // 本地模式 = 单用户即治理者（后端 auth off 放行治理端点），同样显示入口
   const governanceVisible =
@@ -106,6 +102,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const nav = governanceVisible
     ? [...BASE_NAV, { href: "/governance", label: "治理", icon: ShieldCheck }]
     : BASE_NAV;
+
+  // 退出必须立即生效：同步置 anonymous 让徽章/治理入口当场消失（不等下一次
+  // 路由探测），并跳登录页离开可能含私有数据的工作台/治理页
+  const handleLogout = () => {
+    clearSession();
+    setAuth({ mode: "anonymous" });
+    router.push("/login");
+  };
 
   return (
     <div className="min-h-dvh bg-bg text-ink">
@@ -133,7 +137,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             })}
           </nav>
           <div className="flex items-center gap-2">
-            <AuthBadge state={auth} />
+            <AuthBadge state={auth} onLogout={handleLogout} />
           </div>
         </div>
       </header>
