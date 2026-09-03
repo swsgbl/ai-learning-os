@@ -100,6 +100,30 @@ X-Request-ID 可关联）。读取 `GET /api/v1/audit` 仅 admin（auth off 本�
   生产审计仍为 append-only 无链形态，`audit-chain-verify` 会如实报告
   表缺失（exit 1）而非误报有效。
 
+#### `0027_audit_chain` 生产迁移 runbook
+
+前提：`alembic current` 必须显示 `0026_paper_owner`（不是该版本先停下
+排查，不要盲跑 upgrade）。生产 URL/凭据只来自安全运维环境（部署 secret /
+运维会话环境变量），**不入命令文档示例、不入 git、不回显日志**——下文
+`<生产URL>` 一律是占位符。
+
+1. **备份**：迁移前对数据库做完整备份（至少覆盖 `audit_log`；可用
+   `python -m app.ops.cli backup --db-url <生产URL> --out ...` 或既有
+   数据库备份通道）。
+2. **静默审计写入方（quiesce）**：先停止/静默旧版 API 等一切直接写
+   `audit_log` 的进程与 CLI（治理动作、admin 角色变更、数据治理迁移都
+   会写审计），**再**执行 `alembic -c services/api/alembic.ini upgrade
+   head`。禁止迁移过程中旧代码继续直接写 audit_log——迁移只对存量行
+   建链，窗口期写入的 audit 行不会进链表，恢复后即为永久漏链行，
+   verifier 持续 INVALID。
+3. **迁移后验证（放行门禁）**：`python -m app.ops.cli audit-chain-verify
+   --db-url <生产URL>` 必须 **valid 且 exit 0** 才恢复服务；INVALID
+   保持停机排查原因，不带病恢复。
+4. **恢复后观察**：确认新审计写入正常（治理动作落 audit_log 且链
+   sequence 前进），并复跑一次 verifier 确认仍 valid。
+5. **downgrade 仅作应急方案**：必须先停写入、先备份、获得明确审批后
+   才执行；它使生产回到无链形态，事后需重新走本 runbook 建链。
+
 ### 安全边界（M10-03 后更新）
 
 - 已交付：认证基座、三域归属隔离、Web 登录 UI、角色授权+治理审计、

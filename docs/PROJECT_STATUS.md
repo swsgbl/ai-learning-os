@@ -27,7 +27,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 - **验证**：`pytest services/api/tests/test_draft_ownership.py services/api/tests/test_m905_ownership_audit.py` **39 passed**（新增 `test_draft_ownership.py` 22 项：引用提取防御式解析、两类报告字段与汇总聚合、kind 过滤与未知 kind 拒绝、报告零写入、摘要不泄生产 draft_id、CLI 摘要/JSON/输出路径护栏、main 分发、ID 字面量校验（通配符/超长/空集）、缺 DB fail-closed、`--to` 必填、argparse 拒绝未知 kind、dry-run 不写库不写审计、`--yes` 缺失不执行、未知/跨 kind ID 整体拒绝、assign-owner 成功 + owner 更新 + 同事务审计 + status/业务 JSON 不动、用户名/ID 解析与未知用户拒绝、事务内目标用户复核失败回滚、审计写失败业务更新回滚、行数漂移/owner 漂移事务回滚、keep-unowned 仅审计 + 陈旧计划回滚、ids-file）；清除 `AIOS_PG_TEST_URL`/`DATABASE_URL` 后 SQLite 全量 **795 passed / 24 skipped**；`ruff check services/api` 全绿；`git diff --check` 干净。
 - **生产执行边界**：3+3 条 NULL 归属草稿的归属决策（当前引用资源均为公共/NULL owner，预期全部 manual_review）留待运维用只读 report 复核后逐批显式 `--yes`；本切片不做生产归属决策。
 
-**M10-04 第四切片：治理审计防篡改哈希链已完成并验证**（分支未合并；**生产主库（5433/ai_learning_os）未执行 `0027_audit_chain`**——迁移与应用改动只落在代码与测试，生产库零写入、零连接）：
+**M10-04 第四切片：治理审计防篡改哈希链已完成并验证**（分支未合并；**生产主库（5433/ai_learning_os）未执行 `0027_audit_chain`**——迁移与应用改动只落在代码与测试，生产未执行迁移、零写入；Claude 实现与测试未连接生产，Codex 只做了生产只读复核（见下方独立验收证据）；生产迁移 runbook 见 DEVELOPMENT.md「审计」节）：
 
 - **schema（`0027_audit_chain`）**：`audit_chain_entries`（`audit_id` PK + FK `audit_log.id` ON DELETE RESTRICT——删审计行不留痕在数据库层即被拒绝、`sequence` 全局唯一从 1 连续、`previous_hash`/`entry_hash` CHAR(64)、`algorithm`）+ `audit_chain_state` 单行（CHECK id=1，`last_sequence`/`last_hash` 为应用层 FOR UPDATE 锁点）。upgrade 按 `audit_log.id` 升序为存量记录一次性建链（genesis previous_hash=64 个 0），建链算法 import `app.domain.audit_chain` 与应用层同源（杜绝 SQL/Python 两套规则漂移）；downgrade 只删两张新表不动审计数据；空库也落 genesis state（0 entry + state(0,genesis) 是合法链）。
 - **应用层唯一写入入口 `append_audit(session, payload, clock)`**（`app/domain/audit_chain.py`）：调用方事务内 FOR UPDATE 锁 state（缺失时 `INSERT ... ON CONFLICT DO NOTHING` 原子初始化，并发不双初始化）→ 分配 sequence → 插入 audit 行并 flush 拿 id → SHA-256 计算 entry_hash → 同事务写 entry + 推进 state，任一步失败随调用方事务整体回滚（fail-closed）。canonical JSON：sort-keys + 紧凑分隔符 + UTF-8，datetime 统一 UTC 恒定微秒位（SQLite 读回 naive 视为 UTC，与 PG aware 读回序列化一致，跨方言可重算）。payload before/after 递归扫描敏感键（password/passwd/secret/token/api-key/private-key 及前后缀变体），命中即拒绝写入——secret 不入日志也不入哈希。
@@ -35,7 +35,13 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 - **只读校验 CLI**：`python -m app.ops.cli audit-chain-verify --db-url ... [--json]`（`app/ops/audit_chain_verify.py`）。全量重算比对：entries 与 audit_log 一一对应（多 audit=漏记/多 entry=伪造）、sequence 从 1 连续、genesis previous_hash、逐条 previous/entry hash 链接、algorithm、state head 与链尾一致（含 state 缺失/多行）。退出码 valid=0 / invalid=1 / 缺 `--db-url` 或连接失败=2；对数据库零写入；problems 只含 audit_id/sequence 与原因，不含 before/after 正文（测试用 marker 字符串证明零泄漏）。
 - **如实声明的边界**：哈希链可检测篡改与漏记（改行内容、删 entry、跳号、head 漂移），**不等于数字签名，也不是存储级 WORM**——持数据库写权限的攻击者理论上可整链重算；抵御整链重算需外部备份/对象锁等存储层锚定（定期把 head_hash 记录到库外），不在本切片范围。文档（DEVELOPMENT.md 审计节）同步。
 - **验证**：新增 `tests/test_audit_chain.py` **27 项**全过（canonical JSON 确定性与时区归一、entry_hash 对全部稳定字段敏感、append_audit 两条成链 + state 同事务推进 + 空库安全初始化、事务回滚零残留且重写仍从 sequence 1 起、缺字段/敏感键（含 list 嵌套与 access-token 变体）拒绝、篡改矩阵——action/before 篡改、entry_hash/previous_hash 篡改、删 entry（漏记+断裂+head）、删 audit 行（孤儿 entry）、sequence gap、head/last_sequence/algorithm 漂移、state 缺失、表缺失、空链合法、marker 零泄漏、静态守卫、CLI exit 0/1/2 + --json + main 分发、0027 存量建链 + downgrade 只删新表 + 空库 genesis state）；受影响既有套件 admin_audit / m905_ownership_audit / draft_ownership / legacy_paper_governance / data_hygiene / paper_ownership / migrations / repository_contract **129 项全过**（两处 monkeypatch 同步：审计失败注入点从 `AuditLogRow` 构造/`audit_insert_values` 改为 `append_audit`，语义不变）。
-- **剩余风险**：生产主库执行 0027 前生产审计仍为 append-only 无链形态（verify 会如实报表缺失 exit 1，不误报）；整链重算检测需后续切片引入外部锚定（head_hash 库外存证）。
+- **独立验收证据（实现方与验收方分开记录，2026-09-04）**：
+  - **Claude 实现/自测**：聚焦套件 **130 passed / 1 skipped**；全量 **822 passed / 24 skipped**；`ruff check services/api` 与 `git diff --check` 通过。实现与全部测试**未连接生产库**。
+  - **Codex 独立复验**（同分支同代码）：同套聚焦 **130 passed / 1 skipped**；全量 **822 passed / 24 skipped**；ruff / diff check 通过。
+  - **Codex 隔离 PG 冒烟**：新建白名单内隔离库 `ai_learning_os_test_audit_20260904`（过 test_gate 门控，非主库），`alembic` 升级至 0026 后写入 3 条测试审计，执行 0027 建链后 verifier **VALID（3/3，exit 0）**；再用 `append_audit` 追加 1 条后复验 **VALID（4/4，exit 0）**——迁移建链与增量写入两条路径均闭环。
+  - **Codex 生产只读复核**：主库仍 `0026_paper_owner`（未迁移），audit_log=69、papers_total=807、unowned_imported=792、course_generation NULL owner=3、variant_question NULL owner=3；`audit_chain_entries`/`audit_chain_state` 表不存在（与「未执行 0027」一致）；对主库运行 verifier 如实返回 **INVALID / exit 1**，原因为链表缺失（不误报有效）。复核全程零写入。
+  - **表述口径**：不声称「生产零连接」——准确说法是 Claude 实现与测试未连接生产，Codex 只做了生产只读复核；生产未执行迁移、零写入。
+- **剩余风险**：生产主库执行 0027 前生产审计仍为 append-only 无链形态（verify 会如实报表缺失 exit 1，不误报；生产执行按 DEVELOPMENT.md「审计」节 runbook：先备份 + quiesce 审计写入方，迁移后 verify valid exit 0 才恢复服务）；整链重算检测需后续切片引入外部锚定（head_hash 库外存证）。
 
 ## 前一任务（M10-03 生产数据与安全基线）
 
@@ -275,7 +281,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 下一任务
 
-M10-04 生产数据治理与公网语音收尾（legacy 试卷与 generation/variant 草稿的治理工具均已交付，见「当前任务」）：用 `legacy-paper-report` / `legacy-paper-migrate` 对 744 张历史卷、`draft-owner-report` / `draft-owner-migrate` 对 generation/variant 各 3 条 NULL 归属草稿做人工决策并分批执行（生产执行需运维逐批精确 ID + 显式 `--yes`，导出文件留档）；随后做审计哈希链或 WORM 策略、外部 coturn 部署模板、云语音/检索/LLM provider 真实端点 key 冒烟。阶段约束继续：key 不入库不入码、生产清理不整表删除、Web 不直连 provider、UI 变更必须真实浏览器验收。
+M10-04 生产数据治理与公网语音收尾（legacy 试卷与 generation/variant 草稿的治理工具、审计哈希链均已交付，见「当前任务」）：用 `legacy-paper-report` / `legacy-paper-migrate` 对 744 张历史卷、`draft-owner-report` / `draft-owner-migrate` 对 generation/variant 各 3 条 NULL 归属草稿做人工决策并分批执行（生产执行需运维逐批精确 ID + 显式 `--yes`，导出文件留档）；随后在发布窗口按 DEVELOPMENT.md「审计」节的 `0027_audit_chain` 生产迁移 runbook 对主库建链（备份 → quiesce 审计写入方 → upgrade → verify valid exit 0 → 恢复观察），整链重算防御的外部锚定（head_hash 库外存证）为后续切片；再做外部 coturn 部署模板、云语音/检索/LLM provider 真实端点 key 冒烟。阶段约束继续：key 不入库不入码、生产清理不整表删除、Web 不直连 provider、UI 变更必须真实浏览器验收。
 
 ## 追加：M0 收尾验证（compose 全栈）
 
