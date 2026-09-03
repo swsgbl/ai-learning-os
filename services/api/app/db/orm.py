@@ -42,6 +42,8 @@ class PaperRow(Base):
     tags: Mapped[list[Any]] = mapped_column(JSON, default=list)
     origin_url: Mapped[str | None] = mapped_column(String(1024))
     license: Mapped[str] = mapped_column(String(64))
+    # M10-03: 试卷归属；NULL = 系统公共卷（seed 卷与 auth off 期间导入的卷）
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
 
 
 class QuestionRow(Base):

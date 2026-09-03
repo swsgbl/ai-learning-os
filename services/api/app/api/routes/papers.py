@@ -58,17 +58,20 @@ def exam_out(record: ExamSessionRecord, paper: Paper) -> ExamSessionOut:
 
 @router.get("/papers", response_model=list[PaperOut])
 async def list_papers(request: Request) -> list[PaperOut]:
-    papers = await request.app.state.repository.list_papers()
+    # M10-03: 可见性 = 系统公共卷 + 当前用户自有卷（admin 同规则，不放大）；
+    # auth off（owner=None）= 不过滤（本地调试模式）
+    papers = await request.app.state.repository.list_papers(owner_id=current_owner_id(request))
     return [paper_out(paper) for paper in papers]
 
 
 @router.post("/papers/{paper_id}/exams", response_model=ExamSessionOut, status_code=201)
 async def start_exam(paper_id: str, payload: StartExamRequest, request: Request) -> ExamSessionOut:
-    paper = await request.app.state.repository.get_paper(paper_id)
+    # M10-03: 开考读取走同一可见性规则——跨用户私有卷 404（不暴露存在性）
+    owner = current_owner_id(request)
+    paper = await request.app.state.repository.get_paper(paper_id, owner_id=owner)
     if not paper:
         raise HTTPException(status_code=404, detail="试卷不存在")
     # M9-02: 认证开启时考试归属开启者；auth off 记 NULL（本地调试模式）
-    owner = current_owner_id(request)
     record = await request.app.state.repository.create_exam(paper, payload.mode, owner)
     return exam_out(record, paper)
 
@@ -93,7 +96,10 @@ class LineError(BaseModel):
 
 @router.post("/papers/import", response_model=ImportResult, status_code=201)
 async def import_papers_endpoint(request: Request, payload: list[dict] = Body(...)) -> ImportResult:
-    """批量导入试卷 JSON：全部合法才落库；任一行失败则逐行报错且不写入。"""
+    """批量导入试卷 JSON：全部合法才落库；任一行失败则逐行报错且不写入。
+
+    M10-03: auth on 时导入卷归属 current_owner_id（他人不可见）；auth off 保持 NULL。
+    """
     sessionmaker = getattr(request.app.state, "sessionmaker", None)
     if sessionmaker is None:
         raise HTTPException(status_code=503, detail="Paper import requires a database")
@@ -114,4 +120,6 @@ async def import_papers_endpoint(request: Request, payload: list[dict] = Body(..
             status_code=422,
             detail={"imported": [], "errors": [error.model_dump() for error in line_errors]},
         )
-    return ImportResult(imported=await _run_import(sessionmaker, specs))
+    return ImportResult(
+        imported=await _run_import(sessionmaker, specs, owner_id=current_owner_id(request))
+    )
