@@ -223,7 +223,8 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
 - 已交付：认证基座、三域归属隔离、Web 登录 UI、角色授权+治理审计、
   私有语料与四类草稿归属、试卷 owner 可见性、Web HttpOnly cookie、治理工作台、
   审计防篡改哈希链与库外锚定工具（M10-04/M10-06；生产主库迁移与首次
-  锚定待执行，见上）；
+  锚定待执行，见上）、生产切换只读 preflight（M10-07；真实生产执行仍需
+  用户/运维审批，见「生产切换 preflight」节）；
 - 已知边界：744 张历史试卷与 generation/variant 历史无归属草稿仍待人工归属决策
   （M10-04 已交付 `legacy-paper-report`/`legacy-paper-migrate` 与
   `draft-owner-report`/`draft-owner-migrate` 只读报告 + 默认 dry-run 迁移 CLI，
@@ -270,6 +271,56 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   另一 kind 的 ID 整体拒绝），只改 owner_id（keep-unowned 零修改、只写审计
   决策），事务内 FOR UPDATE 复核目标用户与行状态，审计与更新同事务；
   生产未执行任何迁移（M10-04 第三切片）。
+
+## 生产切换 preflight（M10-07）
+
+`python -m app.ops.cli production-preflight --db-url <生产URL> --phase pre-migration|post-migration
+[--anchor-file <path>] [--json] [--output <path>]`（`app/ops/production_preflight.py`）。
+
+定位：生产切换 runbook 的**防呆汇总**，不是 release-check 替代品。全部检查只读——
+不执行迁移、不写数据库、不写锚文件、不清理数据、不启动/停止服务；命令**没有任何
+执行形态（无 --yes）**。五项检查：① 连通与当前库名（PG `current_database()`，不输出
+完整 URL/凭据）；② alembic current/head 只读对账（直接查 `alembic_version` + 只读解析
+脚本目录，绝不 upgrade/downgrade）；③ 审计链（复用 audit-chain-verify 的
+load/verify snapshot 语义）；④ 库外锚定（提供锚文件且存在时只跑 anchor
+verify-only 交叉校验；绝不追加锚行）；⑤ 历史治理聚合计数（无归属非 seed 卷、
+generation/variant NULL owner 草稿——只输出计数，不输出生产 ID）。
+
+- **phase 语义（--phase 必选）**：迁移后忘带 phase 会误用 pre 的宽松语义
+  （链表缺失算 pending），故强制显式选择。pre-migration：0027 链表缺失 =
+  `pending`（pending_migration，迁移建链前预期形态）、current 落后 head =
+  `pending`、未锚定 = `pending`（expected_pending）。post-migration：链表缺失/
+  链 invalid/current != head/未知 revision 一律 `fail`；锚文件未提供或不存在 =
+  `not_configured`（按 runbook 人工完成初始锚定 + WORM 归档，本工具不自动创建）。
+- **状态与退出码**：`pass` / `pending` / `fail` / `not_configured`；无 fail=0、
+  存在 fail=1、输入/锚文件路径/数据库连接错误=2。**pending / not_configured 不
+  包装成 pass**——人类摘要明确写「生产切换仍需按 runbook 人工决策/执行」。报告与
+  错误信息不含完整 URL/凭据（连接错误先抹 `://user:pass@` 再输出）、不含生产
+  paper/draft ID、不含 audit before/after 正文。`--output` 复用 artifacts/temp
+  路径护栏，默认不落盘。
+
+### 生产切换 preflight runbook
+
+真实生产执行**必须先获得用户/运维明确审批**；生产 URL/凭据只来自安全运维环境，
+不入命令文档示例、不入 git、不回显日志（`<生产URL>` 为占位符）。preflight 本身
+只读可重复执行，但**不代替**下面任何人工步骤：
+
+1. **切换前（pre-migration）**：备份完成后运行
+   `production-preflight --db-url <生产URL> --phase pre-migration`。预期：audit-chain
+   `pending_migration`（0027 未执行）、alembic `pending`（current=0026 -> head）、
+   anchor `pending`、治理计数 `pending`（如仍有待归属卷/草稿）；任何 `fail`
+   （alembic_version 异常/链表存在但 invalid/Schema 表缺失）先停下排查。
+2. **人工执行切换**（preflight 绝不代劳）：按「审计」节 `0027_audit_chain`
+   迁移 runbook——静默审计写入方后 `alembic upgrade head`，随后
+   `audit-chain-verify` valid、人工 `audit-chain-anchor --yes` 建初始锚并归档
+   WORM，再恢复服务。历史卷/草稿归属迁移按「生产数据治理」节逐批 `--yes`。
+3. **切换后（post-migration）**：恢复服务前运行
+   `production-preflight --db-url <生产URL> --phase post-migration
+   --anchor-file <运维保管路径>/audit-anchor.jsonl`。放行门禁：db-connect /
+   alembic / audit-chain / audit-anchor 全 `pass` 且退出码 0（anchor
+   verify-only up-to-date）；anchor `not_configured` 或 `pending`（head 超前）
+   说明初始锚定/归档未完成，按锚定 runbook 补齐后再复跑；任何 `fail`
+   保持停机排查，不带病恢复。
 
 ## LLM 接入（M10-01）
 

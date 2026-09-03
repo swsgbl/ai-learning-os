@@ -525,6 +525,68 @@ def _run_audit_chain_anchor(args) -> int:
     return 0 if report["valid"] else 1
 
 
+def _run_production_preflight(args) -> int:
+    """python -m app.ops.cli production-preflight --db-url URL
+    --phase pre-migration|post-migration [--anchor-file PATH] [--json] [--output PATH]
+
+    M10-07 生产切换只读汇总预检（runbook 防呆汇总，非 release-check 替代）：
+    不执行迁移、不写数据库、不写锚文件、不清理数据、不启停服务。检查项：
+    连通与库名（不输出 URL/凭据）、alembic current/head 只读对账、
+    audit-chain-verify 语义（pre 允许 0027 表缺失=pending，post 必须 valid）、
+    锚定 verify-only（post 缺失=not_configured，按 runbook 人工完成，工具
+    不自动创建）、历史治理聚合计数（不输出生产 ID）。
+    退出码：无 fail=0 / 存在 fail=1 / 输入/锚路径/连接错误=2；pending 绝不
+    包装成 pass。无 --yes 参数——本命令没有任何执行形态。
+    """
+    import json as _json
+
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from app.ops.audit_chain_anchor import AnchorInputError
+    from app.ops.legacy_papers import is_safe_artifact_path
+    from app.ops.production_preflight import (
+        format_preflight_summary,
+        redact_secrets,
+        run_preflight,
+    )
+
+    db_url = _db_url_of(args)
+    if not db_url:
+        print("缺少 --db-url 或 DATABASE_URL，拒绝预检（fail-closed）")
+        return 2
+    if args.output and not is_safe_artifact_path(args.output):
+        print(
+            f"拒绝写入 {args.output}：报告只能写入 gitignore 的 artifacts/ 或 temp/ 目录"
+        )
+        return 2
+    try:
+        report = asyncio.run(
+            run_preflight(db_url, args.phase, anchor_file=args.anchor_file)
+        )
+    except AnchorInputError as cause:
+        print(f"锚文件输入无效（参数或锚文件路径）: {cause}")
+        return 2
+    except (SQLAlchemyError, OSError, ValueError) as cause:
+        # 连接失败/无效 URL/磁盘 IO：输入环境问题，非检查结论；错误信息
+        # 可能内嵌 DB URL，先抹凭据再输出。
+        print(
+            "预检执行失败（输入或连接问题，未产生检查结论）: "
+            + redact_secrets(f"{type(cause).__name__}: {cause}")
+        )
+        return 2
+    if args.output:
+        Path(args.output).parent.mkdir(parents=True, exist_ok=True)
+        Path(args.output).write_text(
+            _json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        print(f"报告已写入: {args.output}")
+    if args.as_json:
+        print(_json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(format_preflight_summary(report))
+    return report["exit_code"]
+
+
 async def _run_license_report(args) -> int:
     """license-report 子命令：输出四区段授权清单 JSON（无 DB 时含说明段）。"""
     import json as _json
@@ -753,6 +815,39 @@ def main() -> None:
     p_an.add_argument(
         "--json", dest="as_json", action="store_true", help="输出完整 JSON 报告"
     )
+    p_pf = sub.add_parser(
+        "production-preflight",
+        help=(
+            "生产切换只读汇总预检（M10-07；不迁移/不写库/不写锚/不启停服务，"
+            "无 --yes 执行形态）"
+        ),
+    )
+    p_pf.add_argument("--db-url", default=None)
+    p_pf.add_argument(
+        "--phase",
+        required=True,
+        choices=["pre-migration", "post-migration"],
+        help=(
+            "切换阶段（必选：迁移后忘带 phase 会误用 pre 的宽松语义，"
+            "强制显式选择防呆）"
+        ),
+    )
+    p_pf.add_argument(
+        "--anchor-file",
+        default=None,
+        help=(
+            "可选锚文件路径；提供且文件存在时只做 verify-only 交叉校验（不写锚）；"
+            "post-migration 未提供或文件不存在输出 not_configured（runbook 人工完成）"
+        ),
+    )
+    p_pf.add_argument(
+        "--json", dest="as_json", action="store_true", help="输出完整 JSON 报告"
+    )
+    p_pf.add_argument(
+        "--output",
+        default=None,
+        help="写 JSON 报告到文件（必须位于 gitignore 的 artifacts/temp 目录；默认不落盘）",
+    )
     p_ad = sub.add_parser("admin", help="角色运维：promote/demote/list（M9-04）")
     p_ad.add_argument("action", choices=["promote", "demote", "list"])
     p_ad.add_argument("username", nargs="?", default=None)
@@ -784,6 +879,8 @@ def main() -> None:
         raise SystemExit(_run_audit_chain_verify(args))
     if args.command == "audit-chain-anchor":
         raise SystemExit(_run_audit_chain_anchor(args))
+    if args.command == "production-preflight":
+        raise SystemExit(_run_production_preflight(args))
     if args.command == "admin":
         if args.action != "list" and not args.username:
             print("promote/demote 需要用户名")
