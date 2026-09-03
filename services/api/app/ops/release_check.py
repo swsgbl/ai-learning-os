@@ -22,6 +22,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from app.db.test_gate import (
+    evaluate_pg_test_url,  # M10-04: PG 测试 URL 门控（唯一实现）
+)
 from app.ops.version import REPO_ROOT  # M8-00: 同源探测，兼容容器布局
 
 # 验收九字面 -> 检查项 id 的映射（测试用它守卫「无漏项」）
@@ -69,14 +72,24 @@ def default_command_checks(*, db_url: str | None = None) -> list[CommandCheck]:
     migration 为幂等安全形态（upgrade head + current 对账），不跑
     downgrade base——那是 CI 在独立库上的 roundtrip 职责，对业务主库
     是破坏性操作。
+
+    M10-04 安全门控：db_url 先过 app.db.test_gate 判定（纯解析零连接，
+    全仓库唯一实现，不在此复制规则）——只有放行的隔离测试库 URL 才注入
+    api-test 的 AIOS_PG_TEST_URL；被拒/未传时该变量以 None 落地（从继承
+    环境删除，调用方 shell 的值进不了 pytest 子进程）。migration/backup
+    的 DATABASE_URL 不受测试门控影响：调用方传了 db_url 就照传原 URL，
+    供 alembic/backup 做运行时检查。
     """
     api_dir = REPO_ROOT / "services" / "api"
     web_dir = REPO_ROOT / "apps" / "web"
-    test_env: dict[str, str] = {}
+    gate = evaluate_pg_test_url(db_url)  # 一次门控判定
+    test_env: dict[str, str | None] = {
+        # gate.url 仅在放行时非 None——被拒的 URL 物理上无法进入子进程
+        "AIOS_PG_TEST_URL": gate.url,
+        "DATABASE_URL": None,  # 剥离调用方 shell 的 DATABASE_URL（None=删除）
+    }
     db_env: dict[str, str] = {}
     if db_url:
-        test_env["AIOS_PG_TEST_URL"] = db_url  # pytest 门控专用
-        test_env["DATABASE_URL"] = None  # 隔离调用方 shell 的 DATABASE_URL（None=删除）
         db_env["DATABASE_URL"] = db_url  # alembic/backup 子进程需要
     python = sys.executable
     return [
