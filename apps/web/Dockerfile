@@ -6,6 +6,9 @@ RUN npm ci
 
 FROM node:22-alpine AS build
 WORKDIR /app
+# M9-07: API 地址构建期注入（NEXT_PUBLIC_* 只能在 build 阶段生效）
+ARG NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000
+ENV NEXT_PUBLIC_API_BASE_URL=${NEXT_PUBLIC_API_BASE_URL}
 COPY --from=deps /app ./
 COPY apps/web ./apps/web
 RUN npm run build --workspace apps/web

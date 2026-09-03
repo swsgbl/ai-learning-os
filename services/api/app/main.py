@@ -64,11 +64,12 @@ from app.storage.objectstore import make_object_store
 def create_app(database_url: str | None = None) -> FastAPI:
     settings = get_settings()
     validate_auth_secret(settings.auth_secret, app_env=settings.app_env)  # M9-04 fail-closed
-    validate_exposure(  # M9-06 公开暴露 fail-closed
+    validate_exposure(  # M9-06/M9-07 公开暴露 fail-closed
         host_bind_ip=settings.host_bind_ip,
         app_env=settings.app_env,
         auth_secret=settings.auth_secret,
         livekit_api_secret=settings.livekit_api_secret,
+        cors_origins=settings.cors_origins,
     )
     resolved_url = database_url if database_url is not None else settings.database_url
     if settings.rubric_judge == "llm":

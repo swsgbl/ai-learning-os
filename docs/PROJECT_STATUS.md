@@ -205,7 +205,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 下一任务
 
-M7-06 完成（版本真相源 + /version 端点 + CHANGELOG + db-rollback fail-closed CLI + AIOS_IMAGE_TAG 应用回滚锚点 + README runbook；ADR 61）。**M7 6/6 收官，M0-M7 全部里程碑交付完成**——backlog 无剩余任务。M9-04 已完成（角色授权 + 治理审计 + 泄漏修复，远端 CI 全绿）。**M9 诚实边界（截至 M9-04）**：治理动作已 admin-only 且全留痕；但草稿创建侧仍全局共享（无 owner 列）、papers 公共无归属、token 存 localStorage、审计无哈希链——这些是已知边界而非"完整多用户系统"。M9-06 已完成（CI 稳定性与部署暴露面收尾，PR #1 与 main CI 双绿）。**M9 诚实边界（截至 M9-06）**：papers 公共无归属、generation/variant 历史草稿 NULL 归属（auth on 仅 admin 可读）、token 存 localStorage、审计无哈希链、Web 治理界面未做。后续可选：云 provider key、LLM 真实端点冒烟（待 key）。
+M7-06 完成（版本真相源 + /version 端点 + CHANGELOG + db-rollback fail-closed CLI + AIOS_IMAGE_TAG 应用回滚锚点 + README runbook；ADR 61）。**M7 6/6 收官，M0-M7 全部里程碑交付完成**——backlog 无剩余任务。M9-04/M9-05/M9-06 已完成（角色授权、私有语料与草稿归属、同事务审计、CI 与部署暴露面收尾，远端 CI 全绿）。M9-07 已完成（部署拓扑收口：AIOS_BIND_IP 只影响 api/web/livekit，数据服务固定 loopback；LiveKit 凭据可配置且 API/server 同源；Web API 地址构建期注入；公开模式 CORS fail-closed）。**M9 诚实边界（截至 M9-07）**：papers 公共无归属、generation/variant 历史草稿 NULL 归属（auth on 仅 admin 可读）、token 存 localStorage、审计无哈希链、Web 治理界面未做。后续可选：云 provider key、LLM 真实端点冒烟（待 key）。
 
 ## 追加：M0 收尾验证（compose 全栈）
 

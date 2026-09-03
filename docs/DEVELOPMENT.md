@@ -101,6 +101,28 @@ X-Request-ID 可关联）。读取 `GET /api/v1/audit` 仅 admin（auth off 本�
   连接 minio；`MinioObjectStore` 启动时幂等确保 bucket 存在。
 - 本地裸跑 API（无 S3_* 环境变量）回退内存实现——上传数据不持久，仅供契约调试。
 
+## 部署模式（M9-07）
+
+**本机模式（默认）**——所有端口只绑 127.0.0.1，数据服务（postgres/redis/minio）永不公开：
+
+```bash
+docker compose -f infra/docker-compose.yml --profile local up -d --build
+```
+
+无需额外变量（AUTH_SECRET/LiveKit 凭据使用仓库内开发占位值，仅本机使用）。
+
+**局域网模式**——其他设备访问 Web/语音（AIOS_BIND_IP 只影响 api/web/livekit，
+postgres/redis/minio 始终固定 127.0.0.1 不公开）。必须同时设置：
+
+```bash
+AIOS_BIND_IP=0.0.0.0 AIOS_APP_ENV=production AIOS_AUTH_SECRET='<至少 32 字节随机串>' AIOS_LIVEKIT_API_KEY='<生产 key>' AIOS_LIVEKIT_API_SECRET='<至少 32 字节随机串>' AIOS_CORS_ORIGINS='http://<本机局域网IP或域名>:3000' AIOS_PUBLIC_API_BASE_URL='http://<本机局域网IP或域名>:8000' docker compose -f infra/docker-compose.yml --profile local up -d --build
+```
+
+fail-closed 规则：绑定非 loopback 时任一条件缺失（非 production / 弱 secret /
+localhost-only CORS）API 拒绝启动。`AIOS_PUBLIC_API_BASE_URL` 是**构建期**注入
+Web 的 API 地址（NEXT_PUBLIC_API_BASE_URL），改值后必须 rebuild Web；
+`AIOS_CORS_ORIGINS` 必须包含实际 Web origin。语音数据面 7882-7892/udp 同步公开。
+
 ## 本地验证
 
 ```powershell
