@@ -104,17 +104,28 @@ def _strong_secret(value: str | None) -> bool:
     return bool(value) and len(value.encode("utf-8")) >= 32 and value not in PUBLIC_DEFAULT_SECRETS
 
 
+def _cors_is_local_only(cors_origins: str) -> bool:
+    """CORS 列表是否只含 localhost/127.0.0.1 源（公开服务时这是错误配置）。"""
+    origins = [o.strip() for o in cors_origins.split(",") if o.strip()]
+    return bool(origins) and all(
+        "localhost" in o or "127.0.0.1" in o for o in origins
+    )
+
+
 def validate_exposure(
     *,
     host_bind_ip: str,
     app_env: str,
     auth_secret: str | None,
     livekit_api_secret: str | None,
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000",
 ) -> None:
-    """M9-06 公开暴露 fail-closed：绑定非 loopback 时全部安全前置必须满足。
+    """M9-06/M9-07 公开暴露 fail-closed：绑定非 loopback 时全部安全前置必须满足。
 
     - APP_ENV 必须 production（走 AUTH_SECRET 最严校验）；
     - LIVEKIT_API_SECRET 必须已配置、≥32 字节且非仓库默认占位值；
+    - CORS 不得仍为 localhost-only（否则局域网/外部设备全被浏览器拦下——
+      必须显式配置 AIOS_CORS_ORIGINS 含实际 Web origin）；
     任一不满足即 RuntimeError（启动失败），绝不以弱配置公开启动。
     """
     if _is_loopback(host_bind_ip):
@@ -128,4 +139,9 @@ def validate_exposure(
     if not _strong_secret(livekit_api_secret):
         raise RuntimeError(
             "公开绑定必须配置强 LIVEKIT_API_SECRET（已配置、≥32 字节且非公开默认占位值）"
+        )
+    if _cors_is_local_only(cors_origins):
+        raise RuntimeError(
+            "公开绑定必须配置 AIOS_CORS_ORIGINS（含实际 Web origin）；"
+            f"当前 CORS 仍为 localhost-only: {cors_origins!r}——拒绝以本地 CORS 对外服务"
         )

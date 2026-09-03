@@ -12,7 +12,8 @@ services:
       POSTGRES_PASSWORD: aios
       POSTGRES_DB: ai_learning_os
     ports:
-      - "${AIOS_BIND_IP:-127.0.0.1}:5433:5432"
+      # M9-07: 数据服务固定 loopback —— AIOS_BIND_IP 只影响边缘服务（api/web/livekit）
+      - "127.0.0.1:5433:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -24,7 +25,7 @@ services:
   redis:
     image: redis:7-alpine
     ports:
-      - "${AIOS_BIND_IP:-127.0.0.1}:6379:6379"
+      - "127.0.0.1:6379:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -38,8 +39,8 @@ services:
       MINIO_ROOT_USER: aios
       MINIO_ROOT_PASSWORD: aios12345
     ports:
-      - "${AIOS_BIND_IP:-127.0.0.1}:9000:9000"
-      - "${AIOS_BIND_IP:-127.0.0.1}:9001:9001"
+      - "127.0.0.1:9000:9000"
+      - "127.0.0.1:9001:9001"
     volumes:
       - minio-data:/data
     healthcheck:
@@ -69,8 +70,9 @@ services:
       S3_ACCESS_KEY: aios
       S3_SECRET_KEY: aios12345
       LIVEKIT_URL: ws://livekit:7880
-      LIVEKIT_API_KEY: devkey
-      LIVEKIT_API_SECRET: ailos-local-dev-secret-0f4c9a1e7b2d
+      # M9-07: LiveKit 凭据可配置 —— API 与 livekit server 经同一组变量保持一致
+      LIVEKIT_API_KEY: ${AIOS_LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${AIOS_LIVEKIT_API_SECRET:-ailos-local-dev-secret-0f4c9a1e7b2d}
       # M9-01: 认证开关 —— 生产部署用部署 secret 覆盖 AUTH_SECRET；
       # 本地 dev 值仅用于开发栈（与 LIVEKIT_API_SECRET 同款占位约定）
       AUTH_SECRET: ${AIOS_AUTH_SECRET:-aios-local-dev-secret-7d21b9e4c8a3}
@@ -96,7 +98,10 @@ services:
 
   livekit:
     image: livekit/livekit-server:latest
-    command: --config /etc/livekit/livekit.yaml
+    # M9-07: --keys 与 API 共用同一组凭据变量（不再只能读仓库内占位 yaml）
+    command: >-
+      --config /etc/livekit/livekit.yaml
+      --keys "${AIOS_LIVEKIT_API_KEY:-devkey}: ${AIOS_LIVEKIT_API_SECRET:-ailos-local-dev-secret-0f4c9a1e7b2d}"
     volumes:
       - ./livekit/livekit.yaml:/etc/livekit/livekit.yaml:ro
     ports:
@@ -115,6 +120,9 @@ services:
     build:
       context: ..
       dockerfile: apps/web/Dockerfile
+      args:
+        # M9-07: API 地址构建期注入（局域网设备访问时需设为实际 API 地址并 rebuild）
+        NEXT_PUBLIC_API_BASE_URL: ${AIOS_PUBLIC_API_BASE_URL:-http://127.0.0.1:8000}
     image: aios/web:${AIOS_IMAGE_TAG:-local}
     environment:
       NODE_ENV: production
