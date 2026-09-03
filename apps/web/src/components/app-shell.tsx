@@ -30,8 +30,11 @@ const BASE_NAV: Array<{ href: string; label: string; icon: LucideIcon }> = [
 // 这只是入口可见性——安全边界在后端 require_admin，learner 直接访问 /governance
 // 会被 API 403 拦下并得到无泄露提示。
 function useAuthState(): AuthState | null {
+  const pathname = usePathname();
   const [state, setState] = useState<AuthState | null>(null);
   useEffect(() => {
+    // 路由变化时重新探测：登录页 saveSession 后 router.push 不会重挂 AppShell，
+    // 用户徽章与治理入口需要在这里跟上新凭据（M9-03 遗留，M10-02 治理入口同样依赖）
     let active = true;
     probeAuth(API_BASE)
       .then((s) => {
@@ -43,7 +46,7 @@ function useAuthState(): AuthState | null {
     return () => {
       active = false;
     };
-  }, []);
+  }, [pathname]);
   return state;
 }
 

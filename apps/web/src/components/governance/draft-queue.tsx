@@ -102,6 +102,8 @@ export function DraftQueue<T>({ config }: { config: DraftKindConfig<T> }) {
       setNote("");
       setDrafts(await config.load()); // 动作后刷新队列
       setDetailDraft(updated); // 详情同步为审核后的版本
+      // 终态草稿已不属于「待审」过滤集——切到全部，让刚审的卡片与终态详情保持可见
+      setFilter("all");
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 409) {
         setActionFeedback({
@@ -111,6 +113,7 @@ export function DraftQueue<T>({ config }: { config: DraftKindConfig<T> }) {
         try {
           setDrafts(await config.load());
           setDetailDraft(await config.refreshOne(openId));
+          setFilter("all");
         } catch {
           // 刷新失败保留原状态；手动刷新仍可用
         }
