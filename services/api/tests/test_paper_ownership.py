@@ -11,19 +11,20 @@
 from __future__ import annotations
 
 import asyncio
-import os
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
+from app.db.test_gate import pg_test_gate_from_env
 from app.domain.models import Angles, Option, Paper, Question
 from app.main import create_app
 from app.repositories.memory import MemoryRepository
 
 SQLITE_URL = "sqlite+aiosqlite:///:memory:"
 SECRET = "m10-03-paper-owner-secret-0123456789"
-PG_URL = os.environ.get("AIOS_PG_TEST_URL")
+PG_GATE = pg_test_gate_from_env()
+PG_URL = PG_GATE.url
 
 
 @pytest.fixture()
@@ -256,10 +257,10 @@ def test_memory_repository_visibility_matches_postgres_semantics() -> None:
     asyncio.run(run())
 
 
-# --- 真实 PostgreSQL 集成（AIOS_PG_TEST_URL 门控）---
+# --- 真实 PostgreSQL 集成（AIOS_PG_TEST_URL 门控：仅隔离测试库放行）---
 
 
-@pytest.mark.skipif(not PG_URL, reason="需要 AIOS_PG_TEST_URL 指向真实 PostgreSQL")
+@pytest.mark.skipif(not PG_GATE.enabled, reason=PG_GATE.reason)
 def test_paper_visibility_against_real_postgres(auth_on) -> None:
     """真实 PG：迁移后的 papers.owner_id 列 + 跨用户隔离与 SQLite 同语义。"""
     import uuid

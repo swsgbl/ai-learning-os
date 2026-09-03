@@ -36,7 +36,11 @@ alembic -c services/api/alembic.ini upgrade head
 ```
 
 - PostgreSQL 仓储与内存仓储共用同一 `Repository` 协议，API route 不感知实现差异。
-- 单元测试用 SQLite aiosqlite 内存替身；真实 PG 集成测试设 `AIOS_PG_TEST_URL` 后运行。
+- 单元测试用 SQLite aiosqlite 内存替身；真实 PG 集成测试设 `AIOS_PG_TEST_URL` 后运行，
+  **且必须指向隔离测试库（`ai_learning_os_test` 等）**——安全门控
+  （`services/api/app/db/test_gate.py`，M10-04 返工）只放行隔离测试库名，
+  主/共享库名（`ai_learning_os`）、维护库 `postgres`、缺库名、非 PG 驱动
+  一律自动跳过并给出原因，被拒绝的测试**不建立任何连接**。
 - 环境变量按用途隔离（M8-00 教训）：pytest 只认 `AIOS_PG_TEST_URL`；
   `DATABASE_URL` 属于 alembic / API 运行时，混入 pytest 会把「无 DB 503」
   测试翻成 DB 路径导致断言失败。
@@ -164,10 +168,20 @@ npm run typecheck
 npm run lint
 npm run build
 ruff check services/api
-$env:AIOS_PG_TEST_URL='postgresql+asyncpg://aios:aios@127.0.0.1:5433/ai_learning_os'
+# 真实 PG 集成测试：先创建隔离测试库（只查存在 + CREATE，不碰任何既有库），再指向它
+Push-Location services/api
+.venv\Scripts\python.exe scripts\create_pg_test_db.py
+Pop-Location
+$env:AIOS_PG_TEST_URL='postgresql+asyncpg://aios:aios@127.0.0.1:5433/ai_learning_os_test'
 Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
 python -m pytest services/api -q
 ```
+
+> **禁止把 5433/`ai_learning_os`（主/共享库）设为 `AIOS_PG_TEST_URL`**（M10-04 事故：
+> 该用法曾让全量 pytest 每轮向主库写入 8 张「PG 验证卷」，6 批共 48 张永久污染，
+> 只读分类报告 744/1397 -> 792/1487）。安全门控现在会对主/共享库名自动跳过
+> 并给出原因，但请直接使用隔离库 `ai_learning_os_test`，不要依赖跳过兜底。
+> 不设 `AIOS_PG_TEST_URL` 时全量 pytest 只跑 SQLite 单元路径，同样全绿。
 
 Docker 生产本地版冒烟（全服务 healthy + 端点 + 上传重启读回）：
 

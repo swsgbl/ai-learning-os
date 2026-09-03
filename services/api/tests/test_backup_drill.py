@@ -6,8 +6,9 @@
   恢复 -> 考试/报告逐字一致 + 配置文件逐字一致；
 - manifest 篡改 fail-closed：恢复前校验先行，目标库未被触碰；
 - MinIO 对象 roundtrip：独立 bucket 隔离（AIOS_S3_TEST_ENDPOINT 门控）；
-- 真实 PG drill：主库备份 -> 独立 drill 库（CREATE DATABASE）恢复 -> 考试与报告
-  逐字一致（AIOS_PG_TEST_URL 门控；drill 库用后即删，不碰主库数据）。
+- 真实 PG drill：备份源库 -> 独立 drill 库（CREATE DATABASE）恢复 -> 考试与报告
+  逐字一致（AIOS_PG_TEST_URL 安全门控：源库必须是隔离测试库 ai_learning_os_test，
+  drill 库用后即删，不碰任何主库/共享库数据）。
 """
 from __future__ import annotations
 
@@ -22,6 +23,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.db.session import create_engine
+from app.db.test_gate import pg_test_gate_from_env
 from app.main import create_app
 from app.ops.backup import (
     BackupIntegrityError,
@@ -35,7 +37,8 @@ from app.ops.backup import (
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 DRILL_DB = "ai_learning_os_drill"
-PG_URL = os.environ.get("AIOS_PG_TEST_URL")
+PG_GATE = pg_test_gate_from_env()
+PG_URL = PG_GATE.url
 S3_ENDPOINT = os.environ.get("AIOS_S3_TEST_ENDPOINT")
 
 
@@ -234,9 +237,9 @@ def _drop_drill_database() -> None:
     asyncio.run(_run())
 
 
-@pytest.mark.skipif(not PG_URL, reason="需要 AIOS_PG_TEST_URL 指向真实 PostgreSQL")
+@pytest.mark.skipif(not PG_GATE.enabled, reason=PG_GATE.reason)
 def test_pg_backup_restore_drill_preserves_exam_and_report():
-    """真实 PG drill：主库备份 -> 独立 drill 库恢复 -> 考试与报告逐字一致。"""
+    """真实 PG drill：隔离测试库备份 -> 独立 drill 库恢复 -> 考试与报告逐字一致。"""
     with TestClient(create_app(PG_URL)) as client:
         exam_id = _seeded_exam(client)
         report_before = client.get(f"/api/v1/exams/{exam_id}/report").json()

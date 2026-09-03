@@ -25,11 +25,13 @@ import time
 import pytest
 
 from app.db.session import create_engine, make_sessionmaker, prepare_database
+from app.db.test_gate import pg_test_gate_from_env
 from app.repositories.postgres import PostgresRepository
 from app.repositories.seed import seed_papers
 
 SQLITE_URL = "sqlite+aiosqlite:///:memory:"
-PG_URL = os.environ.get("AIOS_PG_TEST_URL")
+PG_GATE = pg_test_gate_from_env()
+PG_URL = PG_GATE.url
 
 
 # ---------------------------------------------------------------- 故障注入重试
@@ -81,7 +83,7 @@ def test_settlement_failure_retry_no_loss() -> None:
         assert again.json() == fetched.json() == body
 
 
-@pytest.mark.skipif(not PG_URL, reason="需要 AIOS_PG_TEST_URL 指向真实 PostgreSQL")
+@pytest.mark.skipif(not PG_GATE.enabled, reason=PG_GATE.reason)
 def test_settlement_survives_engine_replacement() -> None:
     """真实 PG：换引擎（模拟进程重启）后 submission 持久化，重试提交幂等收敛。"""
 
@@ -144,7 +146,7 @@ def _wait_ready(base: str, deadline_s: float = 90.0) -> None:
     raise RuntimeError("uvicorn 压测实例未在时限内就绪")
 
 
-@pytest.mark.skipif(not PG_URL, reason="需要 AIOS_PG_TEST_URL 指向真实 PostgreSQL")
+@pytest.mark.skipif(not PG_GATE.enabled, reason=PG_GATE.reason)
 def test_non_model_api_p95_under_load() -> None:
     """真实 uvicorn + 真实 PG：并发压测混合只读端点，p95 <= 500ms 且零 5xx。
 

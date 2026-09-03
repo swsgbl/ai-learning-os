@@ -1,22 +1,27 @@
 """真实 PostgreSQL 集成测试。
 
-设置 AIOS_PG_TEST_URL（如 docker compose 里的 postgres）才运行，否则跳过：
-    AIOS_PG_TEST_URL=postgresql+asyncpg://aios:aios@127.0.0.1:5432/ai_learning_os \
+设置 AIOS_PG_TEST_URL 并指向**隔离测试库**才运行，否则跳过。
+安全门控（app/db/test_gate.py，M10-04 返工）fail-closed：
+主/共享库名（ai_learning_os）、维护库、缺库名、非 PG 驱动一律拒绝
+且不建立任何连接；先创建隔离库再跑：
+    cd services/api && .venv/Scripts/python.exe scripts/create_pg_test_db.py
+    AIOS_PG_TEST_URL=postgresql+asyncpg://aios:aios@127.0.0.1:5433/ai_learning_os_test \
         .venv/Scripts/python -m pytest services/api/tests/test_pg_integration.py
 """
 from __future__ import annotations
 
-import os
 from uuid import uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 
+from app.db.test_gate import pg_test_gate_from_env
 from app.main import create_app
 
-PG_URL = os.environ.get("AIOS_PG_TEST_URL")
+PG_GATE = pg_test_gate_from_env()
+PG_URL = PG_GATE.url
 
-pytestmark = pytest.mark.skipif(not PG_URL, reason="需要 AIOS_PG_TEST_URL 指向真实 PostgreSQL")
+pytestmark = pytest.mark.skipif(not PG_GATE.enabled, reason=PG_GATE.reason)
 
 
 def test_exam_flow_against_real_postgres() -> None:

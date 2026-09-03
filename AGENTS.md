@@ -21,4 +21,11 @@ pytest
 .venv\Scripts\python.exe -m ruff check services/api/app services/api/tests
 ```
 
+Real-PostgreSQL integration tests run only when `AIOS_PG_TEST_URL` points at an
+**isolated test database** (`ai_learning_os_test` — create it with
+`services/api/scripts/create_pg_test_db.py`). Never point it at the shared/main
+database `ai_learning_os` (port 5433): the safety gate in
+`services/api/app/db/test_gate.py` auto-skips with a reason and refuses any
+connection, and writing test data into the main database is forbidden.
+
 For UI changes, also run a browser flow that creates an exam, answers all questions, submits, and reads the review report.
