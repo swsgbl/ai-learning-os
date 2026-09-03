@@ -9,6 +9,18 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M10-02 Web 治理与学习工作台整合已完成**（feature/M10-02-web-governance-workbench，PR 已开待审）：
+
+- **auth/me 角色披露**：UserOut 增 role（learner/admin），register/me 均返回；角色实时读库语义保持（promote 后旧 token 不重签立即透出 admin）；auth off 时 me 仍 401（无用户上下文不虚构）。前端仅用 role 渲染治理入口——安全边界仍在后端 require_admin（learner 强访队列/审计 API 403，页面只给无泄露提示）。
+- **/governance 治理工作台**：五 tab（课程导入/课程生成/试卷抽取/变式题/审计日志）；每类队列摘要计数 + 状态过滤 + 关键元数据 + 折叠详情（详情端点实时刷新）；approve/reject 带可选备注（≤512 写审计），动作后刷新队列与详情，终态重复审核 409 给明确反馈并刷新到最新；审计视图 actor/action/target/time/summary 可读可刷新，before/after 折叠展示且不含密钥类字段。
+- **/progress 学习工作台**（保留路由）：聚合 daily-plan/states/papers（Promise.allSettled 单路失败不掩他路）；今日任务三分类（新学/复习/错题重测）带服务端 reason 与概念 chips；薄弱概念 mastery 分带 + 证据计数；试卷卡一键跳 /exam/[paperId] 与 /voice/[paperId]；空状态/API 错误/未登录/本地模式均诚实卡片，不虚构数据。
+- **首页轻量聚合**：hero 收缩为单行 3xl（去营销化）；三个数字卡（今日任务/薄弱概念/可练试卷）+ 三个模式入口；未登录不发请求（避免 401 强跳打断浏览），数字如实显示「登录后可见」；不复制完整工作台。
+- **浏览器验证暴露并修复两缺陷**：① AppShell 认证徽章只在 mount 探测一次——登录后 router.push 不触发重探，徽章仍显示「登录」、治理入口不出现（M9-03 遗留）；改为 pathname 变化时重探。② 审核动作后队列仍按「待审」过滤，刚审的卡片与终态详情直接消失而非确认结果；动作成功/409 后切「全部」保持可见。
+- **类型与 client**：四类草稿/audit/planner/student state/用户资料 TypeScript 类型补齐；ApiError(status) 区分 403/409；draftEndpoints 工厂覆盖四类同构端点；全部请求经统一 API client，组件零直连。
+- **证据**：本地全量 pytest **731 passed 1 skipped**（725→732 +7：me role 4 测 + 治理页面 API 契约 3 测；唯一 skip 为 AIOS_COMPOSE_SMOKE 门控由远端 CI 覆盖；PG 5433/MinIO 9000 真实服务）；ruff 全绿；npm typecheck/lint/build 全绿（10 路由）；**Docker 栈真实浏览器 17 项检查全 PASS（13.2s）**——learner 10 项（首页聚合/导航无治理入口/governance 403 无泄露/工作台 seeded planner·states·papers 渲染/一键跳考并成功创建服务端会话）+ admin 7 项（治理入口/五 tab/待审队列/详情元数据/approve+队列刷新/终态不可再审提示/审计回查）；api 容器日志零 traceback。
+
+## 前一任务（M9-08 收尾）
+
 **M9-08 局域网语音连通性与 LiveKit 部署收尾已完成**（feature/M9-08-public-voice-networking，PR #3 CI 绿后合并）：
 
 - **PUBLIC_LIVEKIT_URL**：token 返回**浏览器可达** LiveKit 地址——公开模式必配（fail-closed：公开绑定时缺失/容器内部地址/127.0.0.1 拒绝启动）；本机模式留空回退 ws://127.0.0.1:7880；**修复 compose LIVEKIT_URL 语义**（原注入容器内部地址 ws://livekit:7880，局域网浏览器不可达——smoke_voice 真实验证时暴露）。
@@ -90,6 +102,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 | M9-06 CI 稳定性/部署暴露面收尾 | 011fc6b(+c3b54f1,7480fb2), merge 851f545 | 本地全量 pytest 712 passed 2 skipped（+13：暴露四路径/LiveKit 绑定断言/M9-05 回归补强）；PR #1 run 33659621796 绿 → main run 33660027186 绿；Docker：全端口 loopback 实测 + 公开绑定弱配置拒启实证 + 零 traceback；上轮遗留 flaky（2099 字符串断言撞微秒）已语义化修复并对症远端红 run | 下一步：按需演进 | 2026-09-03 |
 | M9-07 部署拓扑/局域网可用性/回归修复 | 6f94612+065d5ce, merge 5955d0a | 本地全量 pytest 717 passed 2 skipped（+5：拓扑/LiveKit 凭据/Web arg 渲染门 + CORS 校验 + verify 审计回归）；PR #2 run 33704114630 绿 → main run 33704369399 绿；Docker 实测：数据面固定 loopback + 公开强配置真实启动（health/Web/preflight）通过 + 弱配置拒启 + 零 traceback | 下一步：按需演进 | 2026-09-03 |
 | M9-08 局域网语音/LiveKit 部署收尾 | b62bf74, merge 4a0082a | 本地全量 pytest 723 passed 2 skipped（+6：token 两态/精确 CORS/公开 LiveKit 门禁/compose 注入/凭据同源渲染）；真实客户端（livekit.rtc）local+public 双模式全链路 PASS（CONN_CONNECTED+数据通道）；公开强配置（LAN_IP）token 实测指向 LAN 地址；数据面 loopback 贯穿 + 弱配置拒启 + 零 traceback + 卷保留；PR #3 run 33712317977 绿 → main run 33712566518 绿 | 下一步：按需演进 | 2026-09-03 |
+| M10-02 Web 治理与学习工作台 | ea4d5b3..2d96be5（本分支） | 本地全量 pytest **731 passed 1 skipped**（+7：me role 语义 4 测——learner 默认/register 披露/promote 即时反映/auth off 不变 + 治理页面 API 契约 3 测——admin 全序列（四队列 list→详情→approve 翻转→双向 409→审计回查无密钥字段）/learner 403 门禁先于存在性/本地模式 me 401+队列放行；PG 5433+MinIO 9000 真实服务）；ruff/typecheck/lint/build 全绿（10 路由）；**Docker 栈真实浏览器（Chromium）17 项检查全 PASS 13.2s**：learner（首页三指标聚合/导航无治理入口//governance 403 无泄露提示与零数据标志/工作台 seeded 10 任务+reason+2 薄弱概念+试卷入口/一键跳 /exam/[paperId] 且服务端会话创建题干渲染）+ admin（治理入口/五 tab/待审队列/详情元数据/approve 后队列刷新+终态不可再审提示/审计回查 actor·action·target·时间）；api 容器零 traceback；8 张截图存证 | 下一步：PR 合并后回填 run id | 2026-09-03 |
 
 | M6-05 Security suite | 07a8373, merge a6980c4 | pytest 606 passed（含真实 PG 5433，基线 591→606 +15）：五类安全面集中回归 15 测——SSRF（云元数据端点 169.254.169.254 拒绝、DNS 解析到私网 10.x/172.16 拒绝、域层 check_url_safety 理由可见）、sandbox escape（sympy 字符白名单：__import__/open/dunder 全部进复核不执行、mcq+math 双入口验证）、注入（SQL 元字符 id 四路由 404/int 路径 422 类型拒绝、后续请求存活；SQL 元字符答案 fail-closed 判错；恶意文件名上传 storage_key 内容寻址三段式 uploads/{2hex}/{64hex} 无用户路径成分；坏 JSON parse 显式 422 安全降级不 500）、密钥泄露（voice/search providers 视图无 sk-/AKIA/ghp_/xoxb/PEM 形态；.env.example+compose+livekit.yaml 仓库配置扫描无生产密钥形态——dev 占位值合法）、越权（交卷后建语音会话 409 答案封存、跨会话 event_id 复用 409 状态不扰动——M4-05 套件级守卫、终态草稿 approve→reject 与 reject→approve 双向 409）；真实服务冒烟 6 项 PASS（uvicorn 8026+PG：file 协议 403、元数据 IP 403 带原因、metadata.google.internal 解析失败拒绝、SQLi id 404、交卷后语音 409「考试状态 submitted 不允许语音作答」、providers 无密钥形态） | 下一步 M6-06 | 2026-09-01 |
 | M6-04 Prompt injection suite | b3130fe, merge d6f1632 | pytest 591 passed（含真实 PG 5433，基线 576→591 +15）：四类不变量回归套件 15 测——license 状态向量（恶意文档正文惰性落库 license 保持 UNKNOWN + 复用门禁 403 原因可见；未 verify 来源带注入文档上传 403 不存正文、来源状态不变）、审核队列向量（文档自称「自动通过」无效，唯一离队路径=人工 approve 端点、重复审核 409）、语音注入向量（探针固化 5 案：裸注入/英文注入/时间注入→unknown、答案+注入→槽位优先 choose B、成绩注入→含糊澄清；API 层 unknown 不应用 FSM 状态不变、含糊只进澄清环且不落半成品答案、注入尾巴交卷/改分零效果）、时间向量（答题载荷伪造 end_at/started_at/remaining_seconds/admin_override 被 pydantic 丢弃、服务端时间不动；提交载荷注入字段幂等收敛同一 submission、duration 服务端时钟）、成绩向量（注入答案判 0 分、正确字母+注入尾巴 fail-closed 判错不猜、report 分数只来自服务端判定）、检索面（注入文本 snippet 逐字惰性透传、重复查询恒同无副作用）；真实服务冒烟 8 项 PASS（真实 PG 主库全链路：上传 UNKNOWN→parse→门禁 403「资源授权状态 UNKNOWN 不可复用」→搜索惰性→语音注入 fsm_applied=false→伪造时间被丢弃 end_at 不动→注入提交幂等→注入答案 0 分/正常答案满分/报告 1.0 分服务端判定） | 下一步 M6-05 | 2026-09-01 |
@@ -114,6 +127,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 - [x] M9-06 CI 稳定性与部署暴露面收尾（✅ 2026-09-03——脆弱断言语义化/verify 单次变更/公开暴露 fail-closed/全端口 loopback/GC 隔离负载窗口）
 - [x] M9-07 安全可用部署拓扑与回归修复（✅ 2026-09-03——绑定拓扑收口/LiveKit 凭据同源/Web API 地址注入/公开 CORS fail-closed/generation 决定性回归/verify 审计回归）
 - [x] M9-08 局域网语音连通性与 LiveKit 部署收尾（✅ 2026-09-03——PUBLIC_LIVEKIT_URL/公开 fail-closed/CORS 精确解析/LiveKit config 切换/node-ip 通告/真实客户端双模式全链路 PASS）
+- [x] M10-02 Web 治理与学习工作台整合（✅ 2026-09-03——auth/me role 披露//governance 四类草稿审核+审计//progress 工作台聚合/首页轻聚合/类型化 client；Docker 栈浏览器 17 项全 PASS；本地全量 731 passed 1 skipped）
 
 ## 阻塞与风险
 
@@ -206,10 +220,11 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 | 71 | 部署暴露 fail-closed 与 CI 稳定性：宿主绑定意图（AIOS_BIND_IP→HOST_BIND_IP）传入 API，非 loopback 绑定强制 production + 双强 secret（≥32 字节非占位）否则拒绝启动；安全占位值（auth/LiveKit 默认）进公开默认黑名单；时间断言用 datetime 语义而非字符串包含（脆弱子串断言已在远端真实致红）；负载测试窗口隔离同进程 GC 暂停（预算语义不变，任何 N+1 回归仍被抓住） | M9-06「CI 稳定性与部署暴露面收尾」 | 2026-09-03 |
 | 72 | 部署拓扑边界：AIOS_BIND_IP 只影响边缘服务（api/web/livekit），postgres/redis/minio 数据面固定 loopback（公开绑定时数据面永不暴露）；LiveKit 凭据必须同源可配置（API env 与 server --keys 同一组变量，服务端不绑仓库占位 yaml）；Web 的 API 地址是构建期产物（NEXT_PUBLIC_API_BASE_URL build arg，改值必须 rebuild）；公开绑定第四道门：CORS localhost-only 拒绝启动（AIOS_CORS_ORIGINS 必须含实际 Web origin） | M9-07「安全可用部署拓扑与回归修复」 | 2026-09-03 |
 | 73 | 语音公开链路的诚实性：token ws_url 必须是浏览器可达地址（compose LIVEKIT_URL 语义修正——浏览器地址而非容器内部地址，smoke_voice 真实验证暴露的静默泄漏）；公开绑定时 PUBLIC_LIVEKIT_URL fail-closed（缺失/容器内部地址拒绝启动，不静默降级）；CORS 本地源判定 urlsplit 精确 host（子串误判消除）；语音连通只能由真实客户端证明（livekit.rtc 连接+数据通道），health 200 不构成语音可用证据 | M9-08「局域网语音连通性与 LiveKit 部署收尾」 | 2026-09-03 |
+| 74 | Web 治理与工作台的角色边界：auth/me 披露 role 仅驱动入口渲染（前端隐藏不是安全边界，admin-only 语义全在后端 require_admin，learner 强访 API 403 且页面无泄露提示）；四类草稿端点同构，前端用配置投影（摘要/元数据/详情函数）泛化一个队列组件而非复制四份；审核动作后切「全部」过滤器保持刚审草稿可见（终态确认上下文不消失）；SPA 登录后 AppShell 需随路由重探认证状态（mount 一次探测是 M9-03 遗留缺陷，治理入口可见性依赖它暴露）；首页只做轻聚合（数字+入口），完整工作台留在 /progress，未登录不发会触发 401 强跳的请求 | M10-02「Web 治理与学习工作台整合」 | 2026-09-03 |
 
 ## 下一任务
 
-M7-06 完成（版本真相源 + /version 端点 + CHANGELOG + db-rollback fail-closed CLI + AIOS_IMAGE_TAG 应用回滚锚点 + README runbook；ADR 61）。**M7 6/6 收官，M0-M7 全部里程碑交付完成**——backlog 无剩余任务。M9-04/M9-05/M9-06 已完成（角色授权、私有语料与草稿归属、同事务审计、CI 与部署暴露面收尾，远端 CI 全绿）。M9-07 已完成（部署拓扑收口 + 局域网可用性 + 回归修复，PR #2 与 main CI 双绿）。M9-08 已完成（局域网语音连通 + LiveKit 部署收尾，PR #3 与 main CI 双绿）。**M9 诚实边界（截至 M9-08）**：papers 公共无归属、generation/variant 历史草稿 NULL 归属（auth on 仅 admin 可读）、token 存 localStorage、审计无哈希链、Web 治理界面未做、**TURN 未内置**（对称 NAT 场景需自建 coturn，文档已说明）。后续可选：云 provider key、LLM 真实端点冒烟（待 key）、TURN 服务。
+M7-06 完成（版本真相源 + /version 端点 + CHANGELOG + db-rollback fail-closed CLI + AIOS_IMAGE_TAG 应用回滚锚点 + README runbook；ADR 61）。**M7 6/6 收官，M0-M7 全部里程碑交付完成**——backlog 无剩余任务。M9-04/M9-05/M9-06 已完成（角色授权、私有语料与草稿归属、同事务审计、CI 与部署暴露面收尾，远端 CI 全绿）。M9-07 已完成（部署拓扑收口 + 局域网可用性 + 回归修复，PR #2 与 main CI 双绿）。M9-08 已完成（局域网语音连通 + LiveKit 部署收尾，PR #3 与 main CI 双绿）。M10-02 已完成（Web 治理与学习工作台整合：/governance 四类草稿审核+审计回查、/progress 工作台聚合、首页轻聚合、auth/me role 披露；Docker 栈浏览器 17 项全 PASS）。**M9 诚实边界（截至 M10-02，已更新）**：papers 公共无归属、generation/variant 历史草稿 NULL 归属（auth on 仅 admin 可读）、token 存 localStorage、审计无哈希链、**TURN 未内置**（对称 NAT 场景需自建 coturn，文档已说明）；~~Web 治理界面未做~~（M10-02 已交付 /governance + 工作台）。**M10-02 验证边界（如实）**：本地全量 pytest 唯一 skip 为 AIOS_COMPOSE_SMOKE 门控的全栈冒烟（由远端 CI Docker 门禁 job 覆盖，本地未重复跑）；浏览器验证截图存于本机临时目录未入库（截图证据以文字断言清单记录，可复现脚本流程已验证）；验证用 web 端口 3010（主机 3000 被其他项目占用，CORS 已联动）。后续可选：云 provider key、LLM 真实端点冒烟（待 key）、TURN 服务。
 
 ## 追加：M0 收尾验证（compose 全栈）
 
