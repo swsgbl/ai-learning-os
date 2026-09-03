@@ -444,7 +444,6 @@ async def run_anchor(
     verify_only: bool = False,
     clock: Callable[[], datetime] | None = None,
     snapshot: Mapping[str, Any] | None = None,
-    verify_report: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """锚定主流程（默认 dry-run；execute=True 且 head 前进才落盘）。
 
@@ -452,12 +451,15 @@ async def run_anchor(
     invalid）。步骤（顺序即防线）：
     1. 路径护栏（symlink/非常规文件/父目录缺失 -> AnchorInputError）；
     2. DB 链快照 verify，invalid 即拒绝。默认自建单连接事务快照
-       （load_verified_snapshot）；调用方也可传入已加载的 snapshot
-       （可选附带 verify_report，缺省现场重算）——用于只读消费方
-       （如 production-preflight）让锚定交叉核对与自身主检查共享同一
-       快照，不再开第二个连接。外部快照只服务只读路径：与 execute
-       互斥（真正落盘必须基于现场单连接快照），db_url 为 None 且未
-       提供快照时 AnchorInputError；
+       （load_verified_snapshot）；调用方也可传入已加载的 snapshot——
+       用于只读消费方（如 production-preflight）让锚定交叉核对与自身
+       主检查共享同一快照，不再开第二个连接。verify 结论**始终从
+       snapshot 纯重算**（verify_chain_snapshot，无 IO），不接收外部
+       verify_report——杜绝「报告与快照不一致」的数据来源歧义。外部
+       快照只服务只读路径：与 execute 互斥（真正落盘必须基于现场单
+       连接快照）、与 db_url 互斥（两者同时提供时数据来源二义，
+       fail-closed 拒绝），db_url 为 None 且未提供快照时
+       AnchorInputError；
     3. 完整解析校验既有锚文件，任何 problem 即拒绝（不自动修复）；
     4. 全部历史锚点与 DB 交叉核对（整链重算/回退拒绝）；
     5. DB head == 最后锚点 -> up-to-date 不重复追加；
@@ -469,6 +471,10 @@ async def run_anchor(
     if snapshot is not None and execute:
         raise AnchorInputError(
             "外部快照仅用于只读校验，与 --yes 互斥（执行锚定必须现场单连接快照）"
+        )
+    if snapshot is not None and db_url is not None:
+        raise AnchorInputError(
+            "外部快照与 --db-url 互斥：两者同时提供时数据来源二义，必须二选一"
         )
     if snapshot is None and db_url is None:
         raise AnchorInputError("缺少 --db-url：未提供外部快照时必须指定数据库")
@@ -488,7 +494,9 @@ async def run_anchor(
 
     if snapshot is None:
         snapshot, verify_report = await load_verified_snapshot(db_url)
-    elif verify_report is None:
+    else:
+        # 始终从 snapshot 纯重算（无 IO）：不接收外部 verify_report，
+        # 结论与快照必然同源，不存在「提供的报告对应另一份快照」的歧义。
         verify_report = verify_chain_snapshot(snapshot)
     report["db"] = {
         "valid": verify_report["valid"],

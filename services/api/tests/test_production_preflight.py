@@ -4,9 +4,16 @@
 1. CLI 注册与参数：缺 --db-url exit 2、--phase 必选（缺省 argparse exit 2）、
    **不存在 --yes 参数**（argparse 拒绝 exit 2——命令没有任何执行形态）、
    main 分发、--json / 人类摘要、--output artifacts/temp 路径护栏；
-1b. --output 写入失败（返工）：artifacts 父级被普通文件占用（mkdir 失败）、
-   write_text 抛 OSError（磁盘满）——均稳定 exit 2、简明错误、无 traceback、
-   不打印检查结论（不把半途报告伪装成完整结论）；
+1b. --output 写入失败与原子落盘（两轮返工）：artifacts 父级被普通文件占用
+   （mkdir 失败）、写入阶段 fsync ENOSPC、replace 阶段 OSError——均稳定
+   exit 2、简明错误、无 traceback、不打印检查结论（不把半途报告伪装成
+   完整结论）；写入/replace 失败时**既有旧报告字节原样保留、无残留
+   .tmp**（同目录临时文件 + fsync + os.replace 原子落盘）；目标是
+   symlink 时拒绝（不写穿链接，POSIX replace 语义平台差异不赌）；
+1c. 快照事务方言选项：PG 分支同时要数据库层 READ ONLY
+   （postgresql_readonly）与 REPEATABLE READ；SQLite 分支不设任何
+   方言级选项（aiosqlite 无 READ ONLY 事务语法，只读边界是语句面的，
+   不伪造数据库层能力——真实 PG 行为未在本测试环境实测，见 docs）；
 2. phase 语义：pre-migration 链表缺失=pending（pending_migration）、
    current 落后 head=pending；post-migration 链表缺失/链 invalid/current !=
    head/未知 revision 均 fail（exit 1）；pre 与 post 全绿（exit 0）；
@@ -32,9 +39,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -53,6 +60,7 @@ from app.domain.audit_chain import append_audit
 from app.ops import cli as cli_module
 from app.ops.production_preflight import (
     _alembic_script_state,
+    _snapshot_execution_options,
     format_preflight_summary,
     run_preflight,
 )
@@ -397,17 +405,29 @@ def test_output_write_failure_when_parent_is_file(tmp_path, capsys) -> None:
     assert not (tmp_path / "artifacts" / "r.json").exists()
 
 
-def test_output_write_failure_disk_full(tmp_path, monkeypatch, capsys) -> None:
-    """write_text 抛 OSError（模拟磁盘满）：exit 2、报告不落盘、无检查结论。"""
+def test_output_atomic_write_failures_keep_old_report(
+    tmp_path, monkeypatch, capsys
+) -> None:
+    """原子落盘（返工）：写入阶段 fsync ENOSPC 与 replace 阶段 OSError——
+    既有旧报告字节原样保留、无残留 .tmp 临时文件、稳定 exit 2、无
+    traceback、不打印检查结论（不把半途报告伪装成完整结论）。"""
 
-    def boom(self, *args, **kwargs):
+    def boom_fsync(fd):
         raise OSError(28, "No space left on device")
+
+    def boom_replace(src, dst):
+        raise OSError(5, "Input/output error")
 
     db_url = _db_url(tmp_path)
     _init_db(db_url, audit_rows=1, alembic_rev=_head_revision())
-    target = tmp_path / "artifacts" / "r.json"
-    monkeypatch.setattr(Path, "write_text", boom)
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    target = artifacts / "report.json"
+    old_bytes = b'{"phase": "old-run", "exit_code": 0}\n'
+    target.write_bytes(old_bytes)
 
+    # 写入阶段失败（fsync 抛 ENOSPC，模拟磁盘满）：旧报告原样保留
+    monkeypatch.setattr(os, "fsync", boom_fsync)
     assert _preflight(db_url, "pre-migration", output=target) == 2
     captured = capsys.readouterr()
     assert "报告写入失败" in captured.out
@@ -415,7 +435,82 @@ def test_output_write_failure_disk_full(tmp_path, monkeypatch, capsys) -> None:
     assert "报告已写入" not in captured.out
     assert "RESULT:" not in captured.out
     assert captured.err == ""
-    assert not target.exists()
+    assert target.read_bytes() == old_bytes  # 旧报告不被截断/覆盖
+    assert list(artifacts.iterdir()) == [target]  # 无残留临时文件
+
+    # replace 阶段失败（IO 错误）：同样旧报告原样保留、无残留
+    monkeypatch.setattr(os, "fsync", lambda fd: None)
+    monkeypatch.setattr(os, "replace", boom_replace)
+    assert _preflight(db_url, "pre-migration", output=target) == 2
+    captured = capsys.readouterr()
+    assert "报告写入失败" in captured.out
+    assert "报告已写入" not in captured.out
+    assert "RESULT:" not in captured.out
+    assert captured.err == ""
+    assert target.read_bytes() == old_bytes
+    assert list(artifacts.iterdir()) == [target]
+
+
+def test_output_atomic_write_replaces_old_report(tmp_path, capsys) -> None:
+    """成功路径原子性：既有旧报告被**整体**替换为新报告（不是追加/拼接）。"""
+    db_url = _db_url(tmp_path)
+    _init_db(db_url, audit_rows=1, alembic_rev=_head_revision())
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    target = artifacts / "report.json"
+    target.write_bytes(b'{"old": true}\n')
+
+    assert _preflight(db_url, "pre-migration", output=target) == 0
+    report = json.loads(target.read_text(encoding="utf-8"))
+    assert report["phase"] == "pre-migration"
+    assert "old" not in report
+    assert list(artifacts.iterdir()) == [target]  # 临时文件已被 replace 消化
+
+
+def test_output_rejects_symlink_target(tmp_path, capsys) -> None:
+    """--output 目标是 symlink：拒绝写入（exit 2）——os.replace 的跨平台
+    语义无法保证「替换链接本身不跟随」，统一 fail-closed 拒绝，不写穿
+    链接、不产生报告/临时文件。链接目标即使也在 artifacts 内（路径
+    guard 放行）仍拒绝——拒绝的是链接形态本身，不是目标位置。"""
+    db_url = _db_url(tmp_path)
+    _init_db(db_url, audit_rows=1, alembic_rev=_head_revision())
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    real = artifacts / "real-target.json"
+    real.write_bytes(b"unchanged")
+    link = artifacts / "report.json"
+    try:
+        os.symlink(real, link)
+    except (OSError, NotImplementedError):
+        pytest.skip("此环境无法创建 symlink（Windows 需开发者模式/特权）")
+
+    assert _preflight(db_url, "pre-migration", output=link) == 2
+    captured = capsys.readouterr()
+    assert "报告写入失败" in captured.out
+    assert "符号链接" in captured.out
+    assert "报告已写入" not in captured.out
+    assert "RESULT:" not in captured.out
+    assert captured.err == ""
+    assert real.read_bytes() == b"unchanged"  # 不写穿链接
+    # 无临时文件、链接本身未被替换（目录里只有链接与其目标两个名字）
+    assert sorted(p.name for p in artifacts.iterdir()) == [
+        "real-target.json",
+        "report.json",
+    ]
+
+
+def test_snapshot_execution_options_dialect_split() -> None:
+    """快照事务方言选项：PG = 数据库层 READ ONLY（postgresql_readonly，
+    事务以 BEGIN READ ONLY 开始，写入在数据库处被拒绝）+ REPEATABLE READ
+    （同一事务快照）；SQLite = 无方言级选项——aiosqlite 无等价 READ ONLY
+    事务语法，只读边界是语句面的（本模块只发 SELECT/inspector），不伪造
+    数据库层能力。真实 PG 上的行为未在本测试环境实测（见 docs 未覆盖
+    边界）。"""
+    assert _snapshot_execution_options("postgresql") == {
+        "isolation_level": "REPEATABLE READ",
+        "postgresql_readonly": True,
+    }
+    assert _snapshot_execution_options("sqlite") is None
 
 
 def test_main_dispatches_production_preflight(tmp_path, monkeypatch, capsys) -> None:

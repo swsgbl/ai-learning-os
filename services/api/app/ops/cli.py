@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import errno
 import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from app.ops.backup import MinioBackupSource, run_backup, run_restore
@@ -525,6 +527,40 @@ def _run_audit_chain_anchor(args) -> int:
     return 0 if report["valid"] else 1
 
 
+def _write_report_atomic(path: Path, text: str) -> None:
+    """报告原子落盘：同目录临时文件写满 + fsync 后 os.replace 到目标。
+
+    既有目标只在 replace 成功的瞬间被**整体**替换——写入/fsync/replace
+    任一步 OSError 都先删除临时文件再上抛原始错误：旧报告字节保持不变，
+    本次 partial 报告不留盘（磁盘满/IO 中途失败不再产生截断 JSON，也不
+    再截断既有报告）。目标是符号链接时拒绝（打开前与 replace 前双重
+    复核；POSIX os.replace 替换链接本身不跟随写穿，Windows 语义无保证
+    ——统一 fail-closed 拒绝，不猜测，残余 swap 竞态窗口见 docs 声明）。
+    """
+    if path.is_symlink():
+        raise OSError(errno.ELOOP, "报告目标路径是符号链接，拒绝写入", str(path))
+    tmp_fd, tmp_name = tempfile.mkstemp(
+        dir=path.parent, prefix=path.name + ".", suffix=".tmp"
+    )
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(tmp_fd, "wb") as handle:
+            handle.write(text.encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
+        if path.is_symlink():  # 写入期间路径被换成链接：拒绝替换（防写穿 guard 外）
+            raise OSError(
+                errno.ELOOP, "报告目标路径是符号链接，拒绝写入", str(path)
+            )
+        os.replace(tmp_path, path)
+    except OSError:
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass  # 临时文件清理失败不掩盖原始错误（残留是 .tmp 后缀，不是报告）
+        raise
+
+
 def _run_production_preflight(args) -> int:
     """python -m app.ops.cli production-preflight --db-url URL
     --phase pre-migration|post-migration [--anchor-file PATH] [--json] [--output PATH]
@@ -537,6 +573,8 @@ def _run_production_preflight(args) -> int:
     verify-only（post 缺失=not_configured，按 runbook 人工完成，工具
     不自动创建；交叉核对消费主流程同一事务快照）、历史治理聚合计数
     （不输出生产 ID）。
+    --output 原子落盘：同目录临时文件 + fsync + os.replace——失败时旧
+    报告原样保留、不留 partial（symlink 目标拒绝）；写入失败 exit 2。
     退出码：无 fail=0 / 存在 fail=1 / 输入/锚路径/连接/Alembic 脚本解析/
     报告写入失败=2；pending 绝不包装成 pass。无 --yes 参数——本命令没有
     任何执行形态。
@@ -589,13 +627,16 @@ def _run_production_preflight(args) -> int:
         return 2
     if args.output:
         try:
-            Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-            Path(args.output).write_text(
-                _json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            _write_report_atomic(
+                output_path,
+                _json.dumps(report, ensure_ascii=False, indent=2),
             )
         except OSError as cause:
-            # 目录无法创建/权限不足/磁盘满：报告未落盘，不得再打印检查
-            # 结论摘要（避免被误读为完整报告）。
+            # 目录无法创建/权限不足/磁盘满/replace 失败：报告未落盘或旧
+            # 报告原样保留（原子写不产生 partial），不得再打印检查结论
+            # 摘要（避免被误读为完整报告）。
             print(
                 f"报告写入失败（路径/权限/磁盘问题，未产生报告文件）: "
                 f"{type(cause).__name__}: {cause}"
@@ -868,7 +909,10 @@ def main() -> None:
     p_pf.add_argument(
         "--output",
         default=None,
-        help="写 JSON 报告到文件（必须位于 gitignore 的 artifacts/temp 目录；默认不落盘）",
+        help=(
+            "写 JSON 报告到文件（必须位于 gitignore 的 artifacts/temp 目录；"
+            "原子落盘：临时文件 + rename，失败保留旧报告、symlink 拒绝；默认不落盘）"
+        ),
     )
     p_ad = sub.add_parser("admin", help="角色运维：promote/demote/list（M9-04）")
     p_ad.add_argument("action", choices=["promote", "demote", "list"])

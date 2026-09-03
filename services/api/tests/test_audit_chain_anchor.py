@@ -23,8 +23,11 @@
    （重跑不误判 up-to-date）、既有文件 fsync EIO 回原字节、回截本身
    失败仍上抛原始错误不虚构成功（均注入模拟故障，不依赖真实磁盘错误）；
 5. 并发边界：verify 与交叉核对共用单连接单事务快照（引擎计数=1）；
-   外部快照参数（production-preflight 复用）：不建引擎、verify_report
-   不重算、与 --yes 互斥、无 db_url 且无快照拒绝；
+   外部快照参数（production-preflight 复用；Codex 二轮返工收敛）：不建
+   引擎、verify 结论**始终从 snapshot 纯重算**（verify_report 参数已移除
+   ——杜绝「报告与快照不一致」的数据来源歧义）、与 --yes 互斥、与
+   db_url 互斥（同时提供=来源二义拒绝）、无 db_url 且无快照拒绝，全部
+   拒绝形态零锚文件副作用；
 6. CLI：exit 0/1/2、--json 结构、人类摘要、main 分发、--yes 与
    --verify-only 互斥、无 secret 泄漏（marker 字符串）。
 """
@@ -1029,11 +1032,12 @@ def test_run_anchor_consumes_external_snapshot_without_new_engine(
     tmp_path, monkeypatch
 ) -> None:
     """外部快照路径（production-preflight 复用）：不建引擎、不另取快照，
-    verify-only 结论与自建快照路径一致；提供的 verify_report 不被重算。"""
+    verify-only 结论与自建快照路径一致；verify 结论从 snapshot 纯重算
+    （verify_report 参数已移除——外部报告与快照不一致的歧义无从产生）。"""
     db_url = _make_db(tmp_path, rows=2)
     anchor_path = tmp_path / "anchor.jsonl"
     assert _anchor(db_url, anchor_path, execute=True)["status"] == "anchored"
-    snapshot, verify_report = _snapshot_of(db_url)
+    snapshot, _ = _snapshot_of(db_url)
 
     def no_engine(url, **kwargs):
         raise AssertionError("外部快照路径不得新建数据库引擎")
@@ -1049,31 +1053,31 @@ def test_run_anchor_consumes_external_snapshot_without_new_engine(
     monkeypatch.setattr(anchor_module, "verify_chain_snapshot", spy_verify)
 
     report = asyncio.run(
-        run_anchor(
-            None,
-            anchor_path,
-            verify_only=True,
-            snapshot=snapshot,
-            verify_report=verify_report,
-        )
+        run_anchor(None, anchor_path, verify_only=True, snapshot=snapshot)
     )
     assert report["status"] == "up-to-date"
     assert report["anchor_file"]["anchors"] == 1
-    assert verify_calls == []  # 提供了 verify_report 就不重算（无 IO 无重复校验）
+    assert verify_calls == [snapshot]  # 纯重算恰好一次（无 IO、无新连接）
 
 
 def test_run_anchor_external_snapshot_guardrails(tmp_path) -> None:
-    """外部快照只服务只读路径：与 --yes 互斥（落盘必须现场快照）；无
-    db_url 且未提供快照时拒绝（fail-closed，不猜测数据来源）。"""
+    """外部快照只服务只读路径，参数组合 fail-closed 防歧义（Codex 二轮
+    返工）：与 --yes 互斥（落盘必须现场快照）、与 db_url 互斥（同时提供=
+    数据来源二义，此前会静默用 snapshot 忽略 db_url）；无 db_url 且未提供
+    快照时拒绝。全部拒绝零锚文件副作用。"""
     db_url = _make_db(tmp_path, rows=1)
     anchor_path = tmp_path / "anchor.jsonl"
     snapshot, _ = _snapshot_of(db_url)
 
-    with pytest.raises(AnchorInputError, match="互斥"):
+    with pytest.raises(AnchorInputError, match="--yes 互斥"):
         asyncio.run(run_anchor(None, anchor_path, execute=True, snapshot=snapshot))
     with pytest.raises(AnchorInputError, match="--db-url"):
         asyncio.run(run_anchor(None, anchor_path, verify_only=True))
-    assert not anchor_path.exists()  # 两种拒绝都不产生锚文件
+    with pytest.raises(AnchorInputError, match="--db-url 互斥"):
+        asyncio.run(
+            run_anchor(db_url, anchor_path, verify_only=True, snapshot=snapshot)
+        )
+    assert not anchor_path.exists()  # 三种拒绝都不产生锚文件
 
 
 # --- 6. CLI：exit code / json / 摘要 / 分发 / 无泄漏 -------------------------

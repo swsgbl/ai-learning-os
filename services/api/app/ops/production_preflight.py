@@ -275,7 +275,6 @@ def _check_audit_chain(
 
 async def _check_anchor(
     snapshot: dict[str, Any],
-    verify_report: dict[str, Any],
     phase: str,
     anchor_path: Path | None,
 ) -> dict[str, Any]:
@@ -315,14 +314,14 @@ async def _check_anchor(
             {"anchor_file": str(anchor_path), "anchors": 0},
         )
     # 只跑 verify-only：DB 链 + 锚文件链 + head 交叉一致（对锚文件零写入）。
-    # 把主流程同一事务快照交给锚定校验（run_anchor 不再自建连接）——
-    # DB head 交叉核对与上面的 audit-chain 检查看到的是同一份链数据。
+    # 把主流程同一事务快照交给锚定校验（run_anchor 不再自建连接，verify
+    # 结论从快照纯重算）——DB head 交叉核对与上面的 audit-chain 检查看到
+    # 的是同一份链数据。
     report = await run_anchor(
         None,
         anchor_path,
         verify_only=True,
         snapshot=snapshot,
-        verify_report=verify_report,
     )
     anchors = report["anchor_file"]["anchors"]
     data = {"anchor_file": str(anchor_path), "anchors": anchors}
@@ -410,17 +409,34 @@ async def _check_legacy_governance(conn) -> dict[str, Any]:
 # --- 主流程 -------------------------------------------------------------------
 
 
+def _snapshot_execution_options(dialect_name: str) -> dict[str, Any] | None:
+    """快照事务的方言级执行选项（返回 None = 无需方言级选项）。
+
+    PG：数据库层 READ ONLY + REPEATABLE READ——`postgresql_readonly`
+    让 SQLAlchemy 以 `BEGIN READ ONLY` 开事务，任何写入语句在数据库处
+    即被拒绝（只读不依赖「本模块只发 SELECT」的语句面自律）；隔离级别
+    保证全部读取共享同一事务快照。SQLite：aiosqlite 无等价的 READ ONLY
+    事务语法，返回 None 走默认显式事务——只读边界是**语句面**的（本
+    模块只发 SELECT / inspector），不伪造数据库层能力。
+    """
+    if dialect_name == "postgresql":
+        return {"isolation_level": "REPEATABLE READ", "postgresql_readonly": True}
+    return None
+
+
 async def run_preflight(
     db_url: str, phase: str, *, anchor_file: str | Path | None = None
 ) -> dict[str, Any]:
     """执行全部只读检查并汇总（连接失败抛 SQLAlchemyError 由 CLI 映射 exit 2）。
 
-    全部数据库读取在**单一连接的显式只读事务**内完成（PG 提升到
-    REPEATABLE READ，SQLite 走显式事务快照——与 audit-chain-anchor 的
-    快照口径一致）：db-connect / alembic / audit-chain / legacy-governance
-    与锚定交叉核对的 DB head 消费同一份快照（`_check_anchor` 把快照交给
-    `run_anchor(verify_only=True)`，不再开第二个数据库连接）。对数据库
-    与锚文件零写入。
+    全部数据库读取在**单一连接的显式只读事务**内完成：PG 在数据库层
+    READ ONLY + REPEATABLE READ（`postgresql_readonly`，写入在数据库处
+    被拒绝且全部读取同一事务快照），SQLite 走显式事务的语句面只读快照
+    （aiosqlite 无等价 READ ONLY 事务语法，不伪造数据库层能力——与
+    audit-chain-anchor 的快照口径一致）：db-connect / alembic /
+    audit-chain / legacy-governance 与锚定交叉核对的 DB head 消费同一份
+    快照（`_check_anchor` 把快照交给 `run_anchor(verify_only=True)`，
+    不再开第二个数据库连接）。对数据库与锚文件零写入。
     """
     if phase not in PHASES:
         raise ValueError(f"未知 phase: {phase}（可选 {PHASES}）")
@@ -434,8 +450,9 @@ async def run_preflight(
     engine = create_engine(db_url)
     try:
         async with engine.connect() as conn:
-            if conn.dialect.name == "postgresql":
-                conn.execution_options(isolation_level="REPEATABLE READ")
+            options = _snapshot_execution_options(conn.dialect.name)
+            if options is not None:
+                conn.execution_options(**options)
             async with conn.begin():
                 checks.append(await _check_database(conn, db_url))
                 checks.append(await _check_alembic(conn, phase))
@@ -445,7 +462,7 @@ async def run_preflight(
                 checks.append(await _check_legacy_governance(conn))
     finally:
         await engine.dispose()
-    checks.append(await _check_anchor(snapshot, verify_report, phase, anchor_path))
+    checks.append(await _check_anchor(snapshot, phase, anchor_path))
     return _assemble_report(phase, checks)
 
 

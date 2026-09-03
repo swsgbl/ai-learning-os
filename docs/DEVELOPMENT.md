@@ -279,17 +279,22 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
 
 定位：生产切换 runbook 的**防呆汇总**，不是 release-check 替代品。全部检查只读——
 不执行迁移、不写数据库、不写锚文件、不清理数据、不启动/停止服务；命令**没有任何
-执行形态（无 --yes）**。全部数据库读取在**单一连接的显式只读事务**内完成（PG
-提升 REPEATABLE READ，SQLite 显式事务快照——与 audit-chain-anchor 同口径）：
-db-connect / alembic / audit-chain / legacy-governance 与锚定交叉核对消费**同一份
-快照**（`run_anchor` 可接收已加载的 snapshot/verify_report，锚定校验不再开第二个
-数据库连接）。五项检查：① 连通与当前库名（PG `current_database()`，不输出
-完整 URL/凭据）；② alembic current/head 只读对账（直接查 `alembic_version` + 只读解析
-脚本目录，绝不 upgrade/downgrade）；③ 审计链（复用 audit-chain-verify 的
-load/verify snapshot 语义）；④ 库外锚定（提供锚文件且存在时只跑 anchor
-verify-only 交叉校验，消费主流程快照；绝不追加锚行）；⑤ 历史治理聚合计数
-（无归属非 seed 卷、generation/variant NULL owner 草稿——只输出计数，不输出
-生产 ID）。
+执行形态（无 --yes）**。全部数据库读取在**单一连接的显式只读事务**内完成：PG 为
+**数据库层 READ ONLY + REPEATABLE READ**（SQLAlchemy execution option
+`postgresql_readonly=True`——事务以 `BEGIN READ ONLY` 开始，任何写入语句在数据库
+处即被拒绝，只读不依赖「本模块只发 SELECT」的语句面自律；隔离级别保证全部读取同一
+事务快照）；SQLite 无等价的 READ ONLY 事务语法，走显式事务的**语句面只读**快照
+（本模块只发 SELECT / inspector，不伪造数据库层能力——与 audit-chain-anchor 的
+快照口径一致，方言差异如实声明）。db-connect / alembic / audit-chain /
+legacy-governance 与锚定交叉核对消费**同一份快照**（`run_anchor` 可接收已加载的
+snapshot——与 `--yes`、与 db_url 均互斥，verify 结论始终从 snapshot 纯重算、不接收
+外部 verify_report，杜绝数据来源歧义；锚定校验不再开第二个数据库连接）。五项检查：
+① 连通与当前库名（PG `current_database()`，不输出完整 URL/凭据）；② alembic
+current/head 只读对账（直接查 `alembic_version` + 只读解析脚本目录，绝不
+upgrade/downgrade）；③ 审计链（复用 audit-chain-verify 的 load/verify snapshot
+语义）；④ 库外锚定（提供锚文件且存在时只跑 anchor verify-only 交叉校验，消费主
+流程快照；绝不追加锚行）；⑤ 历史治理聚合计数（无归属非 seed 卷、generation/
+variant NULL owner 草稿——只输出计数，不输出生产 ID）。
 
 - **phase 语义（--phase 必选）**：迁移后忘带 phase 会误用 pre 的宽松语义
   （链表缺失算 pending），故强制显式选择。pre-migration：**唯一**允许的链表
@@ -305,12 +310,16 @@ verify-only 交叉校验，消费主流程快照；绝不追加锚行）；⑤ �
 - **状态与退出码**：`pass` / `pending` / `fail` / `not_configured`；无 fail=0、
   存在 fail=1、输入/锚文件路径/数据库连接/Alembic 脚本目录解析/报告写入失败=2
   （Alembic 解析失败捕 `alembic.util.exc.CommandError` 基类与迁移脚本
-  `SyntaxError`；`--output` 的目录创建/写入 OSError 不打印检查结论摘要，避免
-  半途报告被误读为完整结论）。**pending / not_configured 不
-  包装成 pass**——人类摘要明确写「生产切换仍需按 runbook 人工决策/执行」。报告与
-  错误信息不含完整 URL/凭据（连接与 Alembic 错误先抹 `://user:pass@` 再输出）、
-  不含生产 paper/draft ID、不含 audit before/after 正文。`--output` 复用
-  artifacts/temp 路径护栏，默认不落盘。
+  `SyntaxError`；`--output` 写入失败不打印检查结论摘要，避免半途报告被误读为完整
+  结论）。**pending / not_configured 不包装成 pass**——人类摘要明确写「生产切换
+  仍需按 runbook 人工决策/执行」。报告与错误信息不含完整 URL/凭据（连接与
+  Alembic 错误先抹 `://user:pass@` 再输出）、不含生产 paper/draft ID、不含
+  audit before/after 正文。`--output` 复用 artifacts/temp 路径护栏，默认不落盘；
+  落盘为**原子写**：同目录临时文件写满 + fsync 后 `os.replace` 到目标——磁盘满/
+  IO 中途失败时既有旧报告字节原样保留、不留本次 partial 报告、无残留临时文件
+  （exit 2）；目标是 symlink 时拒绝（POSIX `os.replace` 替换链接本身不跟随写穿，
+  Windows 语义无保证——统一 fail-closed 拒绝；前置检查与 replace 前复核之间存在
+  理论 swap 竞态窗口，与锚文件同口径如实声明）。
 
 ### 生产切换 preflight runbook
 
