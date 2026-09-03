@@ -147,9 +147,10 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   --anchor-file <path> [--yes | --verify-only] [--json]`
   （`app/ops/audit_chain_anchor.py`）。默认 dry-run 只打印将追加的锚行；
   `--yes` 才落盘（O_APPEND 单行写入 + fsync；写入/文件 fsync/新建后
-  父目录 fsync 任一失败都回截原大小并尽力 fsync 持久化回截——报失败
-  时锚行不在盘上，重跑不会误判 up-to-date；打开/创建区分与持久化
-  能力边界见下条）；
+  父目录 fsync 任一失败都尽力回截原大小并尽力 fsync 持久化回截——
+  回截成功时报失败即锚行不在盘上，重跑不会误判 up-to-date；回截或
+  回截后的 fsync 也失败时状态未知，由下次完整校验或人工排查处理；
+  打开/创建区分与持久化能力边界见下条）；
   `--verify-only` 只做「DB 链 + 锚文件链 + 两者 head 交叉一致」校验。
   退出码与 verifier 对齐：valid/up-to-date/anchored/dry-run=0、
   invalid=1、缺 `--db-url`/锚文件路径问题（symlink、目录、父目录缺失，
