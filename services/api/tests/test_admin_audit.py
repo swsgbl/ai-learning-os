@@ -371,7 +371,19 @@ def test_exposure_valid_production_config_passes() -> None:
         host_bind_ip="0.0.0.0", app_env="production",
         auth_secret="prod-auth-secret-0123456789abcdef012345",
         livekit_api_secret="prod-livekit-secret-0123456789abcdef01",
+        cors_origins="https://learn.example.com",
     )
+
+
+def test_exposure_public_binding_rejects_local_only_cors() -> None:
+    """M9-07: 公开绑定但 CORS 仍 localhost-only → 明确报错要求 AIOS_CORS_ORIGINS。"""
+    with pytest.raises(RuntimeError, match="AIOS_CORS_ORIGINS"):
+        validate_exposure(
+            host_bind_ip="0.0.0.0", app_env="production",
+            auth_secret="prod-auth-secret-0123456789abcdef012345",
+            livekit_api_secret="prod-livekit-secret-0123456789abcdef01",
+            cors_origins="http://localhost:3000,http://127.0.0.1:3000",
+        )
 
 
 def test_compose_livekit_ports_bound_to_loopback_by_default() -> None:
@@ -391,3 +403,56 @@ def test_compose_livekit_ports_bound_to_loopback_by_default() -> None:
     assert env.get("HOST_BIND_IP") == "${AIOS_BIND_IP:-127.0.0.1}", (
         "宿主绑定意图必须以 HOST_BIND_IP 传入 API 容器（对齐 settings.host_bind_ip）"
     )
+
+
+# --- M9-07 Source verify 回归 ---
+
+
+def test_source_verify_single_mutation_single_audit(client_and_db, auth_on) -> None:
+    """admin verify：审计 source.verify 恰好一条；verified 状态只变更一次；404 无审计。"""
+    client, db_url = client_and_db
+    admin_user = User(client, "verify_admin")
+    _promote_to_admin(db_url, "verify_admin")
+
+    r = client.post(
+        "/api/v1/sources",
+        json={"id": "src_v", "name": "s", "source_type": "oer", "license_state": "UNKNOWN",
+              "trust_tier": "B", "authority_score": 5, "homepage": "https://example.edu/v"},
+        headers=admin_user.headers,
+    )
+    assert r.status_code == 201
+
+    # 404 verify：不产生任何成功审计
+    missing = client.post("/api/v1/sources/src_absent/verify", headers=admin_user.headers)
+    assert missing.status_code == 404
+
+    ok = client.post("/api/v1/sources/src_v/verify", headers=admin_user.headers)
+    assert ok.status_code == 200
+    first_verified_at = ok.json()["last_verified_at"]
+
+    # 审计中 source.verify 对该 source 恰好一条，且 actor/request_id 真实
+    entries = [
+        e for e in client.get("/api/v1/audit", headers=admin_user.headers).json()
+        if e["action"] == "source.verify" and e["target_id"] == "src_v"
+    ]
+    assert len(entries) == 1, f"source.verify 应恰好一条审计，实际 {len(entries)}"
+    assert entries[0]["after"] == {"verified": True}
+    assert entries[0]["actor_username"] == "verify_admin"
+    assert entries[0]["request_id"]
+
+    # 重复 verify 是幂等动作（仍 200），但审计条数保持 1 条/次——再验一次计 2 条
+    ok2 = client.post("/api/v1/sources/src_v/verify", headers=admin_user.headers)
+    assert ok2.status_code == 200
+    entries_after = [
+        e for e in client.get("/api/v1/audit", headers=admin_user.headers).json()
+        if e["action"] == "source.verify" and e["target_id"] == "src_v"
+    ]
+    assert len(entries_after) == 2, "每次成功 verify 恰好一条审计（不重复不缺失）"
+    # 状态时间戳：第二次 verify 更新了 last_verified_at（审计/状态各只反映一次调用）
+    assert ok2.json()["last_verified_at"] >= first_verified_at
+
+    # 404 仍无审计（src_absent 不出现）
+    assert not [
+        e for e in client.get("/api/v1/audit", headers=admin_user.headers).json()
+        if e["target_id"] == "src_absent"
+    ]

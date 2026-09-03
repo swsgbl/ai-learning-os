@@ -9,6 +9,8 @@
 """
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -16,6 +18,7 @@ from app.core.config import get_settings
 from app.main import create_app
 
 SECRET = "m9-05-ownership-audit-secret-0123456789abcdef"
+COMPOSE_FILE = Path(__file__).resolve().parents[3] / "infra" / "docker-compose.yml"
 
 
 @pytest.fixture()
@@ -132,7 +135,8 @@ def test_course_generation_excludes_foreign_private_chunks(stack, auth_on, monke
     alice = User(client, "alice_gen")
 
     _public_source(client, admin.headers, "src_pub_gen")
-    _upload(client, alice.headers, "genPrivateMarkerXyz", source_id=None)
+    # M9-07: 预先上传 Alice 私有资源并保存 resource_id —— 生成后做决定性断言
+    alice_private_rid = _upload(client, alice.headers, "genPrivateMarkerXyz", source_id=None)
 
     bob = User(client, "bob_gen")
     # Bob 触发生成：需要 admin 发布 DAG（治理动作）；生成过程检索语料
@@ -152,13 +156,12 @@ def test_course_generation_excludes_foreign_private_chunks(stack, auth_on, monke
     )
     assert gen.status_code == 201, gen.text
     body = gen.json()
-    alice_rid = _upload(client, alice.headers, "genSecondPrivateMarker", source_id=None)
-    # M9-06 补强：拿到 Alice 私有 resource_id 后做决定性断言——
-    # 响应序列化结果与 plan.resources 均不得出现该 id（检索阶段已被 owner 过滤）
-    assert alice_rid not in str(body), "Bob 生成的草稿响应不得引用 Alice 私有资源"
+    # 决定性断言：测试开始前上传的 Alice 私有 resource_id 不得出现在
+    # 响应序列化文本与 plan.resources 中（检索阶段已被 owner 过滤）
+    assert alice_private_rid not in str(body), "Bob 生成响应不得引用 Alice 私有资源"
     resources_in_plan = body["plan"].get("resources", [])
     assert all(
-        ref.get("resource_id") != alice_rid for ref in resources_in_plan
+        ref.get("resource_id") != alice_private_rid for ref in resources_in_plan
     ), "plan.resources 不得引用 Alice 私有资源"
 
     # generation draft ownership：Alice 创建后 Bob list 不可见、get 404、admin 可读
@@ -377,3 +380,92 @@ def test_variant_draft_ownership(stack, auth_on) -> None:
         "/api/v1/questions/variant-drafts", headers=alice.headers
     ).json()
     assert any(item["id"] == draft_id for item in alice_list)
+
+
+# --- 6. M9-07 部署拓扑与 LiveKit 凭据一致性（compose 渲染） ---
+
+
+def test_compose_topology_data_services_stay_loopback(stack, auth_on) -> None:
+    """AIOS_BIND_IP=0.0.0.0 渲染：api/web/livekit 可公开；postgres/redis/minio 仍 loopback。"""
+    import os
+    import subprocess
+
+    def render(tag: str) -> dict:
+        env = {**os.environ, "AIOS_BIND_IP": tag, "AIOS_WEB_PORT": "3100"}
+        env.pop("DATABASE_URL", None)
+        proc = subprocess.run(
+            ["docker", "compose", "-f", COMPOSE_FILE, "--profile", "local", "config", "--format", "json"],
+            capture_output=True, text=True, check=True, env=env,
+        )
+        import json
+        return json.loads(proc.stdout)
+
+    public = render("0.0.0.0")
+    loopback = render("127.0.0.1")
+    for svc in ("postgres", "redis", "minio"):
+        for mode in (public, loopback):
+            ports = mode["services"][svc].get("ports", [])
+            for port in ports:
+                assert port.get("host_ip") == "127.0.0.1", f"{svc} 数据面必须固定 loopback"
+    for svc in ("api", "web", "livekit"):
+        ports = public["services"][svc].get("ports", [])
+        assert ports and all(p.get("host_ip") == "0.0.0.0" for p in ports), (
+            f"{svc} 在 AIOS_BIND_IP=0.0.0.0 下应可公开绑定"
+        )
+    del loopback
+
+
+def test_compose_livekit_credentials_shared_with_api(stack, auth_on) -> None:
+    """生产 key/secret 渲染后：API env 与 livekit server --keys 出现同一组值；默认模式用占位值。"""
+    import json
+    import os
+    import subprocess
+
+    def render(env_extra: dict) -> dict:
+        env = {**os.environ, "AIOS_WEB_PORT": "3100", **env_extra}
+        env.pop("DATABASE_URL", None)
+        proc = subprocess.run(
+            ["docker", "compose", "-f", COMPOSE_FILE, "--profile", "local", "config", "--format", "json"],
+            capture_output=True, text=True, check=True, env=env,
+        )
+        return json.loads(proc.stdout)
+
+    prod_key, prod_secret = "prod-lk-key", "prod-lk-secret-0123456789abcdef"
+    rendered = render({
+        "AIOS_LIVEKIT_API_KEY": prod_key,
+        "AIOS_LIVEKIT_API_SECRET": prod_secret,
+    })
+    api_env = rendered["services"]["api"]["environment"]
+    assert api_env["LIVEKIT_API_KEY"] == prod_key
+    assert api_env["LIVEKIT_API_SECRET"] == prod_secret
+    livekit_cmd = " ".join(rendered["services"]["livekit"]["command"])
+    assert prod_key in livekit_cmd and prod_secret in livekit_cmd, (
+        "livekit server --keys 必须与 API 使用同一组凭据"
+    )
+
+    default = render({})
+    api_env = default["services"]["api"]["environment"]
+    assert api_env["LIVEKIT_API_KEY"] == "devkey"
+    assert api_env["LIVEKIT_API_SECRET"] == "ailos-local-dev-secret-0f4c9a1e7b2d"
+
+
+def test_compose_web_api_base_url_build_arg(stack, auth_on) -> None:
+    """Web build arg：AIOS_PUBLIC_API_BASE_URL 渲染进 build.args（局域网访问入口）。"""
+    import json
+    import os
+    import subprocess
+
+    def render(env_extra: dict) -> dict:
+        env = {**os.environ, "AIOS_WEB_PORT": "3100", **env_extra}
+        env.pop("DATABASE_URL", None)
+        proc = subprocess.run(
+            ["docker", "compose", "-f", COMPOSE_FILE, "--profile", "local", "config", "--format", "json"],
+            capture_output=True, text=True, check=True, env=env,
+        )
+        return json.loads(proc.stdout)
+
+    rendered = render({"AIOS_PUBLIC_API_BASE_URL": "http://192.168.1.10:8000"})
+    args = rendered["services"]["web"]["build"]["args"]
+    assert args["NEXT_PUBLIC_API_BASE_URL"] == "http://192.168.1.10:8000"
+    default = render({})
+    assert default["services"]["web"]["build"]["args"]["NEXT_PUBLIC_API_BASE_URL"] == "http://127.0.0.1:8000"
