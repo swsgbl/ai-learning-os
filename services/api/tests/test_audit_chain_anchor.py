@@ -11,6 +11,13 @@
    但锚点 hash 全变）、DB sequence 回退；
 4. 文件安全：symlink（含 dangling）/目录/父目录缺失拒绝 exit 2、写入
    中途失败不留半行（回截恢复）、新建 0600（POSIX）；
+4b. 打开/创建语义与持久化（返工）：既有文件不带 O_CREAT 打开、不存在
+   才 O_CREAT|O_EXCL 排他新建——并发窗口被抢先创建则 FileExistsError
+   失败且不覆盖对方内容；POSIX O_NOFOLLOW 可用时 symlink 在 open 处
+   拒绝（无该旗标的平台用注入常量 + mock os.open 测能力分支并注明）；
+   排他新建后 symlink 复核（Windows CRT O_EXCL 跟随链接）；新建成功
+   后 fsync 父目录（仅新建调用；EINVAL=文件系统能力跳过、其余 OSError
+   上抛、无目录 fd 能力平台跳过）；失败场景一律不污染锚文件；
 5. 并发边界：verify 与交叉核对共用单连接单事务快照（引擎计数=1）；
 6. CLI：exit 0/1/2、--json 结构、人类摘要、main 分发、--yes 与
    --verify-only 互斥、无 secret 泄漏（marker 字符串）。
@@ -18,6 +25,7 @@
 from __future__ import annotations
 
 import asyncio
+import errno
 import json
 import os
 import stat
@@ -42,6 +50,7 @@ from app.ops.audit_chain_anchor import (
     ANCHOR_ALGORITHM,
     ANCHOR_SCHEMA_VERSION,
     AnchorInputError,
+    append_anchor_line,
     build_anchor,
     compute_anchor_hash,
     format_anchor_summary,
@@ -699,6 +708,193 @@ def test_anchor_file_created_with_0600(tmp_path) -> None:
     anchor_path = tmp_path / "anchor.jsonl"
     _anchor(db_url, anchor_path, execute=True)
     assert stat.S_IMODE(os.stat(anchor_path).st_mode) == 0o600
+
+
+# --- 4b. 打开/创建语义与持久化（返工） --------------------------------------
+
+
+def test_concurrent_creation_fails_closed_without_overwriting(
+    tmp_path, monkeypatch
+) -> None:
+    """排他创建竞态：既有文件打开报不存在后、O_EXCL 创建前，路径被另一
+    操作员抢先创建 -> FileExistsError 失败退出，不覆盖、不追加对方文件。
+    """
+    anchor_path = tmp_path / "anchor.jsonl"
+    other = b'{"taken":"by-other-operator"}\n'
+    real_open = os.open
+
+    def racing_open(p, flags, *args, **kwargs):
+        if Path(p) == anchor_path and not flags & os.O_CREAT:
+            # 「打开既有文件」窗口：另一操作员抢先创建了锚文件
+            fd = real_open(
+                anchor_path,
+                os.O_WRONLY | os.O_CREAT | getattr(os, "O_BINARY", 0),
+                0o600,
+            )
+            os.write(fd, other)
+            os.close(fd)
+            raise FileNotFoundError(errno.ENOENT, "模拟：检查时文件不存在", str(p))
+        return real_open(p, flags, *args, **kwargs)
+
+    monkeypatch.setattr(anchor_module.os, "open", racing_open)
+    with pytest.raises(FileExistsError):
+        append_anchor_line(anchor_path, b'{"we":"lost-the-race"}\n')
+    # 不猜测、不覆盖：锚文件保持对方写入的内容
+    assert anchor_path.read_bytes() == other
+
+
+def test_existing_file_opened_without_create_flag(tmp_path, monkeypatch) -> None:
+    """续写既有文件必须不带 O_CREAT：盲开 O_CREAT 会掩盖路径被替换。"""
+    anchor_path = tmp_path / "anchor.jsonl"
+    anchor_path.write_bytes(b"")
+    seen_flags: list[int] = []
+    real_open = os.open
+
+    def spy_open(p, flags, *args, **kwargs):
+        seen_flags.append(flags)
+        return real_open(p, flags, *args, **kwargs)
+
+    monkeypatch.setattr(anchor_module.os, "open", spy_open)
+    append_anchor_line(anchor_path, b'{"a":1}\n')
+    assert seen_flags == [anchor_module._APPEND_OPEN_FLAGS | anchor_module._O_NOFOLLOW]
+    assert not seen_flags[0] & os.O_CREAT
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "O_NOFOLLOW") or sys.platform.startswith("win"),
+    reason="需要 POSIX O_NOFOLLOW（内核对 symlink 返回 ELOOP）；Windows 无该旗标，"
+    "另见下方注入常量 + mock 的能力分支测试",
+)
+def test_symlink_open_rejected_at_open_via_nofollow(tmp_path) -> None:
+    """POSIX：O_NOFOLLOW 使 symlink 在 open 处被内核拒绝（ELOOP ->
+    AnchorInputError），消除前置检查与打开之间的 swap TOCTOU 窗口。
+    """
+    real = tmp_path / "real.jsonl"
+    real.write_bytes(b"unchanged\n")
+    link = tmp_path / "link.jsonl"
+    os.symlink(real, link)
+    with pytest.raises(AnchorInputError):
+        append_anchor_line(link, b'{"x":1}\n')
+    assert real.read_bytes() == b"unchanged\n"  # 失败不污染目标文件
+
+
+@pytest.mark.skipif(
+    hasattr(os, "O_NOFOLLOW"),
+    reason="平台原生支持 O_NOFOLLOW，symlink 拒绝由上方真实测试覆盖",
+)
+def test_nofollow_capability_branch_mocked_without_native_support(
+    tmp_path, monkeypatch
+) -> None:
+    """无 O_NOFOLLOW 旗标的平台（Windows）无法真实触发 ELOOP：注入能力
+    常量并 mock os.open 模拟 POSIX 内核对 symlink 的 ELOOP，验证旗标
+    确实传给 open 且被转成 AnchorInputError、不写既有文件。真实内核
+    行为由上方 POSIX 测试覆盖（mock 测试，如实注明）。
+    """
+    fake_nofollow = 0o400000  # 任意位值，只验证旗标传递与错误转换
+    monkeypatch.setattr(anchor_module, "_O_NOFOLLOW", fake_nofollow)
+    anchor_path = tmp_path / "anchor.jsonl"
+    anchor_path.write_bytes(b"unchanged\n")
+    seen_flags: list[int] = []
+
+    def fake_open(p, flags, *args, **kwargs):
+        seen_flags.append(flags)
+        if flags & fake_nofollow:
+            raise OSError(errno.ELOOP, "too many levels of symbolic links", str(p))
+        raise AssertionError("打开既有文件必须携带 O_NOFOLLOW 旗标")
+
+    monkeypatch.setattr(anchor_module.os, "open", fake_open)
+    with pytest.raises(AnchorInputError):
+        append_anchor_line(anchor_path, b'{"x":1}\n')
+    assert seen_flags and seen_flags[0] & fake_nofollow
+    assert anchor_path.read_bytes() == b"unchanged\n"
+
+
+def test_create_rejects_symlink_path_via_post_check(tmp_path) -> None:
+    """排他新建遇 symlink 路径必须 fail-closed：POSIX O_EXCL 检查链接
+    本身直接 EEXIST；Windows CRT 的 O_CREAT|O_EXCL 会跟随 dangling
+    symlink 在目标处创建，靠新建后的 islink 复核拒绝（与 M10-04 导出
+    档案同模式）。两种形态都不得把锚行透过链接写出。环境无法创建
+    symlink 则 skip。
+    """
+    victim_dir = tmp_path / "victim"
+    victim_dir.mkdir()
+    link = tmp_path / "anchor.jsonl"
+    try:
+        os.symlink(victim_dir / "target.jsonl", link)
+    except (OSError, NotImplementedError):
+        pytest.skip("此环境无法创建 symlink（Windows 需开发者模式/特权）")
+    with pytest.raises((AnchorInputError, FileExistsError)):
+        append_anchor_line(link, b'{"x":1}\n')
+    target = victim_dir / "target.jsonl"
+    # POSIX：目标处根本没创建；Windows：至多留下 0 字节目标文件——
+    # 锚行绝不出现（不清理目标：不猜测链接指向的文件归属）
+    assert not target.exists() or target.read_bytes() == b""
+
+
+def test_parent_directory_fsync_only_for_new_file(tmp_path, monkeypatch) -> None:
+    """新建锚文件写入 fsync 成功后同步父目录；续写既有文件不重复同步
+    （目录项未变化）。spy 内调用真实实现：POSIX 真实 fsync 目录，
+    Windows 按能力跳过。
+    """
+    calls: list[Path] = []
+    real = anchor_module._fsync_parent_directory
+
+    def spy(p):
+        calls.append(Path(p))
+        real(p)
+
+    monkeypatch.setattr(anchor_module, "_fsync_parent_directory", spy)
+    anchor_path = tmp_path / "anchor.jsonl"
+    append_anchor_line(anchor_path, b'{"a":1}\n')
+    assert calls == [anchor_path]
+    append_anchor_line(anchor_path, b'{"b":2}\n')
+    assert calls == [anchor_path]  # 续写不触发目录同步
+    assert anchor_path.read_bytes() == b'{"a":1}\n{"b":2}\n'
+
+
+def test_parent_directory_fsync_capability_boundaries(tmp_path, monkeypatch) -> None:
+    """目录 fsync 错误语义：无能力平台不打开目录；EINVAL（文件系统不
+    支持）按能力跳过；其余 OSError 原样上抛（锚行已 fsync 也不虚报
+    目录项持久）；fd 每次都被关闭。
+    """
+    # 无目录 fd 能力（Windows 形态）：直接跳过，不触碰 os.open
+    monkeypatch.setattr(anchor_module, "_CAN_FSYNC_DIR", False)
+
+    def fail_open(p, *args, **kwargs):
+        raise AssertionError("无能力时不应打开目录")
+
+    monkeypatch.setattr(anchor_module.os, "open", fail_open)
+    anchor_module._fsync_parent_directory(tmp_path / "a.jsonl")  # 不抛
+
+    # 有能力（POSIX 形态）：EINVAL=文件系统能力边界跳过；其余上抛
+    monkeypatch.setattr(anchor_module, "_CAN_FSYNC_DIR", True)
+    opened: list[object] = []
+    closed: list[int] = []
+
+    def fake_open(p, flags, *args, **kwargs):
+        opened.append((p, flags))
+        return 7
+
+    monkeypatch.setattr(anchor_module.os, "open", fake_open)
+    monkeypatch.setattr(
+        anchor_module.os, "close", lambda fd: closed.append(fd)
+    )
+
+    def raise_einval(fd):
+        raise OSError(errno.EINVAL, "fs does not support directory fsync")
+
+    monkeypatch.setattr(anchor_module.os, "fsync", raise_einval)
+    anchor_module._fsync_parent_directory(tmp_path / "a.jsonl")
+    assert closed == [7]
+
+    def raise_eio(fd):
+        raise OSError(errno.EIO, "I/O error")
+
+    monkeypatch.setattr(anchor_module.os, "fsync", raise_eio)
+    with pytest.raises(OSError):
+        anchor_module._fsync_parent_directory(tmp_path / "a.jsonl")
+    assert closed == [7, 7]  # 抛错路径同样关闭 fd
+    assert opened and opened[0][0] == tmp_path
 
 
 # --- 5. 并发边界：单连接单事务快照 -------------------------------------------

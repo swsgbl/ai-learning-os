@@ -13,7 +13,16 @@ sha256(canonical JSON of 其余六字段)——与 DB 链同源的 canonical 规
 （app.domain.audit_chain.canonical_json_bytes），锚文件自身成链。
 
 安全边界（docs/DEVELOPMENT.md 审计节同步维护）：
-- 本工具只保证「追加前完整校验 + 单行原子追加 + fsync」；
+- 本工具只保证「追加前完整校验 + 单行原子追加 + fsync +（新建时，
+  支持目录 fsync 的 POSIX 平台）父目录 fsync」；
+- 打开/创建语义可区分（不盲开 O_CREAT）：既有文件以 O_WRONLY|O_APPEND
+  打开，POSIX 平台附带 O_NOFOLLOW 在 open 处即拒绝 symlink；文件不存在
+  才以 O_CREAT|O_EXCL 排他新建（0600），并发窗口内路径被抢先创建/替换
+  则 FileExistsError 失败退出，不猜测、不覆盖。Windows 无 O_NOFOLLOW，
+  依赖前置 check_anchor_path 的 symlink 拒绝 + 打开后 fstat 常规文件
+  复核，两者之间仍存在 symlink swap 残余竞态窗口（docs 如实声明）；
+  Windows CRT 的 O_EXCL 会跟随 dangling symlink，故新建后另复核路径
+  本身不是链接；
 - 锚文件本身是可变文件系统对象，**必须另行复制到 WORM/对象锁/离线介质**
   才构成对持库写权限者的防御——本机锚文件只是操作见证；
 - 并发边界：DB 侧在**同一连接同一事务快照**内完成 verify + 锚点交叉
@@ -23,6 +32,7 @@ sha256(canonical JSON of 其余六字段)——与 DB 链同源的 canonical 规
 """
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import os
@@ -64,6 +74,19 @@ _HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
 
 #: 问题输出上限，与 verifier 一致（防海量锚点刷屏）
 _MAX_PROBLEMS = 50
+
+#: 追加写入的公共 open 旗标（O_BINARY 仅 Windows 存在）
+_APPEND_OPEN_FLAGS = os.O_WRONLY | os.O_APPEND | getattr(os, "O_BINARY", 0)
+
+#: POSIX O_NOFOLLOW：打开既有文件时在内核处拒绝 symlink（防 swap TOCTOU）。
+#: 模块级常量便于测试注入能力分支；Windows 无此旗标（=0，靠前置 symlink
+#: 拒绝 + fstat 复核，残余竞态见 docs 声明）。
+_O_NOFOLLOW = getattr(os, "O_NOFOLLOW", 0)
+
+#: POSIX O_DIRECTORY：具备该旗标即视为支持目录 fsync；Windows 无法打开
+#: 目录 fd，新建文件后跳过父目录同步（能力边界，docs 如实声明）。
+_O_DIRECTORY = getattr(os, "O_DIRECTORY", 0)
+_CAN_FSYNC_DIR = _O_DIRECTORY != 0
 
 
 class AnchorInputError(Exception):
@@ -311,16 +334,74 @@ def cross_check_anchors(
 # --- 追加写入（append-only + fsync + 半行回滚） -----------------------------
 
 
+def _open_existing(path: Path) -> int:
+    """打开既有锚文件：O_WRONLY|O_APPEND，不带 O_CREAT。
+
+    POSIX 平台附带 O_NOFOLLOW——路径是 symlink 时内核直接 ELOOP（消除
+    前置检查与打开之间的 swap TOCTOU 窗口），转成 AnchorInputError。
+    其余 OSError（权限、路径不存在等）原样上抛，由调用方分派。
+    """
+    try:
+        return os.open(path, _APPEND_OPEN_FLAGS | _O_NOFOLLOW)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise AnchorInputError(f"锚文件是符号链接，拒绝写入: {path}") from exc
+        raise
+
+
+def _create_new(path: Path) -> int:
+    """排他新建锚文件：O_CREAT|O_EXCL（0600）。
+
+    并发窗口内路径已被他人创建/替换则 FileExistsError 上抛——不猜测、
+    不覆盖。Windows CRT 的 O_EXCL 会跟随 dangling symlink 在目标处创建
+    （POSIX O_EXCL 检查链接本身），故新建成功后复核路径本身不是符号
+    链接；复核命中时只拒绝不清理目标（与 M10-04 导出档案同模式）。
+    """
+    fd = os.open(path, _APPEND_OPEN_FLAGS | os.O_CREAT | os.O_EXCL, 0o600)
+    if not os.path.islink(path):
+        return fd
+    os.close(fd)
+    raise AnchorInputError(f"锚文件路径是符号链接，拒绝创建: {path}")
+
+
+def _fsync_parent_directory(path: Path) -> None:
+    """fsync 父目录，让新建文件的目录项在 crash 后尽量持久。
+
+    能力边界（docs/DEVELOPMENT.md 同步声明，不虚报）：Windows 无法打开
+    目录 fd（无 O_DIRECTORY），直接跳过；个别文件系统对目录 fsync 返回
+    EINVAL（不支持），按能力跳过；其余 OSError 原样上抛——锚行虽已
+    fsync，但持久性承诺未达成时不静默装作成功。
+    """
+    if not _CAN_FSYNC_DIR:
+        return
+    dir_fd = os.open(path.parent, os.O_RDONLY | _O_DIRECTORY)
+    try:
+        os.fsync(dir_fd)
+    except OSError as exc:
+        if exc.errno != errno.EINVAL:
+            raise  # 真实 IO 失败上抛；EINVAL=该文件系统不支持目录 fsync
+    finally:
+        os.close(dir_fd)
+
+
 def append_anchor_line(path: Path, line: bytes) -> None:
     """单行原子追加：O_APPEND 单次序列写满 + fsync；失败回截不留半行。
 
-    新建文件权限 0600（POSIX 语义；Windows 无 POSIX 权限位，等效于默认
-    ACL，见 docs 说明）。打开后 fstat 复核常规文件（缓解解析与打开间的
-    TOCTOU）。写入异常时尽力 ftruncate 回原大小恢复，仍失败则上抛——
-    残缺文件会被下一次校验按 partial line 拒绝，fail-closed。
+    打开/创建可区分（不盲开 O_CREAT）：先只开既有文件，不存在才排他
+    新建（0600，POSIX 语义；Windows 无 POSIX 权限位=默认 ACL，见 docs）。
+    POSIX 打开带 O_NOFOLLOW 在内核处拒绝 symlink；Windows 无该旗标，
+    靠前置 symlink 拒绝 + 打开后 fstat 常规文件复核，其间仍有残余
+    swap 竞态（docs 如实声明）。新建文件写入并 fsync 成功后，在支持
+    目录 fsync 的平台同步父目录。写入异常时尽力 ftruncate 回原大小
+    恢复，仍失败则上抛——残缺文件会被下一次校验按 partial line
+    拒绝，fail-closed。
     """
-    flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_BINARY", 0)
-    fd = os.open(path, flags, 0o600)
+    try:
+        fd = _open_existing(path)
+        created = False
+    except FileNotFoundError:
+        fd = _create_new(path)
+        created = True
     try:
         if not stat.S_ISREG(os.fstat(fd).st_mode):
             raise AnchorInputError(f"锚文件打开后不是常规文件，拒绝写入: {path}")
@@ -337,6 +418,8 @@ def append_anchor_line(path: Path, line: bytes) -> None:
             except OSError:
                 pass  # 不掩盖原始错误；残缺行由下次校验 fail-closed 拒绝
             raise
+        if created:
+            _fsync_parent_directory(path)
     finally:
         os.close(fd)
 

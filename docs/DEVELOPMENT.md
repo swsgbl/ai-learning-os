@@ -146,7 +146,8 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
 - **CLI**：`python -m app.ops.cli audit-chain-anchor --db-url ...
   --anchor-file <path> [--yes | --verify-only] [--json]`
   （`app/ops/audit_chain_anchor.py`）。默认 dry-run 只打印将追加的锚行；
-  `--yes` 才落盘（O_APPEND 单行写入 + fsync，失败回截不留半行）；
+  `--yes` 才落盘（O_APPEND 单行写入 + fsync，失败回截不留半行；打开/
+  创建区分与持久化能力边界见下条）；
   `--verify-only` 只做「DB 链 + 锚文件链 + 两者 head 交叉一致」校验。
   退出码与 verifier 对齐：valid/up-to-date/anchored/dry-run=0、
   invalid=1、缺 `--db-url`/锚文件路径问题（symlink、目录、父目录缺失，
@@ -167,6 +168,21 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   后台服务与文件锁：两名操作员同时向同一锚文件追加会立刻造成
   previous_anchor_hash 断链，被下一次校验 fail-closed 发现（可检测；
   锚定操作按 runbook 串行执行）。
+- **文件创建与持久化边界**（Codex 审核返工）：`--yes` 落盘区分续写与
+  新建，不盲开 O_CREAT——既有锚文件以 `O_WRONLY|O_APPEND` 打开（不带
+  O_CREAT；POSIX 附带 O_NOFOLLOW，路径是 symlink 时内核在 open 处即
+  ELOOP 拒绝），文件不存在才以 `O_CREAT|O_EXCL` 排他新建（0600）；
+  并发窗口内路径被另一操作员抢先创建/替换则 FileExistsError 失败退出
+  （exit 2），**不猜测、不覆盖**（不引入文件锁，双操作员并发仍按
+  上条「可检测断链 + runbook 串行」边界处理）。Windows CRT 的 O_EXCL
+  会跟随 dangling symlink，新建后另复核路径本身不是链接。新建文件
+  写入并 fsync 成功后，在支持目录 fsync 的 POSIX 平台 fsync 父目录
+  （使目录项在 crash 后尽量持久；个别文件系统返回 EINVAL 视为能力
+  不支持而跳过，其余 IO 错误上抛不虚报）；**Windows 无法打开目录 fd，
+  跳过父目录同步**——如实声明，不虚报已持久。Windows 亦无 O_NOFOLLOW：
+  前置 symlink 拒绝与打开后 fstat 常规文件复核之间仍存在 symlink
+  swap 残余竞态窗口（POSIX 已由 O_NOFOLLOW 消除）；锚行本就无敏感值
+  且权威见证在 WORM 副本，该窗口不扩大敏感暴露面。
 - **锚文件必须另行归档到 WORM/对象锁/离线介质**：本机锚文件是可变
   文件系统对象，持主机写权限者可连锚文件一起重写——它只是「操作
   见证」，单独不构成对持库写权限者的防御。归档介质（对象锁桶、S3
