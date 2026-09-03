@@ -21,7 +21,11 @@ from app.db.base import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # M10-03: API lifespan 内跑迁移时 uvicorn logger 已创建；fileConfig 默认
+    # disable_existing_loggers=True 会把它们静默禁用——迁移后 access log、
+    # "Application startup complete" 与 5xx traceback 全部不再输出（容器日志
+    # 假性干净）。显式保留既有 logger。
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 target_metadata = Base.metadata
 
