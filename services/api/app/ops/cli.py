@@ -665,9 +665,9 @@ def _run_release_readiness(args) -> int:
     """
     import json as _json
 
+    from app.ops.evidence_kit import EvidenceInputError
     from app.ops.legacy_papers import is_safe_artifact_path
     from app.ops.release_readiness import (
-        EvidenceInputError,
         format_readiness_summary,
         run_release_readiness,
     )
@@ -709,6 +709,71 @@ def _run_release_readiness(args) -> int:
         print(_json.dumps(report, ensure_ascii=False, indent=2))
     else:
         print(format_readiness_summary(report))
+    return report["exit_code"]
+
+
+def _run_cutover_rehearsal(args) -> int:
+    """python -m app.ops.cli cutover-rehearsal --evidence-dir DIR
+    [--json] [--output PATH]
+
+    M10-15 生产切换演练编排器（只读、fail-closed、隔离 rehearsal）：按生产
+    切换时间线组织 13 个 required steps（pre-window/pre-migration/
+    post-migration/cutover），只读取调用方显式提供的本地 evidence 目录内的
+    JSON/JSONL 证据文件，逐步给出四态 pass/pending/blocked/not_executed，
+    顶层优先级 blocked > pending > not_executed > ready，并输出 blockers 与
+    next_actions。不连接数据库、不调用 API、不访问网络、不读取环境变量；
+    不执行生产迁移/锚定/清理/WORM/部署/启停/发布/回滚——命令没有 --yes
+    执行形态。rehearsal_ready 不代表生产验收，也不授权生产写入/发布。
+    --output 复用 artifacts/temp gitignore 路径护栏并原子落盘（symlink
+    目标拒绝），写入失败 exit 2 且不打印步骤结论摘要。
+    退出码：13 步全 pass=0 / 任一步非 pass=1 / 目录或路径与 IO 问题=2。
+    """
+    import json as _json
+
+    from app.ops.cutover_rehearsal import (
+        format_rehearsal_summary,
+        run_cutover_rehearsal,
+    )
+    from app.ops.evidence_kit import EvidenceInputError
+    from app.ops.legacy_papers import is_safe_artifact_path
+
+    if args.output and not is_safe_artifact_path(args.output):
+        print(
+            f"拒绝写入 {args.output}：manifest 只能写入 gitignore 的 artifacts/ 或 temp/ 目录"
+        )
+        return 2
+    try:
+        report = run_cutover_rehearsal(args.evidence_dir)
+    except EvidenceInputError as cause:
+        print(f"证据输入无效（目录或路径问题，未产生 manifest）: {cause}")
+        return 2
+    except OSError as cause:
+        print(
+            "证据读取失败（IO 问题，未产生 manifest）: "
+            f"{type(cause).__name__}: {cause}"
+        )
+        return 2
+    if args.output:
+        try:
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            _write_report_atomic(
+                output_path,
+                _json.dumps(report, ensure_ascii=False, indent=2),
+            )
+        except OSError as cause:
+            # 目录无法创建/权限/磁盘满/replace 失败：manifest 未落盘或旧文件
+            # 原样保留（原子写不产生 partial），不得再打印步骤结论摘要。
+            print(
+                f"报告写入失败（路径/权限/磁盘问题，未产生报告文件）: "
+                f"{type(cause).__name__}: {cause}"
+            )
+            return 2
+        print(f"报告已写入: {args.output}")
+    if args.as_json:
+        print(_json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(format_rehearsal_summary(report))
     return report["exit_code"]
 
 
@@ -999,6 +1064,30 @@ def main() -> None:
             "原子落盘：临时文件 + rename，失败保留旧报告、symlink 拒绝；默认不落盘）"
         ),
     )
+    p_cr = sub.add_parser(
+        "cutover-rehearsal",
+        help=(
+            "生产切换演练编排器（M10-15；按切换时间线组织 13 个 required "
+            "steps，只读本地证据目录，不连 DB/网络、不读密钥、不执行任何"
+            "生产操作，无 --yes 形态；隔离 rehearsal，不代表生产验收）"
+        ),
+    )
+    p_cr.add_argument(
+        "--evidence-dir",
+        required=True,
+        help="本地证据目录（每步一个 JSON 证据文件 + 可选 audit-anchor.jsonl 副本）",
+    )
+    p_cr.add_argument(
+        "--json", dest="as_json", action="store_true", help="输出完整 JSON manifest"
+    )
+    p_cr.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "写 JSON manifest 到文件（必须位于 gitignore 的 artifacts/temp 目录；"
+            "原子落盘：临时文件 + rename，失败保留旧报告、symlink 拒绝；默认不落盘）"
+        ),
+    )
     p_ad = sub.add_parser("admin", help="角色运维：promote/demote/list（M9-04）")
     p_ad.add_argument("action", choices=["promote", "demote", "list"])
     p_ad.add_argument("username", nargs="?", default=None)
@@ -1034,6 +1123,8 @@ def main() -> None:
         raise SystemExit(_run_production_preflight(args))
     if args.command == "release-readiness":
         raise SystemExit(_run_release_readiness(args))
+    if args.command == "cutover-rehearsal":
+        raise SystemExit(_run_cutover_rehearsal(args))
     if args.command == "admin":
         if args.action != "list" and not args.username:
             print("promote/demote 需要用户名")
