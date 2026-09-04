@@ -23,7 +23,12 @@
    （approval_file_present 如实标注）；锚副本计入 supporting_evidence；
    证据变更后旧底稿哈希失配（以旧底稿构建的审批 rehearsal 判 blocked、以
    新底稿构建的 pass）；底稿直接改名为 cutover-approval.json => blocked
-   不会被误判 ready；--output 复用 artifacts/temp 护栏，越界拒绝；
+   不会被误判 ready；**DRAFT 不可审批边界（返工）——底稿补齐 step 与全部
+   合法人工字段、哈希精确匹配但保留 draft 专用元数据字段 => cutover-approval
+   blocked 且整体 not ready（rehearsal 审批评估器对 APPROVAL_DRAFT_RESERVED_FIELDS
+   fail-closed），移除全部 draft 专用元数据后 => pass/ready；只保留单个
+   元数据字段同样 blocked；拒绝名单与底稿输出字段集合同步（漏登记即红）**；
+   --output 复用 artifacts/temp 护栏，越界拒绝；
 6. 文档化隔离 fixture 全链路：按 FIXTURE_FORMS 构造 12 步证据 + 底稿哈希
    + 人工字段组装审批 => rehearsal_ready=True（fixture 值非真实执行，仅
    演练——README 已声明不代表生产验收）；
@@ -64,6 +69,7 @@ from app.ops.cutover_evidence_pack import (
 )
 from app.ops.cutover_rehearsal import (
     ANCHOR_COMPANION_FILE,
+    APPROVAL_DRAFT_RESERVED_FIELDS,
     KNOWN_EVIDENCE_FILES,
     STEPS,
     run_cutover_rehearsal,
@@ -568,6 +574,84 @@ def test_draft_misused_as_approval_is_blocked_not_ready(tmp_path) -> None:
     assert approval["status"] == "blocked"
     assert report["rehearsal_ready"] is False
     assert report["overall_status"] == "blocked"
+
+
+def _approval_from_draft_with_metadata(draft: dict) -> dict:
+    """最恶劣误用形态（M10-16 返工场景）：在底稿上补齐 step 与全部合法
+    人工审批字段、哈希照抄底稿——但原样保留全部 draft 专用元数据字段。"""
+    assembled = _approval_from_draft(draft)
+    for key in APPROVAL_DRAFT_RESERVED_FIELDS:
+        assembled[key] = draft[key]
+    return assembled
+
+
+def test_filled_draft_with_draft_metadata_kept_is_blocked_not_ready(
+    tmp_path,
+) -> None:
+    """DRAFT 不可审批边界（M10-16 返工回归）：底稿补齐 step 与全部合法
+    审批字段、哈希精确匹配，只要保留 draft 专用元数据字段 => cutover-approval
+    blocked 且整体 not ready——评估器 fail-closed 拒绝保留元数据字段，
+    「补齐后改名」不再有 pass 读法；移除全部 draft 专用元数据（只保留合法
+    审批字段 + 底稿哈希）=> pass / rehearsal_ready=True。"""
+    directory = _fixture_evidence_dir(tmp_path)
+    draft = build_approval_draft(directory)
+    # 阶段一：补齐全部合法字段但保留全部 draft 专用元数据 => blocked
+    _write_json(
+        directory, "cutover-approval.json", _approval_from_draft_with_metadata(draft)
+    )
+    report = run_cutover_rehearsal(directory)
+    approval = next(
+        item for item in report["steps"] if item["step"] == "cutover-approval"
+    )
+    assert approval["status"] == "blocked"
+    assert report["rehearsal_ready"] is False
+    assert report["overall_status"] == "blocked"
+    # reason 透出命中的保留字段名（可审计；全部 10 个字段都带上了）
+    for field in APPROVAL_DRAFT_RESERVED_FIELDS:
+        assert field in approval["reason"], field
+    # 其余 12 步不受影响：只有审批步 blocked
+    assert all(
+        item["status"] == "pass"
+        for item in report["steps"]
+        if item["step"] != "cutover-approval"
+    )
+    # 阶段二：移除全部 draft 专用元数据（合法组装形态）=> pass / ready
+    _write_json(directory, "cutover-approval.json", _approval_from_draft(draft))
+    report = run_cutover_rehearsal(directory)
+    approval = next(
+        item for item in report["steps"] if item["step"] == "cutover-approval"
+    )
+    assert approval["status"] == "pass"
+    assert report["rehearsal_ready"] is True
+    assert report["overall_status"] == "pass"
+    assert report["exit_code"] == 0
+
+
+def test_single_draft_metadata_field_alone_is_blocked(tmp_path) -> None:
+    """只保留一个 draft 专用元数据字段（其余全部移除、字段合法齐备）
+    => 仍 blocked：字段存在即拒绝，与值/其余字段无关。"""
+    directory = _fixture_evidence_dir(tmp_path)
+    draft = build_approval_draft(directory)
+    payload = _approval_from_draft(draft)
+    payload["draft"] = True  # 最容易「顺手」留下的一个
+    _write_json(directory, "cutover-approval.json", payload)
+    report = run_cutover_rehearsal(directory)
+    approval = next(
+        item for item in report["steps"] if item["step"] == "cutover-approval"
+    )
+    assert approval["status"] == "blocked"
+    assert "draft" in approval["reason"]
+    assert report["rehearsal_ready"] is False
+
+
+def test_reserved_draft_fields_cover_all_draft_metadata(tmp_path) -> None:
+    """守卫：底稿输出的全部元数据字段（除审批合法共享的 step_evidence/
+    supporting_evidence 外）都必须登记在 rehearsal 的拒绝名单内——底稿
+    新增元数据字段而漏登记 APPROVAL_DRAFT_RESERVED_FIELDS 会直接红。"""
+    directory = _fixture_evidence_dir(tmp_path)
+    draft = build_approval_draft(directory)
+    draft_only = set(draft) - {"step_evidence", "supporting_evidence"}
+    assert draft_only == set(APPROVAL_DRAFT_RESERVED_FIELDS)
 
 
 # --- 6. 文档化隔离 fixture 全链路：FIXTURE_FORMS => rehearsal_ready ---------------

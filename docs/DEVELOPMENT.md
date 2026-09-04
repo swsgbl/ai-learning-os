@@ -433,7 +433,13 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   supporting 文件 => `blocked`（证据在审批后被改动/移除，`hash_mismatches` /
   `supporting_hash_mismatches` 透出）；未知 supporting 文件名 / 非 64 位
   小写 hex / 缺 `supporting_evidence` 字段 => malformed => blocked；目录无
-  supporting 文件时该 mapping 必须为空 mapping。supporting 绑定的意义：
+  supporting 文件时该 mapping 必须为空 mapping。审批记录携带任一 DRAFT
+  底稿保留元数据字段（`draft`/`manual_fields_required`/`confirmation_required`/
+  `step_evidence_missing`/`load_problems`/`approval_file_present`/
+  `generated_at`/`notice`/`tool`/`evidence_dir`，即
+  `APPROVAL_DRAFT_RESERVED_FIELDS`）=> malformed => blocked——即使补齐全部
+  人工字段、哈希精确匹配也不放行（M10-16 返工：DRAFT 不可审批边界）。
+  supporting 绑定的意义：
   锚文件副本不属于任何主 step JSON，单靠主 step 哈希发现不了「审批后把
   副本换成另一份仍自洽、锚点数相同的副本」——supporting 绑定补上这个
   完整性缺口。`approved_by` 只做记录，不做身份认证。
@@ -482,9 +488,26 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   `manual_fields_required` 人工必填字段清单（REPLACE-ME 提示）与「直接改名
   只会 blocked」声明；装载层问题（非法 JSON/敏感键/内嵌凭据）如实列
   `load_problems`（只报字段路径，值不回显）。底稿缺 `step`/必填审批字段，
-  误用即 malformed => blocked——测试锁定「底稿字节改名直用 blocked 不 ready」
-  与「证据变更后旧底稿哈希失配 => rehearsal blocked、新底稿重新绑定恢复」。
-  `--output` 复用 artifacts/temp 护栏并原子落盘，写入失败 exit 2。
+  误用即 malformed => blocked。
+- **DRAFT 不可审批边界（fail-closed，返工补上）**：底稿输出的全部元数据
+  字段（`draft` / `tool` / `generated_at` / `evidence_dir` / `notice` /
+  `approval_file_present` / `step_evidence_missing` / `load_problems` /
+  `manual_fields_required` / `confirmation_required`）登记在
+  `cutover_rehearsal.APPROVAL_DRAFT_RESERVED_FIELDS`——cutover-rehearsal 的
+  审批评估器对携带**任一**上述字段的审批记录一律 malformed => blocked：
+  即使在底稿上补齐 `step` 与全部人工审批字段、step/supporting 哈希精确
+  匹配，只要任一底稿元数据字段还在就不得通过（此前评估器忽略未知字段，
+  「补齐后改名保留 draft 元数据」存在 pass 读法，削弱 DRAFT 边界）。合法
+  人工审批不得携带这些字段，审批人应从底稿哈希出发**从零组装**
+  cutover-approval.json（只带 step/schema_version/approved_at/note/window/
+  rollback_plan/observation/approved_by/step_evidence/supporting_evidence），
+  不要在底稿文件上补字段改名。测试锁定「底稿字节改名直用 blocked 不
+  ready」「底稿补齐全部合法字段但保留 draft 元数据 => blocked 且整体 not
+  ready / 移除全部 draft 专用元数据后 => pass-ready」「十字段逐一混入合法
+  审批均 blocked」「拒绝名单与底稿输出字段集合同步（底稿新增元数据漏登记
+  即红）」与「证据变更后旧底稿哈希失配 => rehearsal blocked、新底稿重新
+  绑定恢复」。approval-draft `--output` 复用 artifacts/temp 护栏并原子
+  落盘，写入失败 exit 2。
 - **审批 SHA-256 计算**：`step_evidence` = 其余 12 步每份证据**文件字节**的
   SHA-256（64 位小写 hex）；`supporting_evidence` = 当前实际存在 supporting
   文件的 sha256 mapping（目录无锚副本时必须为空对象）。辅助命令 approval-draft
@@ -495,7 +518,8 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   形态」（`FIXTURE_FORMS`，如 ci-main 用 `{"run_id":1,"merge_commit":
   "aa11bb22cc33","conclusion":"success"}`；anchor 步最简形态不提供锚副本、
   supporting_evidence 用空对象）填写 12 步并改名 → approval-draft 取哈希底稿
-  → 审批人模拟填写人工字段组装 cutover-approval.json → `cutover-rehearsal
+  → 审批人模拟填写人工字段从零组装 cutover-approval.json（只带合法审批
+  字段，不带入任何底稿元数据字段）→ `cutover-rehearsal
   --evidence-dir` 得 `rehearsal_ready=true`。**声明：fixture 值不代表任何真实
   执行结果，ready 不代表生产验收、不授权生产写入/发布**——生产证据必须来自
   人工逐项授权后的真实执行与导出（测试用同一份 FIXTURE_FORMS 真实复现该链路）。

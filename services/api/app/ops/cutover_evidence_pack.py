@@ -29,7 +29,13 @@ approval-draft 本地哈希底稿（仍为 DRAFT，须人工逐项确认）。
 - approval-draft 是**草稿底稿**不是审批记录：输出固定带 `draft: true`、
   人工必填字段清单（manual_fields_required，全部 REPLACE-ME 提示）与
   「直接改名只会 blocked」声明；误用即 malformed => blocked，不构成
-  生产放行证据；
+  生产放行证据。该边界由 cutover-rehearsal 的审批评估器 fail-closed 兜底
+  （M10-16 返工）：审批记录携带任一底稿保留元数据字段（draft /
+  manual_fields_required / confirmation_required / step_evidence_missing /
+  load_problems / approval_file_present / generated_at / notice / tool /
+  evidence_dir，即 `cutover_rehearsal.APPROVAL_DRAFT_RESERVED_FIELDS`）
+  即 blocked——即使补齐 step 与全部人工字段、哈希精确匹配也不放行，合法
+  人工审批必须从底稿哈希出发从零组装（不得在底稿文件上补字段改名）；
 - 输出零敏感、零生产业务 ID：模板与手册只有字段名与占位说明；approval
   底稿只含 SHA-256 与白名单问题摘要（敏感键/内嵌凭据命中只报字段路径，
   值从不回显），最终经 evidence_kit.scrub_sensitive 兜底。
@@ -75,8 +81,13 @@ TEMPLATE_NOTICE = (
 APPROVAL_DRAFT_NOTICE = (
     "DRAFT（草稿底稿）：本文件只是哈希底稿与人工确认清单，不是审批记录——"
     "直接改名为 cutover-approval.json 只会得到 blocked。审批人必须逐项人工"
-    "确认每份证据内容，自行填写 manual_fields_required 列出的全部字段并核对"
-    "哈希后，才能构成 cutover-approval.json；任何真实生产操作仍须人工逐项"
+    "确认每份证据内容，从本底稿的 step_evidence/supporting_evidence 哈希"
+    "出发**从零组装** cutover-approval.json（填写 manual_fields_required "
+    "列出的全部字段），不得在本文件上补字段改名——本文件的全部其余字段"
+    "（draft/tool/generated_at/evidence_dir/notice/approval_file_present/"
+    "step_evidence_missing/load_problems/manual_fields_required/"
+    "confirmation_required）都是底稿保留元数据，cutover-rehearsal 对携带"
+    "任一上述字段的审批记录一律判 blocked；任何真实生产操作仍须人工逐项"
     "授权执行。"
 )
 _COMMON_AUTHORIZATION = (
@@ -411,7 +422,8 @@ FIXTURE_FORMS: dict[str, str] = {
     "cutover-evidence-pack approval-draft --evidence-dir . 取得哈希底稿，"
     "人工填写 schema_version=1 / approved_at / note / window.start / "
     "window.end / rollback_plan / observation / approved_by，并把 "
-    "step_evidence 与 supporting_evidence 换成底稿哈希（人工逐项确认后）",
+    "step_evidence 与 supporting_evidence 换成底稿哈希（人工逐项确认后；"
+    "底稿的 draft/tool/notice 等元数据字段一律不得带入——带入即 blocked）",
 }
 
 
@@ -481,6 +493,15 @@ def render_pack_readme() -> str:
         "  小写十六进制）；supporting_evidence：目录内实际存在的 supporting",
         "  文件（目前仅 audit-anchor.jsonl）的 sha256 mapping，目录没有副本",
         "  时必须为空对象；",
+        "- 审批记录只能携带 step/schema_version/approved_at/note/window/",
+        "  rollback_plan/observation/approved_by/step_evidence/",
+        "  supporting_evidence——不得保留 approval-draft 底稿的任何元数据",
+        "  字段（draft/tool/generated_at/evidence_dir/notice/",
+        "  approval_file_present/step_evidence_missing/load_problems/",
+        "  manual_fields_required/confirmation_required）：cutover-rehearsal",
+        "  对携带任一上述字段的审批记录一律 fail-closed 判 blocked（即使",
+        "  人工字段全部补齐、哈希精确匹配）——请从底稿哈希出发从零组装，",
+        "  不要在底稿文件上补字段改名；",
         "- 辅助计算（仍是 DRAFT，须人工逐项确认）：",
         "  python -m app.ops.cli cutover-evidence-pack approval-draft",
         "  --evidence-dir <演练目录>；",
@@ -631,11 +652,14 @@ MANUAL_APPROVAL_FIELDS: dict[str, str] = {
 
 def build_approval_draft(evidence_dir: str | Path) -> dict[str, Any]:
     """只读计算当前证据目录的审批哈希底稿（DRAFT；缺 step/必填审批字段，
-    直接改名只会 blocked）。哈希范围=审批应绑定的其余 12 步主证据 + 当前
-    实际存在的 supporting 文件（cutover-approval.json 自身不绑定自己，已
-    存在时只在 approval_file_present 如实标注）。装载层问题（非法 JSON/
-    敏感键/内嵌凭据）如实摘要列出（只报字段路径，值不回显），不阻断底稿
-    生成——最终判定仍以 cutover-rehearsal 为准。"""
+    直接改名只会 blocked——且本函数输出的全部元数据字段都被
+    cutover_rehearsal.APPROVAL_DRAFT_RESERVED_FIELDS 登记为审批记录禁带
+    字段，即使补齐人工字段后保留也会被 rehearsal 判 blocked）。哈希范围=
+    审批应绑定的其余 12 步主证据 + 当前实际存在的 supporting 文件
+    （cutover-approval.json 自身不绑定自己，已存在时只在
+    approval_file_present 如实标注）。装载层问题（非法 JSON/敏感键/内嵌
+    凭据）如实摘要列出（只报字段路径，值不回显），不阻断底稿生成——最终
+    判定仍以 cutover-rehearsal 为准。"""
     from datetime import UTC, datetime
 
     root = check_evidence_dir(Path(evidence_dir))
@@ -686,9 +710,10 @@ def build_approval_draft(evidence_dir: str | Path) -> dict[str, Any]:
         "load_problems": problems,
         "manual_fields_required": dict(MANUAL_APPROVAL_FIELDS),
         "confirmation_required": (
-            "审批人必须逐项人工确认每份证据内容并核对哈希后，自行组装 "
-            "cutover-approval.json（本底稿不是审批记录，直接改名只会 blocked）；"
-            "任何真实生产操作仍须人工逐项授权执行"
+            "审批人必须逐项人工确认每份证据内容并核对哈希后，从零组装 "
+            "cutover-approval.json（本底稿不是审批记录，直接改名/保留本文件"
+            "任何底稿元数据字段组装都只会 blocked）；任何真实生产操作仍须"
+            "人工逐项授权执行"
         ),
     }
     return scrub_sensitive(draft)

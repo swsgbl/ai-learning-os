@@ -67,7 +67,13 @@ cutover-approval=not_executed（审批动作尚未发生，不是失败也不是
 确认）；审批哈希（主 step 或 supporting）与当前证据不匹配、或引用当前
 不存在的 supporting 文件 => blocked（证据在审批后被改动/移除——单靠
 主 step JSON 哈希无法发现锚副本被替换成另一份自洽副本，supporting 绑定
-补上这个缺口）。
+补上这个缺口）。审批记录携带 approval-draft 底稿的**保留元数据字段**（
+APPROVAL_DRAFT_RESERVED_FIELDS：draft / manual_fields_required /
+confirmation_required / step_evidence_missing / load_problems /
+approval_file_present / generated_at / notice / tool / evidence_dir）
+任一即 malformed => blocked——在 DRAFT 底稿上补齐 step 与全部人工字段
+后改名/拼装也不能冒充审批（M10-16 返工防线，DRAFT 不可审批边界），合法
+人工审批不得携带这些字段。
 
 顶层判定优先级：blocked > pending > not_executed > ready——任一步
 blocked 整场演练 blocked（先停下排查），否则任一 pending => pending，
@@ -125,6 +131,29 @@ ANCHOR_COMPANION_FILE = "audit-anchor.jsonl"
 #: 审批 supporting_evidence 可绑定的 supporting 文件名集合（当前仅锚文件
 #: 副本；未来新增 supporting 文件时在此登记，审批绑定覆盖语义自动跟进）
 BINDABLE_SUPPORTING_FILES = frozenset({ANCHOR_COMPANION_FILE})
+
+#: 审批记录禁止携带的 approval-draft 底稿保留元数据字段（M10-16 返工）：
+#: 底稿输出中除 step_evidence/supporting_evidence 哈希外的全部字段都是
+#: 「草稿专用」元数据。人工审批记录携带任一即 malformed => blocked
+#: （fail-closed：即使补齐 step 与全部人工字段、哈希精确匹配，只要任一
+#: 底稿元数据字段还在就不得通过）——审批人应从底稿哈希出发**从零组装**
+#: 合法审批记录，而不是在底稿文件上补字段改名。与
+#: cutover_evidence_pack.build_approval_draft 的输出字段保持同步（测试守卫：
+#: 底稿新增元数据字段而漏登记会直接红）。
+APPROVAL_DRAFT_RESERVED_FIELDS = frozenset(
+    (
+        "draft",
+        "manual_fields_required",
+        "confirmation_required",
+        "step_evidence_missing",
+        "load_problems",
+        "approval_file_present",
+        "generated_at",
+        "notice",
+        "tool",
+        "evidence_dir",
+    )
+)
 
 #: 切换时间线四阶段（steps 输出顺序即时间线顺序）
 STAGES = ("pre-window", "pre-migration", "post-migration", "cutover")
@@ -280,7 +309,8 @@ STEPS: tuple[StepSpec, ...] = (
         "审批记录必须绑定 step id + 主 step 证据 sha256 集合 + supporting"
         " 文件（锚文件副本）sha256 mapping + 时间 + 说明；缺审批/未覆盖其余"
         " 12 步/未覆盖当前 supporting 文件 => not_executed，哈希失配/引用"
-        " 不存在的 supporting 文件 => blocked",
+        " 不存在的 supporting 文件/携带 DRAFT 底稿保留元数据字段"
+        "（draft/manual_fields_required 等）=> blocked",
         "其余 12 步全 pass 后，由审批人填写绑定各步证据与 supporting 文件"
         " sha256 的 cutover-approval.json（不回显审批说明）",
     ),
@@ -681,6 +711,18 @@ def _current_supporting(root: Path) -> dict[str, str]:
 
 def _step_cutover_approval(obj: dict[str, Any], root: Path, sha: Mapping[str, str]):
     _require_step_self_id(obj, "cutover-approval")
+    # DRAFT 不可审批边界 fail-closed（M10-16 返工）：审批记录携带任一
+    # approval-draft 底稿保留元数据字段即结构不可信 => malformed => blocked
+    # ——否则「底稿补齐 step 与全部人工字段后改名」可能 pass，DRAFT 边界
+    # 只剩命名自觉。合法人工审批不得携带这些字段（值是什么不重要）。
+    reserved_hits = sorted(APPROVAL_DRAFT_RESERVED_FIELDS & set(obj))
+    if reserved_hits:
+        raise MalformedEvidence(
+            "审批记录携带 DRAFT 底稿保留元数据字段 "
+            + ", ".join(reserved_hits)
+            + "——approval-draft 底稿不是审批记录，合法审批不得携带这些字段"
+            "（请从底稿哈希出发从零组装，不要在底稿上补字段改名）"
+        )
     schema_version = req_int(obj, "schema_version")
     if schema_version != 1:
         raise MalformedEvidence(f"schema_version 非 1: {schema_version}")
