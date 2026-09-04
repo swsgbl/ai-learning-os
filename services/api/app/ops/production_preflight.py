@@ -452,7 +452,10 @@ async def run_preflight(
         async with engine.connect() as conn:
             options = _snapshot_execution_options(conn.dialect.name)
             if options is not None:
-                conn.execution_options(**options)
+                # AsyncConnection.execution_options 是 async 方法：漏 await 时
+                # 协程被静默丢弃、选项完全不生效（M10-08 真实 PG 实测发现的
+                # 缺陷——事务实际落在默认 read committed 且可写）
+                await conn.execution_options(**options)
             async with conn.begin():
                 checks.append(await _check_database(conn, db_url))
                 checks.append(await _check_alembic(conn, phase))

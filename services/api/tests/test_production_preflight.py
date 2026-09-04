@@ -13,7 +13,8 @@
 1c. 快照事务方言选项：PG 分支同时要数据库层 READ ONLY
    （postgresql_readonly）与 REPEATABLE READ；SQLite 分支不设任何
    方言级选项（aiosqlite 无 READ ONLY 事务语法，只读边界是语句面的，
-   不伪造数据库层能力——真实 PG 行为未在本测试环境实测，见 docs）；
+   不伪造数据库层能力——真实 PG 事务行为由第 7 节 M10-08 门控集成测试
+   实证）；
 2. phase 语义：pre-migration 链表缺失=pending（pending_migration）、
    current 落后 head=pending；post-migration 链表缺失/链 invalid/current !=
    head/未知 revision 均 fail（exit 1）；pre 与 post 全绿（exit 0）；
@@ -34,6 +35,16 @@
    exit 2、简明脱敏错误（不回显凭据 marker）、无 traceback、无检查结论；
 6. 只读性：全部表行数、表集合、alembic_version、SQLite 库文件字节、
    锚文件字节在 pre/post 两 phase 各跑一轮后完全不变。
+7. 真实 PG 门控集成（M10-08）：安全 AIOS_PG_TEST_URL（app.db.test_gate
+   白名单，主/共享库 fail-closed 拒绝）存在时，在 run_preflight 同一
+   快照事务内实证数据库层 READ ONLY + REPEATABLE READ 的**真实事务
+   行为**（不是只断言 execution options 字典）——SHOW transaction_
+   isolation = repeatable read、probe CREATE TABLE（短表名仅受控 hex、
+   列仅一个 uuid；不用 TEMP 表——PG 只读事务显式放行临时表 DDL）被
+   PostgreSQL 以 read-only transaction 拒绝；意外创建成功则同事务
+   DROP 并判失败；run_preflight 异常回滚后独立连接 inspector 复核
+   probe 表不存在（隔离库 schema 零残留）；未设置安全 env 时 skip
+   （不影响现有 SQLite 全量口径）。
 """
 from __future__ import annotations
 
@@ -43,6 +54,7 @@ import os
 import sys
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
@@ -56,6 +68,7 @@ from app.db.orm import (
     VariantQuestionDraftRow,
 )
 from app.db.session import create_engine, make_sessionmaker
+from app.db.test_gate import pg_test_gate_from_env
 from app.domain.audit_chain import append_audit
 from app.ops import cli as cli_module
 from app.ops.production_preflight import (
@@ -504,8 +517,8 @@ def test_snapshot_execution_options_dialect_split() -> None:
     事务以 BEGIN READ ONLY 开始，写入在数据库处被拒绝）+ REPEATABLE READ
     （同一事务快照）；SQLite = 无方言级选项——aiosqlite 无等价 READ ONLY
     事务语法，只读边界是语句面的（本模块只发 SELECT/inspector），不伪造
-    数据库层能力。真实 PG 上的行为未在本测试环境实测（见 docs 未覆盖
-    边界）。"""
+    数据库层能力。真实 PG 上的事务行为由 M10-08 门控集成测试实证（见
+    文件末尾第 7 节），本测试只锁定选项取值本身。"""
     assert _snapshot_execution_options("postgresql") == {
         "isolation_level": "REPEATABLE READ",
         "postgresql_readonly": True,
@@ -989,3 +1002,85 @@ def test_summary_pending_never_disguised_as_pass(tmp_path, capsys) -> None:
     report = _run_json(db_url, "pre-migration")
     assert report["summary"]["pending"] == 1
     assert report["exit_code"] == 0
+
+
+# --- 7. 真实 PG 门控集成：快照事务 READ ONLY + REPEATABLE READ（M10-08） ----
+
+PG_GATE = pg_test_gate_from_env()
+
+
+class _ProbeCompleted(Exception):
+    """探针断言全部完成的预期信号——让 run_preflight 立即回滚终止。
+
+    read-only 事务内 CREATE TABLE 被拒后事务已 aborted，后续检查语句必然
+    报 InFailedSqlTransaction；与其让无关检查「意外」失败，不如在拿到全部
+    事务级证据后以显式信号结束（run_preflight 的 conn.begin() 上下文照常
+    回滚，与真实失败的回滚路径完全一致）。
+    """
+
+
+@pytest.mark.skipif(not PG_GATE.enabled, reason=PG_GATE.reason)
+def test_pg_preflight_snapshot_is_readonly_repeatable_read(monkeypatch) -> None:
+    """M10-08：隔离 PG 测试库（白名单门控放行）上实证 run_preflight 的快照
+    事务是**数据库层 READ ONLY + REPEATABLE READ**——证明的是真实 PG 事务
+    行为，不是 `_snapshot_execution_options` 返回的字典：
+
+    - 同一事务内 `SHOW transaction_isolation` == repeatable read；
+    - probe `CREATE TABLE`（表名短且只含受控 hex、列仅一个 uuid，不携带
+      业务数据；**不用 TEMP 表**——PG 只读事务显式放行临时表 DDL，必须用
+      常规表才证明数据库层只读边界）被 PostgreSQL 以 read-only transaction
+      拒绝；
+    - 意外创建成功时：同一事务内 DROP probe 防污染，并直接判测试失败；
+    - run_preflight 异常回滚后：独立连接 inspector 复核 probe 表不存在
+      （隔离测试库 schema 零残留）。
+
+    未设置安全 AIOS_PG_TEST_URL 时整个测试 skip（不影响 SQLite 全量口径）。
+    """
+    from app.ops import production_preflight as preflight_module
+
+    probe_table = f"pf_ro_{uuid4().hex[:8]}"
+    outcome: dict[str, str] = {}
+    real_check_database = preflight_module._check_database
+
+    async def probe_check_database(conn, db_url):
+        # 探针挂在第一个检查上：此刻已处于 run_preflight 的快照事务内
+        result = await real_check_database(conn, db_url)
+        assert result["data"]["dialect"] == "postgresql"
+        # 双重锚定：连接目标确实是门控放行的隔离测试库（db-connect 自身结论）
+        assert result["data"]["database"] == PG_GATE.database
+        # a. 真实事务隔离级别（事务内 SHOW，不是 execution options 字典）
+        isolation = await conn.scalar(sa.text("SHOW transaction_isolation"))
+        assert str(isolation).lower() == "repeatable read", isolation
+        # b. 数据库层只读：任何写入语句在数据库处即被拒绝
+        try:
+            await conn.execute(
+                sa.text(f'CREATE TABLE "{probe_table}" (probe_id uuid PRIMARY KEY)')
+            )
+        except Exception as exc:  # noqa: BLE001 - SQLAlchemy/asyncpg 包装皆可
+            assert "read-only" in str(exc).lower(), (
+                f"CREATE TABLE 被拒但不是只读原因: {type(exc).__name__}: {exc}"
+            )
+            outcome["rejected"] = type(exc).__name__
+            raise _ProbeCompleted from None
+        # c. 意外创建成功：同一事务内删除 probe 防污染，再让测试失败
+        await conn.execute(sa.text(f'DROP TABLE "{probe_table}"'))
+        pytest.fail(f"只读事务中 CREATE TABLE {probe_table} 意外成功")
+
+    monkeypatch.setattr(preflight_module, "_check_database", probe_check_database)
+
+    with pytest.raises(_ProbeCompleted):
+        asyncio.run(run_preflight(PG_GATE.url, "pre-migration"))
+    assert "rejected" in outcome  # 探针确实执行且写入被数据库拒绝
+
+    # run_preflight 异常回滚后：独立连接复核 probe 表不存在（schema 零残留）
+    async def probe_table_exists() -> bool:
+        engine = create_engine(PG_GATE.url)
+        try:
+            async with engine.connect() as conn:
+                return await conn.run_sync(
+                    lambda sync_conn: sa.inspect(sync_conn).has_table(probe_table)
+                )
+        finally:
+            await engine.dispose()
+
+    assert asyncio.run(probe_table_exists()) is False

@@ -167,7 +167,11 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   交叉核对 + head 提取（PG 连接提升 REPEATABLE READ；SQLite 走显式
   事务的库级快照；verifier 相应拆出 `load_chain_snapshot` /
   `verify_chain_snapshot` 供同一快照复用），不存在「verifier 一条
-  连接、锚定义一条连接」的竞态（测试锁定全流程只建一个引擎）。不引入
+  连接、锚定义一条连接」的竞态（测试锁定全流程只建一个引擎）。M10-08
+  真实 PG 实测发现此处 `AsyncConnection.execution_options` 漏 `await`
+  导致隔离级别静默不生效（协程被丢弃、事务实际 read committed），已
+  与 preflight 同型缺陷一并修复（锚定路径的 PG 实证测试未单独落地，
+  见 M10-08 未覆盖边界）。不引入
   后台服务与文件锁：两名操作员同时向同一锚文件追加会立刻造成
   previous_anchor_hash 断链，被下一次校验 fail-closed 发现（可检测；
   锚定操作按 runbook 串行执行）。
@@ -283,7 +287,13 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
 **数据库层 READ ONLY + REPEATABLE READ**（SQLAlchemy execution option
 `postgresql_readonly=True`——事务以 `BEGIN READ ONLY` 开始，任何写入语句在数据库
 处即被拒绝，只读不依赖「本模块只发 SELECT」的语句面自律；隔离级别保证全部读取同一
-事务快照）；SQLite 无等价的 READ ONLY 事务语法，走显式事务的**语句面只读**快照
+事务快照——该 PG 行为已由 M10-08 门控集成测试在**隔离测试库**实证：`AIOS_PG_TEST_URL`
+过白名单门控时在 run_preflight 同一快照事务内 `SHOW transaction_isolation` =
+repeatable read、probe `CREATE TABLE` 被 PostgreSQL 以 read-only transaction 拒绝、
+异常回滚后独立连接复核 probe 表不存在（实测同时发现并修复漏 `await`
+`AsyncConnection.execution_options`、执行选项静默不生效的缺陷，见
+audit-chain-anchor 节同型修复记录；未设安全 env 时该测试跳过；**未在生产库
+执行** preflight，仅验证事务语义本身）；SQLite 无等价的 READ ONLY 事务语法，走显式事务的**语句面只读**快照
 （本模块只发 SELECT / inspector，不伪造数据库层能力——与 audit-chain-anchor 的
 快照口径一致，方言差异如实声明）。db-connect / alembic / audit-chain /
 legacy-governance 与锚定交叉核对消费**同一份快照**（`run_anchor` 可接收已加载的

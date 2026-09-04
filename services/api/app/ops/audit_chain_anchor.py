@@ -294,7 +294,10 @@ async def load_verified_snapshot(db_url: str) -> tuple[dict[str, Any], dict[str,
     try:
         async with engine.connect() as conn:
             if conn.dialect.name == "postgresql":
-                conn.execution_options(isolation_level="REPEATABLE READ")
+                # AsyncConnection.execution_options 是 async 方法：漏 await 时
+                # 协程被静默丢弃、隔离级别不生效（与 M10-08 在 preflight 发现
+                # 并实证的同型缺陷，此处同步修复）
+                await conn.execution_options(isolation_level="REPEATABLE READ")
             async with conn.begin():
                 snapshot = await load_chain_snapshot(conn)
     finally:
