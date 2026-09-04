@@ -9,11 +9,11 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-**M10-11 release readiness manifest 已实现、聚焦验证通过，待全量验证与 push/PR/CI**（分支 `feature/m10-11-release-readiness` 尚未合并；**真实生产 DB 零连接零执行**）：
+**M10-11 release readiness manifest 已完成合并**（feature/m10-11-release-readiness，PR #7 https://github.com/swsgbl/ai-learning-os/pull/7；最终 head `a0e8b9d812efab896ea8527273500226ad4fe088`，merge commit `eb82c5aa5ffb76818f4a8cdd6551f3e036c71e60`（merge commit 方式，非 squash/rebase）；**真实生产 DB 零连接零执行，未做生产验收/生产部署/生产 DB 验证**）：
 
 - **交付内容**：新增只读 release readiness manifest——`services/api/app/ops/release_readiness.py`（gate 矩阵 9 required + 1 optional、SHA-256 汇总、审批哈希绑定校验、脱敏输出、artifacts/temp 路径护栏与原子写入）+ `app.ops.cli release-readiness --evidence-dir [--json] [--output]` 子命令 + 聚焦测试 `services/api/tests/test_release_readiness.py`。工具定位与 runbook 已写入 `docs/DEVELOPMENT.md`「发布准备 readiness manifest（M10-11）」节：不连 DB/网络/API、不读环境变量、不执行迁移/锚定/清理/WORM/发布/回滚、无 `--yes`；`release_ready` 仅断言必需门全 pass 且审批哈希绑定完整匹配，不含公网语音（turn-tls optional 门）就绪结论。
-- **当前验证状态**：聚焦测试 `pytest services/api/tests/test_release_readiness.py -q` **56 passed**；`ruff check services/api` 全绿；真实生产 DB 零连接零执行（工具与测试均不触生产环境）。
-- **待办（未完成，勿视为已合并/已生产验收）**：本地全量验证（清除 `AIOS_PG_TEST_URL`/`DATABASE_URL` 后 `pytest services/api -q`、ruff、`git diff --check`）→ commit → push / PR / CI。合并与生产切换按 DEVELOPMENT.md 各 runbook 另行走人工审批流程。
+- **当前验证状态**：本地——聚焦测试 `pytest services/api/tests/test_release_readiness.py -q` **56 passed**、`ruff check services/api` 全绿、清除 `AIOS_PG_TEST_URL`/`DATABASE_URL` 后全量 `pytest services/api -q` **1013 passed / 29 skipped**、`git diff --check` 干净（本地全量数字为 PR #7 描述记录的分支本地验证，不是 CI 结果）；远端 CI——PR #7 head `a0e8b9d` 触发 run **33851538036** https://github.com/swsgbl/ai-learning-os/actions/runs/33851538036 **conclusion=success**：Web（typecheck/lint/build）、API（ruff/pytest/migration）、Docker（compose build+healthy+smoke）三 job 全部 SUCCESS；真实生产 DB 零连接零执行（工具与测试均不触生产环境）。
+- **合并状态（2026-09-04 回填）**：PR #7 已合并入 main（merge commit `eb82c5aa5ffb76818f4a8cdd6551f3e036c71e60`，2026-09-04T08:26:44Z）；合并前置复核通过（state=open、head SHA 与 `a0e8b9d812efab896ea8527273500226ad4fe088` 一致、base=main、mergeable=MERGEABLE、mergeable_state=CLEAN、CI run 33851538036 success）。**未做事项（勿视为已完成）**：未做生产验收/生产部署/生产 DB 验证/生产迁移/锚定/清理/发布/回滚——生产切换仍按 DEVELOPMENT.md 各 runbook 另行走人工审批流程。
 
 **M10-09 anchor 快照 PG 实证已完成并验证**（分支未合并；**真实生产库零连接零执行**——只在白名单隔离测试库上验证事务语义，不执行任何生产迁移/清理/锚定/preflight）：
 
