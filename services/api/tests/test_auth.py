@@ -283,8 +283,13 @@ def _promote(db_path, username: str) -> None:
     from app.repositories.users import UserRepository
 
     async def _do() -> None:
-        repo = UserRepository(make_sessionmaker(create_engine(f"sqlite+aiosqlite:///{db_path}")))
-        assert await repo.set_role(username, "admin") is not None
+        # engine 必须在同一个 event loop 内 dispose（M10-10，同 legacy 治理测试）。
+        engine = create_engine(f"sqlite+aiosqlite:///{db_path}")
+        try:
+            repo = UserRepository(make_sessionmaker(engine))
+            assert await repo.set_role(username, "admin") is not None
+        finally:
+            await engine.dispose()
 
     asyncio.run(_do())
 

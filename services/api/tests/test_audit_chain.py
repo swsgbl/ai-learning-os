@@ -115,17 +115,22 @@ def _mutate(db_url: str, statement) -> None:
 
 
 def _fetch(db_url: str, model, *conditions) -> list:
+    # engine 必须在同一个 event loop 内 dispose（M10-10，同 legacy 治理测试）。
     async def run():
-        sessions = make_sessionmaker(create_engine(db_url))
-        async with sessions() as session:
-            rows = (
-                (await session.execute(select(model).where(*conditions)))
-                .scalars()
-                .all()
-            )
-            for row in rows:
-                session.expunge(row)
-            return rows
+        engine = create_engine(db_url)
+        try:
+            sessions = make_sessionmaker(engine)
+            async with sessions() as session:
+                rows = (
+                    (await session.execute(select(model).where(*conditions)))
+                    .scalars()
+                    .all()
+                )
+                for row in rows:
+                    session.expunge(row)
+                return rows
+        finally:
+            await engine.dispose()
 
     return asyncio.run(run())
 

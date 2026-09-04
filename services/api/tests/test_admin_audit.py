@@ -54,9 +54,14 @@ def _promote_to_admin(db_url: str, username: str) -> None:
     from app.repositories.users import UserRepository
 
     async def _do_real() -> None:
-        repo = UserRepository(make_sessionmaker(create_engine(db_url)))
-        updated = await repo.set_role(username, "admin")
-        assert updated is not None
+        # engine 必须在同一个 event loop 内 dispose（M10-10，同 legacy 治理测试）。
+        engine = create_engine(db_url)
+        try:
+            repo = UserRepository(make_sessionmaker(engine))
+            updated = await repo.set_role(username, "admin")
+            assert updated is not None
+        finally:
+            await engine.dispose()
 
     asyncio.run(_do_real())
 
@@ -269,8 +274,13 @@ def test_admin_cli_promote_demote_list(auth_on, tmp_path, monkeypatch, capsys) -
     from app.repositories.users import UserRepository
 
     async def _seed():
-        repo = UserRepository(make_sessionmaker(create_engine(db_url)))
-        await repo.create("cli_user", "x")
+        # engine 必须在同一个 event loop 内 dispose（M10-10，同 legacy 治理测试）。
+        engine = create_engine(db_url)
+        try:
+            repo = UserRepository(make_sessionmaker(engine))
+            await repo.create("cli_user", "x")
+        finally:
+            await engine.dispose()
 
     asyncio.run(_seed())
 

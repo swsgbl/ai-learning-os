@@ -12,6 +12,7 @@ import asyncio
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.db.orm import AnswerEventRow
 from app.db.session import create_engine, make_sessionmaker, prepare_database
@@ -33,12 +34,14 @@ class FakeClock:
         self.current = self.current + timedelta(seconds=seconds)
 
 
-async def make_sqlite_repo(clock: FakeClock) -> PostgresRepository:
+async def make_sqlite_repo(clock: FakeClock) -> tuple[PostgresRepository, AsyncEngine]:
+    """返回 (repo, engine)：调用方必须在同一 event loop 内 dispose engine
+    （M10-10，同 legacy 治理测试——否则 aiosqlite worker 比 loop 活得久）。"""
     engine = create_engine(SQLITE_URL)
     await prepare_database(engine, SQLITE_URL)
     repo = PostgresRepository(make_sessionmaker(engine), clock=clock)
     await repo.seed_papers_if_empty()
-    return repo
+    return repo, engine
 
 
 async def run_contract(repo, clock: FakeClock, paper_id: str) -> None:
@@ -102,8 +105,11 @@ def test_postgres_repository_contract_on_sqlite() -> None:
     clock = FakeClock()
 
     async def body() -> None:
-        repo = await make_sqlite_repo(clock)
-        await run_contract(repo, clock, "algorithms-basics")
+        repo, engine = await make_sqlite_repo(clock)
+        try:
+            await run_contract(repo, clock, "algorithms-basics")
+        finally:
+            await engine.dispose()
 
     asyncio.run(body())
 
@@ -114,26 +120,29 @@ def test_sqlite_unique_constraints_backstop() -> None:
     async def body() -> None:
         clock = FakeClock()
         engine = create_engine(SQLITE_URL)
-        await prepare_database(engine, SQLITE_URL)
-        repo = PostgresRepository(make_sessionmaker(engine), clock=clock)
-        await repo.seed_papers_if_empty()
-        paper = await repo.get_paper("algorithms-basics")
-        assert paper
-        exam = await repo.create_exam(paper, "exam")
-        await repo.save_answer(exam.exam_id, 1, paper.questions[0].id, "A")
+        try:
+            await prepare_database(engine, SQLITE_URL)
+            repo = PostgresRepository(make_sessionmaker(engine), clock=clock)
+            await repo.seed_papers_if_empty()
+            paper = await repo.get_paper("algorithms-basics")
+            assert paper
+            exam = await repo.create_exam(paper, "exam")
+            await repo.save_answer(exam.exam_id, 1, paper.questions[0].id, "A")
 
-        from sqlalchemy import insert
+            from sqlalchemy import insert
 
-        async with engine.begin() as conn:
-            with pytest.raises(Exception):  # noqa: B017 - 底层 IntegrityError
-                await conn.execute(
-                    insert(AnswerEventRow).values(
-                        exam_session_id=exam.exam_id,
-                        sequence=1,
-                        question_id=paper.questions[0].id,
-                        answer="B",
-                        occurred_at=datetime(2026, 8, 31, 9, 0, 1, tzinfo=UTC),
+            async with engine.begin() as conn:
+                with pytest.raises(Exception):  # noqa: B017 - 底层 IntegrityError
+                    await conn.execute(
+                        insert(AnswerEventRow).values(
+                            exam_session_id=exam.exam_id,
+                            sequence=1,
+                            question_id=paper.questions[0].id,
+                            answer="B",
+                            occurred_at=datetime(2026, 8, 31, 9, 0, 1, tzinfo=UTC),
+                        )
                     )
-                )
+        finally:
+            await engine.dispose()
 
     asyncio.run(body())

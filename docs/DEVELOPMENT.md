@@ -447,6 +447,13 @@ python -m pytest services/api -q
 > 并给出原因，但请直接使用隔离库 `ai_learning_os_test`，不要依赖跳过兜底。
 > 不设 `AIOS_PG_TEST_URL` 时全量 pytest 只跑 SQLite 单元路径，同样全绿。
 
+> **测试自建 async engine 必须在创建它的同一个 `asyncio.run` 事件循环内
+> `finally: await engine.dispose()`**（M10-10）：连接池持 aiosqlite worker
+> 线程，不 dispose 就退出循环会让 worker 携已关闭 loop 的 future 存活，
+> GC 时机不定地在后续任意测试触发 `PytestUnhandledThreadExceptionWarning`
+> （call_soon_threadsafe on closed loop），且警告归属的测试与泄漏源无关。
+> `TestClient(create_app(...))` 的 engine 由应用 lifespan 关闭，无需处理。
+
 Docker 生产本地版冒烟（全服务 healthy + 端点 + 上传重启读回）：
 
 ```bash

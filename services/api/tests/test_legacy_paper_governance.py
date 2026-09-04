@@ -133,15 +133,22 @@ def _make_db(tmp_path) -> str:
 
 
 def _fetch(db_url: str, model, *conditions):
+    # engine 必须在同一个 event loop 内 dispose：否则 aiosqlite worker 线程
+    # 携已关闭 loop 的 future 存活，全量套件随机触发
+    # PytestUnhandledThreadExceptionWarning（call_soon_threadsafe on closed loop）。
     async def run():
-        sessions = make_sessionmaker(create_engine(db_url))
-        async with sessions() as session:
-            rows = (
-                await session.execute(select(model).where(*conditions))
-            ).scalars().all()
-            for row in rows:
-                session.expunge(row)
-            return rows
+        engine = create_engine(db_url)
+        try:
+            sessions = make_sessionmaker(engine)
+            async with sessions() as session:
+                rows = (
+                    await session.execute(select(model).where(*conditions))
+                ).scalars().all()
+                for row in rows:
+                    session.expunge(row)
+                return rows
+        finally:
+            await engine.dispose()
 
     return asyncio.run(run())
 
@@ -1016,3 +1023,31 @@ def test_cli_export_delete_via_ids_file(tmp_path, capsys) -> None:
         "pap_owned",
         "pap_ref",
     }
+
+
+# --- 测试资源生命周期 --------------------------------------------------------
+
+
+def test_fetch_disposes_verification_engine(tmp_path, monkeypatch) -> None:
+    """回归 M10-10：_fetch 自建 engine 必须在 finally dispose。
+
+    未 dispose 的 aiosqlite 连接要等 GC 异步回收（时机不确定），其 worker
+    线程可能在后续测试的 event loop 关闭后才调 call_soon_threadsafe →
+    全量套件随机出现 PytestUnhandledThreadExceptionWarning。业务断言已由
+    本文件全部经由 _fetch 读库覆盖，此处只锁资源生命周期。
+    """
+    db_url = _make_db(tmp_path)
+    engines = []
+    real_create_engine = create_engine
+
+    def tracking_create_engine(url: str, **kwargs):
+        engine = real_create_engine(url, **kwargs)
+        engines.append(engine)
+        return engine
+
+    monkeypatch.setattr(sys.modules[__name__], "create_engine", tracking_create_engine)
+    assert _fetch(db_url, PaperRow)
+    # dispose 已在 _fetch 返回前完成：连接池为空（未 dispose 时为 1），
+    # aiosqlite worker 线程随之退出，不会比 event loop 活得更久。
+    assert len(engines) == 1
+    assert "Connections in pool: 0" in engines[0].pool.status()

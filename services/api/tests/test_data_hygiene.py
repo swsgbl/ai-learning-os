@@ -78,11 +78,16 @@ def _register_login(client: TestClient, username: str) -> tuple[dict[str, str], 
 
 
 def _promote(db_path, username: str) -> None:
+    # engine 必须在同一个 event loop 内 dispose（M10-10，同 legacy 治理测试）。
     async def run() -> None:
         from app.repositories.users import UserRepository
 
-        repo = UserRepository(make_sessionmaker(create_engine(f"sqlite+aiosqlite:///{db_path}")))
-        assert await repo.set_role(username, "admin") is not None
+        engine = create_engine(f"sqlite+aiosqlite:///{db_path}")
+        try:
+            repo = UserRepository(make_sessionmaker(engine))
+            assert await repo.set_role(username, "admin") is not None
+        finally:
+            await engine.dispose()
 
     asyncio.run(run())
 
@@ -119,178 +124,188 @@ def _seed_direct_rows(db_url: str, owner_id: str, exam_id: str) -> None:
     now = datetime.now(UTC)
 
     async def run() -> None:
-        sessions = make_sessionmaker(create_engine(db_url))
-        async with sessions() as session, session.begin():
-            session.add(
-                ResourceRow(
-                    id="res_smoke",
-                    source_id=None,
-                    url=None,
-                    media_type="application/json",
-                    title="smoke resource",
-                    language="zh",
-                    access_state="private",
-                    license_state="OPEN_LICENSE",
-                    owner_id=owner_id,
-                    content_hash="a" * 64,
-                    storage_key="uploads/aa/" + "a" * 64,
-                    size_bytes=1,
-                    content_type="application/json",
-                    parse_status="parsed",
-                    parser_name="json",
-                    parse_metrics={},
-                    parse_error=None,
-                    fetched_at=now,
+        # engine 必须在同一个 event loop 内 dispose（M10-10，同 legacy 治理测试）。
+        engine = create_engine(db_url)
+        try:
+            sessions = make_sessionmaker(engine)
+            async with sessions() as session, session.begin():
+                session.add(
+                    ResourceRow(
+                        id="res_smoke",
+                        source_id=None,
+                        url=None,
+                        media_type="application/json",
+                        title="smoke resource",
+                        language="zh",
+                        access_state="private",
+                        license_state="OPEN_LICENSE",
+                        owner_id=owner_id,
+                        content_hash="a" * 64,
+                        storage_key="uploads/aa/" + "a" * 64,
+                        size_bytes=1,
+                        content_type="application/json",
+                        parse_status="parsed",
+                        parser_name="json",
+                        parse_metrics={},
+                        parse_error=None,
+                        fetched_at=now,
+                    )
                 )
-            )
-            session.add(
-                ChunkRow(
-                    id="chunk_smoke",
-                    resource_id="res_smoke",
-                    chunk_index=0,
-                    text="smoke",
-                    chunk_hash="b" * 64,
-                    page_start=1,
-                    page_end=1,
-                    slide=None,
-                    block_types=[],
-                    embedding_status="pending",
+                session.add(
+                    ChunkRow(
+                        id="chunk_smoke",
+                        resource_id="res_smoke",
+                        chunk_index=0,
+                        text="smoke",
+                        chunk_hash="b" * 64,
+                        page_start=1,
+                        page_end=1,
+                        slide=None,
+                        block_types=[],
+                        embedding_status="pending",
+                    )
                 )
-            )
-            session.add(
-                EvidenceRow(
-                    id="evidence_smoke",
-                    chunk_id="chunk_smoke",
-                    resource_id="res_smoke",
-                    source_id=None,
-                    url=None,
-                    parser_name="json",
-                    locator={"page": 1},
-                    snippet_hash="c" * 64,
-                    license_state="OPEN_LICENSE",
-                    retrieved_at=now,
+                session.add(
+                    EvidenceRow(
+                        id="evidence_smoke",
+                        chunk_id="chunk_smoke",
+                        resource_id="res_smoke",
+                        source_id=None,
+                        url=None,
+                        parser_name="json",
+                        locator={"page": 1},
+                        snippet_hash="c" * 64,
+                        license_state="OPEN_LICENSE",
+                        retrieved_at=now,
+                    )
                 )
-            )
-            session.add(
-                ParseJobRow(
-                    id="job_smoke",
-                    resource_id="res_smoke",
-                    parser_name="json",
-                    status="succeeded",
-                    attempts=1,
-                    max_attempts=3,
-                    last_error=None,
-                    created_at=now,
-                    updated_at=now,
+                session.add(
+                    ParseJobRow(
+                        id="job_smoke",
+                        resource_id="res_smoke",
+                        parser_name="json",
+                        status="succeeded",
+                        attempts=1,
+                        max_attempts=3,
+                        last_error=None,
+                        created_at=now,
+                        updated_at=now,
+                    )
                 )
-            )
-            session.add(
-                CourseImportDraftRow(
-                    id="cid_smoke",
-                    owner_id=owner_id,
-                    title="smoke course",
-                    status="pending_review",
-                    source_resource_id="res_smoke",
-                    source_license_state="OPEN_LICENSE",
-                    reuse_admission="ADMISSIBLE",
-                    concepts=[],
-                    resource_refs=["res_smoke"],
-                    extraction_note="smoke",
-                    review_note=None,
-                    reviewed_at=None,
-                    created_at=now,
+                session.add(
+                    CourseImportDraftRow(
+                        id="cid_smoke",
+                        owner_id=owner_id,
+                        title="smoke course",
+                        status="pending_review",
+                        source_resource_id="res_smoke",
+                        source_license_state="OPEN_LICENSE",
+                        reuse_admission="ADMISSIBLE",
+                        concepts=[],
+                        resource_refs=["res_smoke"],
+                        extraction_note="smoke",
+                        review_note=None,
+                        reviewed_at=None,
+                        created_at=now,
+                    )
                 )
-            )
-            session.add(
-                VariantQuestionDraftRow(
-                    id="vqd_smoke",
-                    owner_id=owner_id,
-                    status="pending_review",
-                    variants={},
-                    variant_count=0,
-                    generation_note="smoke",
-                    review_note=None,
-                    reviewed_at=None,
-                    created_at=now,
+                session.add(
+                    VariantQuestionDraftRow(
+                        id="vqd_smoke",
+                        owner_id=owner_id,
+                        status="pending_review",
+                        variants={},
+                        variant_count=0,
+                        generation_note="smoke",
+                        review_note=None,
+                        reviewed_at=None,
+                        created_at=now,
+                    )
                 )
-            )
-            session.add(
-                SearchQueryRow(
-                    query="smoke query",
-                    providers_requested=["local"],
-                    providers_skipped=[],
-                    result_count=0,
-                    duration_ms=1,
-                    results=[],
-                    owner_id=owner_id,
-                    created_at=now,
+                session.add(
+                    SearchQueryRow(
+                        query="smoke query",
+                        providers_requested=["local"],
+                        providers_skipped=[],
+                        result_count=0,
+                        duration_ms=1,
+                        results=[],
+                        owner_id=owner_id,
+                        created_at=now,
+                    )
                 )
-            )
-            session.add(
-                VoiceTranscriptRow(
-                    provider="local",
-                    text="smoke transcript",
-                    confidence=1.0,
-                    latency_ms=1,
-                    audio_bytes=1,
-                    audio_object_key=None,
-                    owner_id=owner_id,
-                    audio_stored=False,
-                    exam_id=exam_id,
-                    question_id=None,
-                    created_at=now,
+                session.add(
+                    VoiceTranscriptRow(
+                        provider="local",
+                        text="smoke transcript",
+                        confidence=1.0,
+                        latency_ms=1,
+                        audio_bytes=1,
+                        audio_object_key=None,
+                        owner_id=owner_id,
+                        audio_stored=False,
+                        exam_id=exam_id,
+                        question_id=None,
+                        created_at=now,
+                    )
                 )
-            )
-            session.add(
-                VoiceSessionRow(
-                    id="voice_smoke",
-                    exam_id=exam_id,
-                    status="completed",
-                    question_index=0,
-                    revision=1,
-                    created_at=now,
-                    updated_at=now,
+                session.add(
+                    VoiceSessionRow(
+                        id="voice_smoke",
+                        exam_id=exam_id,
+                        status="completed",
+                        question_index=0,
+                        revision=1,
+                        created_at=now,
+                        updated_at=now,
+                    )
                 )
-            )
-            session.add(
-                VoiceAnswerEventRow(
-                    event_id="voice_event_smoke",
-                    session_id="voice_smoke",
-                    exam_id=exam_id,
-                    question_id="q",
-                    normalized_answer="B",
-                    intent="choose",
-                    transcript="choose B",
-                    confidence=1.0,
-                    accepted=True,
-                    created_at=now,
+                session.add(
+                    VoiceAnswerEventRow(
+                        event_id="voice_event_smoke",
+                        session_id="voice_smoke",
+                        exam_id=exam_id,
+                        question_id="q",
+                        normalized_answer="B",
+                        intent="choose",
+                        transcript="choose B",
+                        confidence=1.0,
+                        accepted=True,
+                        created_at=now,
+                    )
                 )
-            )
-            session.add(
-                VoiceTraceSpanRow(
-                    stage="asr",
-                    duration_ms=1,
-                    source="server",
-                    session_id="voice_smoke",
-                    exam_id=exam_id,
-                    question_id=None,
-                    created_at=now,
+                session.add(
+                    VoiceTraceSpanRow(
+                        stage="asr",
+                        duration_ms=1,
+                        source="server",
+                        session_id="voice_smoke",
+                        exam_id=exam_id,
+                        question_id=None,
+                        created_at=now,
+                    )
                 )
-            )
+        finally:
+            await engine.dispose()
     asyncio.run(run())
 
 
 def _rows(db_path, model, *conditions):
+    # engine 必须在同一个 event loop 内 dispose（M10-10，同 legacy 治理测试）。
     async def run():
-        sessions = make_sessionmaker(create_engine(f"sqlite+aiosqlite:///{db_path}"))
-        async with sessions() as session:
-            rows = (
-                await session.execute(select(model).where(*conditions))
-            ).scalars().all()
-            # Detach plain ORM rows for synchronous assertions.
-            for row in rows:
-                session.expunge(row)
-            return rows
+        engine = create_engine(f"sqlite+aiosqlite:///{db_path}")
+        try:
+            sessions = make_sessionmaker(engine)
+            async with sessions() as session:
+                rows = (
+                    await session.execute(select(model).where(*conditions))
+                ).scalars().all()
+                # Detach plain ORM rows for synchronous assertions.
+                for row in rows:
+                    session.expunge(row)
+                return rows
+        finally:
+            await engine.dispose()
 
     return asyncio.run(run())
 
@@ -471,37 +486,42 @@ def test_object_store_keys_shared_across_rows_are_never_deleted(auth_on, tmp_pat
     now = datetime.now(UTC)
 
     async def seed_and_plan() -> dict:
-        sessions = make_sessionmaker(create_engine(db_url))
-        async with sessions() as session, session.begin():
-            _seed_resource(
-                session,
-                rid="res_smoke_shared",
-                owner_id=smoke_id,
-                storage_key="uploads/shared-payload",
-                digest="1" * 64,
-                now=now,
-            )
-            _seed_resource(
-                session,
-                rid="res_normal_shared",
-                owner_id=normal_id,
-                storage_key="uploads/shared-payload",
-                digest="1" * 64,
-                now=now,
-            )
-            _seed_resource(
-                session,
-                rid="res_smoke_exclusive",
-                owner_id=smoke_id,
-                storage_key="uploads/smoke-only",
-                digest="2" * 64,
-                now=now,
-            )
-            _seed_transcript(session, owner_id=smoke_id, audio_key="voice/shared-audio", now=now)
-            _seed_transcript(session, owner_id=normal_id, audio_key="voice/shared-audio", now=now)
-            _seed_transcript(session, owner_id=smoke_id, audio_key="voice/smoke-only", now=now)
-        async with sessions() as session:
-            return await _build_cleanup_plan(session, ("smoke_",))
+        # engine 必须在同一个 event loop 内 dispose（M10-10，同 legacy 治理测试）。
+        engine = create_engine(db_url)
+        try:
+            sessions = make_sessionmaker(engine)
+            async with sessions() as session, session.begin():
+                _seed_resource(
+                    session,
+                    rid="res_smoke_shared",
+                    owner_id=smoke_id,
+                    storage_key="uploads/shared-payload",
+                    digest="1" * 64,
+                    now=now,
+                )
+                _seed_resource(
+                    session,
+                    rid="res_normal_shared",
+                    owner_id=normal_id,
+                    storage_key="uploads/shared-payload",
+                    digest="1" * 64,
+                    now=now,
+                )
+                _seed_resource(
+                    session,
+                    rid="res_smoke_exclusive",
+                    owner_id=smoke_id,
+                    storage_key="uploads/smoke-only",
+                    digest="2" * 64,
+                    now=now,
+                )
+                _seed_transcript(session, owner_id=smoke_id, audio_key="voice/shared-audio", now=now)
+                _seed_transcript(session, owner_id=normal_id, audio_key="voice/shared-audio", now=now)
+                _seed_transcript(session, owner_id=smoke_id, audio_key="voice/smoke-only", now=now)
+            async with sessions() as session:
+                return await _build_cleanup_plan(session, ("smoke_",))
+        finally:
+            await engine.dispose()
 
     plan = asyncio.run(seed_and_plan())
     assert [user["username"] for user in plan["matched_users"]] == ["smoke_keys"]
