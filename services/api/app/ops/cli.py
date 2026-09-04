@@ -650,6 +650,68 @@ def _run_production_preflight(args) -> int:
     return report["exit_code"]
 
 
+def _run_release_readiness(args) -> int:
+    """python -m app.ops.cli release-readiness --evidence-dir DIR
+    [--json] [--output PATH]
+
+    M10-11 发布准备与人工审批证据 manifest（只读、fail-closed）：只读取调用方
+    显式提供的本地 evidence 目录（JSON/JSONL），对关键证据计算 SHA-256，按门
+    汇总 missing/malformed/tampered/blocked/pending/pass，并校验人工审批记录与
+    证据哈希的绑定。不连接数据库、不调用 API、不访问网络、不读取环境变量
+    （生产密钥物理上进不了本工具）；不执行生产迁移/锚定/清理/WORM/发布/回滚
+    ——命令没有 --yes 执行形态。--output 复用 artifacts/temp gitignore 路径
+    护栏并原子落盘（symlink 目标拒绝），写入失败 exit 2 且不打印门结论摘要。
+    退出码：全部必需门 pass=0 / 任一必需门非 pass=1 / 目录或路径与 IO 问题=2。
+    """
+    import json as _json
+
+    from app.ops.legacy_papers import is_safe_artifact_path
+    from app.ops.release_readiness import (
+        EvidenceInputError,
+        format_readiness_summary,
+        run_release_readiness,
+    )
+
+    if args.output and not is_safe_artifact_path(args.output):
+        print(
+            f"拒绝写入 {args.output}：manifest 只能写入 gitignore 的 artifacts/ 或 temp/ 目录"
+        )
+        return 2
+    try:
+        report = run_release_readiness(args.evidence_dir)
+    except EvidenceInputError as cause:
+        print(f"证据输入无效（目录或路径问题，未产生 manifest）: {cause}")
+        return 2
+    except OSError as cause:
+        print(
+            "证据读取失败（IO 问题，未产生 manifest）: "
+            f"{type(cause).__name__}: {cause}"
+        )
+        return 2
+    if args.output:
+        try:
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            _write_report_atomic(
+                output_path,
+                _json.dumps(report, ensure_ascii=False, indent=2),
+            )
+        except OSError as cause:
+            # 目录无法创建/权限/磁盘满/replace 失败：manifest 未落盘或旧文件
+            # 原样保留（原子写不产生 partial），不得再打印门结论摘要。
+            print(
+                f"报告写入失败（路径/权限/磁盘问题，未产生报告文件）: "
+                f"{type(cause).__name__}: {cause}"
+            )
+            return 2
+        print(f"报告已写入: {args.output}")
+    if args.as_json:
+        print(_json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(format_readiness_summary(report))
+    return report["exit_code"]
+
+
 async def _run_license_report(args) -> int:
     """license-report 子命令：输出四区段授权清单 JSON（无 DB 时含说明段）。"""
     import json as _json
@@ -914,6 +976,29 @@ def main() -> None:
             "原子落盘：临时文件 + rename，失败保留旧报告、symlink 拒绝；默认不落盘）"
         ),
     )
+    p_rr = sub.add_parser(
+        "release-readiness",
+        help=(
+            "发布准备与人工审批证据 manifest（M10-11；只读本地证据目录，"
+            "不连 DB/网络、不读密钥、不执行任何生产操作，无 --yes 形态）"
+        ),
+    )
+    p_rr.add_argument(
+        "--evidence-dir",
+        required=True,
+        help="本地证据目录（每门一个 JSON 证据文件 + 可选 audit-anchor.jsonl 副本）",
+    )
+    p_rr.add_argument(
+        "--json", dest="as_json", action="store_true", help="输出完整 JSON manifest"
+    )
+    p_rr.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "写 JSON manifest 到文件（必须位于 gitignore 的 artifacts/temp 目录；"
+            "原子落盘：临时文件 + rename，失败保留旧报告、symlink 拒绝；默认不落盘）"
+        ),
+    )
     p_ad = sub.add_parser("admin", help="角色运维：promote/demote/list（M9-04）")
     p_ad.add_argument("action", choices=["promote", "demote", "list"])
     p_ad.add_argument("username", nargs="?", default=None)
@@ -947,6 +1032,8 @@ def main() -> None:
         raise SystemExit(_run_audit_chain_anchor(args))
     if args.command == "production-preflight":
         raise SystemExit(_run_production_preflight(args))
+    if args.command == "release-readiness":
+        raise SystemExit(_run_release_readiness(args))
     if args.command == "admin":
         if args.action != "list" and not args.username:
             print("promote/demote 需要用户名")
