@@ -81,6 +81,10 @@ class ParseWorker:
         if self._task is None or self._task.done():
             self._task = asyncio.create_task(self._loop())
 
+    def is_running(self) -> bool:
+        """消费循环是否存活（M10-14 运行观测快照；SQLite 测试替身不启动循环）。"""
+        return self._task is not None and not self._task.done()
+
     async def stop(self) -> None:
         if self._task:
             self._task.cancel()
