@@ -27,7 +27,10 @@
    hex / 缺 supporting_evidence 字段 => malformed => blocked；note 只验证
    非空不回显；审批后把锚副本替换为另一份仍自洽、锚点数相同的副本——
    anchor 步仍 pass 但 approval 变 blocked（主 step 哈希盖不到的缺口由
-   supporting 绑定补上）；
+   supporting 绑定补上）；**审批记录携带任一 DRAFT 底稿保留元数据字段
+   （APPROVAL_DRAFT_RESERVED_FIELDS 十字段逐一参数化）=> malformed =>
+   blocked——底稿补齐人工字段后改名/拼装不能 pass（M10-16 返工），
+   合法审批不携带这些字段仍 pass，拒绝名单与底稿输出字段同步**；
 6. 顶层优先级 blocked > pending > not_executed > ready（组合场景逐一锁定）；
 7. 路径护栏与 IO（exit 2）：--evidence-dir 不存在 / 普通文件 / symlink、
    目录内任何 symlink、证据文件名被目录占用；--output 非 artifacts/temp
@@ -719,6 +722,58 @@ def test_approval_unknown_step_reference_malformed(tmp_path) -> None:
     _write_json(directory, "cutover-approval.json", payload)
     report = _run(directory)
     assert _step(report, "cutover-approval")["status"] == "blocked"
+
+
+# --- 5a. 审批记录禁带 DRAFT 底稿元数据（M10-16 返工：DRAFT 不可审批边界） -----
+
+
+@pytest.mark.parametrize(
+    "field", sorted(cr.APPROVAL_DRAFT_RESERVED_FIELDS)
+)
+def test_approval_with_draft_metadata_field_is_blocked(tmp_path, field) -> None:
+    """合法审批混入任一 approval-draft 底稿保留元数据字段（draft/
+    manual_fields_required/confirmation_required/step_evidence_missing/
+    load_problems/approval_file_present/generated_at/notice/tool/
+    evidence_dir）=> malformed => blocked——字段存在即拒绝（与值无关），
+    整体 blocked、绝不 ready；底稿补齐人工字段后改名/拼装不再有 pass 读法。"""
+    directory = _full_passing_dir(tmp_path)
+    payload = _approval_payload(directory)  # 哈希绑定本来精确匹配
+    payload[field] = "draft-metadata"  # 值任意：字段存在即 fail-closed
+    _write_json(directory, "cutover-approval.json", payload)
+    report = _run(directory)
+    record = _step(report, "cutover-approval")
+    assert record["status"] == "blocked"
+    assert field in record["reason"]
+    assert report["overall_status"] == "blocked"
+    assert report["rehearsal_ready"] is False
+    # 只有审批步 blocked：其余 12 步不受影响
+    assert all(
+        item["status"] == "pass"
+        for item in report["steps"]
+        if item["step"] != "cutover-approval"
+    )
+
+
+def test_clean_approval_without_draft_metadata_still_passes(tmp_path) -> None:
+    """对照锚：合法人工审批（不携带任何底稿元数据字段）=> pass/ready——
+    拒绝名单只挡 DRAFT 底稿残留，不放宽也不收紧既有合法形态。"""
+    report = _run(_full_passing_dir(tmp_path))
+    assert _step(report, "cutover-approval")["status"] == "pass"
+    assert report["rehearsal_ready"] is True
+
+
+def test_reserved_draft_fields_are_draft_only_metadata(tmp_path) -> None:
+    """拒绝名单与 approval-draft 底稿输出字段精确同步：恰为底稿全部字段
+    减去审批合法共享的 step_evidence/supporting_evidence——底稿新增元数据
+    字段而漏登记会在此红（跨模块单一事实源守卫）。"""
+    from app.ops.cutover_evidence_pack import build_approval_draft
+
+    directory = _full_passing_dir(tmp_path)
+    (directory / "cutover-approval.json").unlink()  # 底稿不哈希审批自身
+    draft = build_approval_draft(directory)
+    assert set(cr.APPROVAL_DRAFT_RESERVED_FIELDS) == (
+        set(draft) - {"step_evidence", "supporting_evidence"}
+    )
 
 
 # --- 5b. 审批 supporting 绑定（M10-15 返工：锚副本等 supporting 文件哈希） -----
