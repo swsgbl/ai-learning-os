@@ -446,6 +446,65 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   release_readiness 原样提取，零行为变更，既有测试全绿），两个只读 manifest
   工具的装载与校验底层保持同一实现，安全语义不漂移。
 
+## 生产切换证据包脚手架（M10-16）
+
+- **CLI**：`python -m app.ops.cli cutover-evidence-pack scaffold
+  --target-dir <artifacts/temp内新目录>`（生成模板+手册）与
+  `python -m app.ops.cli cutover-evidence-pack approval-draft
+  --evidence-dir <dir> [--output <artifacts路径>]`（审批 DRAFT 哈希底稿），
+  实现文件 `services/api/app/ops/cutover_evidence_pack.py`。
+- **定位**：M10-15 cutover-rehearsal 回答「证据齐不齐、绑没绑」，本工具回答
+  「每份证据从哪来、怎么脱敏、怎么算通过、审批哈希怎么算」——在运维显式
+  指定的 artifacts/temp 新目录内生成 13 步证据模板（`.template.json` 命名，
+  预填值全部 REPLACE-ME 形态）+ 锚文件副本模板（`audit-anchor.jsonl.template`）
+  + 逐项操作手册 README（证据文件名/来源命令或 runbook/脱敏要求/通过失败
+  语义/人工授权/隔离 fixture 形态六要素，数据登记在 `MANUAL_ENTRIES` /
+  `FIXTURE_FORMS`，README 由数据渲染生成，测试守卫与 `STEPS` 一一对应无漏项）。
+  **真实生产操作必须人工逐项授权**：手册内出现的生产命令（production-preflight /
+  backup / audit-chain-* / *-migrate 等）全部由运维显式授权后手动执行，本工具
+  与 rehearsal 均不代为执行。
+- **模板防误用（三层）**：`.template.json` 命名——rehearsal 只认精确证据
+  文件名（`KNOWN_EVIDENCE_FILES`），模板只会进 `unrecognized_files`，不可能被
+  当作证据评估；预填值全部 REPLACE-ME 字符串（类型/枚举故意不符），即使手工
+  改名直用也只会在 `req_int/req_bool/req_choice` 处 malformed => blocked；
+  每个模板带 DRAFT/REPLACE-ME 标注与 `_template_notice` 说明字段。测试锁定
+  「13 个模板改名直用全部 blocked、绝不 ready」。
+- **scaffold 路径护栏（fail-closed，exit 2）**：只写入用户显式指定且通过
+  `is_safe_artifact_path`（直接父目录名 artifacts/temp，或 git check-ignore
+  判定忽略；仓库外路径一律拒绝）的新目录；路径任何已存在组件是 symlink 即
+  拒绝、`..` 越界归一后落在护栏外即拒绝、目标是 artifacts/temp 目录本身即
+  拒绝；已存在且非空则必须与本工具脚手架**逐字节一致**（幂等重放零改写，
+  产物无时间戳保证确定性）否则拒绝覆盖——多余文件、被填写的模板、子目录
+  占用模板名一律拒绝且既有字节不变。
+- **approval-draft**：只读计算当前证据目录**其余 12 步**主证据与实际存在
+  supporting 文件（锚副本）的 SHA-256 底稿（cutover-approval.json 自身不绑定
+  自己，已存在时 `approval_file_present` 如实标注）；输出固定 `draft: true`、
+  `manual_fields_required` 人工必填字段清单（REPLACE-ME 提示）与「直接改名
+  只会 blocked」声明；装载层问题（非法 JSON/敏感键/内嵌凭据）如实列
+  `load_problems`（只报字段路径，值不回显）。底稿缺 `step`/必填审批字段，
+  误用即 malformed => blocked——测试锁定「底稿字节改名直用 blocked 不 ready」
+  与「证据变更后旧底稿哈希失配 => rehearsal blocked、新底稿重新绑定恢复」。
+  `--output` 复用 artifacts/temp 护栏并原子落盘，写入失败 exit 2。
+- **审批 SHA-256 计算**：`step_evidence` = 其余 12 步每份证据**文件字节**的
+  SHA-256（64 位小写 hex）；`supporting_evidence` = 当前实际存在 supporting
+  文件的 sha256 mapping（目录无锚副本时必须为空对象）。辅助命令 approval-draft
+  或手工 `python -c "import hashlib,sys;print(hashlib.sha256(
+  open(sys.argv[1],'rb').read()).hexdigest())" <证据文件>`。
+- **隔离 fixture 全链路**（README 手册同步记载）：`scaffold --target-dir
+  temp/cutover-pack-dryrun` → 复制到 temp/ 演练目录，按各步「隔离 fixture
+  形态」（`FIXTURE_FORMS`，如 ci-main 用 `{"run_id":1,"merge_commit":
+  "aa11bb22cc33","conclusion":"success"}`；anchor 步最简形态不提供锚副本、
+  supporting_evidence 用空对象）填写 12 步并改名 → approval-draft 取哈希底稿
+  → 审批人模拟填写人工字段组装 cutover-approval.json → `cutover-rehearsal
+  --evidence-dir` 得 `rehearsal_ready=true`。**声明：fixture 值不代表任何真实
+  执行结果，ready 不代表生产验收、不授权生产写入/发布**——生产证据必须来自
+  人工逐项授权后的真实执行与导出（测试用同一份 FIXTURE_FORMS 真实复现该链路）。
+- **安全边界**：不连 DB/网络/API、不读环境变量（AST 级测试守卫零 `os.environ`/
+  零引擎/零 HTTP 引用）、不执行任何生产命令、无 `--yes` 执行形态；模板与手册
+  零敏感键/零凭据字样（find_sensitive_key 与凭据 URL 形态扫描测试锁定）；
+  scaffold/approval-draft 退出码：成功（含幂等重放）=0 / 目标目录或路径与 IO
+  问题=2。
+
 ## LLM 接入（M10-01）
 
 - OpenAI 兼容 gateway（`app/llm/gateway.py`）：`LLM_ENDPOINT/LLM_API_KEY/LLM_MODEL`

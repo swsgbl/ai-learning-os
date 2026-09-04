@@ -777,6 +777,108 @@ def _run_cutover_rehearsal(args) -> int:
     return report["exit_code"]
 
 
+def _run_cutover_evidence_pack(args) -> int:
+    """python -m app.ops.cli cutover-evidence-pack scaffold --target-dir DIR
+    python -m app.ops.cli cutover-evidence-pack approval-draft
+    --evidence-dir DIR [--output PATH]
+
+    M10-16 生产切换证据包脚手架与操作手册（本地生成，纯脱敏模板与文档）：
+    scaffold 在用户显式指定且通过 artifacts/temp gitignore 护栏的新目录内
+    生成 M10-15 全部 13 步的证据模板（.template.json 命名，预填值全部
+    REPLACE-ME 形态——改名直用只会 blocked）+ 锚文件副本模板 + 逐项操作
+    手册 README（来源命令/脱敏要求/通过失败语义/人工授权/审批哈希计算/
+    隔离 fixture 全链路）。不连接数据库、不调用 API、不访问网络、不读取
+    环境变量；不执行任何生产迁移/锚定/清理/备份/部署/启停/发布/回滚——
+    命令没有 --yes 执行形态，真实生产操作必须人工逐项授权。目标目录护栏
+    fail-closed（exit 2）：任何已存在路径组件是 symlink、目标是 artifacts/
+    temp 本身、越界路径一律拒绝；已存在且非空则必须与本工具脚手架字节
+    一致（幂等重放，零改写）否则拒绝覆盖。approval-draft 只读计算当前
+    证据目录各步与 supporting 文件的 SHA-256 底稿——输出仍是 DRAFT（缺
+    step/必填审批字段，直接改名只会 blocked），必须人工逐项确认后由审批
+    人自行组装 cutover-approval.json；--output 复用 artifacts/temp 护栏
+    并原子落盘（symlink 目标拒绝），写入失败 exit 2。
+    退出码：成功（含幂等重放）=0 / 目标目录或路径与 IO 问题=2。
+    """
+    import json as _json
+
+    from app.ops.cutover_evidence_pack import (
+        PackInputError,
+        build_approval_draft,
+        scaffold_pack,
+    )
+    from app.ops.evidence_kit import EvidenceInputError
+    from app.ops.legacy_papers import is_safe_artifact_path
+
+    if args.action == "scaffold":
+        if not args.target_dir:
+            print("scaffold 需要 --target-dir <artifacts/temp 内的新目录>")
+            return 2
+        try:
+            report = scaffold_pack(args.target_dir)
+        except PackInputError as cause:
+            print(f"脚手架目标目录无效（未创建/未改写任何文件）: {cause}")
+            return 2
+        except OSError as cause:
+            print(f"脚手架写入失败（IO 问题）: {type(cause).__name__}: {cause}")
+            return 2
+        if report["idempotent"]:
+            print(
+                f"脚手架已存在且内容一致（幂等，未改写任何文件）: "
+                f"{report['target_dir']}"
+            )
+        else:
+            print(
+                f"脚手架已创建: {report['target_dir']}"
+                f"（{len(report['files_written'])} 个文件）"
+            )
+        print(
+            "下一步: 复制到隔离演练目录后填写模板（全部 REPLACE-ME），或按 "
+            "README 手册逐项准备证据；模板与手册不代表生产验收。"
+        )
+        return 0
+
+    # approval-draft
+    if not args.evidence_dir:
+        print("approval-draft 需要 --evidence-dir <本地证据目录>")
+        return 2
+    if args.output and not is_safe_artifact_path(args.output):
+        print(
+            f"拒绝写入 {args.output}：审批底稿只能写入 gitignore 的 artifacts/ 或 temp/ 目录"
+        )
+        return 2
+    try:
+        draft = build_approval_draft(args.evidence_dir)
+    except EvidenceInputError as cause:
+        print(f"证据输入无效（目录或路径问题，未产生底稿）: {cause}")
+        return 2
+    except OSError as cause:
+        print(
+            f"证据读取失败（IO 问题，未产生底稿）: {type(cause).__name__}: {cause}"
+        )
+        return 2
+    text = _json.dumps(draft, ensure_ascii=False, indent=2)
+    if args.output:
+        try:
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            _write_report_atomic(output_path, text + "\n")
+        except OSError as cause:
+            # 目录无法创建/权限/磁盘满/replace 失败：底稿未落盘或旧文件原样
+            # 保留（原子写不产生 partial），不得再打印底稿正文（防被误读）。
+            print(
+                f"底稿写入失败（路径/权限/磁盘问题，未产生底稿文件）: "
+                f"{type(cause).__name__}: {cause}"
+            )
+            return 2
+        print(f"审批底稿已写入: {args.output}")
+    print(text)
+    print(
+        "DRAFT：以上是哈希底稿，不是审批记录；人工逐项确认并填写全部 "
+        "REPLACE-ME 字段后才能构成 cutover-approval.json。"
+    )
+    return 0
+
+
 async def _run_license_report(args) -> int:
     """license-report 子命令：输出四区段授权清单 JSON（无 DB 时含说明段）。"""
     import json as _json
@@ -1088,6 +1190,45 @@ def main() -> None:
             "原子落盘：临时文件 + rename，失败保留旧报告、symlink 拒绝；默认不落盘）"
         ),
     )
+    p_ep = sub.add_parser(
+        "cutover-evidence-pack",
+        help=(
+            "生产切换证据包脚手架与操作手册（M10-16；13 步脱敏模板 + 手册 "
+            "README + 审批 DRAFT 哈希底稿，不连 DB/网络、不读密钥、不执行"
+            "任何生产操作，无 --yes 形态；模板不代表生产验收）"
+        ),
+    )
+    p_ep.add_argument(
+        "action",
+        choices=["scaffold", "approval-draft"],
+        help=(
+            "scaffold：在 artifacts/temp 内的新目录生成模板与手册；"
+            "approval-draft：只读计算证据目录的审批哈希底稿（仍是 DRAFT）"
+        ),
+    )
+    p_ep.add_argument(
+        "--target-dir",
+        default=None,
+        help=(
+            "scaffold 目标目录（必须位于 gitignore 的 artifacts/ 或 temp/ 内、"
+            "不是 artifacts/temp 本身；不存在或为空，同内容重复执行幂等，"
+            "非空且不一致拒绝覆盖）"
+        ),
+    )
+    p_ep.add_argument(
+        "--evidence-dir",
+        default=None,
+        help="approval-draft：本地证据目录（只读，产出 DRAFT 哈希底稿）",
+    )
+    p_ep.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "approval-draft：写底稿到文件（必须位于 gitignore 的 artifacts/ 或 "
+            "temp/ 目录；原子落盘：临时文件 + rename，失败保留旧文件、symlink "
+            "拒绝；默认只打印）"
+        ),
+    )
     p_ad = sub.add_parser("admin", help="角色运维：promote/demote/list（M9-04）")
     p_ad.add_argument("action", choices=["promote", "demote", "list"])
     p_ad.add_argument("username", nargs="?", default=None)
@@ -1125,6 +1266,8 @@ def main() -> None:
         raise SystemExit(_run_release_readiness(args))
     if args.command == "cutover-rehearsal":
         raise SystemExit(_run_cutover_rehearsal(args))
+    if args.command == "cutover-evidence-pack":
+        raise SystemExit(_run_cutover_evidence_pack(args))
     if args.command == "admin":
         if args.action != "list" and not args.username:
             print("promote/demote 需要用户名")
