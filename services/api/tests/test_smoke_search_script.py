@@ -8,10 +8,15 @@
 
 真实端点冒烟留给运维显式执行（bash infra/smoke_search.sh）——本套件不发起
 任何网络请求（探针 python 以 true/false 替身代替，endpoint 检查在 env 层失败）。
+脚本以 cwd=REPO_ROOT + 相对 POSIX 路径调用：Windows 绝对路径在 WSL bash 下
+不可解析，相对路径让 WSL/Git Bash/Linux 一致工作。环境组装同样必须在
+bash -c 内部完成：WSL bash 不继承 Windows 环境变量（Python 侧 env= 传参
+到不了 WSL），unset/export 只有发生在 bash 会话内才对三种 bash 一致成立。
 """
 from __future__ import annotations
 
-import os
+import re
+import shlex
 import shutil
 import subprocess
 from pathlib import Path
@@ -20,8 +25,20 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "infra" / "smoke_search.sh"
+#: 调用脚本用的相对 POSIX 路径（配合 cwd=REPO_ROOT）——Windows 绝对路径
+#: （D:\… 反斜杠形态）在 WSL bash 下不可解析（需 /mnt/<drive>/…），
+#: 相对 POSIX 路径对 WSL/Git Bash/Linux 三种 bash 一致可用；脚本自身会
+#: cd "$(dirname "$0")/.." 回仓库根，相对调用不影响其内部定位。
+SCRIPT_RELATIVE = "infra/smoke_search.sh"
 
 BASH = shutil.which("bash")
+
+#: 脚本感知的全部输入环境键——调用前在 bash 内 unset，保证宿主残留
+#: （含经 WSLENV 之类透传的）不影响各用例的起点环境。
+SMOKE_ENV_KEYS = ("SEARCH_CLOUD_ENDPOINT", "SEARCH_CLOUD_API_KEY", "SEARCH_SMOKE_QUERY", "PYTHON")
+
+#: 环境变量名白名单形态（键来自测试自身，注入 bash -c 前校验防拼接）
+_ENV_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 
 pytestmark = pytest.mark.skipif(BASH is None, reason="bash 不可用（脚本契约测试需要 bash）")
 
@@ -40,13 +57,24 @@ def _bash_tool_path(tool: str) -> str:
 
 
 def _run_script(env_overrides: dict[str, str]) -> subprocess.CompletedProcess:
-    env = os.environ.copy()
-    for key in ("SEARCH_CLOUD_ENDPOINT", "SEARCH_CLOUD_API_KEY", "SEARCH_SMOKE_QUERY", "PYTHON"):
-        env.pop(key, None)
-    env.update(env_overrides)
+    """以 bash -c 在 bash 会话内组装环境后 exec 脚本。
+
+    WSL bash 不继承 Windows 环境变量（无 WSLENV 透传时 SEARCH_CLOUD_ENDPOINT
+    等在 WSL 内恒为空）——Python 侧 env= 只作用于 Windows 进程，改 env 字典
+    到不了 WSL 里的脚本。故改为一条安全 shell 命令：先 unset 全部输入键清掉
+    宿主/透传残留，再以 shlex.quote 注入本用例覆盖值（键先过白名单校验，
+    防拼接），最后 exec 相对 POSIX 路径——subprocess 的 cwd=REPO_ROOT 会被
+    WSL 自动转换为 /mnt/<drive>/…，环境组装与脚本执行全在 bash 内完成，
+    对 WSL/Git Bash/Linux 一致成立。"""
+    for key in env_overrides:
+        assert _ENV_KEY_RE.fullmatch(key), f"非法环境变量名: {key}"
+    command = "; ".join(
+        [f"unset {' '.join(SMOKE_ENV_KEYS)}"]
+        + [f"export {key}={shlex.quote(value)}" for key, value in env_overrides.items()]
+        + [f"exec {shlex.quote(SCRIPT_RELATIVE)}"]
+    )
     return subprocess.run(
-        [BASH, str(SCRIPT)],
-        env=env,
+        [BASH, "-c", command],
         capture_output=True,
         text=True,
         timeout=60,
