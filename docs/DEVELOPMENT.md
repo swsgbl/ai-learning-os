@@ -170,8 +170,15 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   连接、锚定义一条连接」的竞态（测试锁定全流程只建一个引擎）。M10-08
   真实 PG 实测发现此处 `AsyncConnection.execution_options` 漏 `await`
   导致隔离级别静默不生效（协程被丢弃、事务实际 read committed），已
-  与 preflight 同型缺陷一并修复（锚定路径的 PG 实证测试未单独落地，
-  见 M10-08 未覆盖边界）。不引入
+  与 preflight 同型缺陷一并修复；M10-09 补上该路径的**独立门控实证
+  测试**（`tests/test_audit_chain_anchor.py` 第 7 节）：安全
+  `AIOS_PG_TEST_URL`（`app.db.test_gate` 白名单）指向隔离测试库时，
+  在 `load_verified_snapshot` 同一快照事务内 `SHOW transaction_isolation`
+  = repeatable read，且第一次链读取确立快照后独立连接并发提交一条新
+  审计，同一事务内第二次链读取仍返回第一次读取前的同一 PG 快照
+  （head 不漂移）——漏 `await` 旧形态下两条断言实测均失败（read
+  committed + head 漂移），暴露力锁定；测试不建辅助表、按基线彻底
+  恢复共享隔离库（零残留），未设安全 env 时 skip。不引入
   后台服务与文件锁：两名操作员同时向同一锚文件追加会立刻造成
   previous_anchor_hash 断链，被下一次校验 fail-closed 发现（可检测；
   锚定操作按 runbook 串行执行）。
@@ -292,7 +299,8 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
 repeatable read、probe `CREATE TABLE` 被 PostgreSQL 以 read-only transaction 拒绝、
 异常回滚后独立连接复核 probe 表不存在（实测同时发现并修复漏 `await`
 `AsyncConnection.execution_options`、执行选项静默不生效的缺陷，见
-audit-chain-anchor 节同型修复记录；未设安全 env 时该测试跳过；**未在生产库
+audit-chain-anchor 节同型修复记录；锚定路径的 REPEATABLE READ 已由 M10-09
+独立门控实证，见审计节并发边界；未设安全 env 时该测试跳过；**未在生产库
 执行** preflight，仅验证事务语义本身）；SQLite 无等价的 READ ONLY 事务语法，走显式事务的**语句面只读**快照
 （本模块只发 SELECT / inspector，不伪造数据库层能力——与 audit-chain-anchor 的
 快照口径一致，方言差异如实声明）。db-connect / alembic / audit-chain /

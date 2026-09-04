@@ -30,6 +30,16 @@
    拒绝形态零锚文件副作用；
 6. CLI：exit 0/1/2、--json 结构、人类摘要、main 分发、--yes 与
    --verify-only 互斥、无 secret 泄漏（marker 字符串）。
+7. 真实 PG 门控集成（M10-09）：安全 AIOS_PG_TEST_URL（app.db.test_gate
+   白名单，主/共享库 fail-closed 拒绝）存在时，在 load_verified_snapshot
+   的快照事务内实证 REPEATABLE READ 的**真实事务行为**（不是只断言
+   execution options 字典）——SHOW transaction_isolation = repeatable
+   read；第一次链读取确立快照后，独立连接并发提交一条新审计（锚定事务
+   保持打开），同一事务内第二次链读取指纹不变（仍用第一次读取前的
+   同一 PG 快照）；并发写入确实已提交生效（排除假阳性）；共享隔离库
+   按基线彻底恢复（零残留）。未设置安全 env 时 skip（不影响 SQLite
+   全量口径）——M10-08 只靠 preflight 同型修复保证本路径，本节消除
+   该验收空洞。
 """
 from __future__ import annotations
 
@@ -42,13 +52,15 @@ import sys
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, select, text, update
 
 from app.db.base import Base
 from app.db.orm import AuditChainEntryRow, AuditChainStateRow, AuditLogRow
-from app.db.session import create_engine, make_sessionmaker
+from app.db.session import create_engine, make_sessionmaker, prepare_database
+from app.db.test_gate import pg_test_gate_from_env
 from app.domain.audit_chain import (
     GENESIS_PREVIOUS_HASH,
     append_audit,
@@ -63,6 +75,7 @@ from app.ops.audit_chain_anchor import (
     build_anchor,
     compute_anchor_hash,
     format_anchor_summary,
+    load_verified_snapshot,
     run_anchor,
 )
 from app.ops.audit_chain_verify import (
@@ -1185,3 +1198,183 @@ def test_anchor_reports_never_leak_secret_payload(tmp_path, capsys) -> None:
 
     # 锚文件本身也不含 marker（只有固定七个无敏感字段）
     assert marker not in anchor_path.read_text(encoding="utf-8")
+
+
+# --- 7. 真实 PG 门控集成：load_verified_snapshot 快照事务（M10-09）---------
+
+PG_GATE = pg_test_gate_from_env()
+
+
+def _snapshot_fingerprint(snapshot) -> tuple:
+    """链快照的稳定指纹：(sequence, entry_hash) 序列 + state 单行 head。"""
+    return (
+        tuple((e["sequence"], e["entry_hash"]) for e in snapshot["entries"]),
+        tuple((s["last_sequence"], s["last_hash"]) for s in snapshot["states"]),
+    )
+
+
+@pytest.mark.skipif(not PG_GATE.enabled, reason=PG_GATE.reason)
+def test_pg_load_verified_snapshot_repeatable_read_stable_snapshot(
+    monkeypatch,
+) -> None:
+    """M10-09：隔离 PG 测试库（白名单门控放行）上实证 load_verified_snapshot
+    的 PG 路径是**数据库层 REPEATABLE READ + 事务级稳定快照**——证明真实
+    PG 事务行为，不是 execution options 字典（M10-08 修复的漏 await 同型
+    缺陷曾让隔离级别静默不生效，本测试是该路径的独立验收）：
+
+    - 探针挂在链读取上（此刻已在 load_verified_snapshot 的快照事务内）：
+      `SHOW transaction_isolation` == repeatable read；
+    - 第一次链读取（真实三条 SELECT）确立快照后，**独立连接**并发提交
+      一条新审计（锚定事务保持打开、未提交），同一事务内第二次链读取
+      的指纹不变——仍用第一次读取前的同一 PG 快照。漏 await 的旧形态下
+      两条断言都会失败：SHOW 报 read committed，且第二次读取看到并发
+      提交（head 漂移）；
+    - 并发写入确实已提交生效（独立连接读到新 head），排除「写入失败
+      导致快照看似稳定」的假阳性；load_verified_snapshot 返回的快照与
+      verify 结论也基于并发提交前的旧快照；
+    - 共享隔离库零残留：先记录基线（state + entry/audit id 集合），
+      结束时删除本测试两条 marker entry/audit 行并按基线恢复 state，
+      复核完全回到基线。前置假设：共享库既有链 valid（全部写入走
+      append_audit；verify 断言失败如实报出库状态异常）。
+
+    未设置安全 AIOS_PG_TEST_URL 时 skip（不影响 SQLite 全量口径）。
+    """
+    marker = uuid4().hex[:8]
+    marker_request = f"m10-09-{marker}"
+    payloads = [
+        _payload(
+            target_id=f"m10_09_{marker}",
+            request_id=f"{marker_request}-a",
+        ),
+        _payload(
+            target_id=f"m10_09_{marker}",
+            request_id=f"{marker_request}-b",
+        ),
+    ]
+    evidence: dict[str, object] = {}
+    real_load_chain_snapshot = anchor_module.load_chain_snapshot
+
+    async def _append_marker_audit(payload: dict) -> None:
+        """独立连接独立事务提交一条链化审计（准备阶段与并发写入方共用）。"""
+        engine = create_engine(PG_GATE.url)
+        try:
+            sessions = make_sessionmaker(engine)
+            async with sessions() as session, session.begin():
+                await append_audit(session, payload, clock=_fixed_clock(LATER))
+        finally:
+            await engine.dispose()
+
+    async def probe_load_chain_snapshot(conn):
+        # 探针在 load_verified_snapshot 的 conn.begin() 事务内被调用
+        # a. 真实事务隔离级别（事务内 SHOW，不是 execution options 字典）
+        isolation = await conn.scalar(text("SHOW transaction_isolation"))
+        evidence["isolation"] = str(isolation).lower()
+        # b. 第一条数据读取（真实三条 SELECT）确立 REPEATABLE READ 快照
+        first = await real_load_chain_snapshot(conn)
+        evidence["first"] = _snapshot_fingerprint(first)
+        # c. 独立连接并发提交新审计（锚定事务保持打开、不提交）
+        await _append_marker_audit(payloads[1])
+        # d. 同一事务内第二次读取：必须仍用第一次读取前的同一 PG 快照
+        second = await real_load_chain_snapshot(conn)
+        evidence["second"] = _snapshot_fingerprint(second)
+        return first
+
+    async def _read_baseline() -> tuple:
+        """基线三元组：state 单行 (seq, hash, updated_at) | None 与两组 id 集。"""
+        engine = create_engine(PG_GATE.url)
+        try:
+            async with engine.connect() as conn:
+                state = (
+                    await conn.execute(select(AuditChainStateRow))
+                ).mappings().first()
+                entry_ids = set(
+                    (await conn.execute(select(AuditChainEntryRow.audit_id))).scalars()
+                )
+                audit_ids = set(
+                    (await conn.execute(select(AuditLogRow.id))).scalars()
+                )
+        finally:
+            await engine.dispose()
+        state_tuple = (
+            (state["last_sequence"], state["last_hash"], state["updated_at"])
+            if state is not None
+            else None
+        )
+        return state_tuple, entry_ids, audit_ids
+
+    async def _prepare_schema() -> None:
+        """PG 走 Alembic 迁移到 head（幂等；全新测试库首次运行时建表）。"""
+        engine = create_engine(PG_GATE.url)
+        try:
+            await prepare_database(engine, PG_GATE.url)
+        finally:
+            await engine.dispose()
+
+    asyncio.run(_prepare_schema())
+    baseline = asyncio.run(_read_baseline())
+    baseline_state = baseline[0]
+
+    try:
+        # 准备：追加 marker-a 确立锚定事务将看到的链头（全新库由
+        # append_audit 原子初始化 genesis state）
+        asyncio.run(_append_marker_audit(payloads[0]))
+
+        monkeypatch.setattr(
+            anchor_module, "load_chain_snapshot", probe_load_chain_snapshot
+        )
+        snapshot, verify_report = asyncio.run(load_verified_snapshot(PG_GATE.url))
+
+        # a. 真实事务隔离级别
+        assert evidence["isolation"] == "repeatable read", evidence["isolation"]
+
+        # b. 同一 PG 快照：并发提交后第二次读取指纹与第一次完全一致
+        assert evidence["second"] == evidence["first"], (
+            f"并发提交后链视图漂移: {evidence['first']} -> {evidence['second']}"
+        )
+
+        # c. 并发写入确实已提交生效（独立连接 head 前进），排除假阳性
+        after_state, _, _ = asyncio.run(_read_baseline())
+        assert after_state is not None
+        head_sequence, head_hash = evidence["first"][1][0]  # type: ignore[index]
+        assert after_state[0] == head_sequence + 1, after_state
+        assert after_state[1] != head_hash
+
+        # d. 返回的快照与 verify 结论都基于并发提交前的旧快照
+        assert verify_report["valid"] is True, verify_report["problems"]
+        assert verify_report["entries"] == head_sequence
+        assert _snapshot_fingerprint(snapshot) == evidence["first"]
+    finally:
+        # 共享隔离库零残留：删本测试 marker 行（entry 先于 audit，FK RESTRICT）
+        # 并按基线恢复 state，复核完全回到基线
+        async def _restore_baseline() -> None:
+            engine = create_engine(PG_GATE.url)
+            try:
+                async with engine.begin() as conn:
+                    marker_ids = select(AuditLogRow.id).where(
+                        AuditLogRow.request_id.startswith(marker_request)
+                    )
+                    await conn.execute(
+                        delete(AuditChainEntryRow).where(
+                            AuditChainEntryRow.audit_id.in_(marker_ids)
+                        )
+                    )
+                    await conn.execute(
+                        delete(AuditLogRow).where(
+                            AuditLogRow.request_id.startswith(marker_request)
+                        )
+                    )
+                    if baseline_state is not None:
+                        await conn.execute(
+                            update(AuditChainStateRow).values(
+                                last_sequence=baseline_state[0],
+                                last_hash=baseline_state[1],
+                                updated_at=baseline_state[2],
+                            )
+                        )
+                    else:
+                        await conn.execute(delete(AuditChainStateRow))
+            finally:
+                await engine.dispose()
+
+        asyncio.run(_restore_baseline())
+        assert asyncio.run(_read_baseline()) == baseline  # 零残留复核
