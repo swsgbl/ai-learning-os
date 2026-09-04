@@ -9,7 +9,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-**M10-10 legacy paper governance 测试 aiosqlite 资源泄漏修复已完成并验证**（分支未合并；纯测试资源生命周期修复——生产代码与业务断言零改动，未用 filterwarnings/suppression/sleep 掩盖）：
+**M10-10 legacy paper governance 测试 aiosqlite 资源泄漏修复已完成并验证**（已合并主干，见下方「合并与主干 CI」记录；纯测试资源生命周期修复——生产代码与业务断言零改动，未用 filterwarnings/suppression/sleep 掩盖）：
 
 - **现象**：Codex 独立全量 `pytest services/api -q` 956 passed / 29 skipped，但出现 5 条 `PytestUnhandledThreadExceptionWarning`，全部挂在 `tests/test_legacy_paper_governance.py::test_export_delete_refuses_to_overwrite_dangling_symlink`，traceback 为 aiosqlite worker 线程在 event loop closed 后调 `call_soon_threadsafe`。
 - **根因（已核实源码级链路，非猜测）**：该文件 `_fetch()` 在 `asyncio.run()` 内 `make_sessionmaker(create_engine(db_url))` 创建 engine 后既不保留引用也不 `await engine.dispose()`。文件型 SQLite engine 默认 `AsyncAdaptedQueuePool`：session 关闭只是把 aiosqlite 连接还回池、连接保持打开，其 worker 线程（`aiosqlite/core.py` 的 `_connection_worker_thread`）随之存活并绑定在该次 `asyncio.run` 已关闭的 loop 上。泄漏连接要等 GC 异步回收：GC 若发生在后续某测试的 `asyncio.run` loop L2 运行期间，`aiosqlite.Connection.__del__ → stop()` 在 L2 上建 future 并入队 `close_and_stop`；L2 关闭后 worker 才处理该队列项 → `future.get_loop().call_soon_threadsafe` 对已关闭 loop 抛 `RuntimeError` → threading.excepthook → PytestUnhandledThreadExceptionWarning 归属到当时正在跑的测试（**警告归属与泄漏源无关**，Codex 那次落在 dangling-symlink 测试纯属 GC 时机；该测试本身无缺陷）。生产代码 `legacy_papers.py` 两处 engine 均已 `finally: await engine.dispose()`，`_make_db` 亦然；单跑本文件不触发（GC 压力与后续 loop 交错不足），全量套件才间歇暴露。
@@ -18,6 +18,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 - **回归测试**：新增 `test_fetch_disposes_verification_engine`——tracking `create_engine` 持强引用防 GC 提前回收，断言 `_fetch` 返回前其 engine 已 dispose（`pool.status()` 报 `Connections in pool: 0`；泄漏形态为 1）。**红→绿实证**：临时还原泄漏实现该测试确定性 AssertionError，恢复修复后通过。不新增业务断言的理由：本文件 31 项既有测试全部经由 `_fetch` 读库做业务断言，dispose 不改变任何查询语义，资源生命周期由新测试单独锁定。
 - **验证**：清除 `AIOS_PG_TEST_URL`/`DATABASE_URL` 后——本文件 **32 passed**（31 + 新回归）；聚焦 7 文件套件 **172 passed / 4 skipped**（M10-09 基线 171/4 + 1，计数一致）；`uv run ruff check services/api` 全绿；全量 `pytest services/api -q` **两次 957 passed / 29 skipped**（基线 956/29 + 1，两次均 exit 0），两次警告 grep（PytestUnhandledThreadExceptionWarning / Event loop is closed）计数均为 0；`git diff --check` 干净。
 - **未覆盖边界**：修复锁定的是测试自建 engine 的生命周期纪律；GC 触发的警告天然非确定（修复前亦非每次必现），两次全量零警告是实证而非概率证明；第三方库（aiosqlite `__del__` 路径依赖 `asyncio.get_event_loop()` 的版本行为）未来升级可能改变 GC 路径表象，dispose 纪律本身使其不回归。
+- **合并与主干 CI**：PR #5 “M10-03 to M10-10: production governance and audit-chain safety” 已 **merged**，merge commit `5725fd3a1d45321da4c948c37113ad54dd8b83a4`；合并后 main CI run **33844236243** completed/**success**，API / Web / Docker 三 job 全绿；全程**生产 DB 未连接、未写入、未迁移**。
 
 **M10-09 anchor 快照 PG 实证已完成并验证**（分支未合并；**真实生产库零连接零执行**——只在白名单隔离测试库上验证事务语义，不执行任何生产迁移/清理/锚定/preflight）：
 
