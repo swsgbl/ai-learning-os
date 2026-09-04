@@ -242,7 +242,8 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   生产迁移待人工决策后显式 `--yes` 执行）；
   哈希链整链重算的抵御依赖库外锚定 + WORM/离线归档（M10-06 工具已交付，
   生产未锚定；非数字签名，见上）；
-  TURN 未内置；云 provider/LLM 真实 key 冒烟未执行。
+  TURN 未内置；云语音/LLM 真实 key 冒烟未执行；检索 cloud-web 已交付真实
+  SearXNG-compatible 实现与冒烟脚本（M10-12——真实端点冒烟待运维显式执行，key 按需）。
 - 部署绑定：所有端口默认 127.0.0.1；LAN/外网需 `AIOS_BIND_IP=0.0.0.0` 且必须同时
   设强 AUTH_SECRET + APP_ENV=production（启动 fail-closed），否则不要对外暴露。
 
@@ -401,6 +402,38 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
 - 单测全部 fake transport（协议格式 / 失败语义 / 装配两态），不发起网络调用。
 - 已知取舍（ADR 65）：判分管线是同步域函数，gateway 用同步 httpx——单用户本地版
   可接受；判分并发化是后续演进。
+
+## 搜索 cloud-web provider 与冒烟（M10-12）
+
+- CloudWebProvider（`app/search/providers.py`）为 SearXNG-compatible JSON API 真实
+  实现：`GET {SEARCH_CLOUD_ENDPOINT}/search?q=<查询词>&format=json`（endpoint 是
+  base URL）；`SEARCH_CLOUD_API_KEY` 可选——设置时经 Authorization 鉴权头出示，
+  无鉴权 SearXNG 留空即可；key 只放部署 secret 或本机 .env，不入库不入码不入日志。
+- 启用判定（`cloud_web_availability`，三门全部放行才 enabled）：
+  1. `PRIVACY_SEND_CONTEXT_TO_CLOUD=false`（隐私总闸）→ 禁用，云检索不出站；
+  2. `SEARCH_MODE != cloud`（local/hybrid——检索暂无混合形态）→ 禁用，
+     **即使 endpoint/key 配齐也不出站**（本地路由）；
+  3. `SEARCH_CLOUD_ENDPOINT` 缺失或非法（非 http/https base URL）→ 禁用。
+  key 不参与启用判定（可选）；三种禁用形态都在 `/api/v1/search/providers` 视图与
+  执行记录 skipped 里给出**不含敏感值**的原因（不虚报可用）。
+- 结果归一化：`results[].title/url/content` → title / url / snippet（snippet 取
+  content，200 字符截断）、provider/source=cloud-web、authority 默认 community
+  （上游显式给 official/oer/platform/community 白名单标注时透传，未知标注兜底
+  community——不猜测）；缺失/非法 URL（非 http/https、无 host）的结果过滤；
+  返回条数不超过 limit（客户端截断）。local-corpus 行为不变。
+- fail-closed：HTTP 非 2xx / 响应非合法 JSON / results 非列表 / 网络错误 / 超时
+  一律 `ProviderUnavailable`（进 skipped）；错误信息为固定脱敏文案——不含 endpoint、
+  API key、鉴权头或其它敏感值。
+- 单测全部 httpx.MockTransport 伪造端点（协议格式 / 失败语义 / 可用性矩阵 /
+  Authorization 仅 key 存在时添加 / 零敏感泄漏），不发起网络调用。
+- 真实端点冒烟（需要真实 SearXNG-compatible 端点，**按需 key**）：`bash
+  infra/smoke_search.sh`——`SEARCH_CLOUD_ENDPOINT` 未设置时明确 FAIL 不虚报；
+  `SEARCH_SMOKE_QUERY` 覆盖默认查询词（"AI Learning OS GitHub"）；至少 1 条合法
+  结果才 PASS；输出只含 provider/结果数等脱敏摘要。release readiness 的
+  `provider-smoke` gate 以真实端点冒烟执行记录为准（**检索冒烟不需要 key**、
+  LLM 冒烟需要 key——见上节 smoke_llm.sh；pass 语义不放宽——仍是 required gate）。
+- 冒烟脚本契约由 `services/api/tests/test_smoke_search_script.py` 锁定（不触网：
+  env 缺失 FAIL、探针失败传播、文本契约与零敏感回显）。
 
 ## 对象存储
 
