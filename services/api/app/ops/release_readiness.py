@@ -88,7 +88,9 @@ CI_CONCLUSIONS = (
     "action_required",
 )
 
-#: provider 冒烟覆盖的三类云 provider（缺任一 = malformed，不虚报覆盖面）
+#: provider 冒烟覆盖的三类云 provider（缺任一 = malformed，不虚报覆盖面）。
+#: 三类要求不同：voice/LLM 需运维部署 key；search 打真实端点
+#: （SEARCH_CLOUD_API_KEY 可选——无鉴权 SearXNG 合法，M10-12）。
 SMOKE_PROVIDERS = ("voice", "search", "llm")
 
 #: 公网 TURN/TLS 验证的三项检查
@@ -190,10 +192,11 @@ GATES: tuple[GateSpec, ...] = (
     ),
     GateSpec(
         "provider-smoke",
-        "云 voice/search/LLM 真实 key 冒烟（只收脱敏结果文件）",
+        "云 voice/LLM 部署 key 冒烟 + search 真实端点冒烟（只收脱敏结果文件）",
         "provider-smoke.json",
         True,
-        "三类云 provider 真实 key 冒烟通过；证据文件不得携带任何 key",
+        "voice/LLM 需运维以部署 key 冒烟通过；search 需打真实端点冒烟通过"
+        "（SEARCH_CLOUD_API_KEY 可选，无鉴权端点可空）；证据文件不得携带任何 key",
     ),
     GateSpec(
         "turn-tls",
@@ -689,7 +692,10 @@ def _eval_provider_smoke(obj: dict[str, Any], root: Path, sha: Mapping[str, str]
     if fails:
         return (
             STATUS_BLOCKED,
-            f"真实 key 冒烟失败: {', '.join(fails)}——排查后重跑冒烟并导出脱敏结果",
+            (
+                f"provider 冒烟失败: {', '.join(fails)}——voice/LLM 排查部署 key、"
+                "search 排查真实端点（SEARCH_CLOUD_API_KEY 可选）后重跑冒烟并导出脱敏结果"
+            ),
             data,
             [],
         )
@@ -697,13 +703,22 @@ def _eval_provider_smoke(obj: dict[str, Any], root: Path, sha: Mapping[str, str]
         return (
             STATUS_PENDING,
             (
-                f"未执行真实 key 冒烟: {', '.join(not_run)}——需运维以部署 key 执行"
-                "（key 不入库不入码；证据只收脱敏结果文件）"
+                f"未执行冒烟: {', '.join(not_run)}——voice/LLM 需运维以部署 key 执行"
+                "（key 不入库不入码）；search 需打真实端点冒烟"
+                "（SEARCH_CLOUD_API_KEY 可选）；证据只收脱敏结果文件"
             ),
             data,
             [],
         )
-    return STATUS_PASS, "voice/search/LLM 真实 key 冒烟全部通过（脱敏结果文件）", data, []
+    return (
+        STATUS_PASS,
+        (
+            "voice/LLM 部署 key 冒烟 + search 真实端点冒烟"
+            "（SEARCH_CLOUD_API_KEY 可选）全部通过（脱敏结果文件）"
+        ),
+        data,
+        [],
+    )
 
 
 def _eval_turn_tls(obj: dict[str, Any], root: Path, sha: Mapping[str, str]):

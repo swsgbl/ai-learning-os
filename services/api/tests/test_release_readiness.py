@@ -3,7 +3,9 @@
 覆盖矩阵：
 1. 门矩阵与 CLI 注册：GATES 覆盖十个发布审批门（无漏项/无虚设）、
    required/optional 划分、EVALUATORS 全覆盖、证据文件名唯一；CLI 子命令
-   注册、无 --yes 执行形态（argparse exit 2）、main 分发；
+   注册、无 --yes 执行形态（argparse exit 2）、main 分发；provider-smoke
+   措辞口径：voice/LLM 需部署 key、search 需真实端点冒烟且
+   SEARCH_CLOUD_API_KEY 可选（M10-12，不得回退「三类统一真实 key」旧口径）；
 2. 全 pass：齐备证据 + 哈希绑定审批 -> release_ready=True / exit 0；每门
    evidence sha256 与文件字节独立重算一致；审批 data 记录覆盖门与零失配；
 3. missing / malformed：空目录全 missing（exit 1）；单门缺失；非法 JSON /
@@ -249,6 +251,68 @@ def test_gate_matrix_complete_no_phantom() -> None:
     assert optional == EXPECTED_OPTIONAL
     assert "release-approval" in REQUIRED_GATE_IDS
     assert set(EVALUATORS) == GATE_IDS
+
+
+def test_provider_smoke_wording_matches_provider_requirements(tmp_path) -> None:
+    """provider-smoke 措辞与三类 provider 的真实要求一致：voice/LLM 需部署
+    key，search 需真实端点冒烟且 SEARCH_CLOUD_API_KEY 可选（M10-12：无鉴权
+    SearXNG 合法，不得把 search 冒烟说成必须有 key，也不得把「真实 key 冒烟」
+    口径统一套在三类上）。措辞只是口径修正——门语义不放宽：仍是 required
+    gate，not_executed -> pending、fail -> blocked 由既有语义测试守卫。"""
+    spec = next(s for s in GATES if s.gate_id == "provider-smoke")
+    assert spec.required is True
+    for surface in (spec.title, spec.basis):
+        assert "voice/LLM" in surface, surface
+        assert "部署 key" in surface, surface
+        assert "search" in surface and "真实端点" in surface, surface
+    # key 可选语义在 basis 里显式声明（title 保持一行可读）
+    assert "SEARCH_CLOUD_API_KEY" in spec.basis
+    assert "可选" in spec.basis
+
+    # pending：search/llm 未执行——指引区分部署 key 与真实端点（key 可选）
+    directory = _evidence_dir(tmp_path, "smoke-wording-pending")
+    evidence = _passing_evidence()
+    evidence["provider-smoke.json"]["providers"] = {
+        "voice": {"executed": True, "result": "pass"},
+        "search": {"executed": False, "result": "not_executed"},
+        "llm": {"executed": False, "result": "not_executed"},
+    }
+    _write_evidence(directory, evidence)
+    _write_approval(directory)
+    gate = _gate(_run(directory), "provider-smoke")
+    assert gate["status"] == "pending"
+    assert "search, llm" in gate["reason"]
+    assert "部署 key" in gate["reason"]
+    assert "真实端点" in gate["reason"]
+    assert "SEARCH_CLOUD_API_KEY" in gate["reason"] and "可选" in gate["reason"]
+
+    # blocked：search 冒烟失败（无 key 合法端点也可能失败）——指引同口径区分
+    directory = _evidence_dir(tmp_path, "smoke-wording-fail")
+    evidence = _passing_evidence()
+    evidence["provider-smoke.json"]["providers"]["search"] = {
+        "executed": True,
+        "result": "fail",
+    }
+    _write_evidence(directory, evidence)
+    _write_approval(directory)
+    gate = _gate(_run(directory), "provider-smoke")
+    assert gate["status"] == "blocked"
+    assert "search" in gate["reason"]
+    assert "部署 key" in gate["reason"] and "真实端点" in gate["reason"]
+    assert "SEARCH_CLOUD_API_KEY" in gate["reason"] and "可选" in gate["reason"]
+
+    # pass：全部通过——通过口径同样区分三类要求，不虚称「真实 key 冒烟」
+    directory = _evidence_dir(tmp_path, "smoke-wording-pass")
+    _write_evidence(directory)
+    _write_approval(directory)
+    report = _run(directory)
+    gate = _gate(report, "provider-smoke")
+    assert gate["status"] == "pass"
+    assert "部署 key" in gate["reason"] and "真实端点" in gate["reason"]
+    assert "SEARCH_CLOUD_API_KEY" in gate["reason"] and "可选" in gate["reason"]
+    # 旧口径（三类统一「真实 key 冒烟」）不得回流到门文案
+    assert "真实 key" not in gate["reason"]
+    assert "真实 key" not in spec.title and "真实 key" not in spec.basis
 
 
 def test_cli_registered_and_has_no_execute_flag(tmp_path, monkeypatch) -> None:

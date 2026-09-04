@@ -38,9 +38,9 @@
 
 - 显式 `ASR_PROVIDER` / `TTS_PROVIDER` 覆盖模式默认选择；想用云端但未配置云端端点时，系统降级本地并在接口响应里透出 `fallback` 标记——不虚报实际链路。
 - 云端端点配置项：`ASR_CLOUD_ENDPOINT`、`ASR_CLOUD_API_KEY`、`ASR_CLOUD_MODEL`、`TTS_CLOUD_ENDPOINT`、`TTS_CLOUD_API_KEY`、`TTS_CLOUD_MODEL`。真实密钥规则：只放部署 secret 或本机 `.env`，不入库不入码。
-- 检索出站：`SEARCH_MODE=cloud` 需要同时配置 `SEARCH_CLOUD_ENDPOINT` 与 `SEARCH_CLOUD_API_KEY` 才会启用云端检索；未配置时 cloud-web 源如实显示未配置与原因（不虚报可用），本地语料检索恒可用且不出站。查询词、结果与弃用原因都落在本机库，可事后审计。
+- 检索出站：`SEARCH_MODE=cloud` 且 `SEARCH_CLOUD_ENDPOINT` 配置了合法的 http/https 端点时启用云端 web 检索（SearXNG-compatible JSON API——查询词会发送到该端点）；`SEARCH_CLOUD_API_KEY` 可选（无鉴权 SearXNG 不需要，设置时经鉴权头出示）。`SEARCH_MODE=local/hybrid`（检索路由本地，暂无混合形态）或 `PRIVACY_SEND_CONTEXT_TO_CLOUD=false`（隐私总闸）时，即使 endpoint/key 配齐也禁用 cloud-web，视图如实显示原因（不虚报可用）；本地语料检索恒可用且不出站。查询词、结果与弃用原因都落在本机库，可事后审计。
 - 主观题判分：`RUBRIC_JUDGE` 默认 `keyword`——内置确定性判分，不出站；设为空时主观题全部进入人工复核（不判分、不出站）。
-- 上下文出站总闸：`PRIVACY_SEND_CONTEXT_TO_CLOUD`（默认 true）控制是否允许把学习上下文发送到云端模型链路；当前状态在语音 providers 视图中透出，学生与家长可直接核对。
+- 上下文出站总闸：`PRIVACY_SEND_CONTEXT_TO_CLOUD`（默认 true）控制是否允许把学习上下文发送到云端模型链路与云端 web 检索（检索查询词出站同受此闸）；当前状态在语音 providers 视图中透出，学生与家长可直接核对。
 - 抓取频率上限：`FETCH_RATE_LIMIT_PER_MINUTE`（默认 30/分钟，per-IP 固定窗口），用于抓取外部网页前限流。
 
 ## 三、语音数据的具体策略
@@ -70,7 +70,7 @@ curl http://127.0.0.1:8000/api/v1/search/providers
 2. `asr` / `tts` 的 `provider` 与 `fallback` 如实反映实际链路；
 3. `privacy_store_audio` / `privacy_send_context_to_cloud` 与 `.env` 一致；
 4. transcribe 响应的 `audio_stored` 逐条可核（默认 false）；
-5. search 视图里 cloud-web 未配置时 `enabled=false` 且 `unavailable_reason` 说明原因。
+5. search 视图里 cloud-web 未启用时 `enabled=false` 且 `unavailable_reason` 说明原因（本地路由 / 隐私总闸 / 端点未配置或非法）。
 
 ## 五、声明-证据映射（每条声明都有支撑）
 
@@ -80,7 +80,7 @@ curl http://127.0.0.1:8000/api/v1/search/providers
 | 原始音频默认不保存（audio_stored=false 留痕） | `PRIVACY_STORE_AUDIO` 默认 false + `tests/test_voice_providers.py` |
 | 开启保存时内容哈希寻址、可回读 | SHA-256 内容寻址 + `tests/test_voice_providers.py` |
 | hybrid 听写本地、朗读云端、fallback 透出 | `app/voice/routing.py` + `tests/test_voice_providers.py` |
-| cloud-web 未配置不虚报可用；查询落库可审计 | `tests/test_search.py` |
+| cloud-web 未启用（本地路由/隐私总闸/未配置）不虚报可用；查询落库可审计 | `tests/test_search.py` |
 | 视图无密钥形态 | `tests/test_security_suite.py` |
 | 非法隐私模式拒绝启动 | `tests/test_config_privacy.py` |
 | 端到端核实路径可用 | `tests/test_privacy_disclosure.py`（本守卫测试） |

@@ -19,6 +19,9 @@ SQLITE_URL = "sqlite+aiosqlite:///:memory:"
 def _fake_settings():
     class S:
         search_provider = "auto"
+        # M10-12：cloud-web 启用判定新增字段（默认与 Settings 一致——本地路由）
+        search_mode = "local"
+        privacy_send_context_to_cloud = True
         search_cloud_endpoint = None
         search_cloud_api_key = None
     return S()
