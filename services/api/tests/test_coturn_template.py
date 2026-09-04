@@ -660,13 +660,27 @@ def test_compose_relay_range_follows_env_single_source() -> None:
     [{}, {"COTURN_EXTERNAL_IP": "198.51.100.10"}, {"COTURN_STATIC_AUTH_SECRET": "a" * 64}],
 )
 def test_compose_render_fails_closed_without_required_vars(overrides: dict[str, str]) -> None:
-    """任一必填变量缺失：config 直接失败并点名变量——无默认值兜底（:? 语法）。"""
+    """任一必填变量缺失：config 直接失败并点名变量——无默认值兜底（:? 语法）。
+
+    compose 的 :? 校验是 fail-fast：多个必填变量同时缺失时只报第一个就退出，
+    报哪个取决于 compose 内部求值顺序，跨平台/版本不稳定（CI Ubuntu 只报
+    COTURN_EXTERNAL_IP）。故只缺一个时 stderr 必须点名该变量；两个都缺时
+    点名任一实际缺失必填变量即可，不依赖 fail-fast 的报错顺序——但仍要求
+    stderr 命中真实缺失的变量名，不接受任意错误蒙混过关。
+    """
     result = _render(overrides)
     assert result.returncode != 0, f"缺必填变量仍渲染成功:\n{result.stdout}"
-    if "COTURN_STATIC_AUTH_SECRET" not in overrides:
-        assert "COTURN_STATIC_AUTH_SECRET" in result.stderr
-    if "COTURN_EXTERNAL_IP" not in overrides:
-        assert "COTURN_EXTERNAL_IP" in result.stderr
+    missing = [
+        name
+        for name in ("COTURN_STATIC_AUTH_SECRET", "COTURN_EXTERNAL_IP")
+        if name not in overrides
+    ]
+    if len(missing) == 1:
+        assert missing[0] in result.stderr
+    else:
+        assert any(name in result.stderr for name in missing), (
+            f"stderr 未点名任一实际缺失必填变量 {missing}:\n{result.stderr}"
+        )
 
 
 @pytest.mark.skipif(not _compose_available(), reason="需要 docker compose CLI")
