@@ -2,12 +2,15 @@
 
 - 路由：VOICE_MODE 三模式 + 显式 provider 覆盖 + 云端未配置降级（fallback 透出）；
 - 转写落盘：transcript 恒存 DB、可回查；原始音频仅 PRIVACY_STORE_AUDIO=true 时写对象存储；
-- 云端 provider 用 httpx.MockTransport 伪造端点（无真实 key 依赖）。
+- 云端 provider 用 httpx.MockTransport 伪造端点（无真实 key 依赖）；
+- 云端 provider 失败语义（M10-13）：网络/HTTP/非法载荷固定脱敏文案、TTS 拒空/非
+  RIFF 音频、成功路径 provider/latency 字段保持。
 """
 from __future__ import annotations
 
 import asyncio
 import io
+import json
 import wave
 
 import httpx
@@ -171,6 +174,219 @@ def test_cloud_tts_failure_raises_provider_unavailable() -> None:
         )
         with pytest.raises(ProviderUnavailable, match="cloud TTS"):
             await provider.synthesize("文本")
+
+    asyncio.run(body())
+
+
+# ---------- 云端 provider：失败脱敏与非法载荷（M10-13） ----------
+
+#: 脱敏断言基准：异常文案不得出现 endpoint/key/鉴权头/httpx 异常文本/响应正文
+_SENSITIVE_MARKERS = (
+    "cloud.example.invalid",
+    "test-key",
+    "Authorization",
+    "Bearer",
+    "ConnectError",
+    "ConnectTimeout",
+)
+
+
+def _assert_sanitized(exc: pytest.ExceptionInfo[ProviderUnavailable], *extra: str) -> None:
+    message = str(exc.value)
+    for marker in (*_SENSITIVE_MARKERS, *extra):
+        assert marker not in message, marker
+
+
+def test_cloud_asr_network_failure_is_sanitized() -> None:
+    """网络/超时失败：固定脱敏文案（不嵌 httpx 异常文本——其含请求 URL/endpoint）。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection to https://cloud.example.invalid/v1/audio/transcriptions refused")
+
+    async def body() -> None:
+        provider = CloudOpenAiAsrProvider(
+            "https://cloud.example.invalid/v1",
+            "test-key",
+            "whisper-1",
+            transport=httpx.MockTransport(handler),
+        )
+        with pytest.raises(ProviderUnavailable, match="cloud ASR 请求失败") as exc:
+            await provider.transcribe(b"audio-bytes")
+        _assert_sanitized(exc, "refused")
+
+    asyncio.run(body())
+
+
+def test_cloud_asr_http_failure_is_sanitized() -> None:
+    """HTTP 非 2xx：只透出状态码——不回显响应正文（其可能携带上游错误细节）。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(500, text="upstream internal secret-leak detail")
+
+    async def body() -> None:
+        provider = CloudOpenAiAsrProvider(
+            "https://cloud.example.invalid/v1",
+            "test-key",
+            "whisper-1",
+            transport=httpx.MockTransport(handler),
+        )
+        with pytest.raises(ProviderUnavailable, match=r"cloud ASR 端点返回 HTTP 500") as exc:
+            await provider.transcribe(b"audio-bytes")
+        _assert_sanitized(exc, "upstream", "secret-leak")
+
+    asyncio.run(body())
+
+
+@pytest.mark.parametrize(
+    "response",
+    [
+        httpx.Response(200, text="not-json"),  # 非合法 JSON
+        httpx.Response(200, json=["a", "b"]),  # 顶层非对象
+        httpx.Response(200, json={"confidence": 0.9}),  # text 缺失
+        httpx.Response(200, json={"text": 123}),  # text 非字符串
+    ],
+    ids=["not-json", "not-object", "text-missing", "text-not-str"],
+)
+def test_cloud_asr_rejects_invalid_payload_shapes(response: httpx.Response) -> None:
+    """ASR JSON 形状校验：非法载荷 fail-closed（不猜测转写结果）且文案脱敏。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return response
+
+    async def body() -> None:
+        provider = CloudOpenAiAsrProvider(
+            "https://cloud.example.invalid/v1",
+            "test-key",
+            "whisper-1",
+            transport=httpx.MockTransport(handler),
+        )
+        with pytest.raises(ProviderUnavailable, match="cloud ASR 响应") as exc:
+            await provider.transcribe(b"audio-bytes")
+        _assert_sanitized(exc)
+
+    asyncio.run(body())
+
+
+def test_cloud_asr_rejects_non_numeric_confidence() -> None:
+    """confidence 非数值：拒绝（旧实现 float() 会抛裸 ValueError 绕过脱敏）。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"text": "文本", "confidence": "high"})
+
+    async def body() -> None:
+        provider = CloudOpenAiAsrProvider(
+            "https://cloud.example.invalid/v1",
+            "test-key",
+            "whisper-1",
+            transport=httpx.MockTransport(handler),
+        )
+        with pytest.raises(ProviderUnavailable, match="confidence 字段类型非法") as exc:
+            await provider.transcribe(b"audio-bytes")
+        _assert_sanitized(exc)
+
+    asyncio.run(body())
+
+
+def test_cloud_tts_network_failure_is_sanitized() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectTimeout("timed out connecting to https://cloud.example.invalid/v1")
+
+    async def body() -> None:
+        provider = CloudOpenAiTtsProvider(
+            "https://cloud.example.invalid/v1",
+            "test-key",
+            "tts-1",
+            transport=httpx.MockTransport(handler),
+        )
+        with pytest.raises(ProviderUnavailable, match="cloud TTS 请求失败") as exc:
+            await provider.synthesize("文本")
+        _assert_sanitized(exc, "timed out")
+
+    asyncio.run(body())
+
+
+def test_cloud_tts_http_failure_is_sanitized() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, text="upstream tts detail")
+
+    async def body() -> None:
+        provider = CloudOpenAiTtsProvider(
+            "https://cloud.example.invalid/v1",
+            "test-key",
+            "tts-1",
+            transport=httpx.MockTransport(handler),
+        )
+        with pytest.raises(ProviderUnavailable, match=r"cloud TTS 端点返回 HTTP 503") as exc:
+            await provider.synthesize("文本")
+        _assert_sanitized(exc, "upstream")
+
+    asyncio.run(body())
+
+
+@pytest.mark.parametrize(
+    "content",
+    [b"", b"\xff\xfb\x90\x00mp3-frame-bytes"],
+    ids=["empty", "non-riff"],
+)
+def test_cloud_tts_rejects_invalid_audio(content: bytes) -> None:
+    """TTS 音频校验：响应为空或非 RIFF/WAV（请求了 response_format=wav）一律拒绝。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=content, headers={"Content-Type": "audio/wav"})
+
+    async def body() -> None:
+        provider = CloudOpenAiTtsProvider(
+            "https://cloud.example.invalid/v1",
+            "test-key",
+            "tts-1",
+            transport=httpx.MockTransport(handler),
+        )
+        with pytest.raises(ProviderUnavailable, match="cloud TTS 响应") as exc:
+            await provider.synthesize("文本")
+        _assert_sanitized(exc)
+
+    asyncio.run(body())
+
+
+def test_cloud_tts_success_preserves_wav_contract_fields() -> None:
+    """成功路径保持：请求带 response_format=wav、返回 RIFF/WAV、provider/latency 字段齐全。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert json.loads(request.content)["response_format"] == "wav"
+        return httpx.Response(200, content=_sine_wav(0.4), headers={"Content-Type": "audio/wav"})
+
+    async def body() -> None:
+        provider = CloudOpenAiTtsProvider(
+            "https://cloud.example.invalid/v1",
+            "test-key",
+            "tts-1",
+            transport=httpx.MockTransport(handler),
+        )
+        result = await provider.synthesize("文本")
+        assert result.audio_format == "wav"
+        assert result.provider == "cloud-openai-tts"
+        assert result.audio[:4] == b"RIFF" and result.audio[8:12] == b"WAVE"
+        assert result.latency_ms >= 0
+
+    asyncio.run(body())
+
+
+def test_cloud_asr_success_preserves_latency_and_provider_fields() -> None:
+    """成功路径保持：provider/latency/confidence 字段齐全（M10-13 加固不改变成功行为）。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json={"text": "识别文本", "confidence": 0.9})
+
+    async def body() -> None:
+        provider = CloudOpenAiAsrProvider(
+            "https://cloud.example.invalid/v1",
+            "test-key",
+            "whisper-1",
+            transport=httpx.MockTransport(handler),
+        )
+        result = await provider.transcribe(b"audio-bytes")
+        assert (result.text, result.confidence, result.provider) == ("识别文本", pytest.approx(0.9), "cloud-openai")
+        assert result.latency_ms >= 0
 
     asyncio.run(body())
 

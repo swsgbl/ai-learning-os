@@ -37,7 +37,7 @@
 | cloud | 云端 | 云端 | 语音音频 + 朗读文本 |
 
 - 显式 `ASR_PROVIDER` / `TTS_PROVIDER` 覆盖模式默认选择；想用云端但未配置云端端点时，系统降级本地并在接口响应里透出 `fallback` 标记——不虚报实际链路。
-- 云端端点配置项：`ASR_CLOUD_ENDPOINT`、`ASR_CLOUD_API_KEY`、`ASR_CLOUD_MODEL`、`TTS_CLOUD_ENDPOINT`、`TTS_CLOUD_API_KEY`、`TTS_CLOUD_MODEL`。真实密钥规则：只放部署 secret 或本机 `.env`，不入库不入码。
+- 云端端点配置项：`ASR_CLOUD_ENDPOINT`、`ASR_CLOUD_API_KEY`、`ASR_CLOUD_MODEL`、`TTS_CLOUD_ENDPOINT`、`TTS_CLOUD_API_KEY`、`TTS_CLOUD_MODEL`。真实密钥规则：只放部署 secret 或本机 `.env`，不入库不入码。云端语音链路的真实端点冒烟（`bash infra/smoke_voice_cloud.sh`，需要部署 key 与一段真实短语音 WAV）是**显式运维动作**——会把该音频与 TTS 合成文本发送到所配置的云端端点（与 cloud 模式出站内容一致），输出只含 provider/长度/字节数等脱敏摘要（不打印 endpoint、key、音频路径或转写正文）。
 - 检索出站：`SEARCH_MODE=cloud` 且 `SEARCH_CLOUD_ENDPOINT` 配置了合法的 http/https 端点时启用云端 web 检索（SearXNG-compatible JSON API——查询词会发送到该端点）；`SEARCH_CLOUD_API_KEY` 可选（无鉴权 SearXNG 不需要，设置时经鉴权头出示）。`SEARCH_MODE=local/hybrid`（检索路由本地，暂无混合形态）或 `PRIVACY_SEND_CONTEXT_TO_CLOUD=false`（隐私总闸）时，即使 endpoint/key 配齐也禁用 cloud-web，视图如实显示原因（不虚报可用）；本地语料检索恒可用且不出站。查询词、结果与弃用原因都落在本机库，可事后审计。
 - 主观题判分：`RUBRIC_JUDGE` 默认 `keyword`——内置确定性判分，不出站；设为空时主观题全部进入人工复核（不判分、不出站）。
 - 上下文出站总闸：`PRIVACY_SEND_CONTEXT_TO_CLOUD`（默认 true）控制是否允许把学习上下文发送到云端模型链路与云端 web 检索（检索查询词出站同受此闸）；当前状态在语音 providers 视图中透出，学生与家长可直接核对。

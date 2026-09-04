@@ -242,7 +242,9 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   生产迁移待人工决策后显式 `--yes` 执行）；
   哈希链整链重算的抵御依赖库外锚定 + WORM/离线归档（M10-06 工具已交付，
   生产未锚定；非数字签名，见上）；
-  TURN 未内置；云语音/LLM 真实 key 冒烟未执行；检索 cloud-web 已交付真实
+  TURN 未内置；云语音/LLM 真实 key 冒烟未执行（云语音 ASR/TTS 冒烟脚本已交付：
+  M10-13 `infra/smoke_voice_cloud.sh`；LLM：M10-01 `infra/smoke_llm.sh`——真实
+  端点/密钥冒烟待运维显式执行）；检索 cloud-web 已交付真实
   SearXNG-compatible 实现与冒烟脚本（M10-12——真实端点冒烟待运维显式执行，key 按需）。
 - 部署绑定：所有端口默认 127.0.0.1；LAN/外网需 `AIOS_BIND_IP=0.0.0.0` 且必须同时
   设强 AUTH_SECRET + APP_ENV=production（启动 fail-closed），否则不要对外暴露。
@@ -434,6 +436,33 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   LLM 冒烟需要 key——见上节 smoke_llm.sh；pass 语义不放宽——仍是 required gate）。
 - 冒烟脚本契约由 `services/api/tests/test_smoke_search_script.py` 锁定（不触网：
   env 缺失 FAIL、探针失败传播、文本契约与零敏感回显）。
+
+## 云语音 provider 失败语义与真实端点冒烟（M10-13）
+
+- CloudOpenAiAsrProvider / CloudOpenAiTtsProvider（`app/voice/providers.py`）失败
+  语义与 CloudWebProvider（M10-12）同口径 fail-closed：网络/超时 / HTTP 非 2xx /
+  非法 JSON 一律 `ProviderUnavailable` **固定脱敏文案**——不嵌 httpx 异常文本
+  （其含请求 URL/endpoint），不回显 endpoint、key、鉴权头或响应正文（HTTP 失败
+  只透状态码）。
+- 载荷校验：ASR 响应顶层必须是 JSON 对象、`text` 字段必须是字符串、`confidence`
+  非数值即拒绝（不猜测转写结果）；TTS 请求固定 `response_format=wav`——响应音频
+  为空或不带 RIFF/WAV 头一律拒绝（不把非 WAV 字节冒充 wav 结果）。成功路径的
+  provider / latency / confidence 字段保持不变。
+- 真实端点冒烟（需要真实 OpenAI 兼容端点 + 部署 key + 一段真实短语音 WAV，
+  **仅运维显式执行**）：`bash infra/smoke_voice_cloud.sh`——必填
+  `ASR_CLOUD_ENDPOINT` / `ASR_CLOUD_API_KEY` / `ASR_CLOUD_MODEL` /
+  `TTS_CLOUD_ENDPOINT` / `TTS_CLOUD_API_KEY` / `TTS_CLOUD_MODEL` /
+  `ASR_SMOKE_AUDIO`（真实短语音 WAV 路径），任一缺失明确 FAIL 不虚报；可选覆盖
+  仅 `VOICE_SMOKE_TEXT`（TTS 合成文本，默认 "AI Learning OS cloud voice smoke"）
+  与 `ASR_SMOKE_EXPECTED_TEXT`（设置时要求其 casefold 文本出现在 casefold 转写
+  中）；PASS 门槛：ASR 转写非空（设置了期望文本则 casefold 包含）且 TTS 响应
+  非空并带 RIFF/WAV 头；输出只含 provider / 转写长度 / TTS 字节数等脱敏摘要。
+- **边界**：真实云端点/密钥**本仓库不执行**——冒烟是显式运维动作（key 只经部署
+  secret/env 注入，不入库不入码）；单测全部 httpx.MockTransport 伪造端点（失败
+  脱敏 / 非法载荷 / 成功字段保持），不发起网络调用。
+- 冒烟脚本契约由 `services/api/tests/test_smoke_voice_cloud_script.py` 锁定
+  （不触网、不读真实 secret：必填 env 缺失 FAIL、音频文件缺失 FAIL、探针失败
+  传播、文本契约与零敏感回显）。
 
 ## 对象存储
 
