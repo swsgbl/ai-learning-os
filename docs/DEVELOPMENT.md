@@ -365,6 +365,30 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
    说明初始锚定/归档未完成，按锚定 runbook 补齐后再复跑；任何 `fail`
    保持停机排查，不带病恢复。
 
+## 发布准备 readiness manifest（M10-11）
+
+- **CLI**：`python -m app.ops.cli release-readiness --evidence-dir <path>
+  [--json] [--output <artifacts路径>]`，实现文件
+  `services/api/app/ops/release_readiness.py`。
+- **定位**：只读汇总调用方显式提供的 10 个 gate 证据 JSON/JSONL，计算
+  SHA-256；不连 DB/网络/API，不读环境变量，不执行迁移、锚定、清理、WORM、
+  发布、回滚，无 `--yes` 执行形态。
+- **gate 矩阵**：required——`ci-main`、`release-check`、`production-preflight`、
+  `backup-restore`、`audit-chain-anchor`、`legacy-papers`、`draft-ownership`、
+  `provider-smoke`、`release-approval`；optional——`turn-tls`。
+- **状态语义**：`missing` / `malformed` / `tampered` / `blocked` / `pending` /
+  `pass`，不得把 pending 包装成 pass。`release_ready=true` 仅表示全部 required
+  gates `pass` 且 `release-approval` 的 gate id + evidence sha256 集合与当前证据
+  完整匹配；`approved_by` 只做记录，不做身份认证。
+- **turn-tls 语义**：本机/LAN 发布形态可 `pending`/缺省，不阻断
+  `release_ready`；公网语音发布必须另行要求 `turn-tls=pass`。manifest 固定输出
+  `not_pass_optional` 与 `optional_scope_note`，`release_ready` 不得解释为
+  公网语音就绪。
+- **输出脱敏/路径边界**：不回显证据正文、完整 DB URL、密码/token/key、生产
+  paper/draft/用户 ID；敏感键或内嵌凭据证据判 `malformed`。`evidence_dir` 是
+  唯一 caller-supplied 路径字段，可能含本机路径，供人工复核定位；`--output`
+  仅允许 artifacts/temp 护栏并原子写入，symlink fail-closed。
+
 ## LLM 接入（M10-01）
 
 - OpenAI 兼容 gateway（`app/llm/gateway.py`）：`LLM_ENDPOINT/LLM_API_KEY/LLM_MODEL`
