@@ -11,8 +11,9 @@
 覆盖（真实浏览器行为断言，非 DOM 快照）：
     A 未登录访问 /progress：停留 /progress、出现「请先登录」、受保护 API 请求数为 0
       （回归：认证未定时曾先发 3 个受保护请求 → 401 全局跳转 /login）
-    B admin 在 /governance 点击退出：aios_token 清空、用户徽章消失、登录入口出现、
-      治理入口消失、路由离开治理页到 /login
+    B admin 在 /governance：HttpOnly cookie 生效、刷新仍登录、页面不保存 token；
+      点击退出后 cookie 清空、用户徽章消失、登录入口出现、治理入口消失、
+      路由离开治理页到 /login
       （回归：退出曾只 clearSession + router.refresh，pathname 不变不重探，徽章/入口残留）
     C 已登录 learner 的 /progress：seeded 今日任务（含分类）、薄弱概念、可练试卷入口
     D 角色入口差异：learner 无治理入口，admin 有
@@ -224,22 +225,31 @@ def scenario_a_anonymous_progress(context, shots: str) -> None:
 
 
 def scenario_b_admin_logout(context, shots: str) -> None:
-    print("[B] admin 退出：徽章/治理入口立即消失 + 离开治理页")
+    print("[B] admin HttpOnly cookie 登录/刷新/退出")
     page = context.new_page()
     login(page, ADMIN)
+    auth_cookie = next((cookie for cookie in context.cookies(API_BASE) if cookie["name"] == "aios_auth"), None)
+    check("B0a 登录设置 HttpOnly auth cookie", bool(
+        auth_cookie and auth_cookie["httpOnly"] and auth_cookie["sameSite"] in ("Lax", "lax")
+    ), json.dumps(auth_cookie, ensure_ascii=False))
+    check("B0b 页面 localStorage 无 access token", page.evaluate("localStorage.getItem('aios_token')") is None)
+    page.reload()
+    page.wait_for_timeout(1_000)
+    check("B0c 刷新后仍保持登录", ADMIN in page.inner_text("header"))
     page.goto(f"{WEB_BASE}/governance")
     page.get_by_role("button", name="课程导入").wait_for(timeout=15_000)
-    check("B0 前置：admin 徽章与治理入口在位",
+    check("B0d 前置：admin 徽章与治理入口在位",
           ADMIN in page.inner_text("header") and "治理" in page.inner_text("header"))
     page.get_by_text("退出", exact=True).click()
     page.wait_for_url("**/login", timeout=15_000)
     page.wait_for_timeout(800)
     header = page.inner_text("header")
     check("B1 退出后离开治理页到 /login", page.url.endswith("/login"), page.url)
-    check("B2 aios_token 已清空", page.evaluate("localStorage.getItem('aios_token')") is None)
-    check("B3 用户徽章消失", ADMIN not in header)
-    check("B4 登录入口出现", "登录" in header)
-    check("B5 治理入口消失", "治理" not in header)
+    check("B2 auth cookie 已清除", all(cookie["name"] != "aios_auth" for cookie in context.cookies(API_BASE)))
+    check("B3 aios_token 仍为空", page.evaluate("localStorage.getItem('aios_token')") is None)
+    check("B4 用户徽章消失", ADMIN not in header)
+    check("B5 登录入口出现", "登录" in header)
+    check("B6 治理入口消失", "治理" not in header)
     page.screenshot(path=f"{shots}/B-admin-logout.png", full_page=True)
     page.close()
 

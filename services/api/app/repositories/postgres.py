@@ -14,7 +14,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -148,11 +148,18 @@ class PostgresRepository:
                 for sort_order, question in enumerate(paper.questions):
                     session.add(self._question_row(paper.id, question, sort_order))
 
-    async def list_papers(self) -> list[Paper]:
+    async def list_papers(self, owner_id: str | None = None) -> list[Paper]:
         # M6-07：一次批量取全部题目（原逐卷查询为 N+1——每卷一次独立往返，
         # 并发下往返延迟线性放大总延迟）。行为不变：按 id 排序、题目按 sort_order。
+        # M10-03：owner_id 给定时只返回「系统公共卷 + 自有卷」（admin 同规则，
+        # 不放大可见性）；None = 不过滤（auth off 本地模式 / 服务端内部读取）。
         async with self._sessionmaker() as session:
-            rows = (await session.execute(select(PaperRow).order_by(PaperRow.id))).scalars().all()
+            query = select(PaperRow).order_by(PaperRow.id)
+            if owner_id is not None:
+                query = query.where(
+                    or_(PaperRow.owner_id.is_(None), PaperRow.owner_id == owner_id)
+                )
+            rows = (await session.execute(query)).scalars().all()
             if not rows:
                 return []
             question_rows = (
@@ -171,10 +178,13 @@ class PostgresRepository:
                 grouped.setdefault(question_row.paper_id, []).append(question_row)
             return [_paper_from_rows(row, grouped.get(row.id, ())) for row in rows]
 
-    async def get_paper(self, paper_id: str) -> Paper | None:
+    async def get_paper(self, paper_id: str, owner_id: str | None = None) -> Paper | None:
+        # M10-03：可见性与 list_papers 同规则——跨用户私有卷对调用方不存在（404 语义）
         async with self._sessionmaker() as session:
             row = await session.get(PaperRow, paper_id)
             if not row:
+                return None
+            if owner_id is not None and row.owner_id not in (None, owner_id):
                 return None
             return await self._paper_record(session, row)
 

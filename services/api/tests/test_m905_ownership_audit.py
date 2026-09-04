@@ -53,8 +53,13 @@ def _promote(db_url: str, username: str) -> None:
     from app.repositories.users import UserRepository
 
     async def _do():
-        repo = UserRepository(make_sessionmaker(create_engine(db_url)))
-        assert await repo.set_role(username, "admin") is not None
+        # engine 必须在同一个 event loop 内 dispose（M10-10，同 legacy 治理测试）。
+        engine = create_engine(db_url)
+        try:
+            repo = UserRepository(make_sessionmaker(engine))
+            assert await repo.set_role(username, "admin") is not None
+        finally:
+            await engine.dispose()
 
     asyncio.run(_do())
 
@@ -291,11 +296,10 @@ def test_audit_failure_rolls_back_business_mutation(stack, auth_on, monkeypatch)
 
     from app.repositories import course_import_drafts as draft_repo_mod
 
-    class _ExplodingRow:  # 构造即炸 = 审计写入失败
-        def __init__(self, *a, **kw):
-            raise RuntimeError("audit storage broken")
+    async def exploding_append(session, payload, *, clock):  # 审计写入失败
+        raise RuntimeError("audit storage broken")
 
-    monkeypatch.setattr(draft_repo_mod, "AuditLogRow", _ExplodingRow)
+    monkeypatch.setattr(draft_repo_mod, "append_audit", exploding_append)
     failed = False
     try:
         client.post(f"/api/v1/courses/import-drafts/{draft_id}/approve",

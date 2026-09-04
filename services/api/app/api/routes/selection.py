@@ -9,6 +9,7 @@ from datetime import UTC, datetime
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.api.routes.auth import current_owner_id
 from app.api.routes.student import all_learning_streams
 from app.api.schemas import SelectionItemOut, SelectionOut
 from app.domain.selection import (
@@ -33,7 +34,8 @@ async def get_selection(request: Request, now: str | None = None) -> SelectionOu
             raise HTTPException(status_code=422, detail=f"now 不是合法 ISO 时间: {now}") from cause
     else:
         anchor = datetime.now(UTC)
-    papers = await request.app.state.repository.list_papers()
+    # M10-03: 题库池可见性与 /papers 同规则——选题不得放大到他人私有卷
+    papers = await request.app.state.repository.list_papers(owner_id=current_owner_id(request))
     selection = build_selection(await all_learning_streams(request), papers, now=anchor)
     items = [
         SelectionItemOut(

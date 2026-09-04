@@ -170,15 +170,17 @@ def create_app(database_url: str | None = None) -> FastAPI:
         version="0.1.0",
         description="Server-authoritative exam and learning APIs.",
         lifespan=lifespan,
-        # M9-01 认证门禁：AUTH_SECRET 配置后全业务路径要求 Bearer token；
-        # 未配置时依赖内部放行（status 如实透出 auth_enabled=false）
+        # M9-01/M10-03 认证门禁：AUTH_SECRET 配置后全业务路径要求
+        # Bearer token 或 HttpOnly cookie；未配置时本地模式放行
         dependencies=[Depends(require_user)],
     )
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origin_list,
         allow_origin_regex=r"^https?://(?:localhost|127\.0\.0\.1)(?::\d+)?$" if settings.app_env == "development" else None,
-        allow_credentials=False,
+        # Web 与 API 端口不同，浏览器登录态依赖 HttpOnly cookie 跨端口携带。
+        # CORS 源仍是精确 allowlist； SameSite=Lax 负责拦跨站非导航请求。
+        allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
     )

@@ -31,9 +31,15 @@ def _options_to_legacy(q) -> list[dict]:
 
 
 async def import_papers(
-    sessionmaker: async_sessionmaker[AsyncSession], specs: list[PaperSpec]
+    sessionmaker: async_sessionmaker[AsyncSession],
+    specs: list[PaperSpec],
+    owner_id: str | None = None,
 ) -> list[str]:
-    """全部合法的 specs 一次性落库；返回 paper ids。"""
+    """全部合法的 specs 一次性落库；返回 paper ids。
+
+    M10-03: owner_id 给定时导入卷归属该用户（跨用户不可见）；None = 系统公共语义
+    （auth off 本地调试模式）。
+    """
     ids: list[str] = []
     async with sessionmaker() as session, session.begin():
         for spec in specs:
@@ -52,6 +58,7 @@ async def import_papers(
                 tags=[spec.policy],
                 origin_url=None,
                 license="UNKNOWN",
+                owner_id=owner_id,
             ))
             for order, ref in enumerate(spec.questions, start=1):
                 session.add(QuestionRow(

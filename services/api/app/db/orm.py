@@ -11,9 +11,11 @@ from datetime import datetime
 from typing import Any
 
 from sqlalchemy import (
+    CHAR,
     JSON,
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     Float,
     ForeignKey,
@@ -42,6 +44,8 @@ class PaperRow(Base):
     tags: Mapped[list[Any]] = mapped_column(JSON, default=list)
     origin_url: Mapped[str | None] = mapped_column(String(1024))
     license: Mapped[str] = mapped_column(String(64))
+    # M10-03: 试卷归属；NULL = 系统公共卷（seed 卷与 auth off 期间导入的卷）
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
 
 
 class QuestionRow(Base):
@@ -451,6 +455,47 @@ class AuditLogRow(Base):
     after: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     request_id: Mapped[str] = mapped_column(String(64))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+
+
+class AuditChainEntryRow(Base):
+    """M10-04 治理审计哈希链 entry：与 audit_log 一一对应（audit_id PK）。
+
+    entry_hash = sha256(canonical(previous_hash + sequence + audit 稳定字段))；
+    FK ON DELETE RESTRICT 让「删审计行不留痕」在数据库层即被拒绝。
+    """
+
+    __tablename__ = "audit_chain_entries"
+
+    audit_id: Mapped[int] = mapped_column(
+        Integer, ForeignKey("audit_log.id", ondelete="RESTRICT"), primary_key=True
+    )
+    sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    previous_hash: Mapped[str] = mapped_column(CHAR(64), nullable=False)
+    entry_hash: Mapped[str] = mapped_column(CHAR(64), nullable=False)
+    algorithm: Mapped[str] = mapped_column(String(16), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (
+        UniqueConstraint("sequence", name="uq_audit_chain_entries_sequence"),
+        UniqueConstraint("entry_hash", name="uq_audit_chain_entries_entry_hash"),
+    )
+
+
+class AuditChainStateRow(Base):
+    """M10-04 哈希链单行状态：append 的事务级锁点（FOR UPDATE 串行分配 sequence）。
+
+    CHECK id=1 保证全库至多一行；last_sequence/last_hash 指向链尾。
+    """
+
+    __tablename__ = "audit_chain_state"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    last_sequence: Mapped[int] = mapped_column(Integer, nullable=False)
+    last_hash: Mapped[str] = mapped_column(CHAR(64), nullable=False)
+    algorithm: Mapped[str] = mapped_column(String(16), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+
+    __table_args__ = (CheckConstraint("id = 1", name="ck_audit_chain_state_singleton"),)
 
 
 class CourseImportDraftRow(Base):

@@ -1,14 +1,19 @@
-"""M9-01 多用户与认证：注册 / 登录 / me / status。
+"""M9-01 多用户与认证：注册 / 登录 / me / status / logout（M10-03 cookie 升级）。
 
 门禁策略（ADR 记录）：
 - AUTH_SECRET 未配置 = 认证关闭，/api/v1/auth/status 如实透出 auth_enabled=false；
-- 配置后全 /api/v1/* 业务路径要求 Bearer token（register/login/status 豁免——
-  未登录可达；me 要求有效 token）。
+- 配置后全 /api/v1/* 业务路径要求凭据——M10-03 起同时接受 Bearer header（CLI/API）
+  与 login 设置的 HttpOnly cookie（浏览器）；register/login/status/logout 豁免。
 - 登录失败统一「用户名或密码错误」，防用户名枚举。
+
+M10-03 cookie 边界：
+- cookie 值仍是同一 JWT（验签/过期/幽灵用户语义与 Bearer 完全一致）；
+- HttpOnly + SameSite=Lax 默认（跨站 POST 不携带 cookie = CSRF 边界），
+  Secure 经 AUTH_COOKIE_SECURE 配置（HTTPS 部署开启），有效期与 token TTL 同源。
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from app.core.config import get_settings
@@ -56,17 +61,24 @@ def _user_repo(request: Request):
 
 
 def _current_user_id(request: Request) -> str:
-    """从 Bearer token 解出 user_id；认证关闭时返回空串（门禁放行语义）。"""
+    """解出 user_id：Bearer header 优先，其次 HttpOnly cookie（M10-03）。
+
+    认证关闭时返回空串（门禁放行语义）；两种载体共用同一验签/过期路径。
+    """
     secret = get_settings().auth_secret
     if not secret:
         return ""
     auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
+    token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
+    if not token:
+        cookie_name = get_settings().auth_cookie_name
+        token = request.cookies.get(cookie_name, "")
+    if not token:
         raise HTTPException(
             status_code=401, detail="Missing bearer token", headers={"WWW-Authenticate": "Bearer"}
         )
     try:
-        return decode_access_token(auth.removeprefix("Bearer ").strip(), secret=secret)
+        return decode_access_token(token, secret=secret)
     except AuthenticationError as cause:
         raise HTTPException(
             status_code=401, detail=str(cause), headers={"WWW-Authenticate": "Bearer"}
@@ -90,6 +102,7 @@ async def require_user(request: Request) -> None:
         "/api/v1/auth/status",
         "/api/v1/auth/register",
         "/api/v1/auth/login",
+        "/api/v1/auth/logout",  # M10-03: 清 cookie 无需有效凭据（幂等，仅作用于调用方自身）
     )
     if exempt:
         return
@@ -121,7 +134,7 @@ async def register(payload: CredentialsIn, request: Request) -> UserOut:
 
 
 @router.post("/login", response_model=TokenOut)
-async def login(payload: CredentialsIn, request: Request) -> TokenOut:
+async def login(payload: CredentialsIn, request: Request, response: Response) -> TokenOut:
     repo = _user_repo(request)
     found = await repo.find_by_username(payload.username)
     # 用户不存在与密码错误同文案同路径，防枚举；verify 仍执行以拉平常量时间
@@ -135,7 +148,39 @@ async def login(payload: CredentialsIn, request: Request) -> TokenOut:
         secret=settings.auth_secret or "",
         expires_minutes=settings.auth_token_expire_minutes,
     )
+    # M10-03: 浏览器登录态走 HttpOnly cookie（页面 JS 不再读取/保存 token；
+    # body 里的 access_token 保留给 CLI/API 客户端）
+    set_auth_cookie(response, token, settings)
     return TokenOut(access_token=token)
+
+
+def set_auth_cookie(response: Response, token: str, settings=None) -> None:
+    """M10-03: 登录态 cookie 统一落点（HttpOnly + SameSite=Lax 默认 + 可配置名/Secure）。"""
+    settings = settings or get_settings()
+    response.set_cookie(
+        key=settings.auth_cookie_name,
+        value=token,
+        max_age=settings.auth_token_expire_minutes * 60,
+        httponly=True,
+        secure=settings.auth_cookie_secure,
+        samesite=settings.auth_cookie_samesite,
+        path="/",
+    )
+
+
+@router.post("/logout", status_code=204)
+async def logout(request: Request, response: Response) -> None:
+    """M10-03: 清除登录 cookie（幂等；无需有效凭据——只作用于调用方自己的 cookie）。"""
+    settings = get_settings()
+    # 属性镜像 set_auth_cookie：Secure cookie 的删除指令同样携带 Secure，
+    # 避免部分 hardened 浏览器丢弃不带 Secure 的覆写（RFC 6265bis 语义）。
+    response.delete_cookie(
+        key=settings.auth_cookie_name,
+        path="/",
+        secure=settings.auth_cookie_secure,
+        httponly=True,
+        samesite=settings.auth_cookie_samesite,
+    )
 
 
 @router.get("/me", response_model=UserOut)
@@ -170,14 +215,9 @@ async def current_is_admin(request: Request) -> bool:
     """auth off -> True（本地单用户）；auth on -> 实时 role==admin。无效 token False。"""
     if not get_settings().auth_secret:
         return True
-    auth = request.headers.get("Authorization", "")
-    if not auth.startswith("Bearer "):
-        return False
     try:
-        user_id = decode_access_token(
-            auth.removeprefix("Bearer ").strip(), secret=get_settings().auth_secret
-        )
-    except AuthenticationError:
+        user_id = _current_user_id(request)
+    except HTTPException:
         return False
     repo = getattr(request.app.state, "users", None)
     if repo is None:

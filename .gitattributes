@@ -1,2 +1,4 @@
 # M9-04: shell 脚本在 Windows checkout 后保持 LF（CRLF 会让 bash 冒烟脚本执行失败）
 *.sh text eol=lf
+# M10-05: coturn .env 示例保持 LF（CRLF 尾部 CR 字符会污染 compose env 值）
+infra/coturn/.env.example text eol=lf

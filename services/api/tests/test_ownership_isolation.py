@@ -81,7 +81,8 @@ def test_resources_are_invisible_to_other_users(auth_on) -> None:
 
         assert client.get(f"/api/v1/resources/{rid}", headers=alice.headers).status_code == 200
         assert client.get(f"/api/v1/resources/{rid}", headers=bob.headers).status_code == 404
-        # 无 token = 门禁层 401（优先于归属 404）
+        # 浏览器 cookie 已按设计认证；清空后才是真正的未携带凭据 401。
+        client.cookies.clear()
         assert client.get(f"/api/v1/resources/{rid}").status_code == 401
 
         # 下游读取面同样隔离：parse / chunks / jobs

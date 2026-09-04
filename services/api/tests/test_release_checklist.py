@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
@@ -33,6 +34,8 @@ from app.ops.release_check import (
 )
 
 SQLITE_URL = "sqlite+aiosqlite:///:memory:"
+#: 隔离测试库 URL——release_check 门控唯一放行注入 api-test 的形态。
+ISOLATED_TEST_DB_URL = "postgresql+asyncpg://aios:aios@127.0.0.1:5433/ai_learning_os_test"
 
 
 def _all_check_ids() -> set[str]:
@@ -72,10 +75,11 @@ def test_command_checks_match_ci_commands() -> None:
     # cwd 真实存在（services/api 与 apps/web）
     for c in checks.values():
         assert c.cwd.exists(), f"cwd missing: {c.cwd}"
-    # --db-url 透传到 api-test 门控与 backup 参数
-    gated = {c.id: c for c in default_command_checks(db_url="postgresql+asyncpg://x")}
-    assert gated["api-test"].env.get("AIOS_PG_TEST_URL") == "postgresql+asyncpg://x"
-    assert "postgresql+asyncpg://x" in gated["backup"].argv
+    # --db-url: only a gate-approved isolated test DB reaches api-test's env;
+    # backup keeps forwarding the raw value as its --db-url argument
+    gated = {c.id: c for c in default_command_checks(db_url=ISOLATED_TEST_DB_URL)}
+    assert gated["api-test"].env.get("AIOS_PG_TEST_URL") == ISOLATED_TEST_DB_URL
+    assert ISOLATED_TEST_DB_URL in gated["backup"].argv
 
 
 def test_live_checks_present() -> None:
@@ -221,18 +225,67 @@ def test_api_test_env_isolates_caller_pollution() -> None:
 
     终验暴露的真实缺陷：pytest 继承调用方 DATABASE_URL 后，「无 DB」测试
     预期 503 却拿到 201，24 测误报失败。env 分离必须对调用方环境鲁棒。
+    api-test 能看到的唯一 DB URL 是门控放行后注入的 AIOS_PG_TEST_URL。
     """
     import os
 
     from app.ops.release_check import default_command_checks
 
-    checks = default_command_checks(
-        db_url="postgresql+asyncpg://u:p@localhost:5433/x"
-    )
+    checks = default_command_checks(db_url=ISOLATED_TEST_DB_URL)
     api_test = next(c for c in checks if c.id == "api-test")
     assert api_test.env["DATABASE_URL"] is None  # 删除语义：调用方污染被剥离
-    assert api_test.env["AIOS_PG_TEST_URL"] == "postgresql+asyncpg://u:p@localhost:5433/x"
+    assert api_test.env["AIOS_PG_TEST_URL"] == ISOLATED_TEST_DB_URL
     # migration/backup 仍需真实 DATABASE_URL（非 None）
     mig = next(c for c in checks if c.id == "migration")
-    assert mig.env["DATABASE_URL"] == "postgresql+asyncpg://u:p@localhost:5433/x"
+    assert mig.env["DATABASE_URL"] == ISOLATED_TEST_DB_URL
     assert os.environ.get("_AIOS_SENTINEL_") is None  # sanity: 不改全局
+
+
+# ------------------------------------------ M10-04: PG test URL 安全门控 --
+
+#: 必须被拒绝注入 api-test 的 db_url 形态（fail-closed；pytest 侧门控同源）。
+UNSAFE_DB_URLS = {
+    "main-database": "postgresql+asyncpg://aios:aios@127.0.0.1:5433/ai_learning_os",
+    "missing-database": "postgresql+asyncpg://aios:aios@127.0.0.1:5433",
+    "non-postgres-driver": "mysql+pymysql://u:p@localhost/ai_learning_os_test",
+    "unparsable-url": ":://x",
+}
+
+
+def test_isolated_test_db_url_reaches_api_test_env() -> None:
+    """门控放行隔离测试库 -> gate.url 注入 AIOS_PG_TEST_URL；同 URL 仍供
+    migration/backup 的 DATABASE_URL 运行时检查。"""
+    checks = {c.id: c for c in default_command_checks(db_url=ISOLATED_TEST_DB_URL)}
+    assert checks["api-test"].env.get("AIOS_PG_TEST_URL") == ISOLATED_TEST_DB_URL
+    assert checks["migration"].env["DATABASE_URL"] == ISOLATED_TEST_DB_URL
+    assert checks["backup"].env["DATABASE_URL"] == ISOLATED_TEST_DB_URL
+
+
+@pytest.mark.parametrize(
+    "db_url", list(UNSAFE_DB_URLS.values()), ids=list(UNSAFE_DB_URLS)
+)
+def test_unsafe_db_url_never_reaches_api_test_env(db_url: str) -> None:
+    """门控拒绝的 URL 一律不得注入 api-test 的 AIOS_PG_TEST_URL。
+
+    M10-04 事故重演防线：release_check 自身也不得把主库 URL 递给 pytest。
+    None（删除）语义同时剥离从调用方 shell 继承的值；被拒 URL 不得以任何
+    形式出现在检查 env 里（不回显完整 URL/凭据）。migration/backup 的
+    DATABASE_URL 不受测试门控影响，仍传原 URL。
+    """
+    checks = {c.id: c for c in default_command_checks(db_url=db_url)}
+    api_test = checks["api-test"]
+    assert api_test.env.get("AIOS_PG_TEST_URL") is None
+    assert not any(isinstance(v, str) and db_url in v for v in api_test.env.values())
+    assert checks["migration"].env["DATABASE_URL"] == db_url
+    assert checks["backup"].env["DATABASE_URL"] == db_url
+
+
+def test_no_db_url_keeps_api_test_env_clean() -> None:
+    """未传 db_url：api-test 既不设 AIOS_PG_TEST_URL 也不继承 DATABASE_URL；
+    migration/backup 无 DATABASE_URL 可传。"""
+    checks = {c.id: c for c in default_command_checks()}
+    env = checks["api-test"].env
+    assert env.get("AIOS_PG_TEST_URL") is None
+    assert env.get("DATABASE_URL") is None
+    assert checks["migration"].env.get("DATABASE_URL") is None
+    assert checks["backup"].env.get("DATABASE_URL") is None

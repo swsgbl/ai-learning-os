@@ -12,8 +12,6 @@ import type {
   UserProfile,
   VariantDraft,
 } from "./types";
-import { getToken } from "./auth";
-
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
 // M10-02: 治理页需要区分 403（非管理员）/ 409（重复审核）做明确状态反馈
@@ -28,12 +26,11 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const token = getToken();
   const response = await fetch(`${API_BASE}${path}`, {
     ...init,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...init?.headers,
     },
     cache: "no-store",

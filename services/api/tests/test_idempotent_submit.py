@@ -94,11 +94,12 @@ def test_timeout_submit_idempotent_at_api_level() -> None:
 
 def test_concurrent_timeout_submit_yields_single_submission() -> None:
     """真实 PG：并发超时结算撞 submissions 唯一约束，幂等收敛到同一份报告。"""
-    import os
+    from app.db.test_gate import pg_test_gate_from_env
 
-    pg_url = os.environ.get("AIOS_PG_TEST_URL")
-    if not pg_url:
-        pytest.skip("需要 AIOS_PG_TEST_URL 指向真实 PostgreSQL")
+    gate = pg_test_gate_from_env()
+    if not gate.enabled:
+        pytest.skip(gate.reason)
+    pg_url = gate.url
 
     async def body() -> None:
         engine = create_engine(pg_url)

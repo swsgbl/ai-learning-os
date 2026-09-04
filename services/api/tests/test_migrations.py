@@ -77,3 +77,28 @@ def test_migration_offline_dry_run(tmp_path: Path, capsys) -> None:
     assert "CREATE TABLE papers" in output
     assert "CREATE TABLE answer_events" in output
     assert not (tmp_path / "never_created.db").exists()
+
+
+def test_migration_preserves_existing_loggers(tmp_path: Path) -> None:
+    """M10-03: lifespan 内跑迁移不得禁用 uvicorn logger。
+
+    生产时序：uvicorn 启动即创建 uvicorn.error/uvicorn.access logger →
+    lifespan 里 command.upgrade 加载本 env.py → fileConfig 若按默认
+    disable_existing_loggers=True 会把它们静默，迁移后 access log、
+    "Application startup complete" 与 5xx traceback 全部消失
+    （容器日志假性干净）。回归：fileConfig 必须显式保留既有 logger。
+    """
+    import logging
+
+    # 模拟 uvicorn 启动时序：迁移执行前 logger 已实例化（fileConfig 只
+    # 禁用“已存在”的 logger，预先 getLogger 即可复现生产条件）
+    access_logger = logging.getLogger("uvicorn.access")
+    error_logger = logging.getLogger("uvicorn.error")
+    access_logger.info("pre-migration access line")
+    error_logger.info("pre-migration error line")
+
+    config = _config(f"sqlite+aiosqlite:///{(tmp_path / 'logging.db').as_posix()}")
+    command.upgrade(config, "head")
+
+    assert not access_logger.disabled, "迁移禁用了 uvicorn.access：access log 将静默"
+    assert not error_logger.disabled, "迁移禁用了 uvicorn.error：启动完成与 5xx traceback 将静默"

@@ -29,16 +29,19 @@ jobs:
         env:
           POSTGRES_USER: aios
           POSTGRES_PASSWORD: aios
-          POSTGRES_DB: ai_learning_os
+          # M10-04 返工：CI service 是一次性容器，也统一用隔离测试库名——
+          # pytest 安全门控只放行 ai_learning_os_test 等隔离名，主/共享库
+          # 名 ai_learning_os 会被自动跳过（本地与 CI 同一规则）。
+          POSTGRES_DB: ai_learning_os_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U aios -d ai_learning_os"
+          --health-cmd "pg_isready -U aios -d ai_learning_os_test"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
     env:
-      AIOS_PG_TEST_URL: postgresql+asyncpg://aios:aios@localhost:5432/ai_learning_os
+      AIOS_PG_TEST_URL: postgresql+asyncpg://aios:aios@localhost:5432/ai_learning_os_test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -58,7 +61,7 @@ jobs:
         run: python -m pytest services/api
       - name: Migration check (upgrade - downgrade base - upgrade)
         env:
-          DATABASE_URL: postgresql+asyncpg://aios:aios@localhost:5432/ai_learning_os
+          DATABASE_URL: postgresql+asyncpg://aios:aios@localhost:5432/ai_learning_os_test
         run: |
           cd services/api
           alembic upgrade head

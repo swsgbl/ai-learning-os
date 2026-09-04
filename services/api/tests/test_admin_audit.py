@@ -54,9 +54,14 @@ def _promote_to_admin(db_url: str, username: str) -> None:
     from app.repositories.users import UserRepository
 
     async def _do_real() -> None:
-        repo = UserRepository(make_sessionmaker(create_engine(db_url)))
-        updated = await repo.set_role(username, "admin")
-        assert updated is not None
+        # engine 必须在同一个 event loop 内 dispose（M10-10，同 legacy 治理测试）。
+        engine = create_engine(db_url)
+        try:
+            repo = UserRepository(make_sessionmaker(engine))
+            updated = await repo.set_role(username, "admin")
+            assert updated is not None
+        finally:
+            await engine.dispose()
 
     asyncio.run(_do_real())
 
@@ -269,8 +274,13 @@ def test_admin_cli_promote_demote_list(auth_on, tmp_path, monkeypatch, capsys) -
     from app.repositories.users import UserRepository
 
     async def _seed():
-        repo = UserRepository(make_sessionmaker(create_engine(db_url)))
-        await repo.create("cli_user", "x")
+        # engine 必须在同一个 event loop 内 dispose（M10-10，同 legacy 治理测试）。
+        engine = create_engine(db_url)
+        try:
+            repo = UserRepository(make_sessionmaker(engine))
+            await repo.create("cli_user", "x")
+        finally:
+            await engine.dispose()
 
     asyncio.run(_seed())
 
@@ -318,6 +328,15 @@ def test_compose_cors_follows_web_port() -> None:
     cors = compose["services"]["api"]["environment"]["CORS_ORIGINS"]
     assert "AIOS_CORS_ORIGINS" in cors, "必须支持完整覆盖"
     assert "${AIOS_WEB_PORT:-3000}" in cors, "自定义 Web 端口时 CORS 默认联动"
+
+
+def test_compose_exposes_auth_cookie_switches() -> None:
+    """HTTPS 部署必须能把 Secure/SameSite 传入 API 容器。"""
+    with open(COMPOSE_FILE, encoding="utf-8") as fh:
+        compose = yaml.safe_load(fh)
+    env = compose["services"]["api"]["environment"]
+    assert env["AUTH_COOKIE_SECURE"] == "${AIOS_AUTH_COOKIE_SECURE:-false}"
+    assert env["AUTH_COOKIE_SAMESITE"] == "${AIOS_AUTH_COOKIE_SAMESITE:-lax}"
 
 
 # --- M9-06 公开暴露 fail-closed（四类路径） ---

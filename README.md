@@ -26,8 +26,9 @@ docker compose -f infra/docker-compose.yml --profile local up -d --build
 基础服务（postgres/redis/minio/api/web）不挂 profile 恒启动；livekit（语音基础设施）
 挂在 local/hybrid/cloud 三个命名 profile 下。
 
-登录/注册由 API 提供（`POST /api/v1/auth/register` / `login`，compose 已注入 dev AUTH_SECRET，
-业务端点需 Bearer token；生产部署覆盖 `AIOS_AUTH_SECRET`）。
+登录/注册由 API 提供（`POST /api/v1/auth/register` / `login`，compose 已注入 dev AUTH_SECRET）。
+浏览器登录态走 HttpOnly cookie；CLI/API 客户端仍使用 Bearer token。生产部署覆盖
+`AIOS_AUTH_SECRET`，HTTPS 反代同时设置 `AIOS_AUTH_COOKIE_SECURE=true`。
 
 验证真实可用（全服务 healthy + 关键端点 + 认证 + 上传对象重启 API 后仍可读）：
 
@@ -64,6 +65,42 @@ python -m app.ops.cli db-rollback --steps 1          # dry-run：打印计划
 python -m app.ops.cli backup --out backup-dir/       # 回滚前先备份
 python -m app.ops.cli db-rollback --steps 1 --yes    # 真正执行 alembic downgrade -1
 ```
+
+**生产数据盘点与验收清理**（M10-03；inventory 只读；清理默认 dry-run，必须 `--yes`）：
+
+```bash
+python -m app.ops.cli data-inventory --db-url ...    # 只读：用户/试卷/资源/语音/草稿/审计风险盘点
+python -m app.ops.cli acceptance-clean --db-url ...                # dry-run：按用户名前缀列出待删计划
+python -m app.ops.cli acceptance-clean --db-url ... --yes          # 执行（learner 精确行 ID 单事务删除）
+```
+
+清理只按显式字面量前缀（默认 `smoke_` / `voice_smoke_`，拒绝 `*`/`%`）匹配 learner 账号；
+admin 与普通用户、系统 seed 卷、无归属历史数据、append-only 审计不进入删除集；
+对象存储只删「仅被待删行引用」的 key（共享 key 保留）。
+
+**历史无归属试卷治理**（M10-04 第一切片；报告只读；迁移默认 dry-run，必须 `--yes`）：
+
+```bash
+python -m app.ops.cli legacy-paper-report --db-url ...                # 只读摘要（不含生产 ID）
+python -m app.ops.cli legacy-paper-report --db-url ... --json         # 完整明细 JSON（stdout）
+python -m app.ops.cli legacy-paper-report --db-url ... --output artifacts/legacy-report.json
+python -m app.ops.cli legacy-paper-migrate keep-public --db-url ... --paper-id pap_xxx            # dry-run 计划
+python -m app.ops.cli legacy-paper-migrate assign-owner --db-url ... --to <用户名或ID> --paper-id pap_xxx --yes
+python -m app.ops.cli legacy-paper-migrate export-delete --db-url ... --paper-id pap_xxx --export artifacts/legacy-export.jsonl --yes
+```
+
+报告范围是 `owner_id IS NULL` 且非 seed 的历史公共卷；每卷给出题量/总分/是否被历史
+考试引用/引用次数/最近引用时间与建议路径（keep_public/assign_owner/export_review）。
+papers 表没有时间戳列，创建/更新时间如实为 null，时间证据以考试引用时间派生。
+迁移只接受精确 paper ID（`--paper-id` 可重复或 `--ids-file`，拒绝 `*`/`%`），未知 ID
+整体拒绝；assign-owner 只迁报告确认的行，事务内先锁定目标用户再复核行数与行状态，
+不符即回滚；export-delete 排他创建导出档案（目标已存在，含 dangling symlink，一律
+拒绝覆盖、不动 DB），回读做完整归档校验（与导出前内存快照逐字段确定性全等、paper
+ID 精确集合、无缺行/重复/错行，IO 失败稳定退出码 1 不删库），删除事务内再次证明
+即将删除的题目与已验证档案完全一致（同数量换内容也拒绝），被历史考试引用的卷一律
+拒绝删除（人工处理，不级联删考试）；keep-public 在审计事务内复核行事实后才写决策，
+不改试卷。报告/导出文件含生产 ID，只能写入 gitignore 的 `artifacts/`、`temp/`
+目录（其他路径退出码 2）。
 
 **应用回滚**：compose 以 `AIOS_IMAGE_TAG` 为镜像锚点，发布时固化 tag，回滚即旧 tag 重启：
 

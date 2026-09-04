@@ -37,6 +37,9 @@ class MemoryRepository:
         self, clock: Callable[[], datetime] = utc_now, rubric_judge: RubricJudge | None = None
     ) -> None:
         self._papers = {paper.id: paper for paper in seed_papers()}
+        # M10-03: 试卷归属（与 PostgresRepository 同可见性规则）；
+        # seed 卷不在映射中 = 无主（系统公共卷），auth off 导入亦无主
+        self._paper_owners: dict[str, str] = {}
         self._exams: dict[str, ExamSessionRecord] = {}
         self._exam_owners: dict[str, str] = {}
         self._submissions: dict[str, SubmissionRecord] = {}
@@ -44,11 +47,29 @@ class MemoryRepository:
         self._rubric_judge = rubric_judge
         self._lock = asyncio.Lock()
 
-    async def list_papers(self) -> list[Paper]:
-        return list(self._papers.values())
+    async def list_papers(self, owner_id: str | None = None) -> list[Paper]:
+        # M10-03: owner_id 给定时 = 系统公共卷 + 自有卷；None = 不过滤（与 PG 语义一致）
+        if owner_id is None:
+            return list(self._papers.values())
+        return [
+            paper
+            for paper in self._papers.values()
+            if self._paper_owners.get(paper.id) in (None, owner_id)
+        ]
 
-    async def get_paper(self, paper_id: str) -> Paper | None:
-        return self._papers.get(paper_id)
+    async def get_paper(self, paper_id: str, owner_id: str | None = None) -> Paper | None:
+        paper = self._papers.get(paper_id)
+        if paper is None:
+            return None
+        if owner_id is not None and self._paper_owners.get(paper_id) not in (None, owner_id):
+            return None
+        return paper
+
+    def add_paper(self, paper: Paper, owner_id: str | None = None) -> None:
+        """M10-03: 测试/嵌入用导入入口（内存模式无 /papers/import 端点，保持协议面最小）。"""
+        self._papers[paper.id] = paper
+        if owner_id is not None:
+            self._paper_owners[paper.id] = owner_id
 
     async def create_exam(self, paper: Paper, mode: str, owner_id: str | None = None) -> ExamSessionRecord:
         now = self._clock()
