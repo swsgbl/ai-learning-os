@@ -4,8 +4,9 @@
 1. 门矩阵与 CLI 注册：GATES 覆盖十个发布审批门（无漏项/无虚设）、
    required/optional 划分、EVALUATORS 全覆盖、证据文件名唯一；CLI 子命令
    注册、无 --yes 执行形态（argparse exit 2）、main 分发；provider-smoke
-   措辞口径：voice/LLM 需部署 key、search 需真实端点冒烟且
-   SEARCH_CLOUD_API_KEY 可选（M10-12，不得回退「三类统一真实 key」旧口径）；
+   措辞口径：voice 指向确切冒烟命令（M10-13 smoke_voice_cloud.sh）、LLM 需部署
+   key、search 需真实端点冒烟且 SEARCH_CLOUD_API_KEY 可选（M10-12，不得回退
+   「三类统一真实 key」旧口径）；
 2. 全 pass：齐备证据 + 哈希绑定审批 -> release_ready=True / exit 0；每门
    evidence sha256 与文件字节独立重算一致；审批 data 记录覆盖门与零失配；
 3. missing / malformed：空目录全 missing（exit 1）；单门缺失；非法 JSON /
@@ -254,17 +255,24 @@ def test_gate_matrix_complete_no_phantom() -> None:
 
 
 def test_provider_smoke_wording_matches_provider_requirements(tmp_path) -> None:
-    """provider-smoke 措辞与三类 provider 的真实要求一致：voice/LLM 需部署
-    key，search 需真实端点冒烟且 SEARCH_CLOUD_API_KEY 可选（M10-12：无鉴权
-    SearXNG 合法，不得把 search 冒烟说成必须有 key，也不得把「真实 key 冒烟」
-    口径统一套在三类上）。措辞只是口径修正——门语义不放宽：仍是 required
+    """provider-smoke 措辞与三类 provider 的真实要求一致：voice 指向确切冒烟
+    命令（M10-13 bash infra/smoke_voice_cloud.sh，部署 key + 真实短语音 WAV），
+    LLM 需部署 key，search 需真实端点冒烟且 SEARCH_CLOUD_API_KEY 可选（M10-12：
+    无鉴权 SearXNG 合法，不得把 search 冒烟说成必须有 key，也不得把「真实 key
+    冒烟」口径统一套在三类上）。措辞只是口径修正——门语义不放宽：仍是 required
     gate，not_executed -> pending、fail -> blocked 由既有语义测试守卫。"""
     spec = next(s for s in GATES if s.gate_id == "provider-smoke")
     assert spec.required is True
-    for surface in (spec.title, spec.basis):
-        assert "voice/LLM" in surface, surface
-        assert "部署 key" in surface, surface
-        assert "search" in surface and "真实端点" in surface, surface
+    # title 保持一行可读的合并口径；basis 按 provider 拆分（M10-13 voice 独立命令）
+    assert "voice/LLM" in spec.title and "部署 key" in spec.title
+    assert "search" in spec.title and "真实端点" in spec.title
+    for provider in ("voice", "LLM"):
+        assert provider in spec.basis, spec.basis
+    assert "部署 key" in spec.basis, spec.basis
+    assert "search" in spec.basis and "真实端点" in spec.basis, spec.basis
+    # voice 冒烟的确切命令与输入在 basis 里显式给出（M10-13）
+    assert "smoke_voice_cloud.sh" in spec.basis
+    assert "真实短语音" in spec.basis
     # key 可选语义在 basis 里显式声明（title 保持一行可读）
     assert "SEARCH_CLOUD_API_KEY" in spec.basis
     assert "可选" in spec.basis
@@ -284,6 +292,7 @@ def test_provider_smoke_wording_matches_provider_requirements(tmp_path) -> None:
     assert "search, llm" in gate["reason"]
     assert "部署 key" in gate["reason"]
     assert "真实端点" in gate["reason"]
+    assert "smoke_voice_cloud.sh" in gate["reason"]
     assert "SEARCH_CLOUD_API_KEY" in gate["reason"] and "可选" in gate["reason"]
 
     # blocked：search 冒烟失败（无 key 合法端点也可能失败）——指引同口径区分
@@ -299,6 +308,7 @@ def test_provider_smoke_wording_matches_provider_requirements(tmp_path) -> None:
     assert gate["status"] == "blocked"
     assert "search" in gate["reason"]
     assert "部署 key" in gate["reason"] and "真实端点" in gate["reason"]
+    assert "smoke_voice_cloud.sh" in gate["reason"]
     assert "SEARCH_CLOUD_API_KEY" in gate["reason"] and "可选" in gate["reason"]
 
     # pass：全部通过——通过口径同样区分三类要求，不虚称「真实 key 冒烟」

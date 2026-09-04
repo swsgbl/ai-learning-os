@@ -195,8 +195,10 @@ GATES: tuple[GateSpec, ...] = (
         "云 voice/LLM 部署 key 冒烟 + search 真实端点冒烟（只收脱敏结果文件）",
         "provider-smoke.json",
         True,
-        "voice/LLM 需运维以部署 key 冒烟通过；search 需打真实端点冒烟通过"
-        "（SEARCH_CLOUD_API_KEY 可选，无鉴权端点可空）；证据文件不得携带任何 key",
+        "voice 需运维执行 bash infra/smoke_voice_cloud.sh 冒烟通过（部署 key + 真实"
+        "短语音 WAV，ASR/TTS 双探针）；LLM 需运维以部署 key 冒烟通过；search 需打"
+        "真实端点冒烟通过（SEARCH_CLOUD_API_KEY 可选，无鉴权端点可空）；"
+        "证据文件不得携带任何 key",
     ),
     GateSpec(
         "turn-tls",
@@ -693,8 +695,9 @@ def _eval_provider_smoke(obj: dict[str, Any], root: Path, sha: Mapping[str, str]
         return (
             STATUS_BLOCKED,
             (
-                f"provider 冒烟失败: {', '.join(fails)}——voice/LLM 排查部署 key、"
-                "search 排查真实端点（SEARCH_CLOUD_API_KEY 可选）后重跑冒烟并导出脱敏结果"
+                f"provider 冒烟失败: {', '.join(fails)}——voice/LLM 排查部署 key"
+                "（voice 用 bash infra/smoke_voice_cloud.sh 重跑）、search 排查"
+                "真实端点（SEARCH_CLOUD_API_KEY 可选）后重跑冒烟并导出脱敏结果"
             ),
             data,
             [],
@@ -703,9 +706,11 @@ def _eval_provider_smoke(obj: dict[str, Any], root: Path, sha: Mapping[str, str]
         return (
             STATUS_PENDING,
             (
-                f"未执行冒烟: {', '.join(not_run)}——voice/LLM 需运维以部署 key 执行"
-                "（key 不入库不入码）；search 需打真实端点冒烟"
-                "（SEARCH_CLOUD_API_KEY 可选）；证据只收脱敏结果文件"
+                f"未执行冒烟: {', '.join(not_run)}——voice 需运维执行 bash "
+                "infra/smoke_voice_cloud.sh（部署 key + 真实短语音 WAV，key 不入库"
+                "不入码）；LLM 需运维以部署 key 执行（key 不入库不入码）；"
+                "search 需打真实端点冒烟（SEARCH_CLOUD_API_KEY 可选）；"
+                "证据只收脱敏结果文件"
             ),
             data,
             [],
