@@ -18,6 +18,8 @@
 
 开启保存原始录音的开关：`PRIVACY_STORE_AUDIO`（默认 false）。开启后录音按内容哈希写入本机对象存储，与数据库记录互相可回查。
 
+运维观测（管理员专用）：系统提供一个只读聚合快照端点（`GET /api/v1/system/ops-snapshot`，仅持久数据库模式可用）供运维查看运行状态——只输出聚合计数与状态分布（各角色用户数、试卷数、解析队列状态、待审草稿分类数、语音会话状态、搜索/审计总条数等），**不含任何用户名、查询词、标题、学习内容、答案或其它业务正文**；仅管理员角色可访问（本地单用户模式与其它治理端点同口径），只读本机数据库、不产生任何新的出站请求。该边界由 `tests/test_ops_snapshot.py` 持续锁定。
+
 ## 二、什么内容会发送到云端（云端处理边界）
 
 路由由三个隐私模式开关控制（local / hybrid / cloud）：
@@ -83,4 +85,5 @@ curl http://127.0.0.1:8000/api/v1/search/providers
 | cloud-web 未启用（本地路由/隐私总闸/未配置）不虚报可用；查询落库可审计 | `tests/test_search.py` |
 | 视图无密钥形态 | `tests/test_security_suite.py` |
 | 非法隐私模式拒绝启动 | `tests/test_config_privacy.py` |
+| 运维观测只读聚合（admin-only、无出站、无学习内容正文） | `tests/test_ops_snapshot.py` |
 | 端到端核实路径可用 | `tests/test_privacy_disclosure.py`（本守卫测试） |

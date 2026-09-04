@@ -464,6 +464,46 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   （不触网、不读真实 secret：必填 env 缺失 FAIL、音频文件缺失 FAIL、探针失败
   传播、文本契约与零敏感回显）。
 
+## 运行观测快照（M10-14）
+
+- **用途**：runbook（`docs/delivery/12_DEPLOYMENT_OPERATIONS_RUNBOOK.md` 第 7 节
+  观测与告警）的最小可维护落地——运维用一个只读端点回答「解析队列堵不堵、
+  治理草稿积压多少、语音会话在什么状态、用户角色分布、搜索/审计量级」。
+  **不是 Prometheus / Alertmanager / Grafana 的替代品**：没有时序、没有抓取
+  协议、没有告警规则；只是「运维此刻打开一眼」的聚合快照。
+- **调用方式**：`GET /api/v1/system/ops-snapshot`。门禁与治理端点同口径——
+  auth on 时未认证 401、learner 403、admin 200（`require_admin`）；auth off
+  本地单用户放行。仅持久 DB 模式可用：MemoryRepository / 无 sessionmaker 返回
+  503（`Ops snapshot requires a database`）；数据库异常同样 503，detail 固定
+  脱敏（`Ops snapshot temporarily unavailable`）——不透出异常文本、连接串、
+  host 或 db name。
+- **实现**（`services/api/app/ops/snapshot.py` + `app/api/routes/system.py` 挂载）：
+  单个会话内只发 SELECT / COUNT / GROUP BY（零写入、零状态变更；SQLite 与
+  PostgreSQL 双方言可用）；Pydantic response model `OpsSnapshotOut` 锁定字段
+  命名与类型。`worker_running` 来自 `ParseWorker.is_running()`——SQLite 测试
+  替身按既有口径不启动消费循环，快照如实返回 false。
+- **字段语义**（全部为聚合值/状态，无任何业务正文）：
+  - `generated_at`：服务器 UTC ISO-8601（快照生成时刻）；
+  - `database_backend`：`sqlite` / `postgresql` 类别 only——不输出 URL/host/db name；
+  - `users_by_role`：各角色用户数（learner / admin）；
+  - `papers_total`：试卷总数（含 seed 公共卷）；
+  - `resources_by_parse_status`：上传资源按 parse_status 的分布；
+  - `parse_jobs_by_status`：解析任务队列按 status 的分布（pending 积压/running/
+    succeeded/failed 观测面）；
+  - `pending_review_drafts`：四类待审草稿计数（course_import / course_generation /
+    paper_question / variant_question，治理积压观测面；approved/rejected 不计入）；
+  - `voice_sessions_by_status`：语音会话按 FSM status 的分布；
+  - `search_queries_total` / `audit_entries_total`：搜索执行与审计留痕总量级；
+  - `worker_running`：解析消费循环是否存活。
+  空表不伪造非零：分布为空 dict、计数为 0，结构恒稳定。**不输出** username、
+  query 文本、title、题目正文、request_id、业务 ID、endpoint、模型 key。
+- **安全边界**：admin-only；只读（测试锁定调用前后 SQLite 文件字节与全部表
+  行集合完全不变）；marker 注入验证敏感正文零回显；PRIVACY.md 第一节如实披露
+  （无新增出站请求、无学习内容正文）。
+- **后续告警接入边界**：如需真告警（阈值/持续异常判定），应在运维侧外挂
+  Prometheus 抓取器或定时脚本对该端点采样并自行持久化——本仓库不引入监控
+  后端服务/重型依赖；该端点语义只保证「读时点聚合」，不保证连续时序。
+
 ## 对象存储
 
 - compose 的 api 服务注入 `S3_ENDPOINT/S3_BUCKET/S3_ACCESS_KEY/S3_SECRET_KEY`
