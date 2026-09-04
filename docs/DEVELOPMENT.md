@@ -392,6 +392,60 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   唯一 caller-supplied 路径字段，可能含本机路径，供人工复核定位；`--output`
   仅允许 artifacts/temp 护栏并原子写入，symlink fail-closed。
 
+## 生产切换演练编排器（M10-15）
+
+- **CLI**：`python -m app.ops.cli cutover-rehearsal --evidence-dir <path>
+  [--json] [--output <artifacts路径>]`，实现文件
+  `services/api/app/ops/cutover_rehearsal.py`。
+- **定位与分工**：与 release-readiness（M10-11 发布审批门矩阵）互补——本工具按
+  **生产切换时间线**组织 13 个 required steps（pre-window 7 步 → pre-migration
+  2 步 → post-migration 3 步 → cutover 1 步），演练「一次完整切换需要什么证据」
+  的编排视角：切换窗口前 CI/门禁/三类 provider 冒烟/历史治理计数归零；窗口内
+  pre 预检 + 备份恢复演练；迁移后 post 预检 + 审计链校验 + 锚定；最后人工审批。
+  **隔离 rehearsal**：不代表生产验收，也不授权生产写入/发布——`rehearsal_ready=true`
+  仅说明演练时间线 13 步证据齐备且审批绑定完整，生产放行仍须按各 runbook 人工
+  执行。
+- **step 矩阵**（全 required；对 release-readiness 证据面的拆分——preflight 拆
+  pre/post、audit-chain 拆 verify/anchor、provider-smoke 拆 search/cloud-voice/
+  llm，拆分理由：同一文件混合多类结论会互相掩盖，时间线视角要求每类证据单独
+  可审计、单独给出下一步动作）：`ci-main`、`release-check`、`search-smoke`、
+  `cloud-voice-smoke`、`llm-smoke`、`legacy-papers`、`draft-ownership`、
+  `preflight-pre-migration`、`backup-restore`、`preflight-post-migration`、
+  `audit-chain-verify`、`audit-chain-anchor`、`cutover-approval`。
+- **四态语义**：`pass` / `pending`（待人工决策或执行：治理计数 >0、锚定落后、
+  WORM 未归档、恢复演练未 verified、post 预检有 pending）/ `blocked`（fail、
+  malformed——结构不符/自声明 step 错位/计数自相矛盾/敏感键、tampered——审批
+  哈希失配/锚文件副本校验失败，统一映射，不给「待补」的宽松读法）/
+  `not_executed`（missing、冒烟 not run、缺审批或审批覆盖缺口）。分步要点：
+  preflight-pre 无 fail 即 pass（迁移前 pending/not_configured 属预期不阻断，
+  放行仍需 post 证据）；preflight-post 要求放行形态；audit-chain-verify 与
+  anchor 独立评估（链 invalid 先 blocked，锚定另行校验）；三类 provider 冒烟
+  独立证据互不掩盖。
+- **顶层判定**：优先级 blocked > pending > not_executed > ready；manifest 输出
+  `blockers`（全部 blocked 步及原因）与 `next_actions`（全部非 pass 步的逐步
+  动作建议）。
+- **审批绑定**：cutover-approval.json 必须绑定 step id + 主 step 证据
+  sha256 集合 + `supporting_evidence`（文件名 -> sha256 mapping；当前
+  supporting 文件仅 `audit-anchor.jsonl` 锚副本）+ 时间 + 说明。缺审批、
+  未覆盖其余 12 步、或未覆盖当前实际 supporting 文件 => `not_executed`
+  （审批动作尚未完整发生，`coverage_gaps` / `supporting_coverage_gaps`
+  透出）；主 step 或 supporting 哈希与当前证据失配、或引用当前不存在的
+  supporting 文件 => `blocked`（证据在审批后被改动/移除，`hash_mismatches` /
+  `supporting_hash_mismatches` 透出）；未知 supporting 文件名 / 非 64 位
+  小写 hex / 缺 `supporting_evidence` 字段 => malformed => blocked；目录无
+  supporting 文件时该 mapping 必须为空 mapping。supporting 绑定的意义：
+  锚文件副本不属于任何主 step JSON，单靠主 step 哈希发现不了「审批后把
+  副本换成另一份仍自洽、锚点数相同的副本」——supporting 绑定补上这个
+  完整性缺口。`approved_by` 只做记录，不做身份认证。
+- **输出脱敏/路径边界**：与 release-readiness 同口径——不连 DB/网络/API，不读
+  环境变量，不执行迁移/锚定/清理/WORM/部署/启停/发布/回滚，无 `--yes` 执行
+  形态；不回显证据正文与生产业务 ID；敏感键或内嵌凭据证据判 blocked；
+  `--output` 仅允许 artifacts/temp 护栏并原子写入，symlink fail-closed。
+- **共享证据层**：路径护栏/JSON loader/敏感键与内嵌凭据扫描/scrub/schema
+  校验原语提取为 `services/api/app/ops/evidence_kit.py`（M10-15 从
+  release_readiness 原样提取，零行为变更，既有测试全绿），两个只读 manifest
+  工具的装载与校验底层保持同一实现，安全语义不漂移。
+
 ## LLM 接入（M10-01）
 
 - OpenAI 兼容 gateway（`app/llm/gateway.py`）：`LLM_ENDPOINT/LLM_API_KEY/LLM_MODEL`

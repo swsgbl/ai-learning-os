@@ -14,9 +14,9 @@
   回滚——命令没有 --yes 执行形态，是纯汇总器，绝不代跑任何 runbook 步骤；
 - 输出零敏感：每门只提取白名单标量（计数/枚举/哈希/门 id/时间戳），不回显
   证据正文（审批 note 只验证非空、approved_by 只记录是否存在）；最终
-  manifest 整体再做敏感键抹除与 `://user:pass@` 凭据段抹除（复用
-  production_preflight.redact_secrets）——不含完整 DB URL、密码、token、
-  key、生产 paper/draft/用户 ID；
+  manifest 整体再做敏感键抹除与 `://user:pass@` 凭据段抹除（M10-15 起复用
+  app.ops.evidence_kit 共享层，底层同 production_preflight.redact_secrets）
+  ——不含完整 DB URL、密码、token、key、生产 paper/draft/用户 ID；
 - 证据文件含敏感键（password/passwd/secret/token/api_key/access_key/
   private_key/authorization/cookie/credential 等变体，值从不回显）或内嵌
   `://user:pass@` 凭据段即 malformed——证据目录只应存放脱敏导出物
@@ -46,10 +46,7 @@ preflight/anchor CLI 同口径）。
 """
 from __future__ import annotations
 
-import hashlib
-import json
 import os
-import re
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -57,7 +54,28 @@ from pathlib import Path
 from typing import Any
 
 from app.ops.audit_chain_anchor import load_anchor_file
-from app.ops.production_preflight import PHASES, redact_secrets
+from app.ops.evidence_kit import (
+    HEX64_RE,
+    MalformedEvidence,
+    batches_executed,
+    check_evidence_dir,
+    check_regular_file,
+    find_embedded_credential,
+    find_sensitive_key,
+    load_json_object,
+    req,
+    req_bool,
+    req_choice,
+    req_commit,
+    req_dict,
+    req_hex,
+    req_int,
+    req_iso,
+    req_str,
+    scrub_sensitive,
+    sha256_file,
+)
+from app.ops.production_preflight import PHASES
 
 STATUS_PASS = "pass"
 STATUS_PENDING = "pending"
@@ -110,24 +128,6 @@ _OPTIONAL_SCOPE_NOTE = (
     "turn-tls 不计入——公网语音发布必须另行要求 turn-tls=pass 方可放行，"
     "release_ready 不得解释为公网语音就绪"
 )
-
-_HEX64_RE = re.compile(r"^[0-9a-f]{64}$")
-#: 敏感键模式（递归扫描证据与最终 manifest；命中即拒绝/抹除）。
-#: 覆盖常见凭据字段变体（含 authorization/cookie/credential），宁可误拒
-#: 同名业务字段也不放行——证据目录只应存放脱敏导出物。
-_SENSITIVE_KEY_RE = re.compile(
-    r"(password|passwd|secret|token|api[_-]?key|access[_-]?key|private[_-]?key"
-    r"|authorization|auth[_-]?header|cookie|credential)",
-    re.IGNORECASE,
-)
-
-
-class EvidenceInputError(Exception):
-    """证据目录/路径问题（CLI 退出码 2：不是门结论，是输入不可用）。"""
-
-
-class _Malformed(Exception):
-    """gate 证据结构与声明的 schema 不符（内部信号，统一转 malformed 状态）。"""
 
 
 @dataclass(frozen=True)
@@ -225,183 +225,12 @@ KNOWN_EVIDENCE_FILES = frozenset(spec.evidence_file for spec in GATES) | {
 }
 
 
-# --- 路径护栏与证据装载 -------------------------------------------------------
-
-
-def check_evidence_dir(path: Path) -> Path:
-    """证据目录护栏：必须已存在、为真目录、不是 symlink（fail-closed）。"""
-    if path.is_symlink():
-        raise EvidenceInputError(f"证据目录是符号链接，拒绝使用: {path}")
-    if not os.path.lexists(path):
-        raise EvidenceInputError(f"证据目录不存在: {path}")
-    if not path.is_dir():
-        raise EvidenceInputError(f"证据目录不是目录: {path}")
-    for entry in sorted(path.iterdir()):
-        # 目录内任何 symlink（含 dangling）都拒绝：证据可能逃逸出调用方
-        # 显式提供的目录，不猜测链接目标。
-        if entry.is_symlink():
-            raise EvidenceInputError(
-                f"证据目录内存在符号链接，拒绝使用: {entry.name}"
-            )
-    return path
-
-
-def _check_regular_file(path: Path) -> None:
-    if path.is_symlink():
-        raise EvidenceInputError(f"证据文件是符号链接，拒绝读取: {path.name}")
-    if not path.is_file():
-        raise EvidenceInputError(f"证据文件不是常规文件: {path.name}")
-
-
-def _sha256_file(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
-
-
-def _load_json_object(path: Path) -> tuple[dict[str, Any] | None, str | None]:
-    """读 JSON 对象；返回 (obj, None) 或 (None, problem)。OSError 原样上抛
-    （CLI 映射 exit 2）。"""
-    try:
-        text = path.read_bytes().decode("utf-8")
-    except UnicodeDecodeError:
-        return None, "不是有效 UTF-8"
-    try:
-        obj = json.loads(text)
-    except json.JSONDecodeError as exc:
-        return None, f"不是合法 JSON: {exc.msg}（第 {exc.lineno} 行）"
-    if not isinstance(obj, dict):
-        return None, "顶层不是 JSON 对象"
-    return obj, None
-
-
-def _find_sensitive_key(value: Any, prefix: str = "") -> str | None:
-    """递归扫描敏感键，返回首个命中的键路径（如 providers.voice.api_key）。
-
-    证据文件应全为脱敏导出物：命中即由调用方按 malformed 拒绝，值从不回显。
-    """
-    if isinstance(value, dict):
-        for key, item in value.items():
-            name = str(key)
-            if _SENSITIVE_KEY_RE.search(name):
-                return f"{prefix}{name}"
-            hit = _find_sensitive_key(item, f"{prefix}{name}.")
-            if hit:
-                return hit
-    elif isinstance(value, list):
-        for index, item in enumerate(value):
-            hit = _find_sensitive_key(item, f"{prefix}{index}.")
-            if hit:
-                return hit
-    return None
-
-
-def _find_embedded_credential(value: Any, prefix: str = "") -> str | None:
-    """递归扫描内嵌凭据的字符串值（`://user:pass@` 形态，复用 redact_secrets
-    判定），返回首个命中的字段路径——证据文件本不应携带任何凭据。"""
-    if isinstance(value, dict):
-        for key, item in value.items():
-            hit = _find_embedded_credential(item, f"{prefix}{key}.")
-            if hit:
-                return hit
-    elif isinstance(value, list):
-        for index, item in enumerate(value):
-            hit = _find_embedded_credential(item, f"{prefix}{index}.")
-            if hit:
-                return hit
-    elif isinstance(value, str) and redact_secrets(value) != value:
-        return prefix.rstrip(".") or "(root)"
-    return None
-
-
-def scrub_sensitive(value: Any) -> Any:
-    """最终 manifest 的纵深防御：敏感键值整体替换、字符串过凭据抹除。
-
-    正常情况下门的白名单提取已经保证输出零敏感；本函数兜底任何未来的
-    提取面扩张（错误信息/路径字符串等仍统一抹 `://user:pass@`）。
-    """
-    if isinstance(value, dict):
-        return {
-            key: ("[REDACTED]" if _SENSITIVE_KEY_RE.search(str(key)) else scrub_sensitive(item))
-            for key, item in value.items()
-        }
-    if isinstance(value, list):
-        return [scrub_sensitive(item) for item in value]
-    if isinstance(value, str):
-        return redact_secrets(value)
-    return value
-
-
-# --- 白名单字段提取（严格 schema，违例即 _Malformed） -------------------------
-
-
-def _req(obj: Mapping[str, Any], key: str) -> Any:
-    if key not in obj:
-        raise _Malformed(f"缺字段 {key}")
-    return obj[key]
-
-
-def _req_str(obj: Mapping[str, Any], key: str, *, max_len: int = 512) -> str:
-    value = _req(obj, key)
-    if not isinstance(value, str) or not value.strip():
-        raise _Malformed(f"字段 {key} 必须是非空字符串")
-    if len(value) > max_len:
-        raise _Malformed(f"字段 {key} 超长（>{max_len}）")
-    return value
-
-
-def _req_bool(obj: Mapping[str, Any], key: str) -> bool:
-    value = _req(obj, key)
-    if not isinstance(value, bool):
-        raise _Malformed(f"字段 {key} 必须是布尔值")
-    return value
-
-
-def _req_int(obj: Mapping[str, Any], key: str, *, minimum: int = 0) -> int:
-    value = _req(obj, key)
-    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
-        raise _Malformed(f"字段 {key} 必须是 >= {minimum} 的整数")
-    return value
-
-
-def _req_dict(obj: Mapping[str, Any], key: str) -> dict[str, Any]:
-    value = _req(obj, key)
-    if not isinstance(value, dict):
-        raise _Malformed(f"字段 {key} 必须是对象")
-    return value
-
-
-def _req_choice(obj: Mapping[str, Any], key: str, choices: tuple[str, ...]) -> str:
-    value = _req(obj, key)
-    if value not in choices:
-        raise _Malformed(f"字段 {key} 必须是 {list(choices)} 之一")
-    return value
-
-
-def _req_hex(obj: Mapping[str, Any], key: str) -> str:
-    value = _req(obj, key)
-    if not isinstance(value, str) or not _HEX64_RE.fullmatch(value):
-        raise _Malformed(f"字段 {key} 必须是 64 位小写十六进制")
-    return value
-
-
-def _req_iso(obj: Mapping[str, Any], key: str) -> str:
-    value = _req_str(obj, key, max_len=64)
-    try:
-        datetime.fromisoformat(value)
-    except ValueError:
-        raise _Malformed(f"字段 {key} 不是合法 ISO 8601 时间") from None
-    return value
-
-
-def _req_commit(obj: Mapping[str, Any], key: str) -> str:
-    value = _req_str(obj, key, max_len=64)
-    if not re.fullmatch(r"[0-9a-fA-F]{7,40}", value):
-        raise _Malformed(f"字段 {key} 必须是 7-40 位十六进制 commit")
-    return value.lower()
+# --- 白名单字段提取（严格 schema，违例即 MalformedEvidence） -------------------------
 
 
 def _require_gate_self_id(obj: Mapping[str, Any], gate_id: str) -> None:
     """证据文件必须自声明 gate 且与文件名对应门一致（错位文件 fail-closed）。"""
-    _req_choice(obj, "gate", (gate_id,))
+    req_choice(obj, "gate", (gate_id,))
 
 
 # --- 各门评估（只提取白名单标量；返回 status/reason/data/supporting） ---------
@@ -409,9 +238,9 @@ def _require_gate_self_id(obj: Mapping[str, Any], gate_id: str) -> None:
 
 def _eval_ci_main(obj: dict[str, Any], root: Path, sha: Mapping[str, str]):
     _require_gate_self_id(obj, "ci-main")
-    run_id = _req_int(obj, "run_id", minimum=1)
-    commit = _req_commit(obj, "merge_commit")
-    conclusion = _req_choice(obj, "conclusion", CI_CONCLUSIONS)
+    run_id = req_int(obj, "run_id", minimum=1)
+    commit = req_commit(obj, "merge_commit")
+    conclusion = req_choice(obj, "conclusion", CI_CONCLUSIONS)
     data = {"run_id": run_id, "merge_commit": commit, "conclusion": conclusion}
     if conclusion == "success":
         return (
@@ -430,19 +259,19 @@ def _eval_ci_main(obj: dict[str, Any], root: Path, sha: Mapping[str, str]):
 
 def _eval_release_check(obj: dict[str, Any], root: Path, sha: Mapping[str, str]):
     _require_gate_self_id(obj, "release-check")
-    all_green = _req_bool(obj, "all_green")
-    total = _req_int(obj, "total", minimum=1)
-    passed = _req_int(obj, "passed")
-    raw_failed = _req(obj, "failed_ids")
+    all_green = req_bool(obj, "all_green")
+    total = req_int(obj, "total", minimum=1)
+    passed = req_int(obj, "passed")
+    raw_failed = req(obj, "failed_ids")
     if not isinstance(raw_failed, list) or any(
         not isinstance(item, str) or not item for item in raw_failed
     ):
-        raise _Malformed("字段 failed_ids 必须是字符串列表")
+        raise MalformedEvidence("字段 failed_ids 必须是字符串列表")
     failed_ids = list(raw_failed)
     if passed > total:
-        raise _Malformed("字段 passed 大于 total（计数自相矛盾）")
+        raise MalformedEvidence("字段 passed 大于 total（计数自相矛盾）")
     if all_green and (passed != total or failed_ids):
-        raise _Malformed("all_green=true 但计数/失败项非零（自相矛盾）")
+        raise MalformedEvidence("all_green=true 但计数/失败项非零（自相矛盾）")
     data = {"all_green": all_green, "total": total, "passed": passed, "failed_ids": failed_ids}
     if not all_green:
         return (
@@ -456,10 +285,10 @@ def _eval_release_check(obj: dict[str, Any], root: Path, sha: Mapping[str, str])
 
 def _eval_production_preflight(obj: dict[str, Any], root: Path, sha: Mapping[str, str]):
     _require_gate_self_id(obj, "production-preflight")
-    phase = _req_choice(obj, "phase", PHASES)
-    summary = _req_dict(obj, "summary")
+    phase = req_choice(obj, "phase", PHASES)
+    summary = req_dict(obj, "summary")
     counts = {
-        name: _req_int(summary, name)
+        name: req_int(summary, name)
         for name in ("pass", "pending", "fail", "not_configured")
     }
     data = {"phase": phase, "summary": counts}
@@ -489,7 +318,7 @@ def _eval_production_preflight(obj: dict[str, Any], root: Path, sha: Mapping[str
             [],
         )
     if counts["pass"] == 0:
-        raise _Malformed("summary.pass 为 0——不是任何合法 preflight 报告形态")
+        raise MalformedEvidence("summary.pass 为 0——不是任何合法 preflight 报告形态")
     return (
         STATUS_PASS,
         f"post-migration 放行形态（pass={counts['pass']}，无 pending/fail）",
@@ -500,12 +329,12 @@ def _eval_production_preflight(obj: dict[str, Any], root: Path, sha: Mapping[str
 
 def _eval_backup_restore(obj: dict[str, Any], root: Path, sha: Mapping[str, str]):
     _require_gate_self_id(obj, "backup-restore")
-    schema_version = _req_choice(obj, "schema_version", ("aios-backup-v1",))
-    manifest_sha = _req_hex(obj, "manifest_sha256")
-    created_at = _req_iso(obj, "created_at")
-    drill = _req_dict(obj, "restore_drill")
-    verified = _req_bool(drill, "verified")
-    inserted = _req_int(drill, "inserted_rows")
+    schema_version = req_choice(obj, "schema_version", ("aios-backup-v1",))
+    manifest_sha = req_hex(obj, "manifest_sha256")
+    created_at = req_iso(obj, "created_at")
+    drill = req_dict(obj, "restore_drill")
+    verified = req_bool(drill, "verified")
+    inserted = req_int(drill, "inserted_rows")
     data = {
         "schema_version": schema_version,
         "manifest_sha256": manifest_sha,
@@ -533,14 +362,14 @@ def _eval_backup_restore(obj: dict[str, Any], root: Path, sha: Mapping[str, str]
 
 def _eval_audit_chain_anchor(obj: dict[str, Any], root: Path, sha: Mapping[str, str]):
     _require_gate_self_id(obj, "audit-chain-anchor")
-    chain = _req_dict(obj, "chain")
-    anchor = _req_dict(obj, "anchor")
-    worm = _req_dict(obj, "worm")
-    chain_valid = _req_bool(chain, "valid")
-    entries = _req_int(chain, "entries")
-    anchor_status = _req_choice(anchor, "status", ("up-to-date", "valid", "invalid"))
-    anchors = _req_int(anchor, "anchors")
-    worm_archived = _req_bool(worm, "archived")
+    chain = req_dict(obj, "chain")
+    anchor = req_dict(obj, "anchor")
+    worm = req_dict(obj, "worm")
+    chain_valid = req_bool(chain, "valid")
+    entries = req_int(chain, "entries")
+    anchor_status = req_choice(anchor, "status", ("up-to-date", "valid", "invalid"))
+    anchors = req_int(anchor, "anchors")
+    worm_archived = req_bool(worm, "archived")
     data = {
         "chain_valid": chain_valid,
         "entries": entries,
@@ -552,9 +381,9 @@ def _eval_audit_chain_anchor(obj: dict[str, Any], root: Path, sha: Mapping[str, 
     companion_note = "未提供 audit-anchor.jsonl 副本（锚点计数按申报值）"
     companion = root / ANCHOR_COMPANION_FILE
     if os.path.lexists(companion):
-        _check_regular_file(companion)
+        check_regular_file(companion)
         supporting.append(
-            {"file": ANCHOR_COMPANION_FILE, "sha256": _sha256_file(companion)}
+            {"file": ANCHOR_COMPANION_FILE, "sha256": sha256_file(companion)}
         )
         # 独立校验锚文件副本（复用 anchor 工具的完整解析：anchor_hash 重算、
         # 锚链链接、sequence 递增——纯本地文件校验，零 DB 连接）。
@@ -617,23 +446,10 @@ def _eval_audit_chain_anchor(obj: dict[str, Any], root: Path, sha: Mapping[str, 
     )
 
 
-def _batches_executed(raw: Any, *, label: str) -> int:
-    if not isinstance(raw, list):
-        raise _Malformed(f"字段 {label} 必须是列表")
-    executed = 0
-    for batch in raw:
-        if not isinstance(batch, dict):
-            raise _Malformed(f"{label} 元素必须是对象")
-        if not isinstance(batch.get("executed"), bool):
-            raise _Malformed(f"{label} 元素缺 executed 布尔字段")
-        executed += 1 if batch["executed"] else 0
-    return executed
-
-
 def _eval_legacy_papers(obj: dict[str, Any], root: Path, sha: Mapping[str, str]):
     _require_gate_self_id(obj, "legacy-papers")
-    pending_count = _req_int(obj, "pending_count")
-    executed = _batches_executed(_req(obj, "batches"), label="batches")
+    pending_count = req_int(obj, "pending_count")
+    executed = batches_executed(req(obj, "batches"), label="batches")
     data = {"pending_count": pending_count, "batches_executed": executed}
     if pending_count > 0:
         return (
@@ -650,8 +466,8 @@ def _eval_legacy_papers(obj: dict[str, Any], root: Path, sha: Mapping[str, str])
 
 def _eval_draft_ownership(obj: dict[str, Any], root: Path, sha: Mapping[str, str]):
     _require_gate_self_id(obj, "draft-ownership")
-    pending_count = _req_int(obj, "pending_count")
-    executed = _batches_executed(_req(obj, "batches"), label="batches")
+    pending_count = req_int(obj, "pending_count")
+    executed = batches_executed(req(obj, "batches"), label="batches")
     data = {"pending_count": pending_count, "batches_executed": executed}
     if pending_count > 0:
         return (
@@ -668,22 +484,22 @@ def _eval_draft_ownership(obj: dict[str, Any], root: Path, sha: Mapping[str, str
 
 def _eval_provider_smoke(obj: dict[str, Any], root: Path, sha: Mapping[str, str]):
     _require_gate_self_id(obj, "provider-smoke")
-    providers = _req_dict(obj, "providers")
+    providers = req_dict(obj, "providers")
     data: dict[str, dict[str, Any]] = {}
     fails: list[str] = []
     not_run: list[str] = []
     for name in SMOKE_PROVIDERS:
         entry = providers.get(name)
         if not isinstance(entry, dict):
-            raise _Malformed(f"providers.{name} 缺失或不是对象")
-        executed = _req_bool(entry, "executed")
-        result = _req_choice(entry, "result", ("pass", "fail", "not_executed"))
+            raise MalformedEvidence(f"providers.{name} 缺失或不是对象")
+        executed = req_bool(entry, "executed")
+        result = req_choice(entry, "result", ("pass", "fail", "not_executed"))
         if executed and result == "not_executed":
-            raise _Malformed(
+            raise MalformedEvidence(
                 f"providers.{name}.executed=true 但 result=not_executed（自相矛盾）"
             )
         if not executed and result != "not_executed":
-            raise _Malformed(
+            raise MalformedEvidence(
                 f"providers.{name}.executed=false 但 result={result}（自相矛盾）"
             )
         data[name] = {"executed": executed, "result": result}
@@ -728,9 +544,9 @@ def _eval_provider_smoke(obj: dict[str, Any], root: Path, sha: Mapping[str, str]
 
 def _eval_turn_tls(obj: dict[str, Any], root: Path, sha: Mapping[str, str]):
     _require_gate_self_id(obj, "turn-tls")
-    checks = _req_dict(obj, "checks")
+    checks = req_dict(obj, "checks")
     data = {
-        name: _req_choice(checks, name, ("pass", "fail", "not_executed"))
+        name: req_choice(checks, name, ("pass", "fail", "not_executed"))
         for name in TURN_CHECKS
     }
     fails = [name for name, verdict in data.items() if verdict == "fail"]
@@ -759,35 +575,35 @@ def _eval_release_approval(
     obj: dict[str, Any], root: Path, sha: Mapping[str, str]
 ):
     _require_gate_self_id(obj, "release-approval")
-    schema_version = _req_int(obj, "schema_version")
+    schema_version = req_int(obj, "schema_version")
     if schema_version != 1:
-        raise _Malformed(f"schema_version 非 1: {schema_version}")
-    approved_at = _req_iso(obj, "approved_at")
-    _req_str(obj, "note")  # 只验证非空；内容不回显（防审批说明内嵌敏感值）
-    window = _req_dict(obj, "window")
-    start = _req_iso(window, "start")
-    end = _req_iso(window, "end")
+        raise MalformedEvidence(f"schema_version 非 1: {schema_version}")
+    approved_at = req_iso(obj, "approved_at")
+    req_str(obj, "note")  # 只验证非空；内容不回显（防审批说明内嵌敏感值）
+    window = req_dict(obj, "window")
+    start = req_iso(window, "start")
+    end = req_iso(window, "end")
     try:
         window_ordered = datetime.fromisoformat(start) < datetime.fromisoformat(end)
     except TypeError:
         # naive 与 aware 混合比较抛 TypeError：统一按结构不符拒绝
-        raise _Malformed("window.start/end 必须同为带时区或同为本地时间") from None
+        raise MalformedEvidence("window.start/end 必须同为带时区或同为本地时间") from None
     if not window_ordered:
-        raise _Malformed("window.start 必须早于 window.end")
-    _req_str(obj, "rollback_plan")
-    _req_str(obj, "observation")
+        raise MalformedEvidence("window.start 必须早于 window.end")
+    req_str(obj, "rollback_plan")
+    req_str(obj, "observation")
     approved_by = obj.get("approved_by")
     if approved_by is not None and (
         not isinstance(approved_by, str) or not approved_by.strip()
     ):
-        raise _Malformed("字段 approved_by 必须是非空字符串")
-    gate_evidence = _req_dict(obj, "gate_evidence")
+        raise MalformedEvidence("字段 approved_by 必须是非空字符串")
+    gate_evidence = req_dict(obj, "gate_evidence")
     bindable = GATE_IDS - {"release-approval"}
     for gate_id, digest in gate_evidence.items():
         if gate_id not in bindable:
-            raise _Malformed(f"gate_evidence 引用未知门 {gate_id}")
-        if not isinstance(digest, str) or not _HEX64_RE.fullmatch(digest):
-            raise _Malformed(f"gate_evidence.{gate_id} 非 64 位小写十六进制")
+            raise MalformedEvidence(f"gate_evidence 引用未知门 {gate_id}")
+        if not isinstance(digest, str) or not HEX64_RE.fullmatch(digest):
+            raise MalformedEvidence(f"gate_evidence.{gate_id} 非 64 位小写十六进制")
     data = {
         "approved_at": approved_at,
         "window": {"start": start, "end": end},
@@ -860,7 +676,7 @@ def _unrecognized_files(root: Path) -> list[dict[str, Any]]:
             out.append({"file": entry.name, "kind": "directory", "sha256": None})
         else:
             out.append(
-                {"file": entry.name, "kind": "file", "sha256": _sha256_file(entry)}
+                {"file": entry.name, "kind": "file", "sha256": sha256_file(entry)}
             )
     return out
 
@@ -879,16 +695,16 @@ def run_release_readiness(evidence_dir: str | Path) -> dict[str, Any]:
         path = root / spec.evidence_file
         state: dict[str, Any] = {"spec": spec, "obj": None, "problem": None}
         if os.path.lexists(path):
-            _check_regular_file(path)
-            digest = _sha256_file(path)
+            check_regular_file(path)
+            digest = sha256_file(path)
             sha_by_gate[spec.gate_id] = digest
-            obj, problem = _load_json_object(path)
+            obj, problem = load_json_object(path)
             if problem is None:
-                sensitive = _find_sensitive_key(obj)
+                sensitive = find_sensitive_key(obj)
                 if sensitive is not None:
                     problem = f"证据含敏感键 {sensitive}（只接受脱敏证据，值不回显）"
             if problem is None:
-                embedded = _find_embedded_credential(obj)
+                embedded = find_embedded_credential(obj)
                 if embedded is not None:
                     problem = (
                         f"证据字段 {embedded} 内嵌凭据（://user:pass@ 形态，"
@@ -927,7 +743,7 @@ def run_release_readiness(evidence_dir: str | Path) -> dict[str, Any]:
                 status, reason, data, supporting = EVALUATORS[spec.gate_id](
                     state["obj"], root, sha_by_gate
                 )
-            except _Malformed as exc:
+            except MalformedEvidence as exc:
                 status, reason, data, supporting = (
                     STATUS_MALFORMED,
                     f"{spec.evidence_file} 证据结构不符: {exc}",
