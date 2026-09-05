@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
@@ -216,6 +217,7 @@ def _migrate_args(
     draft_id=None,
     ids_file=None,
     to=None,
+    output=None,
     yes=False,
 ):
     return SimpleNamespace(
@@ -225,6 +227,7 @@ def _migrate_args(
         draft_id=draft_id,
         ids_file=ids_file,
         to=to,
+        output=output,
         yes=yes,
     )
 
@@ -926,3 +929,319 @@ def test_cli_assign_owner_via_ids_file(tmp_path, capsys) -> None:
         == "u_alice"
     )
     assert len(_fetch(db_url, AuditLogRow)) == 1
+
+
+# --- M11-13 --output 批次报告落盘 ------------------------------------------------
+
+
+def test_migrate_output_registered_in_argparse(monkeypatch, capsys, tmp_path) -> None:
+    """--output 参数已注册：main 解析后进入 handler 护栏（越界路径 exit 2）。"""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "cli",
+            "draft-owner-migrate",
+            "keep-unowned",
+            "--kind",
+            "course-generation",
+            "--db-url",
+            "sqlite+aiosqlite:///:memory:",
+            "--draft-id",
+            "cgd_single",
+            "--output",
+            str(tmp_path / "batch.json"),
+        ],
+    )
+    with pytest.raises(SystemExit) as exc:
+        cli_module.main()
+    assert exc.value.code == 2
+    captured = capsys.readouterr()
+    assert "拒绝写入" in captured.out
+    assert not (tmp_path / "batch.json").exists()
+
+
+def test_migrate_output_dry_run_persists_report(tmp_path, capsys) -> None:
+    """dry-run 报告如实落盘；stdout 纯 JSON 可解析且与文件逐字一致，提示走 stderr。"""
+    db_url = _make_db(tmp_path)
+    out = tmp_path / "temp" / "batch.json"
+    code = cli_module._run_draft_owner_migrate(
+        _migrate_args(
+            "keep-unowned", db_url=db_url, draft_id=["cgd_single"], output=str(out)
+        )
+    )
+    assert code == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["dry_run"] is True
+    assert payload["draft_ids"] == ["cgd_single"]
+    assert out.read_text(encoding="utf-8") == captured.out.rstrip("\n")
+    assert "[dry-run]" in captured.err
+    assert "报告已写入" in captured.err
+    assert "[dry-run]" not in captured.out and "报告已写入" not in captured.out
+
+
+@pytest.mark.parametrize("bad_kind", ["outside", "directory", "symlink", "symlink_dir"])
+def test_migrate_output_rejects_unsafe_path_before_db(
+    tmp_path, capsys, monkeypatch, bad_kind
+) -> None:
+    """非法输出形态（越界/目录/symlink/中间目录 symlink）在 DB runner 前拒绝。"""
+    called = []
+    monkeypatch.setattr(ownership, "run_draft_migrate", lambda *a, **k: called.append(1))
+    temp_dir = tmp_path / "temp"
+    temp_dir.mkdir()
+    out = None
+    if bad_kind == "outside":
+        out = tmp_path / "batch.json"
+    elif bad_kind == "directory":
+        out = temp_dir / "adir"
+        out.mkdir()
+    else:
+        try:
+            if bad_kind == "symlink":
+                real = tmp_path / "real.json"
+                real.write_text("{}", encoding="utf-8")
+                out = temp_dir / "batch.json"
+                os.symlink(real, out)
+            else:
+                real_dir = tmp_path / "real-dir"
+                real_dir.mkdir()
+                link_dir = temp_dir / "link-dir"
+                os.symlink(real_dir, link_dir, target_is_directory=True)
+                out = link_dir / "batch.json"
+        except OSError:
+            pytest.skip("此环境无法创建 symlink（Windows 需开发者模式/特权）")
+    assert (
+        cli_module._run_draft_owner_migrate(
+            _migrate_args(
+                "keep-unowned",
+                db_url="sqlite+aiosqlite:///:memory:",
+                draft_id=["cgd_single"],
+                output=str(out),
+            )
+        )
+        == 2
+    )
+    assert called == []
+    assert "拒绝写入" in capsys.readouterr().out
+    if bad_kind == "outside":
+        assert not out.exists()
+    if bad_kind == "symlink":
+        assert out.is_symlink(), "symlink 本身不被改写"
+    if bad_kind == "symlink_dir":
+        assert (tmp_path / "real-dir").is_dir()
+
+
+@pytest.mark.parametrize("variant", ["direct", "dotdot", "case"])
+def test_migrate_output_conflict_with_ids_file_rejected(
+    tmp_path, capsys, monkeypatch, variant
+) -> None:
+    """output == --ids-file（直接与等价路径书写）拒绝且 runner 零调用、字节不变。"""
+    if variant == "case" and os.path.normcase("A") != os.path.normcase("a"):
+        pytest.skip("此平台路径大小写敏感，大小写变体不是等价路径")
+    called = []
+    monkeypatch.setattr(ownership, "run_draft_migrate", lambda *a, **k: called.append(1))
+    temp_dir = tmp_path / "temp"
+    temp_dir.mkdir()
+    ids_file = temp_dir / "ids.txt"
+    ids_file.write_text("cgd_single\n", encoding="utf-8")
+    before = ids_file.read_bytes()
+    conflict = {
+        "direct": str(ids_file),
+        "dotdot": os.path.join(str(temp_dir), "..", temp_dir.name, "ids.txt"),
+        "case": os.path.join(str(temp_dir), "IDS.TXT"),
+    }[variant]
+    assert (
+        cli_module._run_draft_owner_migrate(
+            _migrate_args(
+                "keep-unowned",
+                db_url="sqlite+aiosqlite:///:memory:",
+                ids_file=str(ids_file),
+                output=conflict,
+            )
+        )
+        == 2
+    )
+    captured = capsys.readouterr()
+    assert "同一文件" in captured.out
+    assert called == []
+    assert ids_file.read_bytes() == before
+
+
+def test_migrate_output_atomic_failure_keeps_old_bytes(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    """写入失败：exit 2、旧输出字节原样、无 .tmp 残留、如实说明 DB 状态。"""
+    db_url = _make_db(tmp_path)
+    temp_dir = tmp_path / "temp"
+    temp_dir.mkdir()
+    out = temp_dir / "batch.json"
+    out.write_text('{"old": true}', encoding="utf-8")
+
+    def no_space(path, text):
+        raise OSError("模拟磁盘满")
+
+    monkeypatch.setattr(cli_module, "_write_report_atomic", no_space)
+    code = cli_module._run_draft_owner_migrate(
+        _migrate_args(
+            "keep-unowned", db_url=db_url, draft_id=["cgd_single"], output=str(out)
+        )
+    )
+    assert code == 2
+    assert out.read_text(encoding="utf-8") == '{"old": true}'
+    assert not list(temp_dir.glob("*.tmp"))
+    captured = capsys.readouterr()
+    assert "落盘失败" in captured.err
+    assert "数据库未修改" in captured.err
+    assert "报告已写入" not in captured.err
+    assert json.loads(captured.out)["dry_run"] is True
+
+
+def test_migrate_output_runtime_error_keeps_old_bytes(
+    tmp_path, capsys, monkeypatch
+) -> None:
+    """run_* 抛 RuntimeError（事务回滚、无 report）：不写新输出、旧输出不变。"""
+    temp_dir = tmp_path / "temp"
+    temp_dir.mkdir()
+    out = temp_dir / "batch.json"
+    out.write_text('{"old": true}', encoding="utf-8")
+
+    async def boom(*a, **k):
+        raise RuntimeError("行数不一致")
+
+    monkeypatch.setattr(ownership, "run_draft_migrate", boom)
+    code = cli_module._run_draft_owner_migrate(
+        _migrate_args(
+            "assign-owner",
+            db_url="sqlite+aiosqlite:///:memory:",
+            draft_id=["cgd_single"],
+            to="alice_draft",
+            output=str(out),
+            yes=True,
+        )
+    )
+    assert code == 1
+    assert out.read_text(encoding="utf-8") == '{"old": true}'
+    assert not list(temp_dir.glob("*.tmp"))
+    assert "事务已回滚" in capsys.readouterr().out
+
+
+def test_migrate_output_failure_report_persisted_and_rejected(tmp_path, capsys) -> None:
+    """failure report（跨 kind ID）如实落盘且保留退出码 1；governance-evidence 拒绝之。"""
+    db_url = _make_db(tmp_path)
+    temp_dir = tmp_path / "temp"
+    temp_dir.mkdir()
+    out = temp_dir / "batch.json"
+    code = cli_module._run_draft_owner_migrate(
+        _migrate_args(
+            "assign-owner",
+            db_url=db_url,
+            draft_id=["cgd_single", "vqd_single"],
+            to="alice_draft",
+            output=str(out),
+            yes=True,
+        )
+    )
+    assert code == 1
+    written = json.loads(out.read_text(encoding="utf-8"))
+    assert written["executed"] is False
+    assert written["invalid_draft_ids"] == ["vqd_single"]
+    assert written["exit_code"] == 1
+    captured = capsys.readouterr()
+    assert "[失败]" in captured.err
+    assert json.loads(captured.out)["executed"] is False
+
+    report_file = temp_dir / "report.json"
+    assert (
+        cli_module._run_draft_owner_report(
+            _report_args(db_url, output=str(report_file))
+        )
+        == 0
+    )
+    evidence = temp_dir / "draft-ownership.json"
+    assert (
+        cli_module._run_governance_evidence(
+            SimpleNamespace(
+                report=str(report_file),
+                batch=[str(out)],
+                output=str(evidence),
+                as_json=False,
+            )
+        )
+        == 2
+    )
+    assert not evidence.exists()
+
+
+def test_migrate_output_batch_consumed_by_governance_evidence(tmp_path) -> None:
+    """成功批次经 --output 落盘后可被 governance-evidence 直接消费推导。"""
+    db_url = _make_db(tmp_path)
+    temp_dir = tmp_path / "temp"
+    temp_dir.mkdir()
+    report_file = temp_dir / "report.json"
+    assert (
+        cli_module._run_draft_owner_report(
+            _report_args(db_url, output=str(report_file))
+        )
+        == 0
+    )
+    batch = temp_dir / "batch.json"
+    assert (
+        cli_module._run_draft_owner_migrate(
+            _migrate_args(
+                "assign-owner",
+                db_url=db_url,
+                draft_id=["cgd_single"],
+                to="alice_draft",
+                output=str(batch),
+                yes=True,
+            )
+        )
+        == 0
+    )
+    persisted = json.loads(batch.read_text(encoding="utf-8"))
+    assert persisted["executed"] is True
+    assert persisted["audit_action"] == "ops.draft_owner.assign_owner"
+
+    evidence = temp_dir / "draft-ownership.json"
+    assert (
+        cli_module._run_governance_evidence(
+            SimpleNamespace(
+                report=str(report_file),
+                batch=[str(batch)],
+                output=str(evidence),
+                as_json=False,
+            )
+        )
+        == 1
+    )
+    payload = json.loads(evidence.read_text(encoding="utf-8"))
+    assert payload["step"] == "draft-ownership"
+    # 批次只解决 cgd_single：pending = 报告两类未归属总数 - 1
+    assert payload["pending_count"] == payload["report"]["total"] - 1
+    assert payload["batches_executed"] == 1
+
+    dry_batch = temp_dir / "dry-batch.json"
+    assert (
+        cli_module._run_draft_owner_migrate(
+            _migrate_args(
+                "keep-unowned",
+                "variant-question",
+                db_url=db_url,
+                draft_id=["vqd_single"],
+                output=str(dry_batch),
+            )
+        )
+        == 0
+    )
+    assert (
+        cli_module._run_governance_evidence(
+            SimpleNamespace(
+                report=str(report_file),
+                batch=[str(dry_batch)],
+                output=str(evidence),
+                as_json=False,
+            )
+        )
+        == 2
+    )

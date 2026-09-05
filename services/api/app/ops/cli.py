@@ -224,6 +224,14 @@ def _run_legacy_paper_migrate(args) -> int:
     计划；--yes 才执行。只接受精确 paper ID（--paper-id 可重复或 --ids-file），
     未知 ID 整体拒绝；export-delete 必须先导出校验 JSONL 才删库，被历史
     考试引用的卷一律拒绝删除（人工处理）。
+
+    --output 把返回的批次报告原子落盘（供 governance-evidence 直接消费）：
+    路径护栏/输入冲突/父目录/symlink 预检全部先于数据库访问（违例 exit 2、
+    不连库、无输出文件）；写入走 _write_report_atomic，失败旧输出字节原样、
+    无 .tmp 残留、exit 2 并如实说明数据库执行与证据落盘状态。带 --output
+    时 stdout 只输出报告 JSON（可解析），[dry-run]/[失败]/"报告已写入"
+    提示走 stderr。dry-run 与 failure 报告如实落盘并保留原退出码——
+    governance-evidence 侧继续拒绝其作为成功批次。
     """
     import json as _json
 
@@ -257,6 +265,16 @@ def _run_legacy_paper_migrate(args) -> int:
     if args.path == "assign-owner" and not args.to:
         print("assign-owner 需要 --to <已存在用户名或用户 ID>")
         return 2
+    output_path = None
+    if args.output:
+        output_inputs = [("--ids-file 输入", args.ids_file)]
+        if args.path == "export-delete":
+            output_inputs.append(("--export 导出", args.export))
+        try:
+            output_path = _prepare_migrate_output(args.output, output_inputs)
+        except (OSError, ValueError) as cause:
+            print(f"拒绝写入 {args.output}: {cause}")
+            return 2
     try:
         report = asyncio.run(
             run_legacy_migrate(
@@ -271,11 +289,31 @@ def _run_legacy_paper_migrate(args) -> int:
     except RuntimeError as cause:
         print(f"执行失败（事务已回滚）: {cause}")
         return 1
-    print(_json.dumps(report, ensure_ascii=False, indent=2))
+    report_text = _json.dumps(report, ensure_ascii=False, indent=2)
+    if output_path is not None:
+        try:
+            _write_report_atomic(output_path, report_text)
+        except OSError as cause:
+            executed_note = (
+                "数据库已执行（事务已提交）"
+                if report.get("executed")
+                else "数据库未修改（dry-run 计划或迁移失败已回滚）"
+            )
+            print(report_text)
+            print(
+                f"批次报告落盘失败（{executed_note}，证据未写入 {output_path}，"
+                f"旧输出保持原样）: {cause}",
+                file=sys.stderr,
+            )
+            return 2
+    print(report_text)
+    notice_stream = sys.stderr if output_path is not None else sys.stdout
+    if output_path is not None:
+        print(f"报告已写入: {output_path}", file=notice_stream)
     if not args.yes:
-        print("[dry-run] 未修改数据库；确认计划后加 --yes 执行。")
+        print("[dry-run] 未修改数据库；确认计划后加 --yes 执行。", file=notice_stream)
     elif report.get("failure"):
-        print(f"[失败] {report['failure']}")
+        print(f"[失败] {report['failure']}", file=notice_stream)
     return int(report.get("exit_code", 0))
 
 
@@ -331,6 +369,13 @@ def _run_draft_owner_migrate(args) -> int:
     --ids-file），未知 ID 或属于另一 kind 的 ID 整体拒绝；只处理
     owner_id IS NULL 的行，不改 status、不改业务 JSON、不删数据；执行事务
     内 FOR UPDATE 复核目标用户/行状态/行数，审计与更新同事务。
+
+    --output 把返回的批次报告原子落盘（供 governance-evidence 直接消费），
+    护栏与退出码语义同 legacy-paper-migrate：预检（symlink/artifacts-temp/
+    目录形态/与 --ids-file 同文件冲突/父目录）先于数据库访问，违例
+    exit 2；写入失败旧输出原样、exit 2 并如实说明数据库执行状态；带
+    --output 时 stdout 只输出报告 JSON，提示走 stderr；dry-run 与
+    failure 报告如实落盘并保留原退出码。
     """
     import json as _json
 
@@ -348,6 +393,15 @@ def _run_draft_owner_migrate(args) -> int:
     if args.path == "assign-owner" and not args.to:
         print("assign-owner 需要 --to <已存在用户名或用户 ID>")
         return 2
+    output_path = None
+    if args.output:
+        try:
+            output_path = _prepare_migrate_output(
+                args.output, [("--ids-file 输入", args.ids_file)]
+            )
+        except (OSError, ValueError) as cause:
+            print(f"拒绝写入 {args.output}: {cause}")
+            return 2
     try:
         report = asyncio.run(
             run_draft_migrate(
@@ -362,11 +416,31 @@ def _run_draft_owner_migrate(args) -> int:
     except RuntimeError as cause:
         print(f"执行失败（事务已回滚）: {cause}")
         return 1
-    print(_json.dumps(report, ensure_ascii=False, indent=2))
+    report_text = _json.dumps(report, ensure_ascii=False, indent=2)
+    if output_path is not None:
+        try:
+            _write_report_atomic(output_path, report_text)
+        except OSError as cause:
+            executed_note = (
+                "数据库已执行（事务已提交）"
+                if report.get("executed")
+                else "数据库未修改（dry-run 计划或迁移失败已回滚）"
+            )
+            print(report_text)
+            print(
+                f"批次报告落盘失败（{executed_note}，证据未写入 {output_path}，"
+                f"旧输出保持原样）: {cause}",
+                file=sys.stderr,
+            )
+            return 2
+    print(report_text)
+    notice_stream = sys.stderr if output_path is not None else sys.stdout
+    if output_path is not None:
+        print(f"报告已写入: {output_path}", file=notice_stream)
     if not args.yes:
-        print("[dry-run] 未修改数据库；确认计划后加 --yes 执行。")
+        print("[dry-run] 未修改数据库；确认计划后加 --yes 执行。", file=notice_stream)
     elif report.get("failure"):
-        print(f"[失败] {report['failure']}")
+        print(f"[失败] {report['failure']}", file=notice_stream)
     return int(report.get("exit_code", 0))
 
 
@@ -756,6 +830,53 @@ def _write_report_atomic(path: Path, text: str) -> None:
         except OSError:
             pass  # 临时文件清理失败不掩盖原始错误（残留是 .tmp 后缀，不是报告）
         raise
+
+
+def _reject_output_symlink_components(path: Path, label: str) -> None:
+    """路径任何已存在组件（含自身）是 symlink 即拒绝（fail-closed）。
+
+    先于 is_safe_artifact_path 执行：后者内部 resolve() 会跟随 symlink，
+    链接指向护栏外时会被误放行。语义对齐 governance-evidence 的同名护栏。
+    """
+    chain: list[Path] = []
+    current = path
+    while current.name:
+        chain.append(current)
+        current = current.parent
+    for item in reversed(chain):
+        if item.is_symlink():
+            raise ValueError(f"{label}路径组件是符号链接，拒绝使用: {item}")
+
+
+def _prepare_migrate_output(output: str, inputs: list[tuple[str, str | None]]) -> Path:
+    """migrate 批次报告 ``--output`` 落盘预检（全部先于数据库访问）。
+
+    违例抛 ValueError/OSError，由调用方 exit 2、不连数据库、不写任何输出：
+    任何已存在路径组件（含自身）是 symlink 即拒绝；输出必须位于 gitignore
+    的 artifacts/ 或 temp/ 内（批次报告含生产 ID）；已存在且不是常规文件
+    （目录等）拒绝；不得与任何输入文件（--ids-file、export-delete 的
+    --export）指向同一文件——resolve 后 normcase 归一比较，Windows 上
+    大小写与路径分隔符书写形态差异不可绕过。通过则预创建父目录并返回
+    目标路径（后续写入走 _write_report_atomic 原子替换）。
+    """
+    from app.ops.legacy_papers import is_safe_artifact_path
+
+    target = Path(output)
+    _reject_output_symlink_components(target, "输出")
+    if not is_safe_artifact_path(target):
+        raise ValueError(
+            f"批次报告含生产 ID，只能写入 gitignore 的 artifacts/ 或 temp/ 目录: {target}"
+        )
+    if target.exists() and not target.is_file():
+        raise ValueError(f"输出路径已存在且不是常规文件: {target}")
+    output_key = os.path.normcase(str(target.resolve()))
+    for label, source in inputs:
+        if not source:
+            continue
+        if os.path.normcase(str(Path(source).resolve())) == output_key:
+            raise ValueError(f"输出路径与{label}是同一文件（拒绝覆盖输入）: {output}")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return target
 
 
 def _run_production_preflight(args) -> int:
@@ -1469,6 +1590,15 @@ def main() -> None:
         help="export-delete 的 JSONL 导出路径（必须位于 gitignore 的 artifacts/temp 目录）",
     )
     p_lm.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "批次报告 JSON 原子落盘路径（必须位于 gitignore 的 artifacts/temp "
+            "目录，不得与 --ids-file/--export 同一文件；stdout 仍输出同一 JSON，"
+            "提示走 stderr）"
+        ),
+    )
+    p_lm.add_argument(
         "--yes", action="store_true", help="真正执行（默认仅输出计划，不修改数据库）"
     )
     p_dr = sub.add_parser(
@@ -1516,6 +1646,14 @@ def main() -> None:
     )
     p_dm.add_argument(
         "--to", default=None, help="assign-owner 目标用户（精确用户名或用户 ID，必须已存在）"
+    )
+    p_dm.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "批次报告 JSON 原子落盘路径（必须位于 gitignore 的 artifacts/temp "
+            "目录，不得与 --ids-file 同一文件；stdout 仍输出同一 JSON，提示走 stderr）"
+        ),
     )
     p_dm.add_argument(
         "--yes", action="store_true", help="真正执行（默认仅输出计划，不修改数据库）"
