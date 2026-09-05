@@ -366,6 +366,77 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   网络、不执行任何迁移/治理/锚定/部署，无 `--yes` 执行形态；对报告与
   批次文件零写入（字节保持不变）。
 
+## provider 冒烟证据导出与聚合 provider-smoke-evidence（M11-16）
+
+- **CLI**：`python -m app.ops.cli provider-smoke-export <search|cloud-voice|llm>
+  --output <artifacts>/search-smoke.json|cloud-voice-smoke.json|llm-smoke.json
+  [--json]`（单步导出）与 `python -m app.ops.cli provider-smoke-aggregate
+  --search <PATH> --cloud-voice <PATH> --llm PATH --output
+  <artifacts>/provider-smoke.json [--json]`（三份聚合），实现文件
+  `services/api/app/ops/provider_smoke_evidence.py`。
+- **定位**：cutover-rehearsal（M10-15）的 `search-smoke` /
+  `cloud-voice-smoke` / `llm-smoke` 三步与 release-readiness（M10-11）的
+  `provider-smoke` 门此前的证据只能人工抄录冒烟结论拼装（转抄没有交叉
+  校验，抄错即证据失真）。本工具把既有三个冒烟脚本的真实执行结论自动
+  导出为脱敏、原子、机器可读证据——与 backup-restore-evidence（M11-04）
+  / governance-evidence（M11-12）同一动机：人工拼装改为机器可复现导出。
+  操作链：运维按各冒烟节执行 `bash infra/smoke_search.sh` /
+  `infra/smoke_voice_cloud.sh` / `infra/smoke_llm.sh`（所需 key/端点由
+  运维在调用前显式注入环境）→ 本工具逐 provider 导出单步证据 → 三份
+  齐备后聚合为门证据。
+- **单步导出**：以 bash 运行既有冒烟脚本（cwd=仓库根 + 相对 POSIX 路径
+  ——Windows 绝对路径在 WSL bash 下不可解析），子进程整体继承当前环境
+  与终端（脚本自身的脱敏摘要直通运维终端，本工具不捕获不保存）；runner
+  退出码 0 => `result=pass`（CLI exit 0），非零 => `result=fail`（失败
+  证据照常原子落盘、CLI exit 1——如实记录，不伪装 pass）。**本命令不
+  改变三个冒烟脚本的判定逻辑、不自动补跑任何冒烟**（只编排运维已决定
+  执行的冒烟并导出结论）。
+- **聚合**：三份输入必须**确为本工具导出的单步证据**（exact schema）：
+  顶层键集合恰为 `tool`/`schema_version`/`step`/`executed`/`result`/
+  `exit_code`/`started_at`/`completed_at`/`duration_ms` 九键（缺字段/多字段
+  均拒绝——缺 metadata 或携带额外字段的 JSON 无法确为本工具导出）；
+  `tool` / `schema_version` 精确匹配、`step` 与 provider 槽位精确匹配、
+  `executed=true`、`result` 只能 pass/fail 且与 `exit_code` 结论一致
+  （pass => 0、fail => 非 0）、`exit_code`/`duration_ms` 为非 bool int
+  （后者非负）、起止时间为 timezone-aware ISO 字符串且
+  `completed_at >= started_at`（等时零耗时形态放行）——手工拼装、槽位
+  错位、not_executed 形态、metadata 漂移一律 fail-closed 拒绝；确定性拼装
+  `provider-smoke.json`（`providers.voice/search/llm` 每项仅 `executed`
+  与 `result`，不透传单步 exit_code/时间/脚本细节）；任一 fail =>
+  聚合证据照常落盘、CLI exit 1。纯本地文件推导：不运行冒烟、不连
+  数据库、不读取任何敏感环境变量、不访问网络。
+- **路径护栏与输入保护**：输出/输入必须位于 gitignore 的 artifacts/temp
+  （复用 `is_safe_artifact_path`）；任何已存在路径组件（含自身）是
+  symlink 即拒绝（先于 `resolve`——链接目标落在护栏内不放行）；已存在
+  且不是常规文件拒绝；输出文件名必须恰为对应步/门的精确证据文件名
+  （manifest 工具只认精确文件名）；聚合输出不得等于任何输入、同一输入
+  不得重复传入两个槽位（`resolve` + `os.path.normcase` 归一比较——
+  Windows 大小写与 `..` 折叠等价书写不构成绕过）；护栏先于 runner
+  （exit 2 不运行冒烟、不写证据、不创建输出/父目录）；输出原子落盘
+  （同目录临时文件 + fsync + os.replace，失败旧文件字节原样、无
+  `.tmp` 残留、不打印结论）。
+- **编排 fail-closed（exit 2、不写证据）**：provider 名必须是合法枚举；
+  bash（PATH 查找）或既有脚本文件不可用（编排环境问题不是冒烟结论）；
+  runner 抛 OSError。退出码口径：结论 pass=0 / 结论 fail=1（证据照常
+  落盘）/ 输入、路径、编排或写入失败=2。
+- **脱敏边界**：模块不读取任何敏感环境变量（provider 端点/密钥/模型名/
+  查询词/音频路径等槽位一概不检查——冒烟所需 provider 端点/凭据只由
+  运维在调用前注入，子进程整体继承）；对环境的访问仅限 `shutil.which`
+  经 PATH 解析 bash 路径（编排检查）与子进程对当前环境的整体继承。
+  不捕获不保存子进程 stdout/stderr；单步证据只含白名单标量（`schema_version`/`step`/
+  `executed`/`result`/`exit_code`/`started_at`/`completed_at`/
+  `duration_ms` 与自声明 `tool`）——无命令行、无 endpoint、无模型名、
+  无查询词、无音频路径、无转写正文、无任何摘要文本；输出可过下游装载
+  层的敏感键与内嵌凭据扫描。
+- **测试**：`services/api/tests/test_provider_smoke_evidence.py`
+  （覆盖矩阵：CLI 注册/分发、映射稳定性、fake runner 通过/失败/异常、
+  runner 调用形态、路径与 symlink fail-closed、原子写、聚合校验（含
+  exact schema 参数化回归：缺字段/多字段/结论与退出码矛盾/无效 naive
+  倒置时间/负 duration/bool 伪装 int）、readiness/rehearsal 消费、零敏感
+  落盘、源码级守卫）——**全部用 fake
+  runner/stub 与本地文件，不执行任何真实外网冒烟**（唯一真实子进程是
+  `python -c` 探针，仅验证 cwd=仓库根与环境继承，零网络）。
+
 ## 生产切换 preflight（M10-07）
 
 `python -m app.ops.cli production-preflight --db-url <生产URL> --phase pre-migration|post-migration
@@ -584,6 +655,12 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
 - **gate 矩阵**：required——`ci-main`、`release-check`、`production-preflight`、
   `backup-restore`、`audit-chain-anchor`、`legacy-papers`、`draft-ownership`、
   `provider-smoke`、`release-approval`；optional——`turn-tls`。
+  `provider-smoke` 门的证据来源口径（M11-16）：来源命令是
+  `provider-smoke-aggregate --search <PATH> --cloud-voice <PATH> --llm <PATH>
+  --output <artifacts>/provider-smoke.json`——三份输入必须是
+  `provider-smoke-export` 导出的单步证据（形态校验 fail-closed，不接受
+  手工拼装），`providers.voice/search/llm` 每项仅 `executed`/`result`
+  （见「provider 冒烟证据导出与聚合 provider-smoke-evidence」节）。
 - **状态语义**：`missing` / `malformed` / `tampered` / `blocked` / `pending` /
   `pass`，不得把 pending 包装成 pass。`release_ready=true` 仅表示全部 required
   gates `pass` 且 `release-approval` 的 gate id + evidence sha256 集合与当前证据
@@ -629,6 +706,12 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   governance-evidence」节），不接受人工转抄计数；成功批次自 M11-13 起由
   `legacy-paper-migrate --yes --output` / `draft-owner-migrate --yes
   --output` 原生落盘（护栏见该节）。
+  三 provider 冒烟步（`search-smoke` / `cloud-voice-smoke` / `llm-smoke`）
+  的证据来源口径（M11-16）：来源命令是 `provider-smoke-export
+  <search|cloud-voice|llm> --output <artifacts>/search-smoke.json|
+  cloud-voice-smoke.json|llm-smoke.json`——结论由真实冒烟脚本退出码机器
+  导出（见「provider 冒烟证据导出与聚合 provider-smoke-evidence」节），
+  不接受人工抄录拼装。
 - **四态语义**：`pass` / `pending`（待人工决策或执行：治理计数 >0、锚定落后、
   WORM 未归档、恢复演练未 verified、post 预检有 pending）/ `blocked`（fail、
   malformed——结构不符/自声明 step 错位/计数自相矛盾/敏感键、tampered——审批
@@ -844,7 +927,10 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   `SEARCH_SMOKE_QUERY` 覆盖默认查询词（"AI Learning OS GitHub"）；至少 1 条合法
   结果才 PASS；输出只含 provider/结果数等脱敏摘要。release readiness 的
   `provider-smoke` gate 以真实端点冒烟执行记录为准（**检索冒烟不需要 key**、
-  LLM 冒烟需要 key——见上节 smoke_llm.sh；pass 语义不放宽——仍是 required gate）。
+  LLM 冒烟需要 key——见上节 smoke_llm.sh；pass 语义不放宽——仍是 required
+  gate）；门证据自 M11-16 起由 `provider-smoke-export` /
+  `provider-smoke-aggregate` 从冒烟脚本真实退出码机器导出（见「provider
+  冒烟证据导出与聚合 provider-smoke-evidence」节），不接受人工抄录拼装。
 - 冒烟脚本契约由 `services/api/tests/test_smoke_search_script.py` 锁定（不触网：
   env 缺失 FAIL、探针失败传播、文本契约与零敏感回显）。
 

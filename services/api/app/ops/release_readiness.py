@@ -513,7 +513,10 @@ def _eval_provider_smoke(obj: dict[str, Any], root: Path, sha: Mapping[str, str]
             (
                 f"provider 冒烟失败: {', '.join(fails)}——voice/LLM 排查部署 key"
                 "（voice 用 bash infra/smoke_voice_cloud.sh 重跑）、search 排查"
-                "真实端点（SEARCH_CLOUD_API_KEY 可选）后重跑冒烟并导出脱敏结果"
+                "真实端点（SEARCH_CLOUD_API_KEY 可选）后重跑冒烟，并以 "
+                "provider-smoke-export 重新导出单步证据、provider-smoke-"
+                "aggregate 重新聚合本门证据（M11-16：机器导出，不接受手工"
+                "拼装）"
             ),
             data,
             [],
@@ -526,7 +529,9 @@ def _eval_provider_smoke(obj: dict[str, Any], root: Path, sha: Mapping[str, str]
                 "infra/smoke_voice_cloud.sh（部署 key + 真实短语音 WAV，key 不入库"
                 "不入码）；LLM 需运维以部署 key 执行（key 不入库不入码）；"
                 "search 需打真实端点冒烟（SEARCH_CLOUD_API_KEY 可选）；"
-                "证据只收脱敏结果文件"
+                "冒烟通过后以 provider-smoke-export 逐 provider 导出单步证据、"
+                "provider-smoke-aggregate 聚合为本门脱敏证据（M11-16：机器"
+                "导出，不接受手工拼装）"
             ),
             data,
             [],

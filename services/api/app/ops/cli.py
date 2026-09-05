@@ -1268,6 +1268,138 @@ def _run_governance_evidence(args) -> int:
     return exit_code
 
 
+def _run_provider_smoke_export(args) -> int:
+    """python -m app.ops.cli provider-smoke-export <search|cloud-voice|llm>
+    --output PATH [--json]
+
+    M11-16 单 provider 冒烟证据导出器：以 bash 运行既有冒烟脚本
+    （infra/smoke_search.sh / smoke_voice_cloud.sh / smoke_llm.sh，cwd=仓库根、
+    相对 POSIX 路径，子进程整体继承当前环境与终端——脚本脱敏摘要直通运维
+    终端，不捕获不保存），把真实执行结论导出为 cutover-rehearsal 对应步
+    （search-smoke/cloud-voice-smoke/llm-smoke）可直接消费的脱敏原子证据。
+    证据只含 tool/schema_version/step/executed/result/exit_code/起止时间与
+    耗时——无 stdout/stderr、命令行、endpoint、模型名或任何摘要文本；本
+    命令不读取任何敏感环境变量（冒烟所需 key/端点由运维在调用前显式注入；
+    唯一环境访问是 shutil.which 经 PATH 解析 bash，子进程整体继承环境），
+    不自动补跑任何冒烟、不改变冒烟脚本判定逻辑。
+
+    护栏与退出码：provider 枚举与输出路径护栏（artifacts/temp、symlink
+    拒绝、文件名恰为对应步证据文件名、已存在非常规文件拒绝）先于 runner
+    （exit 2 不运行冒烟、不写证据、不创建输出/父目录）；bash 或脚本不可用
+    exit 2；runner 退出码 0 => pass/exit 0，非零 => 失败证据照常原子落盘/
+    exit 1（如实记录，不伪装 pass）；写入失败 exit 2、旧文件字节原样、无
+    .tmp 残留且不打印结论。--json 时 stdout 纯 JSON、提示走 stderr。
+    """
+    import json as _json
+
+    from app.ops.provider_smoke_evidence import (
+        ProviderSmokeExecutionError,
+        ProviderSmokeInputError,
+        build_step_evidence,
+        format_step_summary,
+    )
+
+    try:
+        evidence, exit_code = build_step_evidence(args.provider, args.output)
+    except ProviderSmokeInputError as cause:
+        print(f"拒绝执行（输入或路径问题，未运行冒烟、未写证据）: {cause}")
+        return 2
+    except ProviderSmokeExecutionError as cause:
+        print(f"冒烟编排失败（未产生证据）: {cause}")
+        return 2
+    try:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        _write_report_atomic(
+            output_path,
+            _json.dumps(evidence, ensure_ascii=False, indent=2),
+        )
+    except OSError as cause:
+        # 目录无法创建/权限不足/磁盘满/replace 失败：证据未落盘或旧文件原样
+        # 保留（原子写不产生 partial），不得再打印冒烟结论（防被误读）。
+        print(
+            f"证据写入失败（路径/权限/磁盘问题，未产生证据文件）: "
+            f"{type(cause).__name__}: {cause}"
+        )
+        return 2
+    # --json 模式下提示走 stderr，stdout 保持纯 JSON（可管道给 jq）
+    print(
+        f"证据已写入: {args.output}",
+        file=sys.stderr if args.as_json else sys.stdout,
+    )
+    if args.as_json:
+        print(_json.dumps(evidence, ensure_ascii=False, indent=2))
+    else:
+        print(format_step_summary(evidence))
+    return exit_code
+
+
+def _run_provider_smoke_aggregate(args) -> int:
+    """python -m app.ops.cli provider-smoke-aggregate --search PATH
+    --cloud-voice PATH --llm PATH --output PATH [--json]
+
+    M11-16 provider 冒烟聚合证据导出器：把三份**本工具导出的**单步证据
+    （provider-smoke-export 产物）确定性聚合为 release-readiness 的
+    provider-smoke 门可直接消费的 provider-smoke.json——providers.voice/
+    search/llm 每项仅 executed 与 result，不透传单步 exit_code/时间/脚本
+    细节。三份输入必须都位于 artifacts/temp 且通过本工具形态校验
+    （exact schema：顶层键集合恰为九键白名单、tool/schema_version 精确
+    匹配、step 与槽位精确匹配、executed=true、result 只能 pass/fail 且与
+    exit_code 结论一致、起止时间 timezone-aware 且不倒置、duration_ms
+    非 bool 非负 int）——手工拼装/错位/未执行/metadata 漂移形态
+    fail-closed 拒绝；输出不得等于任何输入、同一输入不得重复传入；
+    纯本地文件推导：不运行冒烟、不连数据库、不读取任何敏感环境变量、
+    不访问网络。
+
+    退出码：全 pass=0 / 任一 fail=1（聚合证据照常原子落盘，如实记录）/
+    输入、路径或写入失败=2（不写输出、输入字节不变）。--json 时 stdout
+    纯 JSON、提示走 stderr。
+    """
+    import json as _json
+
+    from app.ops.provider_smoke_evidence import (
+        ProviderSmokeInputError,
+        build_provider_smoke_evidence,
+        format_aggregate_summary,
+    )
+
+    try:
+        evidence, exit_code = build_provider_smoke_evidence(
+            {
+                "search": args.search,
+                "cloud-voice": args.cloud_voice,
+                "llm": args.llm,
+            },
+            args.output,
+        )
+    except ProviderSmokeInputError as cause:
+        print(f"拒绝执行（输入或路径问题，未写输出）: {cause}")
+        return 2
+    try:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        _write_report_atomic(
+            output_path,
+            _json.dumps(evidence, ensure_ascii=False, indent=2),
+        )
+    except OSError as cause:
+        # 同上：写入失败旧文件原样保留、无 partial，不打印聚合结论。
+        print(
+            f"证据写入失败（路径/权限/磁盘问题，未产生证据文件）: "
+            f"{type(cause).__name__}: {cause}"
+        )
+        return 2
+    print(
+        f"证据已写入: {args.output}",
+        file=sys.stderr if args.as_json else sys.stdout,
+    )
+    if args.as_json:
+        print(_json.dumps(evidence, ensure_ascii=False, indent=2))
+    else:
+        print(format_aggregate_summary(evidence))
+    return exit_code
+
+
 def _run_release_candidate(args) -> int:
     """python -m app.ops.cli release-candidate manifest --output-dir DIR ...
     python -m app.ops.cli release-candidate verify --package-dir DIR
@@ -1832,6 +1964,77 @@ def main() -> None:
         action="store_true",
         help="stdout 输出纯 JSON 证据（提示走 stderr；契约兼容 cutover-rehearsal）",
     )
+    p_ps = sub.add_parser(
+        "provider-smoke-export",
+        help=(
+            "单 provider 冒烟证据导出（M11-16；以 bash 运行既有冒烟脚本并"
+            "导出脱敏原子单步证据，不改变冒烟判定逻辑；pass=0 / fail=1"
+            "（证据照常落盘）/ 护栏或编排问题=2）"
+        ),
+    )
+    p_ps.add_argument(
+        "provider",
+        choices=sorted(("search", "cloud-voice", "llm")),
+        help="provider 槽位：search / cloud-voice / llm（各自对应既有冒烟脚本）",
+    )
+    p_ps.add_argument(
+        "--output",
+        required=True,
+        help=(
+            "单步证据输出路径（必须位于 gitignore 的 artifacts/temp，文件名"
+            "恰为 search-smoke.json / cloud-voice-smoke.json / llm-smoke.json；"
+            "原子落盘：临时文件 + rename，失败保留旧文件、symlink 拒绝；"
+            "冒烟所需的 key/端点由运维在调用前显式注入环境，本命令不读取"
+            "任何环境变量、不自动补跑）"
+        ),
+    )
+    p_ps.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="stdout 输出纯 JSON 证据（提示走 stderr；契约兼容 cutover-rehearsal）",
+    )
+    p_pa = sub.add_parser(
+        "provider-smoke-aggregate",
+        help=(
+            "provider 冒烟聚合证据导出（M11-16；三份本工具导出的单步证据 -> "
+            "provider-smoke.json，providers 每项仅 executed/result；全 pass=0 / "
+            "任一 fail=1（证据照常落盘）/ 输入或路径问题=2）"
+        ),
+    )
+    p_pa.add_argument(
+        "--search",
+        required=True,
+        metavar="PATH",
+        help="search 单步证据路径（provider-smoke-export 产物 search-smoke.json）",
+    )
+    p_pa.add_argument(
+        "--cloud-voice",
+        required=True,
+        metavar="PATH",
+        help="cloud-voice 单步证据路径（provider-smoke-export 产物 cloud-voice-smoke.json）",
+    )
+    p_pa.add_argument(
+        "--llm",
+        required=True,
+        metavar="PATH",
+        help="llm 单步证据路径（provider-smoke-export 产物 llm-smoke.json）",
+    )
+    p_pa.add_argument(
+        "--output",
+        required=True,
+        help=(
+            "聚合证据输出路径（必须位于 gitignore 的 artifacts/temp，文件名"
+            "恰为 provider-smoke.json；原子落盘：临时文件 + rename，失败保留"
+            "旧文件、symlink 拒绝）"
+        ),
+    )
+    p_pa.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="stdout 输出纯 JSON 证据（提示走 stderr；契约兼容 release-readiness）",
+    )
     p_ep = sub.add_parser(
         "cutover-evidence-pack",
         help=(
@@ -1987,6 +2190,10 @@ def main() -> None:
         raise SystemExit(_run_cutover_rehearsal(args))
     if args.command == "governance-evidence":
         raise SystemExit(_run_governance_evidence(args))
+    if args.command == "provider-smoke-export":
+        raise SystemExit(_run_provider_smoke_export(args))
+    if args.command == "provider-smoke-aggregate":
+        raise SystemExit(_run_provider_smoke_aggregate(args))
     if args.command == "cutover-evidence-pack":
         raise SystemExit(_run_cutover_evidence_pack(args))
     if args.command == "release-candidate":
