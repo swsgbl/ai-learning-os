@@ -20,11 +20,15 @@
 7. build 脚本契约：bash -n 语法、tag 正则、VERSION 比对、干净 worktree、
    AIOS_IMAGE_TAG + --no-build、smoke 默认 infra/smoke_docker.sh、
    down --remove-orphans 且绝无 -v、docker save 独立归档、manifest/verify
-   子命令、symlink 组件检查、代码行零 git tag/git push/docker push/
-   docker login/gh release；
+   子命令、symlink 组件检查、compose project name 由 tag 就地推导（点 ->
+   连字符，bash 参数展开，不引入 Python/tr；禁止未消毒 ${TAG} 直用——
+   M11-02 B-1 回归：run 33938835814 invalid project name）、代码行零
+   git tag/git push/docker push/docker login/gh release；
 8. build 脚本行为面（stub git/docker/python + 真实 manifest 助手）：
    快乐路径全序列、脏 worktree 早退、tag 失配早退、非空目录拒绝且不动
-   既有文件、护栏外拒绝、smoke 失败清理 compose 且不留半成品包；
+   既有文件、护栏外拒绝、smoke 失败清理 compose 且不留半成品包、
+   每次 docker compose 调用都在合法 COMPOSE_PROJECT_NAME（不含点）下执行
+   且 tag -> project name 映射与脚本推导语义逐字一致（M11-02 B-1 回归）；
 9. 工作流契约：仅 workflow_dispatch（无 push/pull_request/schedule）、
    最小权限、Linux runner、upload-artifact 上传且零发布动词；
 10. 真实 Docker 构建冒烟只在 AIOS_RELEASE_SMOKE=1 时执行（默认 skip）。
@@ -75,6 +79,9 @@ WEB_ID = "sha256:" + "c" * 64
 PASSWORD_MARKER = "PROD-PW-77e1"
 API_KEY_MARKER = "sk-PROD-KEY-77e2"
 _CREDENTIAL_URL_RE = re.compile(r"://\S+:\S+@")
+# docker compose project name 合法字符集：小写字母数字/下划线/连字符，
+# 首字符字母或数字——不允许点（tag v0.1.0 含点，直用即被 compose 拒绝）。
+COMPOSE_PROJECT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 
 pytestmark_bash = pytest.mark.skipif(BASH is None, reason="bash 不可用")
 
@@ -943,6 +950,62 @@ def test_build_script_smoke_override_is_test_seam_with_safe_default() -> None:
     assert '${AIOS_RELEASE_SMOKE_SCRIPT:-infra/smoke_docker.sh}' in source
 
 
+def _expected_compose_project_name(tag: str) -> str:
+    """tag -> compose project name 的规范映射：点替换为连字符
+    （v0.1.0 -> aios-rc-v0-1-0）。行为面测试与本映射逐字比对，锁定
+    「脚本推导语义」与「预期映射」不漂移。"""
+    return "aios-rc-" + tag.replace(".", "-")
+
+
+def test_build_script_compose_project_name_derived_not_dotted() -> None:
+    """回归（M11-02 B-1，RC run 33938835814）：COMPOSE_PROJECT_NAME 必须由
+    tag 就地推导（点 -> 连字符，bash 参数展开——不引入 Python/tr）；禁止
+    未消毒的 ${TAG} 直接作 project name（v0.1.0 含点，docker compose 报
+    invalid project name）；镜像 tag 保持原样（含点）不被「顺带」改名。"""
+    source = BUILD_SCRIPT.read_text(encoding="utf-8")
+    # 推导必须就位且为纯 bash 参数展开（无 tr/无 python 参与推导）
+    assert 'aios-rc-${TAG//./-}' in source
+    derivation = "aios-rc-" + "v0.1.0".replace(".", "-")
+    assert derivation == "aios-rc-v0-1-0"
+    assert COMPOSE_PROJECT_NAME_RE.fullmatch(derivation)
+    # 历史缺陷形态必须绝迹：未消毒 tag 直用
+    assert '"aios-rc-${TAG}"' not in source
+    # 推导不得借助外部进程（tr 已只用于 VERSION 空白剥离，不用于项目名）
+    assert "tr -d '[:space:]' < VERSION" in source
+    assert "tr . -" not in source and "tr '.'" not in source
+    # 镜像 tag 与归档名保持原样（含点）——只有 compose project name 被消毒
+    assert '"aios/api:$TAG"' in source
+    assert '"aios/web:$TAG"' in source
+
+
+@pytest.mark.skipif(BASH is None, reason="bash 不可用")
+@pytest.mark.parametrize(
+    "tag", ["v0.1.0", "v0.0.0", "v1.0.0", "v0.1.13", "v10.20.30"]
+)
+def test_compose_project_name_mapping_matches_bash_semantics(
+    tag: str, tmp_path: Path
+) -> None:
+    """tag -> project name 映射不漂移：脚本所用的 bash 参数展开语义
+    （独立脚本文件执行，规避 WSL bash.exe 启动器对 -c 内 $var 的预展开）
+    与 _expected_compose_project_name 逐字一致，且恒满足 compose 合法
+    字符集（首字符小写字母数字，后续小写字母数字/下划线/连字符，无点）。"""
+    script = tmp_path / "derive-project-name.sh"
+    script.write_text(
+        "TAG=" + _sh_sq(tag) + '\nprintf "%s" "aios-rc-${TAG//./-}"\n',
+        encoding="utf-8", newline="\n",
+    )
+    script.chmod(0o755)
+    result = subprocess.run(
+        [BASH, script.name],
+        cwd=tmp_path, capture_output=True, text=True, timeout=60, check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    derived = result.stdout
+    assert derived == _expected_compose_project_name(tag)
+    assert COMPOSE_PROJECT_NAME_RE.fullmatch(derived)
+    assert "." not in derived
+
+
 def test_workflow_and_script_declare_local_scope_boundary() -> None:
     """脚本与工作流都显式声明：本地 RC、非 production readiness、
     不推仓库/不打 tag/不发 Release。"""
@@ -1141,7 +1204,12 @@ class _StubEnv:
             "  esac\n"
             "  exit 0\n"
             "fi\n"
-            "if [ \"$1\" = compose ]; then exit 0; fi\n"
+            "if [ \"$1\" = compose ]; then\n"
+            "  printf 'compose-env COMPOSE_PROJECT_NAME=%s\\n' "
+            "\"$COMPOSE_PROJECT_NAME\" >> "
+            f'"{log}"\n'
+            "  exit 0\n"
+            "fi\n"
             "if [ \"$1\" = save ]; then\n"
             "  out=\"\"; prev=\"\"\n"
             "  for a in \"$@\"; do if [ \"$prev\" = -o ]; then out=\"$a\"; fi; "
@@ -1363,6 +1431,58 @@ def test_build_script_smoke_failure_cleans_compose_and_leaves_no_package(
         out = env.root / "out"
         assert not out.exists(), "冒烟失败不得创建包目录"
         assert not any("release-candidate manifest" in c for c in calls)
+    finally:
+        env.cleanup()
+
+
+@pytest.mark.skipif(BASH is None, reason="bash 不可用")
+def test_build_script_compose_calls_run_with_legal_project_name(
+    stub_env,
+) -> None:
+    """行为面回归（M11-02 B-1，RC run 33938835814）：每次 docker compose
+    调用（up -d --no-build / down --remove-orphans / 失败清理）都在
+    COMPOSE_PROJECT_NAME=<合法名> 环境下执行——由真实 tag（含点）推导出的
+    项目名不含点、满足 compose 合法字符集，且与规范映射逐字一致。"""
+    tag = _version_tag()
+    result = stub_env.run_builder("--tag", tag, "--output-dir", _out_rel(stub_env))
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = stub_env.calls()
+    env_lines = [c for c in calls if c.startswith("compose-env ")]
+    assert env_lines, "docker compose 桩未记录 COMPOSE_PROJECT_NAME"
+    expected = _expected_compose_project_name(tag)
+    for line in env_lines:
+        name = line.split("COMPOSE_PROJECT_NAME=", 1)[1]
+        assert name == expected, line
+        assert COMPOSE_PROJECT_NAME_RE.fullmatch(name), line
+        assert "." not in name, "compose project name 不得含点（历史缺陷形态）"
+    # 每次 compose 子命令调用都恰有一条环境记录（up + down => >= 2）
+    compose_calls = [c for c in calls if c.startswith("docker compose")]
+    assert len(env_lines) == len(compose_calls) >= 2
+    # up/down 两个方向的调用都在同一合法项目名下（up 与清理不漂移）
+    assert any("up -d --no-build" in c for c in compose_calls)
+    assert any("down --remove-orphans" in c for c in compose_calls)
+
+
+@pytest.mark.skipif(BASH is None, reason="bash 不可用")
+def test_build_script_smoke_failure_cleanup_uses_legal_project_name(
+    tmp_path: Path,
+) -> None:
+    """失败路径回归（M11-02 B-1）：冒烟失败触发的 compose 清理（trap 内
+    down --remove-orphans）同样在合法 COMPOSE_PROJECT_NAME 下执行——
+    清理语义（不带 -v）不变，只换合法项目名。"""
+    env = _StubEnv(tmp_path, smoke_exit=1)
+    try:
+        result = env.run_builder("--tag", _version_tag(), "--output-dir", _out_rel(env))
+        assert result.returncode != 0
+        env_lines = [
+            c for c in env.calls() if c.startswith("compose-env ")
+        ]
+        assert env_lines, "失败清理路径未记录 COMPOSE_PROJECT_NAME"
+        expected = _expected_compose_project_name(_version_tag())
+        for line in env_lines:
+            name = line.split("COMPOSE_PROJECT_NAME=", 1)[1]
+            assert name == expected
+            assert COMPOSE_PROJECT_NAME_RE.fullmatch(name)
     finally:
         env.cleanup()
 

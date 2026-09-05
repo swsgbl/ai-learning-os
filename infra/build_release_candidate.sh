@@ -11,9 +11,10 @@
 #   3. 校验输出目录在 gitignore 的 artifacts/ 或 temp/ 内（symlink 组件/
 #      .. 越界/非空已存在目录/artifacts-temp 本身一律拒绝）；
 #   4. 同一源码树构建两个镜像并钉本地 tag（aios/api:<tag>、aios/web:<tag>）；
-#   5. 以 AIOS_IMAGE_TAG=<tag> + --no-build 启动既有 compose local profile，
-#      跑 infra/smoke_docker.sh；结束/失败都安全清理 compose 项目（down 不带
-#      -v，绝不删除任何卷）；
+#   5. 以 AIOS_IMAGE_TAG=<tag> + --no-build 启动既有 compose local profile
+#      （隔离项目名 aios-rc-<tag 中的点替换为连字符，如 v0.1.0 ->
+#      aios-rc-v0-1-0），跑 infra/smoke_docker.sh；结束/失败都安全清理
+#      compose 项目（down 不带 -v，绝不删除任何卷）；
 #   6. docker save 两个镜像为独立归档（仅写入上面选定的目录）；
 #   7. 调 python manifest 助手原子写 release-manifest.json + SHA256SUMS，
 #      再独立 verify（不加载镜像）。
@@ -125,7 +126,12 @@ say "image ids: api=$API_IMAGE_ID web=$WEB_IMAGE_ID"
 # --- 5. compose 冒烟（--no-build + AIOS_IMAGE_TAG；隔离项目名；安全清理）------
 # COMPOSE_PROJECT_NAME 让本脚本与 smoke_docker.sh 共用同一个隔离项目
 # （不占用/不拆除运维自己的 ai-learning-os 项目）；down 永不带 -v——绝不删除卷。
-export COMPOSE_PROJECT_NAME="aios-rc-${TAG}"
+# compose project name 只允许小写字母数字/下划线/连字符（不允许点），而 tag
+# 形如 v0.1.0 含点——用 bash 参数展开就地把点替换成连字符推导合法项目名
+# （v0.1.0 -> aios-rc-v0-1-0）；镜像 tag 与归档名保持原样不变（M11-02 B-1
+# 回归：run 33938835814 曾因 aios-rc-v0.1.0 被 compose 拒绝 invalid project
+# name 而失败）。
+export COMPOSE_PROJECT_NAME="aios-rc-${TAG//./-}"
 COMPOSE=(docker compose -f infra/docker-compose.yml --profile local)
 SMOKE_SCRIPT="${AIOS_RELEASE_SMOKE_SCRIPT:-infra/smoke_docker.sh}"
 COMPOSE_STARTED=0
