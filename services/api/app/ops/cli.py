@@ -879,6 +879,100 @@ def _run_cutover_evidence_pack(args) -> int:
     return 0
 
 
+def _run_release_candidate(args) -> int:
+    """python -m app.ops.cli release-candidate manifest --output-dir DIR ...
+    python -m app.ops.cli release-candidate verify --package-dir DIR
+    [--version-file PATH]
+
+    M10-17 本地 Release Candidate 包 manifest 助手（编排由
+    infra/build_release_candidate.sh 完成）：manifest 子命令在护栏内
+    （gitignore 的 artifacts/temp）空目录原子写入 release-manifest.json 与
+    SHA256SUMS（含两个镜像归档与 manifest 自身的哈希；失败清理，不留看似
+    有效的半成品）；verify 子命令独立校验 schema/必填字段/version-tag
+    一致性/校验和覆盖面/逐档哈希——只重算文件哈希，绝不 docker load。
+    不读环境变量、不连 DB/网络、不执行任何命令；产出是本地 RC，不是
+    production readiness 声明，不推仓库、不打 git tag、不发 GitHub Release。
+    退出码：成功=0 / verify 校验失败=1 / 参数或路径与 IO 问题=2。
+    """
+    import json as _json
+
+    from app.ops.release_candidate import (
+        ReleaseCandidateError,
+        verify_release_package,
+        write_release_package,
+    )
+
+    if args.action == "manifest":
+        missing = [
+            name
+            for name in (
+                "output_dir",
+                "tag",
+                "version_file",
+                "git_commit",
+                "compose_file",
+                "api_image_id",
+                "web_image_id",
+                "api_archive",
+                "web_archive",
+            )
+            if not getattr(args, name)
+        ]
+        if missing:
+            print("manifest 缺少必填参数: " + ", ".join(f"--{m.replace('_', '-')}" for m in missing))
+            return 2
+        try:
+            report = write_release_package(
+                args.output_dir,
+                tag=args.tag,
+                version_file=args.version_file,
+                git_commit=args.git_commit,
+                compose_file=args.compose_file,
+                api_image_id=args.api_image_id,
+                web_image_id=args.web_image_id,
+                api_archive=args.api_archive,
+                web_archive=args.web_archive,
+                build_context=args.build_context,
+                web_build_arg=args.web_build_arg,
+                smoke_script=args.smoke_script,
+                generated_at=args.generated_at,
+            )
+        except ReleaseCandidateError as cause:
+            print(f"Release Candidate 包输入无效（未写入/未改写任何文件）: {cause}")
+            return 2
+        except OSError as cause:
+            print(f"包写入失败（IO 问题，已清理半成品）: {type(cause).__name__}: {cause}")
+            return 2
+        print(_json.dumps(report, ensure_ascii=False, indent=2))
+        print(
+            "边界：以上是本地 Release Candidate（local build + local verify），"
+            "不是 production readiness 声明；不推镜像仓库、不打 git tag、"
+            "不发 GitHub Release。"
+        )
+        return 0
+
+    # verify
+    if not args.package_dir:
+        print("verify 需要 --package-dir <RC 包目录>")
+        return 2
+    try:
+        report = verify_release_package(
+            args.package_dir, version_file=args.version_file
+        )
+    except ReleaseCandidateError as cause:
+        print(f"包目录输入无效: {cause}")
+        return 2
+    except OSError as cause:
+        print(f"包读取失败（IO 问题）: {type(cause).__name__}: {cause}")
+        return 2
+    print(_json.dumps(report, ensure_ascii=False, indent=2))
+    if report["ok"]:
+        print("VERIFY OK：manifest/校验和/逐档哈希全部一致（未加载 Docker 镜像）。")
+        return 0
+    print(f"VERIFY FAILED：{len(report['problems'])} 个问题（见 problems 列表）。")
+    return 1
+
+
 async def _run_license_report(args) -> int:
     """license-report 子命令：输出四区段授权清单 JSON（无 DB 时含说明段）。"""
     import json as _json
@@ -1229,6 +1323,79 @@ def main() -> None:
             "拒绝；默认只打印）"
         ),
     )
+    p_rc = sub.add_parser(
+        "release-candidate",
+        help=(
+            "本地 Release Candidate 包 manifest 助手（M10-17；manifest 原子写 "
+            "release-manifest.json + SHA256SUMS，verify 独立校验不加载镜像；"
+            "编排入口是 infra/build_release_candidate.sh）"
+        ),
+    )
+    p_rc.add_argument(
+        "action",
+        choices=["manifest", "verify"],
+        help=(
+            "manifest：在护栏内空目录写入 manifest 与校验和（归档需已由 "
+            "build 脚本保存到位）；verify：独立校验既有 RC 包"
+        ),
+    )
+    p_rc.add_argument(
+        "--output-dir",
+        default=None,
+        help=(
+            "manifest：包输出目录（必须位于 gitignore 的 artifacts/ 或 temp/ 内、"
+            "不是 artifacts/temp 本身、不存在或为空——非空拒绝）"
+        ),
+    )
+    p_rc.add_argument(
+        "--package-dir",
+        default=None,
+        help="verify：待校验的 RC 包目录（只读）",
+    )
+    p_rc.add_argument(
+        "--tag",
+        default=None,
+        help="manifest：发布 tag（严格 vX.Y.Z，必须与 VERSION 文件逐字一致）",
+    )
+    p_rc.add_argument(
+        "--version-file",
+        default=None,
+        help="VERSION 文件路径（manifest 必填；verify 可选——提供时交叉核对）",
+    )
+    p_rc.add_argument(
+        "--git-commit",
+        default=None,
+        help="manifest：构建时的完整 git commit SHA（40/64 位十六进制）",
+    )
+    p_rc.add_argument(
+        "--compose-file",
+        default=None,
+        help="manifest：compose 文件路径（哈希写入 manifest）",
+    )
+    p_rc.add_argument("--api-image-id", default=None, help="aios/api 镜像 ID（sha256:<64hex>）")
+    p_rc.add_argument("--web-image-id", default=None, help="aios/web 镜像 ID（sha256:<64hex>）")
+    p_rc.add_argument("--api-archive", default=None, help="api 镜像归档文件名（输出目录内纯文件名）")
+    p_rc.add_argument("--web-archive", default=None, help="web 镜像归档文件名（输出目录内纯文件名）")
+    p_rc.add_argument(
+        "--build-context",
+        default=".",
+        help="docker build context（两个镜像同源同上下文，默认仓库根 .）",
+    )
+    p_rc.add_argument(
+        "--web-build-arg",
+        default="http://127.0.0.1:8000",
+        help="web 构建参数 NEXT_PUBLIC_API_BASE_URL（默认与 compose 缺省一致）",
+    )
+    p_rc.add_argument(
+        "--smoke-script",
+        default="infra/smoke_docker.sh",
+        help="构建时执行的冒烟脚本（记录进 manifest）",
+    )
+    p_rc.add_argument(
+        "--generated-at",
+        default=None,
+        help="可选生成时间戳（ISO-8601，由 build 脚本传入）",
+    )
     p_ad = sub.add_parser("admin", help="角色运维：promote/demote/list（M9-04）")
     p_ad.add_argument("action", choices=["promote", "demote", "list"])
     p_ad.add_argument("username", nargs="?", default=None)
@@ -1268,6 +1435,8 @@ def main() -> None:
         raise SystemExit(_run_cutover_rehearsal(args))
     if args.command == "cutover-evidence-pack":
         raise SystemExit(_run_cutover_evidence_pack(args))
+    if args.command == "release-candidate":
+        raise SystemExit(_run_release_candidate(args))
     if args.command == "admin":
         if args.action != "list" and not args.username:
             print("promote/demote 需要用户名")

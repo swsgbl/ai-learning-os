@@ -529,6 +529,59 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   scaffold/approval-draft 退出码：成功（含幂等重放）=0 / 目标目录或路径与 IO
   问题=2。
 
+## 本地 Release Candidate 包（M10-17）
+
+- **入口与分工**：编排入口是 `bash infra/build_release_candidate.sh --tag vX.Y.Z
+  --output-dir artifacts/rc-vX.Y.Z [--web-build-arg http://127.0.0.1:8000]`
+  （Docker/compose/git 编排）；可独立测试的纯文件逻辑（tag/VERSION 一致性、输出
+  目录护栏、manifest/SHA256SUMS 原子落盘、独立 verify）在
+  `services/api/app/ops/release_candidate.py`，经
+  `python -m app.ops.cli release-candidate manifest|verify` 子命令暴露。
+- **构建序列（fail-closed）**：① tag 严格 `vX.Y.Z` 且与 VERSION 文件**逐字**
+  一致；② git worktree 必须干净并记录完整 commit SHA（40/64 hex）；③ 输出目录
+  必须在 gitignore 的 artifacts/temp 内的新目录（symlink 组件、`..` 越界、非空
+  已存在目录、artifacts/temp 目录本身一律拒绝）；④ 同一源码树构建
+  `aios/api:<tag>` 与 `aios/web:<tag>`（web 带
+  `NEXT_PUBLIC_API_BASE_URL` build arg）；⑤ `AIOS_IMAGE_TAG=<tag>` +
+  `up -d --no-build` 起 compose local profile（隔离项目名 `aios-rc-<tag>`）跑
+  冒烟，`trap cleanup EXIT` 保证结束/失败都 `down --remove-orphans`——down 永远
+  不带 `-v`，绝不删除任何卷；⑥ `docker save` 两个独立归档写入选定目录；
+  ⑦ manifest 助手原子落盘后立即独立 verify，失败即整体失败并清理未完成包目录。
+- **manifest 契约**：必填顶层字段 `schema_version`/`package_kind`/`version`/
+  `tag`/`git_commit`/`build_context`/`web_build_arg`/`compose`（文件 +
+  sha256）/`images`（api+web 各含 repository/tag/image_id/
+  `local_only: true`）/`archives`（两归档 component+filename+sha256+
+  size_bytes）/`checksums_file`/`smoke`（脚本 + passed）/`scope`=
+  `local-release-candidate`/`scope_note`/`boundary_note`（固定边界声明并被
+  verify 校验）。SHA256SUMS 用 sha256sum 兼容格式按文件名排序，**恰覆盖**两个
+  归档 + manifest 自身；原子写（同目录临时文件 + `os.replace`）失败清理全部
+  最终文件与临时文件——绝不留看似有效的半成品 manifest。
+- **独立 verify（不加载 Docker 镜像）**：`cd services/api && python -m
+  app.ops.cli release-candidate verify --package-dir <dir> [--version-file
+  VERSION]`——schema/必填字段与类型、version-tag（-VERSION 提供时三方）一致性、
+  校验和覆盖面（缺/多/重复条目/非法行/包内多余文件）、逐档 SHA-256 重算 +
+  size 复核；「自洽篡改」（改 manifest 后重算 SHA256SUMS 绕过字节哈希门）由
+  schema/一致性门拦下。退出码：0=通过 / 1=校验失败 / 2=输入或 IO 问题。
+- **GitHub Actions 手动 workflow**：`.github/workflows/release-candidate.yml`
+  仅 `workflow_dispatch` 触发（静态契约测试锁定：push/pull_request/schedule
+  永不触发），`permissions: contents: read` 最小权限，GitHub 托管 Linux runner
+  的本地 Docker 构建与冒烟，产物以 `actions/upload-artifact@v4` 上传（保留
+  14 天）——**不是** GitHub Release。
+- **验证证据要求**：验收口径为聚焦 `pytest services/api/tests/
+  test_release_candidate.py`（含 build 脚本 `bash -n` 语法、源码级零发布动词
+  守卫（无 git 标签/push/login/gh release/kubectl/ssh 等）、stub 行为面
+  （脏 worktree/tag 失配/护栏外/冒烟失败全部早退且零残留）、workflow 契约）
+  + 清除 `AIOS_PG_TEST_URL`/`DATABASE_URL` 后的全量 `pytest services/api -q` +
+  `ruff check services/api` + `bash -n infra/build_release_candidate.sh` +
+  `git diff --check` 全绿；真实 Docker 构建冒烟仅在 `AIOS_RELEASE_SMOKE=1`
+  时执行（默认 skip）。手动 workflow 触发证据（run URL + conclusion）在触发后
+  回填台账。
+- **安全边界**：本地 RC **不是 production readiness 声明，不授权部署**；不打
+  git 标签、不发 GitHub Release、不推镜像仓库、不碰生产 DB/服务/主机；
+  manifest 助手不读环境变量、不连 DB/网络、不执行任何命令（AST 级测试守卫零
+  `os.environ`/零 subprocess/零网络 DB 引用）；产物与 CLI 输出无密码/token/key
+  字样、无凭据 URL 形态（测试锁定）。
+
 ## LLM 接入（M10-01）
 
 - OpenAI 兼容 gateway（`app/llm/gateway.py`）：`LLM_ENDPOINT/LLM_API_KEY/LLM_MODEL`
