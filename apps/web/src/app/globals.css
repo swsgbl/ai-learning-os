@@ -1,22 +1,42 @@
 @import "tailwindcss";
 
+/*
+ * M11-01 视觉系统：porcelain / ink / deep teal / amber。
+ * 从米色纸感升级为清爽瓷白底 + 墨色文字 + 深青主色 + 琥珀信号；
+ * 克制、可扫描、可访问——颜色只做语义，动效只做状态反馈。
+ */
 @theme {
-  --color-bg: #f2eee6;
-  --color-paper: #f2eee6;
-  --color-surface: #faf7f2;
-  --color-surface-2: #ebe4d8;
-  --color-ink: #1c1914;
-  --color-muted: #6e675e;
-  --color-subtle: #9a9288;
-  --color-accent: #2d4a44;
-  --color-accent-fg: #f7f4ee;
-  --color-good: #2f5d45;
-  --color-good-soft: #dce8e0;
-  --color-bad: #8a3b36;
-  --color-bad-soft: #f0ddd9;
-  --color-warn: #7a5c2e;
-  --color-ring: #2d4a44;
-  --color-border: #e4ddd2;
+  /* 底与面：porcelain */
+  --color-bg: #f6f5f1;
+  --color-paper: #fffefb;
+  --color-surface: #fffefb;
+  --color-surface-2: #ecebe4;
+  --color-surface-3: #e2e0d7;
+
+  /* 墨与灰阶 */
+  --color-ink: #191f1e;
+  --color-ink-soft: #3a4341;
+  --color-muted: #5b6663;
+  --color-subtle: #8d958f;
+
+  /* 主色：deep teal */
+  --color-accent: #0d5b55;
+  --color-accent-strong: #094742;
+  --color-accent-fg: #f2f7f6;
+  --color-accent-soft: #ddeae7;
+
+  /* 信号色 */
+  --color-good: #1c6b4c;
+  --color-good-soft: #dfeede5;
+  --color-bad: #a23d32;
+  --color-bad-soft: #f6e1dc;
+  --color-warn: #96660a;
+  --color-warn-soft: #f4e8cf;
+  --color-amber: #b07818;
+
+  --color-ring: #0d5b55;
+  --color-border: #e3e1d8;
+  --color-border-strong: #cfcdc2;
 
   --font-display: var(--font-newsreader), "Songti SC", "Noto Serif SC", serif;
   --font-sans: var(--font-figtree), "PingFang SC", "Noto Sans SC", system-ui, sans-serif;
@@ -28,8 +48,10 @@
   --radius-lg: 16px;
   --radius-xl: 24px;
 
-  --shadow-border: 0 0 0 1px rgba(28, 25, 20, 0.08), 0 1px 2px -1px rgba(28, 25, 20, 0.06), 0 2px 6px 0 rgba(28, 25, 20, 0.04);
-  --shadow-border-hover: 0 0 0 1px rgba(28, 25, 20, 0.12), 0 4px 14px -4px rgba(28, 25, 20, 0.1);
+  --shadow-border: 0 0 0 1px rgba(25, 31, 30, 0.08), 0 1px 2px -1px rgba(25, 31, 30, 0.05);
+  --shadow-border-hover: 0 0 0 1px rgba(13, 91, 85, 0.22), 0 6px 18px -8px rgba(25, 31, 30, 0.16);
+  --shadow-raised: 0 0 0 1px rgba(25, 31, 30, 0.06), 0 10px 30px -12px rgba(25, 31, 30, 0.18);
+
   --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
   --motion-quick: 150ms;
 }
@@ -59,6 +81,16 @@
   button:not(:disabled) {
     cursor: pointer;
   }
+
+  /* 统一可聚焦反馈：键盘 focus 一律可见（GSAP 动效不承载可达性） */
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--color-accent-soft);
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -66,6 +98,8 @@
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
