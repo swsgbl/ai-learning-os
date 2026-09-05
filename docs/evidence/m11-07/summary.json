@@ -1,0 +1,109 @@
+{
+  "milestone": "M11-07",
+  "title": "RC artifact local forensics and standalone verify",
+  "date": "2026-09-05",
+  "branch": "feature/m11-07-rc-artifact-local-verify",
+  "base": {
+    "commit": "b2d13dae9271820414a0e6a331b34a2a328819d3",
+    "short": "b2d13da",
+    "kind": "main after PR #26 merge (M11-06 evidence slice merged)"
+  },
+  "rc_run": {
+    "run_id": 33955603683,
+    "workflow": "Release Candidate (manual only)",
+    "event": "workflow_dispatch",
+    "head_sha": "f169c47c29f9529e7f0ff6c465bdf8bc1f617dd8",
+    "status": "success"
+  },
+  "artifact": {
+    "id": 9966304718,
+    "name": "release-candidate-v0.1.0",
+    "outer_zip": {
+      "size_in_bytes": 189076705,
+      "sha256": "04025053A205F069474CFA6D7B8ACCEC157D06AF24838B11760C6DE19F85924C",
+      "digest_scope": "GitHub Artifacts API digest field, computed over the outer artifact zip as a whole; it is a DIFFERENT object from the in-package SHA256SUMS entries (per-file hashes inside the package) — not interchangeable and not substitutable",
+      "created_at": "2026-09-05T08:37:34Z",
+      "expires_at": "2026-09-19T08:37:16Z"
+    }
+  },
+  "local_download": {
+    "path": "artifacts/rc-f169c47/release-candidate-v0.1.0.zip",
+    "gitignored": true,
+    "get_item_length_bytes": 189076705,
+    "get_file_hash_sha256": "04025053A205F069474CFA6D7B8ACCEC157D06AF24838B11760C6DE19F85924C",
+    "length_matches_actions_api_size": true,
+    "hash_matches_actions_api_digest": true
+  },
+  "extraction": {
+    "target_dir": "artifacts/rc-f169c47/package",
+    "gitignored": true,
+    "new_directory_created": true,
+    "overwrote_existing_directory": false,
+    "layout_exactly": [
+      { "name": "aios-api-v0.1.0.tar", "size_bytes": 338336256 },
+      { "name": "aios-web-v0.1.0.tar", "size_bytes": 229956608 },
+      { "name": "release-manifest.json", "size_bytes": 2022 },
+      { "name": "SHA256SUMS", "size_bytes": 260 }
+    ],
+    "manifest_self_description": {
+      "version": "0.1.0",
+      "tag": "v0.1.0",
+      "git_commit": "f169c47c29f9529e7f0ff6c465bdf8bc1f617dd8",
+      "scope": "local-release-candidate",
+      "not_production_readiness": true
+    }
+  },
+  "in_package_checksums": {
+    "source_file": "SHA256SUMS",
+    "source_file_size_bytes": 260,
+    "covers_exactly": [
+      "aios-api-v0.1.0.tar",
+      "aios-web-v0.1.0.tar",
+      "release-manifest.json"
+    ],
+    "sha256": {
+      "aios-api-v0.1.0.tar": "6ecb1287f5d2b6b7d7b47c85250dbcef3c87a2f563bc6c275db4c5770f5c6c32",
+      "aios-web-v0.1.0.tar": "3a43eb7c95e5b2b37d1d646562e76013b988a0d12da3935dbfd18356e2176758",
+      "release-manifest.json": "536400dc58ec999be8bd85ca2b4144bf8f9b9920421312d429e76d4b76d81aed"
+    },
+    "outer_zip_digest_relation": "different objects and purposes (whole artifact zip vs per-file hashes inside the package); cannot be interchanged or substituted for each other"
+  },
+  "standalone_verify": {
+    "performed_by": "Codex on local machine, repo venv, run from services/api",
+    "command": "..\\..\\.venv\\Scripts\\python.exe -m app.ops.cli release-candidate verify --package-dir D:\\AI Learning OS\\ai-learning-os\\artifacts\\rc-f169c47\\package --version-file ..\\..\\VERSION",
+    "result_summary": "VERIFY OK",
+    "ok": true,
+    "problems": [],
+    "checks_passed": 6,
+    "checks_total": 6,
+    "checks": [
+      { "id": "version_tag_consistency", "status": "pass" },
+      { "id": "version_file_consistency", "status": "pass" },
+      { "id": "checksums_coverage", "status": "pass" },
+      { "id": "archive_hash", "status": "pass", "detail": "aios-api-v0.1.0.tar" },
+      { "id": "archive_hash", "status": "pass", "detail": "aios-web-v0.1.0.tar" },
+      { "id": "archive_hash", "status": "pass", "detail": "release-manifest.json" }
+    ],
+    "docker_images_loaded": false,
+    "scope": "pure local file-hash re-verification"
+  },
+  "boundaries": {
+    "scope_statement": "this slice is a LOCAL file-level forensic re-verification; it is NOT production readiness",
+    "production_ready_unchanged": false,
+    "not_performed": [
+      "git tag creation",
+      "GitHub Release publication",
+      "image registry push",
+      "deployment",
+      "docker image load",
+      "production DB connection or write",
+      "secret read or output"
+    ],
+    "artifacts_local_only": "forensics files stay under gitignored artifacts/rc-f169c47/ and never enter git"
+  },
+  "conclusion": {
+    "production_ready": false,
+    "local_file_level_consistency": true,
+    "statement": "downloaded outer zip length and SHA256 match the Actions API exactly; package layout matches the four expected files; in-package SHA256SUMS covers exactly the three entries; standalone verify ok=true with 6/6 checks pass and no Docker images loaded. The outer GitHub artifact zip digest and the in-package SHA256SUMS are different objects and must not be interchanged. Local file-level re-verification does not imply production readiness; production_ready stays false."
+  }
+}
