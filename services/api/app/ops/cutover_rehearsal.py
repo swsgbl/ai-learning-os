@@ -223,7 +223,8 @@ STEPS: tuple[StepSpec, ...] = (
         "search-smoke.json",
         "search 需打真实端点冒烟通过（SEARCH_CLOUD_API_KEY 可选，无鉴权端点"
         "可空——M10-12）；证据文件不得携带任何 key",
-        "打真实 search 端点冒烟（SEARCH_CLOUD_API_KEY 可选）后导出脱敏结果",
+        "打真实 search 端点冒烟（SEARCH_CLOUD_API_KEY 可选）后以 "
+        "provider-smoke-export search --output <artifacts路径> 导出（M11-16）",
     ),
     StepSpec(
         "cloud-voice-smoke",
@@ -233,7 +234,8 @@ STEPS: tuple[StepSpec, ...] = (
         "voice 需运维执行 bash infra/smoke_voice_cloud.sh 冒烟通过（部署 key"
         " + 真实短语音 WAV，ASR/TTS 双探针——M10-13）；证据文件不得携带任何 key",
         "运维执行 bash infra/smoke_voice_cloud.sh（部署 key，不入库不入码）"
-        "后导出脱敏结果",
+        "后以 provider-smoke-export cloud-voice --output <artifacts路径> 导出"
+        "（M11-16）",
     ),
     StepSpec(
         "llm-smoke",
@@ -242,7 +244,8 @@ STEPS: tuple[StepSpec, ...] = (
         "llm-smoke.json",
         "LLM 需运维以部署 key 冒烟通过（M10-01 网关真连通）；证据文件不得"
         "携带任何 key",
-        "运维以部署 key 冒烟 LLM 网关后导出脱敏结果",
+        "运维以部署 key 冒烟 LLM 网关后以 provider-smoke-export llm "
+        "--output <artifacts路径> 导出（M11-16）",
     ),
     StepSpec(
         "legacy-papers",
@@ -432,11 +435,13 @@ _step_search_smoke = _make_smoke_step(
     "search-smoke",
     fail_action=(
         "排查真实 search 端点连通/鉴权（SEARCH_CLOUD_API_KEY 可选）后重跑"
-        "冒烟并导出脱敏结果"
+        "冒烟，并以 provider-smoke-export 重新导出单步证据（M11-16：机器"
+        "导出，不接受手工拼装）"
     ),
     run_action=(
         "打真实 search 端点冒烟（SEARCH_CLOUD_API_KEY 可选，无鉴权端点可空）"
-        "后导出脱敏结果文件"
+        "后以 provider-smoke-export search --output <artifacts路径> 导出单步"
+        "证据（M11-16）"
     ),
     pass_reason="search 真实端点冒烟通过（脱敏结果文件）",
 )
@@ -444,18 +449,27 @@ _step_cloud_voice_smoke = _make_smoke_step(
     "cloud-voice-smoke",
     fail_action=(
         "运维排查部署 key 与云 ASR/TTS 后重跑 bash infra/smoke_voice_cloud.sh"
-        "并导出脱敏结果"
+        "，并以 provider-smoke-export 重新导出单步证据（M11-16：机器导出，"
+        "不接受手工拼装）"
     ),
     run_action=(
         "运维执行 bash infra/smoke_voice_cloud.sh（部署 key + 真实短语音 WAV，"
-        "ASR/TTS 双探针，key 不入库不入码）后导出脱敏结果文件"
+        "ASR/TTS 双探针，key 不入库不入码）后以 provider-smoke-export "
+        "cloud-voice --output <artifacts路径> 导出单步证据（M11-16）"
     ),
     pass_reason="云 voice 部署 key 冒烟通过（ASR/TTS 双探针，脱敏结果文件）",
 )
 _step_llm_smoke = _make_smoke_step(
     "llm-smoke",
-    fail_action="运维排查部署 key 与 LLM 网关后重跑冒烟并导出脱敏结果",
-    run_action="运维以部署 key 冒烟 LLM 网关（key 不入库不入码）后导出脱敏结果文件",
+    fail_action=(
+        "运维排查部署 key 与 LLM 网关后重跑冒烟，并以 provider-smoke-export "
+        "重新导出单步证据（M11-16：机器导出，不接受手工拼装）"
+    ),
+    run_action=(
+        "运维以部署 key 冒烟 LLM 网关（key 不入库不入码）后以 "
+        "provider-smoke-export llm --output <artifacts路径> 导出单步证据"
+        "（M11-16）"
+    ),
     pass_reason="云 LLM 部署 key 冒烟通过（脱敏结果文件）",
 )
 
