@@ -783,7 +783,11 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   仅 `workflow_dispatch` 触发（静态契约测试锁定：push/pull_request/schedule
   永不触发），`permissions: contents: read` 最小权限，GitHub 托管 Linux runner
   的本地 Docker 构建与冒烟，产物以 `actions/upload-artifact@v4` 上传（保留
-  14 天）——**不是** GitHub Release。
+  14 天）——**不是** GitHub Release。checkout/setup-node/setup-python 等
+  runtime action 统一钉 v7 主版本（node24 runtime，M11-14——v4/v5 为 node20
+  旧 runtime，GitHub 托管 runner 已打 Node.js 20 deprecation 警告；
+  `services/api/tests/test_workflow_actions_runtime.py` 静态锁定不回退，
+  upload-artifact 不在此列、保持 v4）。
 - **验证证据要求**：验收口径为聚焦 `pytest services/api/tests/
   test_release_candidate.py`（含 build 脚本 `bash -n` 语法、源码级零发布动词
   守卫（无 git 标签/push/login/gh release/kubectl/ssh 等）、stub 行为面
