@@ -584,6 +584,54 @@ def _run_release_check(args) -> int:
     return 0 if all_green else 1
 
 
+def _run_release_check_isolated(args) -> int:
+    """python -m app.ops.cli release-check-isolated [--workdir DIR]
+    [--output PATH] [--health-timeout SECONDS] [--json]
+
+    M11-10 隔离本地 full release-check 一键编排器：把 M11-09 的人工流程
+    （一次性 gitignored SQLite -> alembic upgrade head -> 127.0.0.1 回环临时
+    uvicorn -> /health 就绪 -> full 模式 10 项门禁 -> JSON 证据原子落盘 ->
+    finally 关停临时 API）收敛为一条命令。环境显式隔离（APP_ENV=development
+    / VOICE_MODE=local / HOST_BIND_IP=127.0.0.1 / DATABASE_URL=一次性 SQLite，
+    继承的 AUTH_SECRET/AIOS_PG_TEST_URL/DATABASE_URL 剥离），不连接任何生产面。
+
+    退出码：全绿=0 / 门禁真实 fail=1（证据照常落盘，execution_scope=full）
+    / 护栏或编排失败=2（迁移失败、临时 API 未就绪、写入失败等，均不写证据）。
+    all_green 只表示隔离本地运行面全过，不是 production readiness、不授权
+    生产发布；production_ready=false 保持不变。
+    """
+    import json as _json
+
+    from app.ops.release_check_isolated import BOUNDARY_NOTE, run_isolated_release_check
+
+    result = run_isolated_release_check(
+        workdir=args.workdir,
+        output=args.output,
+        health_timeout=args.health_timeout,
+    )
+    lines: list[str] = []
+    if result.workspace is not None:
+        lines.append(f"隔离工作区（gitignored，本地审计，不入 git）: {result.workspace}")
+    if result.db_path is not None:
+        lines.append(f"一次性 SQLite（保留本地，不入 git）: {result.db_path}")
+    if result.api_base is not None:
+        stop_note = f"，关停方式: {result.server_stop}" if result.server_stop else ""
+        lines.append(f"临时 API（仅回环，已收尾{stop_note}）: {result.api_base}")
+    if result.evidence_written and result.evidence_path is not None:
+        lines.append(f"报告已写入: {result.evidence_path}")
+    lines.append(result.summary)
+    if BOUNDARY_NOTE not in result.summary:
+        lines.append(BOUNDARY_NOTE)
+    text = "\n".join(lines)
+    if args.as_json and result.evidence is not None:
+        # --json：stdout 纯 JSON（可管道给 jq），人读提示走 stderr
+        print(_json.dumps(result.evidence, ensure_ascii=False, indent=2))
+        print(text, file=sys.stderr)
+    else:
+        print(text)
+    return result.exit_code
+
+
 class _nullcontext:
     """httpx.Client 缺席时的空上下文，保持 with 对称。"""
 
@@ -1272,6 +1320,44 @@ def main() -> None:
             "可与 --json 同用）"
         ),
     )
+    p_ri = sub.add_parser(
+        "release-check-isolated",
+        help=(
+            "隔离本地 full release-check 一键编排（M11-10；一次性 SQLite + "
+            "回环临时 API + 10 项门禁 + JSON 证据；全绿=0 / 门禁 fail=1 / "
+            "编排失败=2；all_green 仅隔离本地证据，非生产授权）"
+        ),
+    )
+    p_ri.add_argument(
+        "--workdir",
+        default=None,
+        help=(
+            "隔离工作区目录（必须位于 gitignore 的 artifacts/ 或 temp/；存放"
+            "一次性 SQLite、uvicorn 日志与证据；缺省自动生成唯一 run 目录；"
+            "目录内既有同名数据库会被拒绝以保护证据）"
+        ),
+    )
+    p_ri.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "证据 JSON 输出路径（必须位于 gitignore 的 artifacts/ 或 temp/；"
+            "缺省 <工作区>/release-check-isolated.json；原子落盘，失败保留"
+            "旧报告、symlink 拒绝）"
+        ),
+    )
+    p_ri.add_argument(
+        "--health-timeout",
+        type=float,
+        default=60.0,
+        help="等待临时 API /health 就绪的限时秒数（默认 60）",
+    )
+    p_ri.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="stdout 输出纯 JSON 证据（人读提示走 stderr；编排失败无证据时不启用）",
+    )
     p_v = sub.add_parser("version", help="版本 + git + alembic 状态")
     p_v.add_argument("--json", dest="as_json", action="store_true")
     p_di = sub.add_parser("data-inventory", help="生产数据与风险只读盘点")
@@ -1615,6 +1701,8 @@ def main() -> None:
         raise SystemExit(asyncio.run(_run_license_report(args)))
     if args.command == "release-check":
         raise SystemExit(_run_release_check(args))
+    if args.command == "release-check-isolated":
+        raise SystemExit(_run_release_check_isolated(args))
     if args.command == "backup-restore-evidence":
         raise SystemExit(_run_backup_restore_evidence(args))
     if args.command == "version":
