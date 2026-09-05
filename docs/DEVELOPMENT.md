@@ -285,6 +285,67 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   另一 kind 的 ID 整体拒绝），只改 owner_id（keep-unowned 零修改、只写审计
   决策），事务内 FOR UPDATE 复核目标用户与行状态，审计与更新同事务；
   生产未执行任何迁移（M10-04 第三切片）。
+- 治理步证据导出（M11-12）：报告 + 成功批次 -> rehearsal/readiness 可
+  消费的 `pending_count` 脱敏证据，见「治理证据推导 governance-evidence」
+  节——计数由报告明细与批次 eligible 集合确定性推导，非人工转抄。
+
+## 治理证据推导 governance-evidence（M11-12）
+
+- **CLI**：`python -m app.ops.cli governance-evidence --report <报告JSON>
+  --batch <批次JSON> [--batch ...] --output <artifacts>/legacy-papers.json
+  |draft-ownership.json [--json]`，实现文件
+  `services/api/app/ops/governance_evidence.py`。
+- **定位**：cutover-rehearsal（M10-15）/ release-readiness（M10-11）的
+  `legacy-papers` / `draft-ownership` 治理步需要 `pending_count` + `batches`
+  证据；此前只能人工从报告抄录计数拼装（转抄没有任何交叉校验，抄错即
+  证据失真）。本工具把「一份完整治理报告 + 一或多个成功 migrate 批次」
+  确定性推导为同契约脱敏证据——与 backup-restore-evidence（M11-04）
+  同一动机：人工拼装改为机器可复现导出。操作链：`legacy-paper-report
+  --output` / `draft-owner-report --output` 出报告（artifacts/temp）→
+  逐批 `legacy-paper-migrate --yes` / `draft-owner-migrate --yes`（stdout
+  plan JSON 重定向保存到 artifacts/temp）→ 本命令推导出证据文件。
+- **确定性推导（非转抄）**：`pending_count = 报告明细 ID 集合 - 全部成功
+  批次 eligible ID 并集`（legacy 按 paper_id；draft 按 (kind, draft_id)
+  二元组，两类 kind 独立不串）。批次处理过的 ID 不必仍在报告中——
+  assign-owner/export-delete 执行后行已移出治理范围、重跑报告自然不含，
+  keep-public/keep-unowned 不改行、仍在；两类时序形态同一公式覆盖。
+- **失败批次 fail-closed（exit 2、不写输出）**：每个批次必须是成功执行
+  形态（`executed=true` 且 `dry_run` **显式为 false** 且 `exit_code=0`
+  且无 `failure`/invalid ID 且 eligible ⊆ 请求集合且 requested 与 ID
+  条数一致，且 `audit_action` 与迁移路径/草稿 kind **精确匹配**——
+  keep-public => `ops.legacy_paper.keep_public`、assign-owner =>
+  `ops.legacy_paper.assign_owner`、export-delete =>
+  `ops.legacy_paper.export_delete`、draft assign-owner =>
+  `ops.draft_owner.assign_owner`、draft keep-unowned =>
+  `ops.draft_owner.keep_unowned`）——dry-run（含 `dry_run=true` 即便
+  `executed=true` 的拼改畸形形态）、审计动作错配（跨动作/跨 kind）、
+  未知 ID 拒绝、目标用户不存在、导出校验失败等任何非成功形态一律拒绝，
+  绝不从完整性存疑的执行历史推导 pending_count（会低估剩余待处理数）。
+  批次类型必须与报告类型匹配；报告结构必须自洽（`summary.total` ==
+  明细条数、ID 唯一、papers/drafts 恰有其一切判类型）。
+- **路径护栏与输入保护**：报告/每个批次/输出都必须位于 gitignore 的
+  artifacts/temp（复用 `is_safe_artifact_path`，含生产 ID 的文件不入
+  仓库）；任何已存在路径组件是 symlink 即拒绝；**输出不得覆盖任何输入**
+  ——输出 resolved 路径等于报告或任何批次的 resolved 路径即 exit 2
+  （`resolve` + `os.path.normcase` 归一比较，Windows 大小写/`..` 折叠等
+  等价书写形态不构成绕过；冲突时输入字节保持不变）；**同一批次文件不得
+  重复传入**（含等价路径规范化后的重复——重复会虚增成功批次数）；输出
+  文件名必须恰为 `legacy-papers.json` / `draft-ownership.json` 且与报告
+  类型对应（manifest 工具只认精确证据文件名，防笔误产出不可消费文件）；
+  输出原子落盘（同目录临时文件 + fsync + os.replace，失败旧文件字节
+  原样、无 `.tmp` 残留、不打印推导结论）。
+- **输出零业务 ID/零敏感值且契约最小化**：证据只含白名单标量
+  （step/pending_count/`batches[].executed`——每项仅此一键——与聚合计数
+  `batches_executed`/报告聚合计数/源报告 sha256/时间戳），**不输出任何
+  逐批迁移路径、逐批解决计数、逐批文件哈希或其它批次细节**（人类摘要
+  同样只打印聚合计数）；报告与批次正文一律不透传；输出可过下游装载层
+  的敏感键与内嵌凭据扫描。
+- **退出码**：`pending_count=0` => 0；`pending_count>0` => 1（证据照常
+  原子落盘，如实记录治理未归零，不伪装 pass）；输入/路径/结构/失败
+  批次/写入失败 => 2。`--json` 时 stdout 纯 JSON、提示走 stderr。
+- **隔离声明**：纯本地文件推导器——不连数据库、不读环境变量、不访问
+  网络、不执行任何迁移/治理/锚定/部署，无 `--yes` 执行形态；对报告与
+  批次文件零写入（字节保持不变）。
 
 ## 生产切换 preflight（M10-07）
 
@@ -542,6 +603,11 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   三项真实执行）；`--local-only` 导出（`execution_scope=local-only`、live 项
   `not_executed`、`all_green=false`）**只能作为本地过程证据，不能替代完整
   release-check / live 门禁，full 模式未执行不得记 pass**。
+  `legacy-papers` / `draft-ownership` 步的证据来源口径（M11-12）：来源命令
+  是 `governance-evidence --report <治理报告> --batch <成功批次>
+  [--batch ...] --output <artifacts>/legacy-papers.json|draft-ownership.json`
+  ——`pending_count` 由报告明细与成功批次确定性推导（见「治理证据推导
+  governance-evidence」节），不接受人工转抄计数。
 - **四态语义**：`pass` / `pending`（待人工决策或执行：治理计数 >0、锚定落后、
   WORM 未归档、恢复演练未 verified、post 预检有 pending）/ `blocked`（fail、
   malformed——结构不符/自声明 step 错位/计数自相矛盾/敏感键、tampered——审批

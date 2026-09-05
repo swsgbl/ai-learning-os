@@ -302,10 +302,14 @@ MANUAL_ENTRIES: dict[str, dict[str, str]] = {
     },
     "legacy-papers": {
         "source": "python -m app.ops.cli legacy-paper-report --db-url <生产URL> "
-        "复核 => 逐批 legacy-paper-migrate --yes（人工授权）=> 计数归零后"
-        "导出 pending_count 与分批记录",
-        "redaction": "只含 pending_count 与 batches[].executed 布尔；生产 "
-        "paper ID 明细留在 artifacts 报告，不入证据文件",
+        "--output <artifacts路径> 复核 => 逐批 legacy-paper-migrate --yes"
+        "（人工授权，stdout plan JSON 重定向保存到 artifacts）=> python -m "
+        "app.ops.cli governance-evidence --report <报告> --batch <批次>"
+        " [--batch ...] --output <artifacts>/legacy-papers.json（M11-12：报告"
+        "明细与成功批次确定性推导 pending_count，非人工转抄计数）",
+        "redaction": "只含 pending_count、batches[].executed（每项仅此一键）"
+        "与聚合计数 batches_executed——无逐批迁移路径、逐批解决计数或逐批"
+        "文件哈希；生产 paper ID 明细留在 artifacts 报告，不入证据文件",
         "semantics": "pending_count=0 => pass；pending_count>0 => pending"
         "（待人工决策/分批执行至归零）；无文件 => not_executed；结构不符/"
         "敏感键 => blocked",
@@ -313,10 +317,14 @@ MANUAL_ENTRIES: dict[str, dict[str, str]] = {
     },
     "draft-ownership": {
         "source": "python -m app.ops.cli draft-owner-report --db-url <生产URL> "
-        "复核 => 逐批 draft-owner-migrate --yes（人工授权）=> 两类草稿计数"
-        "归零后导出",
-        "redaction": "只含 pending_count 与 batches[].executed 布尔；生产 "
-        "draft ID 明细留在 artifacts 报告，不入证据文件",
+        "--output <artifacts路径> 复核 => 逐批 draft-owner-migrate --yes"
+        "（人工授权，stdout plan JSON 重定向保存到 artifacts）=> python -m "
+        "app.ops.cli governance-evidence --report <报告> --batch <批次>"
+        " [--batch ...] --output <artifacts>/draft-ownership.json（M11-12："
+        "两类草稿按 kind 独立推导，非人工转抄计数）",
+        "redaction": "只含 pending_count、batches[].executed（每项仅此一键）"
+        "与聚合计数 batches_executed——无逐批迁移路径、逐批解决计数或逐批"
+        "文件哈希；生产 draft ID 明细留在 artifacts 报告，不入证据文件",
         "semantics": "pending_count=0 => pass；pending_count>0 => pending；"
         "无文件 => not_executed；结构不符/敏感键 => blocked",
         "authorization": _COMMON_AUTHORIZATION,

@@ -1076,6 +1076,77 @@ def _run_cutover_evidence_pack(args) -> int:
     return 0
 
 
+def _run_governance_evidence(args) -> int:
+    """python -m app.ops.cli governance-evidence --report <报告JSON>
+    --batch <批次JSON> [--batch ...] --output <artifacts路径> [--json]
+
+    M11-12 治理证据推导器：从 artifacts/temp 内的 legacy-paper-report /
+    draft-owner-report 完整 JSON 与一或多个成功 migrate 批次 JSON 确定性
+    推导 pending_count（报告明细 ID 集合 - 成功批次 eligible ID 并集，
+    非转抄报告计数），原子生成 cutover-rehearsal / release-readiness 可
+    直接消费且不含业务 ID/敏感值的 legacy-papers.json / draft-ownership.json。
+    纯本地文件推导：不连数据库、不读环境变量、不访问网络、不执行任何
+    迁移/治理/锚定/部署（无 --yes 执行形态）；报告与批次文件零写入。
+
+    护栏先于推导（exit 2、不写输出、输入字节不变）：报告/批次/输出都必须
+    位于 gitignore 的 artifacts/temp 且为常规文件、任何已存在路径组件是
+    symlink 即拒绝；**输出 resolved 路径不得等于报告或任何批次的 resolved
+    路径**（normcase 归一比较，Windows 大小写/分隔符形态不构成绕过）；
+    同一批次文件不得重复传入（含等价路径规范化后的重复——虚增成功批次
+    数）；报告结构自洽（summary.total == 明细条数、ID 唯一）；每个批次
+    必须是成功执行形态（executed=true 且 dry_run 显式 false 且
+    exit_code=0 且无 failure/invalid 且 audit_action 与迁移路径/kind 精确
+    匹配——dry-run（含 dry_run=true 而 executed=true 的畸形形态）、审计
+    动作错配或任何失败批次 fail-closed 拒绝，绝不从不完整执行历史推导
+    计数）；批次类型与报告类型匹配；输出文件名恰为对应步的精确证据文件名。
+    输出契约最小化：batches 每项仅 {"executed": true}，成功批次数量只以
+    聚合计数 batches_executed 表达——无逐批路径/逐批解决计数/逐批哈希。
+
+    退出码：pending_count=0 => 0 / pending_count>0 => 1（证据照常原子落盘，
+    如实记录治理未归零）/ 输入或路径或写入失败 => 2。
+    """
+    import json as _json
+
+    from app.ops.governance_evidence import (
+        GovernanceInputError,
+        build_governance_evidence,
+        format_governance_summary,
+    )
+
+    try:
+        evidence, exit_code = build_governance_evidence(
+            args.report, args.batch or [], args.output
+        )
+    except GovernanceInputError as cause:
+        print(f"拒绝执行（输入或路径问题，未写输出）: {cause}")
+        return 2
+    try:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        _write_report_atomic(
+            output_path,
+            _json.dumps(evidence, ensure_ascii=False, indent=2),
+        )
+    except OSError as cause:
+        # 目录无法创建/权限不足/磁盘满/replace 失败：证据未落盘或旧文件原样
+        # 保留（原子写不产生 partial），不得再打印推导结论（防被误读）。
+        print(
+            f"证据写入失败（路径/权限/磁盘问题，未产生证据文件）: "
+            f"{type(cause).__name__}: {cause}"
+        )
+        return 2
+    # --json 模式下提示走 stderr，stdout 保持纯 JSON（可管道给 jq）
+    print(
+        f"证据已写入: {args.output}",
+        file=sys.stderr if args.as_json else sys.stdout,
+    )
+    if args.as_json:
+        print(_json.dumps(evidence, ensure_ascii=False, indent=2))
+    else:
+        print(format_governance_summary(evidence))
+    return exit_code
+
+
 def _run_release_candidate(args) -> int:
     """python -m app.ops.cli release-candidate manifest --output-dir DIR ...
     python -m app.ops.cli release-candidate verify --package-dir DIR
@@ -1578,6 +1649,51 @@ def main() -> None:
             "原子落盘：临时文件 + rename，失败保留旧报告、symlink 拒绝；默认不落盘）"
         ),
     )
+    p_ge = sub.add_parser(
+        "governance-evidence",
+        help=(
+            "治理证据推导器（M11-12；报告 + 成功批次 -> pending_count 推导 + "
+            "脱敏证据落盘 legacy-papers.json / draft-ownership.json；纯本地文件"
+            "推导，不连 DB/网络、不执行迁移；归零=0 / 未归零=1 / 输入或路径"
+            "问题=2）"
+        ),
+    )
+    p_ge.add_argument(
+        "--report",
+        required=True,
+        help=(
+            "治理报告 JSON 路径（legacy-paper-report 或 draft-owner-report 的"
+            "完整 --output/--json 输出；必须位于 gitignore 的 artifacts/temp，"
+            "含生产 ID——本工具只从中推导计数，明细不进证据）"
+        ),
+    )
+    p_ge.add_argument(
+        "--batch",
+        action="append",
+        required=True,
+        metavar="PATH",
+        help=(
+            "成功 migrate 批次 JSON 路径（legacy-paper-migrate / "
+            "draft-owner-migrate 的 plan 输出；可重复提供多批；必须位于 "
+            "gitignore 的 artifacts/temp；dry-run 或任何失败批次 fail-closed "
+            "拒绝推导）"
+        ),
+    )
+    p_ge.add_argument(
+        "--output",
+        required=True,
+        help=(
+            "证据输出路径（必须位于 gitignore 的 artifacts/temp，文件名恰为 "
+            "legacy-papers.json 或 draft-ownership.json 且与报告类型对应；"
+            "原子落盘：临时文件 + rename，失败保留旧文件、symlink 拒绝）"
+        ),
+    )
+    p_ge.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="stdout 输出纯 JSON 证据（提示走 stderr；契约兼容 cutover-rehearsal）",
+    )
     p_ep = sub.add_parser(
         "cutover-evidence-pack",
         help=(
@@ -1731,6 +1847,8 @@ def main() -> None:
         raise SystemExit(_run_release_readiness(args))
     if args.command == "cutover-rehearsal":
         raise SystemExit(_run_cutover_rehearsal(args))
+    if args.command == "governance-evidence":
+        raise SystemExit(_run_governance_evidence(args))
     if args.command == "cutover-evidence-pack":
         raise SystemExit(_run_cutover_evidence_pack(args))
     if args.command == "release-candidate":

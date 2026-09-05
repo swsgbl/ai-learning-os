@@ -251,7 +251,8 @@ STEPS: tuple[StepSpec, ...] = (
         "legacy-papers.json",
         "历史无归属非 seed 卷必须在切换窗口前人工决策并分批执行完毕"
         "（计数归零）",
-        "legacy-paper-report 复核后逐批人工决策/执行至计数归零，再导出",
+        "legacy-paper-report 复核后逐批人工决策/执行至计数归零，再以 "
+        "governance-evidence 从报告与成功批次推导导出（M11-12）",
     ),
     StepSpec(
         "draft-ownership",
@@ -259,7 +260,8 @@ STEPS: tuple[StepSpec, ...] = (
         "pre-window",
         "draft-ownership.json",
         "两类历史草稿必须在切换窗口前人工决策并执行完毕（计数归零）",
-        "draft-owner-report 复核后逐批人工决策/执行至计数归零，再导出",
+        "draft-owner-report 复核后逐批人工决策/执行至计数归零，再以 "
+        "governance-evidence 从报告与成功批次推导导出（M11-12）",
     ),
     StepSpec(
         "preflight-pre-migration",
