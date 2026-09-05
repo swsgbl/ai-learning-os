@@ -18,6 +18,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 - **修复的关键缺陷**：SubmitDialog 入场由 autoAlpha 改 opacity（visibility:hidden 会把聚焦的 h2 焦点丢回 body）；语音跟读输入框 flex-1 与 h-11 在 flex-col 下高度塌陷（326x17px 触控目标）→ `w-full sm:flex-1`；Button/Progress 语义补全（role=progressbar + aria-valuenow）。
 - **验证**：`npm install`（两包精确锁定）/`typecheck`/`lint`/`build` 全绿（First Load JS 156-162kB）；真实浏览器 Playwright 套件 **186/186 通过**——1440x900 / 820x1180 / 390x844 / 360x800 四档视口 × 全部核心路由（内容渲染、路由切换、控制台零错误、零横向溢出、触控目标 >=44px、键盘焦点环、reduced-motion 全功能 + 无 opacity:0 卡死）、考场全流程（进入试卷→作答→交卷确认→提交→审阅，桌面/390/360 三档）、治理（admin 五 tab + 方向键切换 + 审计展开 + 移动端）、语音；隔离环境 = 本地 API 8001（SQLite 临时库 + 一次性 AUTH_SECRET）+ web dev 3001，账号仅存于隔离库；22 张截图 + results.json 存证 `docs/evidence/m11-01/`。API 未改动，API 测试未重跑（按任务边界）。
 - **安全边界**：真实生产 DB 零连接零执行；未读取/输出任何 key/token/password（验证用 secret 为本地临时文件生成、chmod 600、命令替换传递未打印）；未打 git 标签、未发 GitHub Release、未推镜像 registry、未做生产部署。
+- **PR#20 审查修复（Codex 独立审查两个交互缺口）**：① 匿名 header「登录」链接 `min-h-9`（36px）移动端触控不足 → `min-h-11 md:min-h-9`（移动 44px / 桌面紧凑保持 36px）；② SubmitDialog 补齐焦点圈定与滚动锁定——Tab/Shift+Tab 循环限制在对话框内（首/尾环绕 + tabIndex=-1 标题与焦点逃逸边界处理，capture 阶段拦截）、打开期间锁定 body 滚动（overflow 传播到视口 + 滚动条宽度补偿）并在卸载时恢复、提交中 `aria-busy` + 双按钮禁用时焦点回落标题（防禁用丢焦到 body）、监听仅挂载一次不随 onCancel/submitting 变化重挂；提交 API 与考试语义零改动。验证：`typecheck`/`lint`/`build` 全绿；Playwright 全量重跑 **250/250 通过**（新增 `anonymous-header` 6 项 + `dialog-a11y` 三视口 58 项：Tab 循环/边界环绕/滚动锁定与恢复/提交中焦点安全，短视口 390×568 下背景 scrollY=85 滚轮不动的真实锁定证据），results.json + 6 张新截图存证 `docs/evidence/m11-01/`。
 
 ## 前一任务（M10-17 本地 Release Candidate 包构建，PR #19 已合并）
 

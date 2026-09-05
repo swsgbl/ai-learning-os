@@ -1,7 +1,7 @@
 {
   "summary": {
-    "total": 186,
-    "passed": 186,
+    "total": 250,
+    "passed": 250,
     "failed": 0
   },
   "results": [
@@ -655,19 +655,19 @@
     },
     {
       "group": "keyboard",
-      "name": "tab-4-focus-ring(skip-dev-overlay)",
+      "name": "tab-4-focus-ring(语音陪练)",
       "pass": true,
       "detail": ""
     },
     {
       "group": "keyboard",
-      "name": "tab-6-focus-ring(砚席AI Learning OS)",
+      "name": "tab-5-focus-ring(考场)",
       "pass": true,
       "detail": ""
     },
     {
       "group": "keyboard",
-      "name": "tab-7-focus-ring(首页)",
+      "name": "tab-6-focus-ring(skip-dev-overlay)",
       "pass": true,
       "detail": ""
     },
@@ -681,7 +681,7 @@
       "group": "keyboard",
       "name": "library-search-filter-updates-count",
       "pass": true,
-      "detail": "1 / 2 份"
+      "detail": "2 / 3 份"
     },
     {
       "group": "keyboard",
@@ -690,6 +690,42 @@
       "detail": "overflowX=0px"
     },
     {
+      "group": "anonymous-header",
+      "name": "mobile-390-login-link-present",
+      "pass": true,
+      "detail": "68x44 \"登录\""
+    },
+    {
+      "group": "anonymous-header",
+      "name": "mobile-390-login-touch-target",
+      "pass": true,
+      "detail": "68x44"
+    },
+    {
+      "group": "anonymous-header",
+      "name": "mobile-360-login-link-present",
+      "pass": true,
+      "detail": "68x44 \"登录\""
+    },
+    {
+      "group": "anonymous-header",
+      "name": "mobile-360-login-touch-target",
+      "pass": true,
+      "detail": "68x44"
+    },
+    {
+      "group": "anonymous-header",
+      "name": "desktop-1440-login-link-present",
+      "pass": true,
+      "detail": "68x36 \"登录\""
+    },
+    {
+      "group": "anonymous-header",
+      "name": "desktop-1440-login-desktop-compact",
+      "pass": true,
+      "detail": "68x36"
+    },
+    {
       "group": "exam-flow-desktop",
       "name": "enter-exam",
       "pass": true,
@@ -877,6 +913,354 @@
     },
     {
       "group": "exam-flow-mobile-360",
+      "name": "console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "dialog-opens",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "focus-on-heading",
+      "pass": true,
+      "detail": "H2 \"提交试卷？\""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "focus-inside-dialog",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "body-scroll-locked",
+      "pass": true,
+      "detail": "overflow=hidden"
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "wheel-does-not-scroll-background",
+      "pass": true,
+      "detail": "scrollY 0 -> 0 (page not scrollable at this viewport)"
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "tab-heading-to-first-button",
+      "pass": true,
+      "detail": "BUTTON \"再看看\""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "tab-first-to-last-button",
+      "pass": true,
+      "detail": "BUTTON \"提交审阅\""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "tab-wraps-to-first-button",
+      "pass": true,
+      "detail": "BUTTON \"再看看\""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "shift-tab-wraps-to-last-button",
+      "pass": true,
+      "detail": "BUTTON \"提交审阅\""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "dialog-closes",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "body-scroll-restored",
+      "pass": true,
+      "detail": "overflow=visible"
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "focus-returned-to-trigger",
+      "pass": true,
+      "detail": "BUTTON \"交卷\""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "submitting-aria-busy",
+      "pass": true,
+      "detail": "aria-busy=true"
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "submitting-buttons-disabled",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "submitting-focus-in-dialog",
+      "pass": true,
+      "detail": "H2"
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "submitting-tab-stays-in-dialog",
+      "pass": true,
+      "detail": "H2 \"提交试卷？\""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "submitting-scroll-still-locked",
+      "pass": true,
+      "detail": "overflow=hidden"
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "navigated-to-review-after-submit",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "dialog-opens",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "focus-on-heading",
+      "pass": true,
+      "detail": "H2 \"提交试卷？\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "focus-inside-dialog",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "body-scroll-locked",
+      "pass": true,
+      "detail": "overflow=hidden"
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "wheel-does-not-scroll-background",
+      "pass": true,
+      "detail": "scrollY 0 -> 0 (page not scrollable at this viewport)"
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "tab-heading-to-first-button",
+      "pass": true,
+      "detail": "BUTTON \"再看看\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "tab-first-to-last-button",
+      "pass": true,
+      "detail": "BUTTON \"提交审阅\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "tab-wraps-to-first-button",
+      "pass": true,
+      "detail": "BUTTON \"再看看\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "shift-tab-wraps-to-last-button",
+      "pass": true,
+      "detail": "BUTTON \"提交审阅\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "dialog-closes",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "body-scroll-restored",
+      "pass": true,
+      "detail": "overflow=visible"
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "focus-returned-to-trigger",
+      "pass": true,
+      "detail": "BUTTON \"交卷\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "submitting-aria-busy",
+      "pass": true,
+      "detail": "aria-busy=true"
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "submitting-buttons-disabled",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "submitting-focus-in-dialog",
+      "pass": true,
+      "detail": "H2"
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "submitting-tab-stays-in-dialog",
+      "pass": true,
+      "detail": "H2 \"提交试卷？\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "submitting-scroll-still-locked",
+      "pass": true,
+      "detail": "overflow=hidden"
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "navigated-to-review-after-submit",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "dialog-opens",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "focus-on-heading",
+      "pass": true,
+      "detail": "H2 \"提交试卷？\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "focus-inside-dialog",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "body-scroll-locked",
+      "pass": true,
+      "detail": "overflow=hidden"
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "page-scrolled-before-lock",
+      "pass": true,
+      "detail": "scrollY=85"
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "wheel-does-not-scroll-background",
+      "pass": true,
+      "detail": "scrollY 85 -> 85"
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "tab-heading-to-first-button",
+      "pass": true,
+      "detail": "BUTTON \"再看看\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "tab-first-to-last-button",
+      "pass": true,
+      "detail": "BUTTON \"提交审阅\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "tab-wraps-to-first-button",
+      "pass": true,
+      "detail": "BUTTON \"再看看\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "shift-tab-wraps-to-last-button",
+      "pass": true,
+      "detail": "BUTTON \"提交审阅\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "dialog-closes",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "body-scroll-restored",
+      "pass": true,
+      "detail": "overflow=visible"
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "focus-returned-to-trigger",
+      "pass": true,
+      "detail": "BUTTON \"交卷\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "submitting-aria-busy",
+      "pass": true,
+      "detail": "aria-busy=true"
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "submitting-buttons-disabled",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "submitting-focus-in-dialog",
+      "pass": true,
+      "detail": "H2"
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "submitting-tab-stays-in-dialog",
+      "pass": true,
+      "detail": "H2 \"提交试卷？\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "submitting-scroll-still-locked",
+      "pass": true,
+      "detail": "overflow=hidden"
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "navigated-to-review-after-submit",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
       "name": "console-clean",
       "pass": true,
       "detail": ""
