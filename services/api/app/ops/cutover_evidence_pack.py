@@ -259,13 +259,16 @@ MANUAL_ENTRIES: dict[str, dict[str, str]] = {
         "authorization": _COMMON_AUTHORIZATION,
     },
     "release-check": {
-        "source": "python -m app.ops.cli release-check --local-only"
-        "（九字面 lint/typecheck/test/build/E2E/migration/backup/voice/"
-        "license 全绿后导出汇总）",
+        "source": "python -m app.ops.cli release-check --output <artifacts路径>"
+        "（--api-base 提供运行中服务时含 live 三项；九字面 lint/typecheck/"
+        "test/build/E2E/migration/backup/voice/license 全绿后导出汇总）。"
+        "--local-only 导出只能作本地过程证据（execution_scope=local-only、"
+        "live 项 not_executed、all_green=false），不能替代完整门禁/live 检查",
         "redaction": "all_green/total/passed/failed_ids 四项；failed_ids 是 "
         "release-check 检查项 id（非生产业务 ID），不含任何密钥",
         "semantics": "all_green=true 且 passed=total、failed_ids 为空 => pass；"
-        "未全绿 => blocked；无文件 => not_executed；计数自相矛盾/敏感键 => blocked",
+        "未全绿（含 local-only：all_green=false、live 项 not_executed）=> "
+        "blocked；无文件 => not_executed；计数自相矛盾/敏感键 => blocked",
         "authorization": "本地命令无生产副作用；结论进入证据前由发布负责人复核",
     },
     "search-smoke": {

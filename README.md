@@ -113,6 +113,32 @@ docker tag aios/web:local aios/web:v0.1.0
 AIOS_IMAGE_TAG=v0.1.0 docker compose -f infra/docker-compose.yml up -d --no-build
 ```
 
+## 发布门禁 release-check（M7-05 / M11-03）
+
+发布前九字面门禁的可执行汇总清单（lint / typecheck / test / build / E2E /
+migration / backup / voice / license），命令与 CI 同构：
+
+```bash
+cd services/api
+python -m app.ops.cli release-check --api-base http://127.0.0.1:8000   # 完整门禁（含 live 三项）
+python -m app.ops.cli release-check --local-only                       # 只跑本地七项（不依赖运行中服务）
+# M11-03 机器可读证据导出（可同用）：
+python -m app.ops.cli release-check --local-only --json                # stdout 输出纯 JSON（可管道给 jq）
+python -m app.ops.cli release-check --local-only --output artifacts/release-check.json
+```
+
+JSON 证据契约兼容 release-readiness / cutover-rehearsal（同时含 `gate` 与
+`step` 自声明、`all_green` / `total` / `passed` / `failed_ids` /
+`not_executed_ids` / `execution_scope` / `checks`），可直接作为
+`release-check.json` 证据文件。诚实语义：`--local-only` 下 e2e/voice/license
+三项如实 `not_executed`、`all_green=false`、`total` 覆盖本地 7 + live 3、
+`passed` 只统计真实 pass——**local-only 证据只能作为本地过程证据，不能替代
+完整 release-check / live 门禁；full 模式未执行不得记 pass**。CLI 退出码按
+已执行门禁判定（local-only 本地七项全过=0），导出的证据不因此伪装全绿。
+`--output` 只允许 gitignore 的 `artifacts/`、`temp/` 目录（其他路径 exit 2
+且不执行门禁），原子落盘（同目录临时文件 + rename，失败保留旧报告、symlink
+拒绝、无 `.tmp` 残留，写入失败 exit 2 且不打印门禁结论）。
+
 ## 本地 Release Candidate 包（M10-17）
 
 在干净 worktree 上打一个**本地** RC 包（镜像归档 + manifest + 校验和），一条命令：

@@ -368,6 +368,42 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
    说明初始锚定/归档未完成，按锚定 runbook 补齐后再复跑；任何 `fail`
    保持停机排查，不带病恢复。
 
+## 发布门禁 release-check 汇总与 JSON 证据（M7-05 / M11-03）
+
+- **CLI**：`python -m app.ops.cli release-check [--api-base URL] [--db-url URL]
+  [--local-only] [--json] [--output PATH]`，实现文件
+  `services/api/app/ops/release_check.py`。九字面门禁：本地七项命令
+  （api-lint/web-lint/web-typecheck/web-build/api-test/migration/backup，
+  命令与 CI 同构，900s 超时，`--db-url` 过 `app.db.test_gate` 门控后才注入
+  api-test 的 `AIOS_PG_TEST_URL`）+ live 三项（e2e/voice/license，对
+  `--api-base` 运行中服务执行；服务未运行如实 fail 不虚报）。
+- **M11-03 JSON 证据导出**：`--json` 向 stdout 输出纯 JSON（可管道给 jq；
+  `--output` 同用时「报告已写入」提示走 stderr），`--output` 原子写入 JSON
+  文件，两者可同用互不替代。证据同时自声明 `gate`（release-readiness 消费）
+  与 `step`（cutover-rehearsal 消费），白名单提取面
+  `all_green`/`total`/`passed`/`failed_ids` 与两侧评估器一致，另有
+  `not_executed_ids`/`execution_scope`（full|local-only）/`checks`（id/title/
+  kind/status/detail）扩展字段，计数自洽（passed + failed + not_executed ==
+  total；all_green=true 仅当全部项真实 pass）——可直接作为 readiness /
+  rehearsal 的 `release-check.json` 证据文件。detail 过 `redact_secrets`
+  抹 `://user:pass@` 形态凭据；字段名不含敏感键模式。
+- **诚实语义（local-only 不冒充全绿）**：`--local-only` 下 e2e/voice/license
+  三项如实 `not_executed`、`all_green=false`、`total` 覆盖本地 7 + live 3、
+  `passed` 只统计真实 pass；`failed_ids` 只放真实 fail，未执行项进
+  `not_executed_ids`。**local-only 证据只能作为本地过程证据，不能替代完整
+  release-check / live 门禁；full 模式未执行不得记 pass**（cutover evidence
+  手册的 release-check 步来源命令已同步该口径）。CLI 退出码与证据分工：
+  退出码按已执行门禁判定（local-only 本地七项全过=exit 0，语义不倒退），
+  导出的证据不因此伪装全绿——完整门禁 `all_green` 需要 full 模式 10 项
+  全部真实 pass。
+- **`--output` 路径与原子写**：只允许 gitignore 的 `artifacts/`、`temp/`
+  目录（复用 `is_safe_artifact_path`；普通路径/越界/symlink 一律拒绝），
+  拒绝时 exit 2 且**不执行任何门禁**（护栏先于执行）；落盘复用 CLI 共享的
+  `_write_report_atomic`（同目录临时文件写满 + fsync + `os.replace`），
+  写入失败稳定 exit 2、无 traceback、旧报告字节原样保留、无 `.tmp` 残留，
+  且不再打印门禁结论摘要（防半途报告被误读为完整结论）。九项门禁的命令、
+  超时、环境隔离与 live 检查逻辑零改动。
+
 ## 发布准备 readiness manifest（M10-11）
 
 - **CLI**：`python -m app.ops.cli release-readiness --evidence-dir <path>
@@ -412,6 +448,11 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   `cloud-voice-smoke`、`llm-smoke`、`legacy-papers`、`draft-ownership`、
   `preflight-pre-migration`、`backup-restore`、`preflight-post-migration`、
   `audit-chain-verify`、`audit-chain-anchor`、`cutover-approval`。
+  `release-check` 步的证据来源口径（M11-03 修正）：来源命令是
+  `release-check --output <artifacts路径>`（`--api-base` 提供运行中服务，live
+  三项真实执行）；`--local-only` 导出（`execution_scope=local-only`、live 项
+  `not_executed`、`all_green=false`）**只能作为本地过程证据，不能替代完整
+  release-check / live 门禁，full 模式未执行不得记 pass**。
 - **四态语义**：`pass` / `pending`（待人工决策或执行：治理计数 >0、锚定落后、
   WORM 未归档、恢复演练未 verified、post 预检有 pending）/ `blocked`（fail、
   malformed——结构不符/自声明 step 错位/计数自相矛盾/敏感键、tampered——审批

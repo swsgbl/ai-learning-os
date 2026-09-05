@@ -408,18 +408,46 @@ def updated_id_of(record):
 
 def _run_release_check(args) -> int:
     """python -m app.ops.cli release-check [--api-base URL] [--db-url URL]
+    [--local-only] [--json] [--output PATH]
 
     本地七项命令门禁默认全跑；--api-base 提供时 live 三项对运行中服务
     执行（E2E walkthrough/voice/license）。任一 fail 退出码 1。
+
+    M11-03 机器可读证据导出：--json 向 stdout 输出纯 JSON（可管道给 jq；
+    --output 同用时「报告已写入」提示走 stderr，不污染 JSON 流），
+    --output 原子写入 JSON 文件（两者可同用，互不替代）。证据契约兼容
+    release-readiness（gate 字段）/ cutover-rehearsal（step 字段）：
+    all_green/total/passed/failed_ids/not_executed_ids/execution_scope/
+    checks，计数自洽。--local-only 下 live 三项如实 not_executed、
+    all_green=false、total 覆盖本地 7 + live 3、passed 只计真实 pass——
+    缺席不冒充 pass；failed_ids 只放真实 fail。退出码与证据分工：退出码
+    仍按已执行门禁判定（local-only 本地全过=0，不倒退），导出的证据不
+    因此伪装全绿（完整门禁 all_green 需 full 模式 10 项全 pass）。
+
+    --output 只允许 gitignore 的 artifacts/temp 目录（复用
+    is_safe_artifact_path，越界/普通路径 exit 2 且不执行门禁）；原子
+    落盘：同目录临时文件 + fsync + os.replace，symlink 拒绝；写入失败
+    exit 2、无 traceback、旧报告字节原样保留、无 .tmp 残留，且不再打印
+    门禁结论（防半途报告被误读为完整结论）。九项门禁的命令/超时/环境
+    隔离/live 检查逻辑零改动。
     """
+    import json as _json
+
     import httpx
 
+    from app.ops.legacy_papers import is_safe_artifact_path
     from app.ops.release_check import (
+        build_release_check_evidence,
         build_release_checks,
         run_release_check,
         summarize,
     )
 
+    if args.output and not is_safe_artifact_path(args.output):
+        print(
+            f"拒绝写入 {args.output}：报告只能写入 gitignore 的 artifacts/ 或 temp/ 目录"
+        )
+        return 2
     cmd_checks, live_checks = build_release_checks(db_url=args.db_url)
     client = None
     if args.api_base and not args.local_only:
@@ -431,7 +459,37 @@ def _run_release_check(args) -> int:
             cmd_checks, None if args.local_only else live_checks, client=client
         )
         all_green, report = summarize(results)
-    print(report)
+        evidence = build_release_check_evidence(
+            results,
+            skipped_live_checks=live_checks if args.local_only else (),
+            execution_scope="local-only" if args.local_only else "full",
+        )
+    if args.output:
+        try:
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            _write_report_atomic(
+                output_path,
+                _json.dumps(evidence, ensure_ascii=False, indent=2),
+            )
+        except OSError as cause:
+            # 目录无法创建/权限不足/磁盘满/replace 失败：证据未落盘或旧
+            # 报告原样保留（原子写不产生 partial），不得再打印门禁结论
+            # 摘要（避免被误读为完整报告）。
+            print(
+                f"报告写入失败（路径/权限/磁盘问题，未产生报告文件）: "
+                f"{type(cause).__name__}: {cause}"
+            )
+            return 2
+        # --json 模式下提示走 stderr，stdout 保持纯 JSON（可管道给 jq）
+        print(
+            f"报告已写入: {args.output}",
+            file=sys.stderr if args.as_json else sys.stdout,
+        )
+    if args.as_json:
+        print(_json.dumps(evidence, ensure_ascii=False, indent=2))
+    else:
+        print(report)
     return 0 if all_green else 1
 
 
@@ -1064,6 +1122,25 @@ def main() -> None:
     p_rc.add_argument("--api-base", default="http://127.0.0.1:8000")
     p_rc.add_argument("--db-url", default=None)
     p_rc.add_argument("--local-only", action="store_true", help="跳过 live 项（不依赖运行中服务）")
+    p_rc.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help=(
+            "输出机器可读 JSON 证据（契约兼容 release-readiness/"
+            "cutover-rehearsal；local-only 下 live 项如实 not_executed、"
+            "all_green=false，不冒充全绿）"
+        ),
+    )
+    p_rc.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "写 JSON 证据到文件（必须位于 gitignore 的 artifacts/temp 目录；"
+            "原子落盘：临时文件 + rename，失败保留旧报告、symlink 拒绝；"
+            "可与 --json 同用）"
+        ),
+    )
     p_v = sub.add_parser("version", help="版本 + git + alembic 状态")
     p_v.add_argument("--json", dest="as_json", action="store_true")
     p_di = sub.add_parser("data-inventory", help="生产数据与风险只读盘点")
