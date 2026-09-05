@@ -1,0 +1,129 @@
+{
+  "milestone": "M11-02",
+  "title": "Production readiness evidence: RC pipeline, read-only baseline, cutover rehearsal",
+  "date": "2026-09-05",
+  "branch": "feature/m11-02-production-evidence",
+  "collection": {
+    "github_actions": "read-only metadata queries (runs, jobs, artifacts)",
+    "read_only_baseline": "HTTP/DB read-only collection against the local production-approximation stack",
+    "boundaries": [
+      "zero production writes throughout",
+      "no migration, governance, audit-chain anchoring, or deployment executed",
+      "no secret values read or output"
+    ]
+  },
+  "production_ready": false,
+  "collection_scope": {
+    "github_actions": "read-only queries of GitHub Actions run records",
+    "read_only_baseline": "HTTP/DB read-only baseline collection against the local production-approximation stack",
+    "zero_production_writes": true,
+    "not_executed": ["migration", "governance", "audit-chain anchoring", "deployment"],
+    "secrets_read_or_output": false
+  },
+  "release_candidate": {
+    "initial_failure": {
+      "run_id": 33938835814,
+      "commit": "c6ba0d3f46ef44375331ed80a485367eb0a9c62e",
+      "reason": "compose project name contained a dot: aios-rc-v0.1.0"
+    },
+    "fix": {
+      "commit": "794a76a8723bd75e688cd00cfefe3a7a782e044a",
+      "mapping": "v0.1.0 -> aios-rc-v0-1-0"
+    },
+    "branch_run": {
+      "run_id": 33939403335,
+      "all_steps_success": true,
+      "artifact": {
+        "name": "release-candidate-v0.1.0",
+        "size_bytes": 189052548,
+        "sha256": "ff8ba4272a9eba2c105fcdd1fbc53c085d01b6d28c526d1998fc0e3508480f10",
+        "expires": "2026-09-19"
+      }
+    },
+    "main_ci": {
+      "run_id": 33940183843,
+      "commit": "001ea26b8eef308739e30f096a623582ded31771",
+      "jobs": { "web": "success", "api": "success", "docker": "success" }
+    },
+    "main_run": {
+      "run_id": 33940204511,
+      "commit": "001ea26b8eef308739e30f096a623582ded31771",
+      "all_steps_success": true,
+      "artifact": {
+        "name": "release-candidate-v0.1.0",
+        "size_bytes": 189054719,
+        "sha256": "5c228fd705c5641e181ddd87f2e8cbe43c23bc32cf229cd21e238ce45b191db9",
+        "expires": "2026-09-19"
+      }
+    }
+  },
+  "read_only_baseline": {
+    "legacy_papers": {
+      "total": 792,
+      "referenced": 790,
+      "unreferenced": 2,
+      "total_questions": 1487,
+      "triage": { "keep_public": 790, "assign_owner": 2, "export_review": 0 }
+    },
+    "draft_ownership": {
+      "total": 6,
+      "by_source": { "course-generation": 3, "variant-question": 3 }
+    },
+    "preflight_pre_migration": { "pass": 1, "pending": 4, "fail": 0 },
+    "audit_chain": {
+      "valid": false,
+      "entries": 0,
+      "audit_rows": 0,
+      "issue": "audit_chain_entries and audit_chain_state tables missing (migration 0027 not executed)"
+    }
+  },
+  "provider_smoke": {
+    "search": {
+      "status": "not_executed",
+      "missing_config": ["SEARCH_CLOUD_ENDPOINT"]
+    },
+    "llm": {
+      "status": "not_executed",
+      "missing_config": ["LLM_ENDPOINT", "LLM_MODEL"],
+      "notes": "LLM_API_KEY present on host with unknown origin; must not be used"
+    },
+    "cloud_voice": {
+      "status": "not_executed",
+      "missing_config": ["ASR/TTS six config slots", "ASR_SMOKE_AUDIO"],
+      "notes": "no real WAV audio available"
+    }
+  },
+  "cutover_rehearsal": {
+    "rehearsal_ready": false,
+    "pass": ["ci-main", "preflight-pre-migration"],
+    "pending": ["legacy-papers", "draft-ownership"],
+    "blocked": ["audit-chain-verify"],
+    "not_executed": [
+      "release-check",
+      "search-smoke",
+      "cloud-voice-smoke",
+      "llm-smoke",
+      "backup-restore",
+      "preflight-post-migration",
+      "audit-chain-anchor",
+      "cutover-approval"
+    ]
+  },
+  "release_check_note": {
+    "status": "not_executed",
+    "reason": "release-check --local-only was truncated by tool timeout with no valid output; remains not_executed and must not be recorded as pass"
+  },
+  "conclusion": {
+    "production_ready": false,
+    "rc_success_does_not_imply_production_ready": true,
+    "not_performed": [
+      "production migration",
+      "governance",
+      "audit chain anchoring",
+      "deployment",
+      "git tag",
+      "release publication",
+      "image push"
+    ]
+  }
+}

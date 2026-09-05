@@ -9,7 +9,18 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-**M11-01 全站 GSAP 体验重设计已提交待审**（feature/m11-01-gsap-experience-redesign，基于 main `d20b544` 创建分支；仅改 `apps/web`，API 路由/请求语义/考试权威边界/判分归属零改动）：
+**M11-02 生产硬化切片 1 与生产证据文档已提交待审**（分支 `feature/m11-02-production-evidence`，基于 main `001ea26` 创建；本切片仅改 `docs/evidence/m11-02/README.md`、`docs/evidence/m11-02/summary.json` 与本台账，工程零变更；本 PR 仅补录生产证据与台账，工程零变更）：
+
+- **切片 1（PR #21 已合并 main@001ea26）**：feature/m11-02-production-hardening 单提交 `794a76a8723bd75e688cd00cfefe3a7a782e044a`（fix(infra): derive dot-free compose project name in RC builder，M11-02 B-1）——main 首次 RC run **33938835814** 在 compose 冒烟启动即失败：`COMPOSE_PROJECT_NAME` 内嵌原始 tag（`aios-rc-v0.1.0`）而 docker compose 拒绝带点项目名（invalid project name；镜像真实构建已成功，失败严格发生在冒烟前）。修复以纯 bash 参数展开 `${TAG//./-}` 就地推导合法隔离项目名（`v0.1.0` → `aios-rc-v0-1-0`），镜像 tag 与归档名保持原样、清理语义不变（down --remove-orphans 永不带 -v）；回归测试 +8（源级：推导存在、裸 `aios-rc-${TAG}` 形态绝迹、镜像 tag 保留点；行为面：stub docker 记录每次 compose 的 COMPOSE_PROJECT_NAME，快乐路径与冒烟失败清理均断言全部 compose 调用处于合法无点项目名；映射非漂移：v0.1.0/v0.0.0/v1.0.0/v0.1.13/v10.20.30 参数化锁定 bash 语义 == 期望映射；**117 passed / 1 skipped**；红证：仅还原 export 行即 3 项红）。改动仅 `infra/build_release_candidate.sh` + `services/api/tests/test_release_candidate.py`；PR #21 常规 merge commit `001ea26b8eef308739e30f096a623582ded31771`。
+- **RC 链路证据（GitHub Actions 元数据只读查询）**：失败 RC **33938835814**（main 首次，`c6ba0d3`）→ 分支成功 RC **33939403335**（含修复，全部步骤成功）→ main CI **33940183843**（`001ea26`，Web/API/Docker 三 job 全绿）→ main RC **33940204511**（`001ea26`，全绿）。main 产物 `release-candidate-v0.1.0`：size **189054719** bytes / sha256 `5c228fd705c5641e181ddd87f2e8cbe43c23bc32cf229cd21e238ce45b191db9` / 过期 **2026-09-19**。
+- **只读基线（本机生产近似栈 HTTP/DB 只读采集）**：legacy papers total **792** / referenced **790** / unreferenced **2** / total_questions **1487**；draft 归属共 **6**（course-generation 3 / variant-question 3）；迁移前 preflight pass **1** / pending **4** / fail **0**；audit chain valid=**false** 且链表缺失（entries=0、audit_rows=0——`audit_chain_entries` 与 `audit_chain_state` 表缺失，迁移 0027 未执行）。
+- **Provider 冒烟**：search / llm / cloud voice 均 **not_executed** 及缺口——search 缺 `SEARCH_CLOUD_ENDPOINT`；llm 缺 `LLM_ENDPOINT` 与 `LLM_MODEL`（宿主存在来源不明的 `LLM_API_KEY`，不得使用）；cloud voice 缺 ASR/TTS 六个配置槽位与 `ASR_SMOKE_AUDIO` 且无真实 WAV 音频。`release-check --local-only` 曾被工具超时截断且无有效输出，保持 not_executed、不得记为 pass。
+- **切换演练**：rehearsal_ready=**false**（pass 2：ci-main、preflight-pre-migration；pending 2：legacy-papers、draft-ownership；blocked 1：audit-chain-verify；not_executed 8）。
+- **结论**：**production_ready=false**——RC 流水线成功不等于生产就绪。采集边界：GitHub Actions 元数据只读查询 + 本机生产近似栈 HTTP/DB 只读基线采集；全程零生产写入，未执行迁移/治理/锚定/部署，未读取或输出密钥值。证据见 `docs/evidence/m11-02/README.md` 与 `summary.json`。
+
+## 前一任务（M11-01 全站 GSAP 体验重设计，PR #20 已合并）
+
+**M11-01 全站 GSAP 体验重设计已完成并合并**（feature/m11-01-gsap-experience-redesign，基于 main `d20b544` 创建分支；PR #20 已合并入 main——常规 merge commit `c6ba0d3f46ef44375331ed80a485367eb0a9c62e`（父母 `d20b544` 与 `9fdcd7c195e9758926afb2f34a46f199215926d9`，非 squash/rebase/force push），分支最终 head `9fdcd7c195e9758926afb2f34a46f199215926d9`；仅改 `apps/web`，API 路由/请求语义/考试权威边界/判分归属零改动）：
 
 - **定位**：学习工作台（非营销站）的全站体验升级——引入 GSAP 动效体系 + 视觉从米黄升级为瓷白/墨色/深青/琥珀信号色，保持「砚席」克制可用的产品气质；明确不做 AI 紫渐变、装饰性循环动画、卡中卡。
 - **动效基座**：锁定 `gsap@3.15.0` + `@gsap/react@2.1.2`（精确版本）；`lib/gsap.ts` 唯一注册点（registerPlugin(useGSAP, Flip)，按需不引 ScrollTrigger——工作台无装饰性滚动需求，控制包体）+ `useMotion` 封装（gsap.matchMedia 双条件 reduce/no-preference + mm.revert 清理，useGSAP scope 隔离）；`lib/motion.ts` MOTION 令牌（时长/缓动/位移/staggerFor）避免过度抽象。全部动效在客户端叶子组件（页面组件保持服务端承担数据/路由职责），transform/opacity 优先，reduced-motion 全功能保留。
