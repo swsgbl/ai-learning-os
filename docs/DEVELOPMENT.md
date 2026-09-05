@@ -404,6 +404,43 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   且不再打印门禁结论摘要（防半途报告被误读为完整结论）。九项门禁的命令、
   超时、环境隔离与 live 检查逻辑零改动。
 
+## 隔离本地 full release-check 一键编排（M11-10）
+
+- **CLI**：`python -m app.ops.cli release-check-isolated [--workdir DIR]
+  [--output PATH] [--health-timeout SECONDS] [--json]`（从 `services/api`
+  目录、repo venv 执行），实现文件
+  `services/api/app/ops/release_check_isolated.py`。示例：
+  `python -m app.ops.cli release-check-isolated`（全自动唯一工作区）；
+  `python -m app.ops.cli release-check-isolated --workdir
+  ../../artifacts/m11-10/run1 --output ../../artifacts/m11-10/evidence.json
+  --json`。
+- **定位**：把 M11-09 的人工流程收敛为一条命令——一次性 gitignored SQLite
+  （缺省 `artifacts/release-check-isolated/run-<UTC>-<pid>-<seq>/`，每次唯一）
+  -> `alembic upgrade head` -> 127.0.0.1 回环临时 uvicorn -> 限时 `/health`
+  就绪 -> full 模式 10 项门禁（零改动复用 `release-check`，含 voice/license/
+  e2e live 三项）-> JSON 证据原子落盘（`execution_scope=full` 同一契约，可被
+  readiness/rehearsal 消费）-> `finally` 关停临时 API。
+- **退出码**：全绿=**0** / 门禁真实 fail=**1**（证据照常落盘、不虚报）/
+  护栏或编排失败=**2**（迁移失败、临时 API 未就绪、证据写入失败等，均**不写
+  证据**）。护栏先于一切副作用（exit 2 时不建目录/不迁移/不启服务）：工作区
+  与证据输出必须位于 gitignore 的 artifacts/temp（复用 `is_safe_artifact_path`；
+  已过护栏工作区内的嵌套证据路径同样放行），工作区 symlink 一律拒绝；一次性
+  SQLite 已存在即拒绝（保护既有证据绝不改写）。
+- **临时 API 保证关停**：无论成功、门禁失败还是编排异常，`finally` 路径都会
+  terminate -> 限时等待 -> kill 兜底并复核进程已回收；关停失败即使门禁全绿也
+  如实降级 exit 2 并提示人工核查，绝不留常驻子进程。单进程无 reload/workers
+  即完整进程树；uvicorn 日志留档工作区 `uvicorn.log`。
+- **环境隔离**：子进程环境显式构造——剥离继承的 `AUTH_SECRET`/
+  `AIOS_PG_TEST_URL`/`DATABASE_URL`，显式注入 `APP_ENV=development`、
+  `VOICE_MODE=local`、`HOST_BIND_IP=127.0.0.1`、
+  `DATABASE_URL=<一次性 SQLite>`；不连接任何生产 DB / PG 面。所有对外消息过
+  `redact_secrets`。
+- **产物与边界**：一次性 SQLite、uvicorn 日志与 JSON 证据全部留在 gitignored
+  `artifacts/` 本地，不入 git。**`all_green=true` 只表示「隔离本地运行面 10 项
+  门禁全部真实通过」（development 配置、auth-off、本地语音），不是 production
+  readiness、不授权生产发布；`production_ready=false` 保持不变**。本工具不部署、
+  不打 tag、不发 Release、不推镜像。
+
 ## 备份恢复演练证据导出（M11-04）
 
 - **CLI**：`python -m app.ops.cli backup-restore-evidence --backup-dir <备份目录>
