@@ -80,7 +80,8 @@ function AuthBadge({ state, onLogout }: { state: AuthState | null; onLogout: () 
     return (
       <Link
         href="/login"
-        className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-accent px-3 text-xs font-medium text-accent-fg transition-opacity duration-150 hover:opacity-90"
+        // PR#20: 匿名登录入口移动端 44px 触控目标（min-h-11），桌面回到紧凑密度（md:min-h-9）
+        className="inline-flex min-h-11 items-center gap-1.5 rounded-lg bg-accent px-3 text-xs font-medium text-accent-fg transition-opacity duration-150 hover:opacity-90 md:min-h-9"
       >
         <LogIn className="size-3.5" /> 登录
       </Link>
