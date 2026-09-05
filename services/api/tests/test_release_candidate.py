@@ -958,22 +958,123 @@ def test_workflow_and_script_declare_local_scope_boundary() -> None:
 # --- 8. build 脚本行为面（stub git/docker/python；不调用真实 Docker）-------------
 
 
+def _sh_sq(text: str) -> str:
+    """POSIX 单引号字面量（用于把路径内嵌进 bash -c 脚本）。
+
+    内嵌内容保持零 ``$`` 变量：WSL 的 bash.exe 启动器会把 -c 脚本里的
+    ``$var`` 在外层 shell 预展开成空串（旧实现因此拿到 "."）。
+    """
+    return "'" + text.replace("'", "'\\''") + "'"
+
+
+_BASH_ENV_CACHE: dict[str, str] = {}
+
+
+def _bash_env() -> str:
+    """判定 BASH 运行环境："wsl" / "msys" / "other"（按 uname 输出，缓存）。
+
+    - WSL：Linux 内核且 release 带 microsoft/wsl 标记 => 词法映射
+      /mnt/<盘>/...，不依赖 interop PATH 里混入的 Windows Git cygpath
+      （它输出的是 MSYS 视角 /d/...，在 WSL 下不存在）；
+    - Git Bash/Cygwin：uname 以 mingw/msys/cygwin 开头 => cygpath -u；
+    - 探测脚本零 $ 变量、路径零内嵌，两类启动器都不会误伤。
+    """
+    if BASH is None:
+        return "other"
+    cached = _BASH_ENV_CACHE.get(BASH)
+    if cached is not None:
+        return cached
+    result = subprocess.run(
+        [BASH, "-c", "uname -s; uname -r"],
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    info = " ".join(result.stdout.lower().split())
+    if result.returncode == 0 and "linux" in info \
+            and ("microsoft" in info or "wsl" in info):
+        kind = "wsl"
+    elif result.returncode == 0 and re.match(
+            r"^(mingw|msys|cygwin)", info):
+        kind = "msys"
+    else:
+        kind = "other"
+    _BASH_ENV_CACHE[BASH] = kind
+    return kind
+
+
+def _wsl_lexical(text: str) -> str:
+    """Windows 盘符路径 -> /mnt/<小写盘符>/...（WSL 默认挂载的词法映射）。"""
+    return f"/mnt/{text[0].lower()}" + text[2:].replace("\\", "/")
+
+
+def _nearest_existing(text: str) -> str | None:
+    """从 text（含自身）向上找第一个真实存在的祖先；到盘符根都不存在
+    => None（无从回验）。"""
+    current = Path(text)
+    while not current.exists():
+        if current.parent == current:
+            return None
+        current = current.parent
+    return str(current)
+
+
+def _bash_exists(posix_path: str) -> bool:
+    """在 BASH 侧确认路径存在（单引号内嵌，零 $ 变量）。"""
+    assert BASH is not None
+    result = subprocess.run(
+        [BASH, "-c", f"test -e {_sh_sq(posix_path)}"],
+        capture_output=True, text=True, timeout=30, check=False,
+    )
+    return result.returncode == 0
+
+
 def _bash_path(path: Path | str) -> str | None:
-    """Windows 路径转 bash 视角路径（cygpath/wslpath）；POSIX 路径原样；
-    无法转换且是 Windows 形态 => None（调用方 skip）。"""
+    """Windows 路径转当前 BASH 视角的 POSIX 路径；POSIX 路径原样返回；
+    无法得到可信转换 => None（调用方 skip/断言失败）。
+
+    WSL 的 bash.exe 启动器（Windows 侧）有三个坑，本函数逐条规避：
+    1. 丢弃 -c 之后的定位参数（旧实现把路径当 $1 传 => $1 恒空，
+       wslpath -u "" 恰好 rc=0 且输出 "."，stub bin 目录因此变成 "."，
+       build 脚本读到了真实仓库的 git status）；
+    2. 在外层 shell 预展开 -c 脚本里的 $var；
+    3. 不转发 stdin。
+    因此所有 bash 调用都是「零 $ 变量 + 单引号字面量内嵌」的扁平命令；
+    结果必须过格式校验（非空、非 "."/".."、绝对路径）与存在性回验
+    （最近存在的祖先在 bash 侧同样存在），全部失败 => None。
+    """
     text = str(path)
     if not re.match(r"^[A-Za-z]:", text):
         return text
     if BASH is None:
         return None
-    for tool in ("cygpath -u", "wslpath -u"):
+    env_kind = _bash_env()
+    if env_kind == "wsl":
+        candidate = _wsl_lexical(text)
+    elif env_kind == "msys":
         result = subprocess.run(
-            [BASH, "-c", f'{tool} "$1"', "bash", text],
+            [BASH, "-c", f"cygpath -u {_sh_sq(text)}"],
             capture_output=True, text=True, timeout=30, check=False,
         )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    return None
+        candidate = result.stdout.strip()
+    else:
+        return None
+    if not candidate.startswith("/") or candidate in (".", "..", "/"):
+        return None
+    anchor = _nearest_existing(text)
+    if anchor is None:
+        return candidate  # Windows 侧连祖先都不存在：结构合法即接受
+    if anchor == text:
+        anchor_posix = candidate
+    elif env_kind == "wsl":
+        anchor_posix = _wsl_lexical(anchor)
+    else:
+        anchor_result = subprocess.run(
+            [BASH, "-c", f"cygpath -u {_sh_sq(anchor)}"],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+        anchor_posix = anchor_result.stdout.strip()
+    if not _bash_exists(anchor_posix):
+        return None
+    return candidate
 
 
 class _StubEnv:
@@ -989,6 +1090,9 @@ class _StubEnv:
         self.dirty = dirty
         self.smoke_exit = smoke_exit
         self._real_python = real_python
+        # 委派目标是否 Windows python（WSL bash 不做 MSYS 式 argv 路径
+        # 转换，stub 需自行把 /mnt/<盘>/... 参数转回 Windows 路径）。
+        self._real_py_windows = bool(re.match(r"^[A-Za-z]:", str(sys.executable)))
         real_py = _bash_path(sys.executable)
         if real_python and real_py is None:
             pytest.skip("无法把 Windows python 转成 bash 路径（缺 cygpath/wslpath）")
@@ -1048,11 +1152,29 @@ class _StubEnv:
             "exit 0\n",
         )
         if self._real_python:
+            translate = ""
+            if self._real_py_windows:
+                # WSL bash 不转换 argv 里的路径（Git Bash/MSYS 会自动转），
+                # 委派 Windows python 前把 /mnt/<盘>/... 参数转回 Windows 形态；
+                # 其余参数（-m/flag/tag/URL）不匹配模式，原样透传。
+                translate = (
+                    "args=()\n"
+                    'for a in "$@"; do\n'
+                    '  case "$a" in\n'
+                    "    /mnt/[a-zA-Z]/*)\n"
+                    '      a="$(wslpath -w "$a" 2>/dev/null '
+                    "|| printf '%s' \"$a\")\" ;;\n"
+                    "  esac\n"
+                    '  args+=("$a")\n'
+                    "done\n"
+                )
+            exec_args = '"${args[@]}"' if translate else '"$@"'
             self._stub(
                 "python3",
                 "#!/usr/bin/env bash\n"
                 f'echo "python3 $*" >> "{log}"\n'
-                f'exec "{self._real_py}" "$@"\n',
+                + translate
+                + f'exec "{self._real_py}" {exec_args}\n',
             )
         else:
             self._stub(
