@@ -444,6 +444,17 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   备份内容/表名/业务 ID；`manifest.tables` 只取计数总和），
   `manifest_sha256` 是备份 `manifest.json` 文件字节 SHA-256，`created_at` 是
   演练执行时刻。
+- **真实 PG 测试覆盖（AIOS_PG_TEST_URL 门控）**：`tests/test_backup_restore_
+  evidence.py` 第 9 节复用 `test_backup_drill` 同一安全门控基础
+  （`pg_test_gate_from_env` 白名单），但额外要求源库（业务造数 + `run_backup`
+  的对象）固定为隔离库 `ai_learning_os_test`；满足时自动在独立
+  `ai_learning_os_drill` 库（DROP+CREATE、用后即删、不碰源库数据）真实执行
+  alembic 迁移 + 恢复 + 只读导出全等对账 + 证据导出并断言零敏感。env 未
+  设置，或指向 `ai_learning_os_drill` 等其他白名单隔离库名（含前缀变体）时，
+  本测试在建立任何连接前 skip——避免把正在使用的源库当 drill 目标
+  DROP+CREATE；CI 的 api job（postgres service，`AIOS_PG_TEST_URL` 指向
+  `ai_learning_os_test`）自动跑通该路径。注意：这验证的是演练工具链在
+  隔离库上的端到端正确性，**不等于生产备份已演练**。
 
 ## 发布准备 readiness manifest（M10-11）
 
