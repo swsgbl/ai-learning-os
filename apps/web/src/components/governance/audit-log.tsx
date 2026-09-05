@@ -2,11 +2,14 @@
 
 // M10-02 审计日志视图（admin-only 端点）：actor / action / target / time / summary。
 // 只读 + 可刷新；before/after 折叠展示原始变更（均为角色与草稿状态，不含密钥类字段）。
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, RefreshCw } from "lucide-react";
 import { ApiError, api } from "@/lib/api";
 import type { AuditEntry } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { gsap, useMotion } from "@/lib/gsap";
+import { MOTION, staggerFor } from "@/lib/motion";
+import { ErrorState, LoadingState, EmptyState } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -52,7 +55,8 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
     <Card className="overflow-hidden">
       <button
         type="button"
-        className="flex w-full items-start justify-between gap-3 p-4 text-left"
+        aria-expanded={open}
+        className="flex w-full items-start justify-between gap-3 p-4 text-left outline-offset-[-4px]"
         onClick={() => setOpen((value) => !value)}
       >
         <div className="min-w-0">
@@ -69,6 +73,7 @@ function AuditRow({ entry }: { entry: AuditEntry }) {
         </div>
         <ChevronDown
           className={cn("mt-1 size-4 shrink-0 text-muted transition-transform", open && "rotate-180")}
+          aria-hidden="true"
         />
       </button>
       {open && (
@@ -88,6 +93,34 @@ export function AuditLog() {
   const [entries, setEntries] = useState<AuditEntry[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [forbidden, setForbidden] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // 审计时间线：条目 stagger 入场（时间线语义——自下而上依次浮现）
+  useMotion(
+    (reduced) => {
+      const root = rootRef.current;
+      if (!root) return;
+      const rows = root.querySelectorAll<HTMLElement>("[data-audit-row]");
+      if (rows.length === 0) return;
+      if (reduced) {
+        gsap.set(rows, { clearProps: "all" });
+        return;
+      }
+      gsap.fromTo(
+        rows,
+        { autoAlpha: 0, y: MOTION.distance.rise },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: MOTION.duration.base,
+          ease: MOTION.ease.out,
+          stagger: staggerFor(rows.length),
+          clearProps: "opacity,visibility,transform",
+        },
+      );
+    },
+    { scope: rootRef, dependencies: [entries] },
+  );
 
   const reload = useCallback(async () => {
     setError(null);
@@ -108,36 +141,31 @@ export function AuditLog() {
   }, [reload]);
 
   if (forbidden) {
-    return <Card className="p-5 text-sm text-muted">需要管理员权限才能查看审计日志。</Card>;
+    return <EmptyState title="需要管理员权限才能查看审计日志。" />;
   }
   if (error) {
-    return (
-      <Card className="flex items-center justify-between gap-3 p-5 text-sm text-bad">
-        <span>审计日志加载失败：{error}</span>
-        <Button variant="outline" size="sm" onClick={() => void reload()}>
-          重试
-        </Button>
-      </Card>
-    );
+    return <ErrorState title="审计日志加载失败" detail={error} onRetry={() => void reload()} />;
   }
   if (!entries) {
-    return <Card className="p-5 text-sm text-muted">正在读取审计日志……</Card>;
+    return <LoadingState title="正在读取审计日志" />;
   }
 
   return (
-    <div className="space-y-3">
+    <div ref={rootRef} className="space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted tabular-nums">最近 {entries.length} 条</p>
-        <Button variant="ghost" size="icon" title="刷新审计" onClick={() => void reload()}>
-          <RefreshCw />
+        <Button variant="ghost" size="icon" title="刷新审计" aria-label="刷新审计" onClick={() => void reload()}>
+          <RefreshCw aria-hidden="true" />
         </Button>
       </div>
       {entries.length === 0 ? (
-        <Card className="p-5 text-sm text-muted">暂无审计记录。</Card>
+        <EmptyState title="暂无审计记录" />
       ) : (
         <div className="space-y-3">
           {entries.map((entry) => (
-            <AuditRow key={entry.id} entry={entry} />
+            <div key={entry.id} data-audit-row>
+              <AuditRow entry={entry} />
+            </div>
           ))}
         </div>
       )}

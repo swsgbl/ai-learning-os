@@ -1,55 +1,22 @@
 "use client";
 
+// M11-01 考场：状态机与考试语义（服务端权威计时 / append-only 答案 /
+// 幂等提交 / 断线恢复）保持原样；视觉层拆到 QuestionPanel / QuestionNav /
+// Countdown / SubmitDialog 四个 client leaf，动效只是状态反馈。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import type { ExamSession } from "@/lib/types";
-import { formatClock } from "@/lib/utils";
-import { cn } from "@/lib/utils";
+import { ErrorState, LoadingState } from "@/components/states";
+import { Countdown } from "@/components/exam/countdown";
+import { QuestionNav } from "@/components/exam/question-nav";
+import { QuestionPanel } from "@/components/exam/question-panel";
+import { SubmitDialog } from "@/components/exam/submit-dialog";
 import { Button } from "./ui/button";
-import { Card } from "./ui/card";
+import { Progress } from "./ui/progress";
 
 function remainingSeconds(endAt: string) {
   return Math.max(0, Math.floor((new Date(endAt).getTime() - Date.now()) / 1000));
-}
-
-const TYPE_LABELS: Record<string, string> = {
-  mcq: "选择",
-  multiple_select: "多选",
-  tf: "判断",
-  true_false: "判断",
-  short: "简答",
-  short_answer: "简答",
-  numeric: "数值",
-  math: "数学",
-  coding: "编程",
-  essay: "写作",
-};
-
-// 非选项题（数值/数学/简答）：文本输入，走同一 append-only 保存链路
-function AnswerInput({ value, onSave }: { value: string; onSave: (text: string) => void }) {
-  const [draft, setDraft] = useState(value);
-
-  useEffect(() => {
-    setDraft(value);
-  }, [value]);
-
-  return (
-    <div className="mt-5 flex gap-2">
-      <input
-        value={draft}
-        onChange={(event) => setDraft(event.target.value)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" && draft.trim()) onSave(draft.trim());
-        }}
-        placeholder="输入答案，如 3.14 或 2x"
-        className="w-full rounded-lg bg-surface px-4 py-3 text-sm shadow-border outline-none placeholder:text-subtle focus:bg-surface-2"
-      />
-      <Button disabled={!draft.trim() || draft === value} onClick={() => onSave(draft.trim())}>
-        保存
-      </Button>
-    </div>
-  );
 }
 
 export function ExamStudio({ paperId }: { paperId: string }) {
@@ -58,7 +25,9 @@ export function ExamStudio({ paperId }: { paperId: string }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [remaining, setRemaining] = useState(0);
   const [index, setIndex] = useState(0);
+  const [direction, setDirection] = useState<1 | -1>(1);
   const [confirming, setConfirming] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const started = useRef(false);
   // M2-06：下一个答案的服务端序号；以服务端 next_sequence 为权威，断线后由 getExam 恢复
@@ -69,12 +38,14 @@ export function ExamStudio({ paperId }: { paperId: string }) {
     async (examId: string) => {
       if (submitted.current) return;
       submitted.current = true;
+      setSubmitting(true);
       try {
         await api.submitExam(examId);
         window.localStorage.removeItem(`aios.exam.${paperId}`);
         router.push(`/review/${examId}`);
       } catch (cause) {
         submitted.current = false;
+        setSubmitting(false);
         setError(cause instanceof Error ? cause.message : "提交失败");
       }
     },
@@ -136,6 +107,11 @@ export function ExamStudio({ paperId }: { paperId: string }) {
   const answered = Object.values(answers).filter(Boolean).length;
   const progress = useMemo(() => (questions.length ? (answered / questions.length) * 100 : 0), [answered, questions.length]);
 
+  const goTo = useCallback((next: number) => {
+    setDirection(next >= index ? 1 : -1);
+    setIndex(next);
+  }, [index]);
+
   async function choose(key: string) {
     if (!session || !question || submitted.current) return;
     const nextAnswers = { ...answers, [question.id]: key };
@@ -163,82 +139,45 @@ export function ExamStudio({ paperId }: { paperId: string }) {
     }
   }
 
-  if (error && !session) return <Card className="p-6 text-sm text-bad">{error}</Card>;
-  if (!session || !question) return <Card className="p-6 text-sm text-muted">正在准备考场。</Card>;
+  if (error && !session) return <ErrorState title="无法进入考场" detail={error} />;
+  if (!session || !question)
+    return <LoadingState title="正在准备考场" detail="正在向服务端申请考试会话。" />;
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between gap-3">
-        <div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
           <p className="text-xs text-muted">考场审阅</p>
           <h1 className="font-display text-2xl">{session.paper_title}</h1>
-          <p className="mt-1 text-xs text-subtle">server session · {session.exam_id}</p>
+          <p className="mt-1 truncate text-xs text-subtle">server session · {session.exam_id}</p>
         </div>
-        <div className={cn("rounded-lg bg-surface px-3 py-2 text-right shadow-border", remaining < 60 && "text-bad")}>
-          <p className="text-[10px] text-muted">剩余</p>
-          <p className="font-mono text-lg leading-none tabular-nums">{formatClock(remaining)}</p>
-        </div>
+        <Countdown remaining={remaining} />
       </div>
 
-      <div className="flex flex-wrap gap-1.5">
-        {questions.map((item, itemIndex) => (
-          <button
-            key={item.id}
-            type="button"
-            onClick={() => setIndex(itemIndex)}
-            className={cn(
-              "size-9 rounded-md text-xs tabular-nums shadow-border",
-              itemIndex === index && "bg-accent text-accent-fg",
-              itemIndex !== index && answers[item.id] && "bg-surface-2",
-              itemIndex !== index && !answers[item.id] && "bg-surface",
-            )}
-          >
-            {itemIndex + 1}
-          </button>
-        ))}
-      </div>
+      <QuestionNav questions={questions} answers={answers} current={index} onSelect={goTo} />
 
-      <Card className="p-5 sm:p-6">
-        <p className="text-xs text-muted">
-          第 {index + 1} 题 · {TYPE_LABELS[question.type] ?? "作答"}
-        </p>
-        <p className="mt-3 font-display text-xl leading-snug">{question.stem}</p>
-        {question.options?.length ? (
-          <ul className="mt-5 space-y-2">
-          {question.options?.map((option) => {
-            const active = answers[question.id] === option.key;
-            return (
-              <li key={option.key}>
-                <button
-                  type="button"
-                  onClick={() => void choose(option.key)}
-                  className={cn(
-                    "flex w-full items-start gap-3 rounded-lg px-4 py-3 text-left text-sm shadow-border transition-colors",
-                    active ? "bg-accent text-accent-fg" : "bg-surface hover:bg-surface-2",
-                  )}
-                >
-                  <span className="font-medium">{option.key}</span>
-                  <span>{option.text}</span>
-                </button>
-              </li>
-            );
-          })}
-          </ul>
-        ) : (
-          <AnswerInput value={answers[question.id] ?? ""} onSave={(text) => void choose(text)} />
-        )}
-      </Card>
+      <QuestionPanel
+        question={question}
+        index={index}
+        total={questions.length}
+        answer={answers[question.id]}
+        direction={direction}
+        onChoose={(key) => void choose(key)}
+      />
 
-      <div className="h-2 overflow-hidden rounded-full bg-surface-2">
-        <div className="h-full rounded-full bg-accent transition-all duration-300" style={{ width: `${progress}%` }} />
-      </div>
+      <Progress value={progress} aria-label="作答进度" />
 
       <div className="flex gap-2">
-        <Button variant="outline" className="flex-1" disabled={index === 0} onClick={() => setIndex((value) => value - 1)}>
+        <Button
+          variant="outline"
+          className="flex-1"
+          disabled={index === 0}
+          onClick={() => goTo(index - 1)}
+        >
           上一题
         </Button>
         {index < questions.length - 1 ? (
-          <Button className="flex-1" onClick={() => setIndex((value) => value + 1)}>
+          <Button className="flex-1" onClick={() => goTo(index + 1)}>
             下一题
           </Button>
         ) : (
@@ -247,25 +186,20 @@ export function ExamStudio({ paperId }: { paperId: string }) {
           </Button>
         )}
       </div>
-      {error && <p className="text-sm text-bad">{error}</p>}
+      {error && (
+        <p role="alert" className="text-sm text-bad">
+          {error}
+        </p>
+      )}
 
       {confirming && (
-        <div className="fixed inset-0 z-40 flex items-end justify-center bg-ink/40 p-4 sm:items-center">
-          <Card className="w-full max-w-sm p-5">
-            <h2 className="font-display text-xl">提交试卷？</h2>
-            <p className="mt-2 text-sm text-muted">
-              已作答 {answered}/{questions.length} 题。提交后进入审阅。
-            </p>
-            <div className="mt-4 flex gap-2">
-              <Button variant="outline" className="flex-1" onClick={() => setConfirming(false)}>
-                再看看
-              </Button>
-              <Button className="flex-1" onClick={() => void submit(session.exam_id)}>
-                提交审阅
-              </Button>
-            </div>
-          </Card>
-        </div>
+        <SubmitDialog
+          answered={answered}
+          total={questions.length}
+          submitting={submitting}
+          onCancel={() => setConfirming(false)}
+          onConfirm={() => void submit(session.exam_id)}
+        />
       )}
     </div>
   );

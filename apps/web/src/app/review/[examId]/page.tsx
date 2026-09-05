@@ -5,7 +5,7 @@ import { useParams } from "next/navigation";
 import { api } from "@/lib/api";
 import type { ExamReport, Submission } from "@/lib/types";
 import { ReviewView } from "@/components/review-view";
-import { Card } from "@/components/ui/card";
+import { ErrorState, LoadingState } from "@/components/states";
 
 export default function ReviewPage() {
   const params = useParams<{ examId: string }>();
@@ -24,7 +24,7 @@ export default function ReviewPage() {
       .catch(() => setReport(null));
   }, [params.examId]);
 
-  if (error) return <Card className="p-6 text-sm text-bad">{error}</Card>;
-  if (!submission) return <Card className="p-6 text-sm text-muted">正在生成审阅报告。</Card>;
+  if (error) return <ErrorState title="无法生成审阅报告" detail={error} />;
+  if (!submission) return <LoadingState title="正在生成审阅报告" detail="正在从服务端取回你的作答与判分。" />;
   return <ReviewView submission={submission} report={report} />;
 }

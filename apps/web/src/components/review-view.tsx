@@ -1,13 +1,19 @@
 "use client";
 
-import { useState } from "react";
+// M11-01 审阅：分数揭示（ScoreHero count-up + 进度揭示）、概念掌握卡、
+// 错题展开（aria-expanded + 内容 fade/rise，容器高度自然流动不遮挡）、
+// 补救任务。全部为服务端已定结果的只读呈现。
+import { useRef, useState } from "react";
 import { Check, ChevronDown, X } from "lucide-react";
 import { answerLabel, optionLabel } from "@/lib/parse-answer";
 import type { ExamReport, Submission } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { gsap, useMotion } from "@/lib/gsap";
+import { MOTION } from "@/lib/motion";
 import { Badge } from "./ui/badge";
 import { Card } from "./ui/card";
-import { Progress } from "./ui/progress";
+import { RevealProgress } from "@/components/motion/reveal-progress";
+import { ScoreHero } from "@/components/review/score-hero";
 
 const TABS = [
   { id: "concept", label: "知识点" },
@@ -17,36 +23,41 @@ const TABS = [
 ] as const;
 
 export function ReviewView({ submission, report }: { submission: Submission; report?: ExamReport | null }) {
+  const rootRef = useRef<HTMLDivElement>(null);
   const wrong = submission.items.filter((item) => item.correct === false);
   const reviewing = submission.items.filter((item) => item.correct === null);
   const reportItems = report ? new Map(report.items.map((item) => [item.question_id, item])) : null;
 
+  // 区块编排：概念卡 / 错题卡 / 补救任务分批 stagger 入场
+  useMotion(
+    (reduced) => {
+      const root = rootRef.current;
+      if (!root) return;
+      const groups = root.querySelectorAll<HTMLElement>("[data-review-group]");
+      if (groups.length === 0) return;
+      if (reduced) {
+        gsap.set(groups, { clearProps: "all" });
+        return;
+      }
+      gsap.fromTo(
+        groups,
+        { autoAlpha: 0, y: MOTION.distance.rise },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: MOTION.duration.base,
+          ease: MOTION.ease.out,
+          stagger: 0.08,
+          clearProps: "opacity,visibility,transform",
+        },
+      );
+    },
+    { scope: rootRef, dependencies: [submission.exam_id] },
+  );
+
   return (
-    <div className="space-y-6">
-      <Card className="p-6">
-        <p className="text-xs tracking-wide text-muted uppercase">本卷评分</p>
-        <div className="mt-2 flex items-end justify-between gap-4">
-          <div>
-            <p className="font-display text-5xl font-medium leading-none tabular-nums">
-              {submission.score}
-              <span className="ml-1 text-lg text-muted">分</span>
-            </p>
-            <p className="mt-2 text-sm text-muted">
-              {submission.paper_title} · {submission.correct_count}/{submission.total_count} 题正确 ·{" "}
-              {Math.floor(submission.duration_seconds / 60)} 分 {submission.duration_seconds % 60} 秒
-            </p>
-            {report && (
-              <p className="mt-1 text-xs text-muted tabular-nums">
-                原始分 {report.score_earned}/{report.score_max} 分
-              </p>
-            )}
-          </div>
-          <Badge tone={submission.score >= 80 ? "good" : submission.score >= 60 ? "accent" : "bad"}>
-            {submission.score >= 80 ? "掌握良好" : submission.score >= 60 ? "尚可巩固" : "需要回炉"}
-          </Badge>
-        </div>
-        <Progress className="mt-5" value={submission.score} />
-      </Card>
+    <div ref={rootRef} className="space-y-6">
+      <ScoreHero submission={submission} report={report} />
 
       {report && report.concepts.length > 0 && (
         <section>
@@ -54,15 +65,15 @@ export function ReviewView({ submission, report }: { submission: Submission; rep
           <p className="mt-1 text-xs text-muted">按题目关联概念聚合正确率；待复核的题不计入正确率分母。</p>
           <div className="mt-4 grid gap-3 sm:grid-cols-2">
             {report.concepts.map((concept) => (
-              <Card key={concept.concept} className="p-4">
+              <Card key={concept.concept} data-review-group className="p-4">
                 <div className="flex items-center justify-between gap-3">
                   <p className="truncate text-sm">{concept.concept}</p>
                   <span className="shrink-0 text-xs tabular-nums text-muted">
                     {concept.ratio === null ? "待复核" : `${Math.round(concept.ratio * 100)}%`}
                   </span>
                 </div>
-                <Progress className="mt-3" value={(concept.ratio ?? 0) * 100} />
-                <p className="mt-2 text-xs text-muted tabular-nums">
+                <RevealProgress className="mt-3" value={(concept.ratio ?? 0) * 100} aria-label={`${concept.concept} 正确率`} />
+                <p className="mt-2 text-xs tabular-nums text-muted">
                   {concept.correct}/{concept.total} 题正确
                   {concept.reviewed > 0 && <span className="ml-2">{concept.reviewed} 题待复核</span>}
                 </p>
@@ -77,7 +88,11 @@ export function ReviewView({ submission, report }: { submission: Submission; rep
           <h2 className="font-display text-xl">错题 {wrong.length}</h2>
           <div className="mt-4 space-y-3">
             {wrong.map((item) => (
-              <WrongCard key={item.question_id} submission={submission} questionId={item.question_id} />
+              <WrongCard
+                key={item.question_id}
+                submission={submission}
+                questionId={item.question_id}
+              />
             ))}
           </div>
         </section>
@@ -88,7 +103,7 @@ export function ReviewView({ submission, report }: { submission: Submission; rep
           <h2 className="font-display text-xl">补救任务 {report.remediation_tasks.length}</h2>
           <div className="mt-4 space-y-2">
             {report.remediation_tasks.map((task, index) => (
-              <Card key={`${task.question_id}-${task.kind}-${index}`} className="p-4">
+              <Card key={`${task.question_id}-${task.kind}-${index}`} data-review-group className="p-4">
                 <div className="flex items-start gap-3">
                   <Badge tone={task.kind === "review_concept" ? "accent" : "good"}>
                     {task.kind === "review_concept" ? "复习概念" : "变式练习"}
@@ -150,6 +165,7 @@ export function ReviewView({ submission, report }: { submission: Submission; rep
                           ? "bg-good-soft text-good"
                           : "bg-bad-soft text-bad",
                     )}
+                    aria-hidden="true"
                   >
                     {item.correct === null ? "?" : item.correct ? <Check className="size-3.5" /> : <X className="size-3.5" />}
                   </span>
@@ -165,9 +181,7 @@ export function ReviewView({ submission, report }: { submission: Submission; rep
                     </p>
                     {item.rubric && <RubricDetailList rubric={item.rubric} />}
                   </div>
-                  {reportItems && (
-                    <ScoreBadge reportItem={reportItems.get(item.question_id)} />
-                  )}
+                  {reportItems && <ScoreBadge reportItem={reportItems.get(item.question_id)} />}
                 </div>
               </Card>
             );
@@ -215,7 +229,7 @@ function ScoreBadge({ reportItem }: { reportItem: ExamReport["items"][number] | 
           : reportItem.score >= reportItem.max_score
             ? "bg-good-soft text-good"
             : reportItem.score > 0
-              ? "bg-surface-2 text-warn"
+              ? "bg-warn-soft text-warn"
               : "bg-bad-soft text-bad",
       )}
     >
@@ -224,38 +238,51 @@ function ScoreBadge({ reportItem }: { reportItem: ExamReport["items"][number] | 
   );
 }
 
+// 错题卡：展开/收起用 aria-expanded + 内容 fade/rise；展开内容常驻 DOM 树
+// 的自然流（不裁剪、不遮挡），tab 切换即时反馈。
 function WrongCard({ submission, questionId }: { submission: Submission; questionId: string }) {
   const [open, setOpen] = useState(true);
   const [tab, setTab] = useState<(typeof TABS)[number]["id"]>("concept");
+  const contentRef = useRef<HTMLDivElement>(null);
   const question = submission.questions.find((candidate) => candidate.id === questionId);
   const item = submission.items.find((candidate) => candidate.question_id === questionId);
   if (!question || !item) return null;
 
   return (
-    <Card className="overflow-hidden">
-      <button type="button" onClick={() => setOpen((value) => !value)} className="flex w-full items-start justify-between gap-3 p-4 text-left">
-        <div>
+    <Card data-review-group className="overflow-hidden">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((value) => !value)}
+        className="flex w-full items-start justify-between gap-3 p-4 text-left outline-offset-[-4px]"
+      >
+        <div className="min-w-0">
           <p className="text-sm leading-relaxed">{question.stem}</p>
           <p className="mt-2 text-xs text-muted">
             你选了 {optionLabel(question, item.given || "（未作答）")} · 正确是 {answerLabel(question, item.expected)}
           </p>
         </div>
-        <ChevronDown className={cn("mt-1 size-4 shrink-0 text-muted transition-transform", open && "rotate-180")} />
+        <ChevronDown
+          className={cn("mt-1 size-4 shrink-0 text-muted transition-transform duration-200 ease-[var(--ease-out)]", open && "rotate-180")}
+          aria-hidden="true"
+        />
       </button>
       {open && (
-        <div className="border-t border-border px-4 pb-4">
-          <div className="flex gap-1 overflow-x-auto py-3">
-            {TABS.map((item) => (
+        <div ref={contentRef} className="border-t border-border px-4 pb-4">
+          <div className="flex gap-1 overflow-x-auto py-3" role="tablist" aria-label="错题解析视角">
+            {TABS.map((entry) => (
               <button
-                key={item.id}
+                key={entry.id}
                 type="button"
-                onClick={() => setTab(item.id)}
+                role="tab"
+                aria-selected={tab === entry.id}
+                onClick={() => setTab(entry.id)}
                 className={cn(
-                  "rounded-full px-3 py-1.5 text-xs",
-                  tab === item.id ? "bg-accent text-accent-fg" : "bg-surface-2 text-muted",
+                  "min-h-11 rounded-full px-3 py-1.5 text-xs whitespace-nowrap transition-colors duration-150 md:min-h-9",
+                  tab === entry.id ? "bg-accent text-accent-fg" : "bg-surface-2 text-muted",
                 )}
               >
-                {item.label}
+                {entry.label}
               </button>
             ))}
           </div>
