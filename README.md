@@ -139,6 +139,37 @@ JSON 证据契约兼容 release-readiness / cutover-rehearsal（同时含 `gate`
 且不执行门禁），原子落盘（同目录临时文件 + rename，失败保留旧报告、symlink
 拒绝、无 `.tmp` 残留，写入失败 exit 2 且不打印门禁结论）。
 
+## 备份恢复演练证据 backup-restore-evidence（M11-04）
+
+为 release-readiness / cutover-rehearsal 的 `backup-restore` 门/步生成机器可读
+演练证据（`backup-restore.json`，同时自声明 `gate` 与 `step`，可直接作为两
+侧证据文件）：对隔离恢复库执行 `alembic upgrade head` → 完整恢复（manifest
+完整性校验先行，hash 不符拒绝恢复）→ 只读全量导出与备份 `database.json`
+逻辑数据全等比对 + 回灌行数对账 manifest 计数总和——全部一致才
+`verified=true`。
+
+```bash
+cd services/api
+python -m app.ops.cli backup-restore-evidence \
+    --backup-dir ../../temp/backup-2026-09-05 \
+    --restore-db-url "postgresql+asyncpg://aios:<密码>@127.0.0.1:5433/ai_learning_os_drill" \
+    --output ../../temp/backup-restore.json   # 可加 --json：stdout 纯 JSON
+```
+
+前置条件：备份已生成（`python -m app.ops.cli backup`，备份目录含
+`manifest.json`/`database.json`）；restore 库是**已存在的隔离库**——URL 只允许
+`ai_learning_os_test` / `ai_learning_os_drill` 及其下划线前缀变体（主库
+`ai_learning_os`、维护库 `postgres`、缺库名、非 PG 一律在连接前拒绝）；工具
+会升级目标 schema 并**覆盖恢复**该隔离库（它应是专用演练库，不是任何源库）。
+
+安全边界：不读取/不修改备份源库、不写生产、备份目录字节保持不变；输出必须
+位于 gitignore 的 `artifacts/`、`temp/` 且**不得写入备份目录内或等于备份
+目录**（备份目录的精确文件集是 manifest 完整性校验面）；证据零敏感（无 DB
+URL/凭据/备份内容/表名/业务 ID），`manifest_sha256` 绑定备份 manifest 文件
+字节。退出码：`verified=true`=0 / `verified=false`（数据或行数不一致，证据
+如实落盘、不伪装 pass）=1 / 输入或执行错误=2（不迁移、不恢复、不写输出）。
+详见 docs/DEVELOPMENT.md「备份恢复演练证据导出（M11-04）」。
+
 ## 本地 Release Candidate 包（M10-17）
 
 在干净 worktree 上打一个**本地** RC 包（镜像归档 + manifest + 校验和），一条命令：

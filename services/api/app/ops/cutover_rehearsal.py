@@ -277,7 +277,10 @@ STEPS: tuple[StepSpec, ...] = (
         "pre-migration",
         "backup-restore.json",
         "aios-backup-v1 manifest + 恢复演练 verified（迁移前可恢复证据闭合）",
-        "cli backup + 恢复演练 verified 后导出 manifest 摘要",
+        "cli backup 后执行 python -m app.ops.cli backup-restore-evidence "
+        "--backup-dir <备份目录> --restore-db-url <隔离PG URL> --output "
+        "<artifacts路径>（M11-04：隔离库迁移 + 恢复 + 逻辑全等校验，verified "
+        "才闭合）",
     ),
     StepSpec(
         "preflight-post-migration",

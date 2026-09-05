@@ -60,6 +60,97 @@ async def _run_restore(args) -> int:
                                  Path(args.config_target) if args.config_target else None)
     print("restore ok: inserted", inserted, "rows")
     return 0
+def _run_backup_restore_evidence(args) -> int:
+    """python -m app.ops.cli backup-restore-evidence --backup-dir DIR
+    --restore-db-url URL --output PATH [--json]
+
+    M11-04 backup-restore 机器可读演练证据导出器：对隔离恢复库执行
+    alembic upgrade head -> run_restore（manifest 完整性校验先行）-> 只读
+    全量导出与备份 database.json 逻辑数据全等比对 + inserted_rows 对账
+    manifest.tables 计数总和 -> 原子写出 backup-restore.json（gate/step 双
+    自声明，直接可作 release-readiness / cutover-rehearsal 的证据文件）。
+
+    护栏先于执行（exit 2、不迁移/不恢复/不写输出）：备份目录必须在
+    gitignore 的 artifacts/temp 内且 manifest.json/database.json 齐备合法；
+    恢复目标 URL 必须过 evaluate_pg_test_url 隔离白名单（主库/维护库/缺
+    库名/非 PG 连接前拒绝）；输出必须在 artifacts/temp 内且不得位于备份
+    目录内或等于备份目录（保持 manifest 校验面不变）；symlink 一律拒绝。
+    verified=false（数据/行数不一致）证据照常落盘、exit 1——如实记录失败，
+    不伪装 pass；迁移/恢复失败 exit 2 不产证据（错误先抹凭据，旧 evidence
+    字节原样保留、无 .tmp 残留）。--json 时 stdout 纯 JSON、提示走 stderr。
+    """
+    import json as _json
+
+    from sqlalchemy.exc import SQLAlchemyError
+
+    from app.ops.backup import BackupIntegrityError
+    from app.ops.backup_restore_evidence import (
+        DrillExecutionError,
+        DrillInputError,
+        format_drill_summary,
+        run_backup_restore_evidence,
+        validate_drill_inputs,
+    )
+    from app.ops.production_preflight import redact_secrets
+
+    try:
+        validate_drill_inputs(args.backup_dir, args.restore_db_url, args.output)
+    except DrillInputError as cause:
+        print(f"拒绝执行（输入或路径问题，未迁移/未恢复/未写输出）: {cause}")
+        return 2
+    try:
+        evidence, exit_code = asyncio.run(
+            run_backup_restore_evidence(args.backup_dir, args.restore_db_url)
+        )
+    except DrillExecutionError as cause:
+        # 迁移子进程消息由抛出方先抹凭据；此处再抹一次（纵深防御，异常
+        # 消息可能携带连接串）
+        print(
+            "恢复演练执行失败（未产生证据）: " + redact_secrets(str(cause))
+        )
+        return 2
+    except BackupIntegrityError as cause:
+        # run_restore 完整性校验先行：hash 不符 fail-closed，目标库未被触碰
+        print(
+            "备份完整性校验失败（恢复被拒绝，未产生证据）: "
+            + redact_secrets(str(cause))
+        )
+        return 2
+    except (SQLAlchemyError, OSError, ValueError, KeyError) as cause:
+        # 连接失败/无效 URL/磁盘 IO/备份在护栏后被改动（TOCTOU）：输入环境
+        # 问题，非演练结论；错误可能内嵌 DB URL，先抹凭据再输出
+        print(
+            "恢复演练执行失败（连接或 IO 问题，未产生证据）: "
+            + redact_secrets(f"{type(cause).__name__}: {cause}")
+        )
+        return 2
+    try:
+        output_path = Path(args.output)
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        _write_report_atomic(
+            output_path,
+            _json.dumps(evidence, ensure_ascii=False, indent=2),
+        )
+    except OSError as cause:
+        # 目录无法创建/权限不足/磁盘满/replace 失败：证据未落盘或旧文件原样
+        # 保留（原子写不产生 partial），不得再打印演练结论（防被误读）。
+        print(
+            f"报告写入失败（路径/权限/磁盘问题，未产生报告文件）: "
+            f"{type(cause).__name__}: {cause}"
+        )
+        return 2
+    # --json 模式下提示走 stderr，stdout 保持纯 JSON（可管道给 jq）
+    print(
+        f"报告已写入: {args.output}",
+        file=sys.stderr if args.as_json else sys.stdout,
+    )
+    if args.as_json:
+        print(_json.dumps(evidence, ensure_ascii=False, indent=2))
+    else:
+        print(format_drill_summary(evidence))
+    return exit_code
+
+
 def _run_version(args) -> int:
     """python -m app.ops.cli version：版本 + git + alembic 真实状态。"""
     import json as _json
@@ -1113,6 +1204,46 @@ def main() -> None:
     p_r.add_argument("--s3-access-key", default=None)
     p_r.add_argument("--s3-secret-key", default=None)
     p_r.add_argument("--config-target", default=None)
+    p_br = sub.add_parser(
+        "backup-restore-evidence",
+        help=(
+            "备份恢复演练证据导出（M11-04；隔离库迁移 + 恢复 + 逻辑全等校验，"
+            "原子写 backup-restore.json；verified=0 / verified=false=1 / "
+            "输入或执行错误=2）"
+        ),
+    )
+    p_br.add_argument(
+        "--backup-dir",
+        required=True,
+        help=(
+            "既有备份目录（必须位于 gitignore 的 artifacts/temp 内，且已含 "
+            "manifest.json/database.json；演练只读该目录，字节保持不变）"
+        ),
+    )
+    p_br.add_argument(
+        "--restore-db-url",
+        required=True,
+        help=(
+            "隔离恢复库 URL（只允许 ai_learning_os_test / ai_learning_os_drill "
+            "及其下划线前缀变体；主库/维护库/缺库名/非 PG 连接前拒绝；"
+            "演练会升级并覆盖恢复该隔离库）"
+        ),
+    )
+    p_br.add_argument(
+        "--output",
+        required=True,
+        help=(
+            "证据输出路径（必须位于 gitignore 的 artifacts/temp 目录，且不得"
+            "位于备份目录内或等于备份目录；原子落盘：临时文件 + rename，失败"
+            "保留旧报告、symlink 拒绝）"
+        ),
+    )
+    p_br.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="stdout 输出纯 JSON 证据（契约兼容 release-readiness/cutover-rehearsal）",
+    )
     p_l = sub.add_parser("license-report", help="依赖/模型/内容源/派生对象授权清单")
     p_l.add_argument("--db-url", default=None)
     p_l.add_argument("--requirements", default=None)
@@ -1484,6 +1615,8 @@ def main() -> None:
         raise SystemExit(asyncio.run(_run_license_report(args)))
     if args.command == "release-check":
         raise SystemExit(_run_release_check(args))
+    if args.command == "backup-restore-evidence":
+        raise SystemExit(_run_backup_restore_evidence(args))
     if args.command == "version":
         raise SystemExit(_run_version(args))
     if args.command == "data-inventory":
