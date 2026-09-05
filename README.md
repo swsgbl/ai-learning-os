@@ -113,6 +113,37 @@ docker tag aios/web:local aios/web:v0.1.0
 AIOS_IMAGE_TAG=v0.1.0 docker compose -f infra/docker-compose.yml up -d --no-build
 ```
 
+## 本地 Release Candidate 包（M10-17）
+
+在干净 worktree 上打一个**本地** RC 包（镜像归档 + manifest + 校验和），一条命令：
+
+```bash
+# 前置：VERSION 已是目标版本、git worktree 干净（脚本会逐一 fail-closed 校验）
+bash infra/build_release_candidate.sh --tag v0.1.0 --output-dir artifacts/rc-v0.1.0
+```
+
+脚本自动完成：tag/VERSION 逐字一致校验 → 记录干净 worktree 的完整 commit SHA →
+同源构建 `aios/api:<tag>`、`aios/web:<tag>` → `AIOS_IMAGE_TAG=<tag>` + `--no-build`
+起 compose local profile 并跑 `infra/smoke_docker.sh`（结束/失败都
+`down --remove-orphans`，绝不带 `-v` 删卷）→ `docker save` 两个独立归档 → 原子写
+`release-manifest.json` + `SHA256SUMS` → 最后独立 verify。
+
+对既有包做独立校验（不加载 Docker 镜像，只重算文件哈希）：
+
+```bash
+cd services/api
+python -m app.ops.cli release-candidate verify --package-dir ../artifacts/rc-v0.1.0 \
+    --version-file ../VERSION      # 退出码 0=通过 / 1=校验失败 / 2=输入问题
+```
+
+GitHub Actions 侧是手动 workflow：Actions →「Release Candidate (manual only)」→
+Run workflow（tag 留空则取 VERSION）——仅 `workflow_dispatch` 触发（push/PR/schedule
+永不触发），产物作为 workflow artifact 上传（保留 14 天）。
+
+**边界**：产出是**本地** Release Candidate，不是 production readiness 声明，不授权
+部署；不打 git 标签、不发 GitHub Release、不推镜像到任何 registry、不碰生产
+DB/服务/主机。详见 docs/DEVELOPMENT.md「本地 Release Candidate 包（M10-17）」。
+
 ## 本地启动
 
 ```powershell
