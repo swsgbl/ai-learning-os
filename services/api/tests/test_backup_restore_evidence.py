@@ -26,8 +26,13 @@
    --output/--json 解析进 handler）、main 分发、--help 列出子命令、
    --json 时 stdout 纯 JSON 且「报告已写入」提示走 stderr。
 
-单测注入 fake 迁移/恢复/导出，不连 PG；真实 PG 不强制（跳过门控与
-test_backup_drill 的 PG drill 既有覆盖一致）。
+第 1-8 节注入 fake 迁移/恢复/导出（另含真实 SQLite 端到端），不连 PG；
+第 9 节由 AIOS_PG_TEST_URL 安全门控真实 PG 端到端覆盖：独立
+ai_learning_os_drill 库（DROP+CREATE、用后即删、不碰源库）真实执行
+alembic 迁移 + 恢复 + 只读导出全等对账 + 证据导出（源库必须固定
+ai_learning_os_test，gate 未启用或解析到其他隔离库时在建立任何连接前
+skip——drill 目标的 DROP+CREATE 不得落在正在使用的源库上；CI api job
+已设该 env 自动覆盖）。
 """
 from __future__ import annotations
 
@@ -42,9 +47,12 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from fastapi.testclient import TestClient
 
+from app.db.test_gate import pg_test_gate_from_env
+from app.main import create_app
 from app.ops import cli as cli_module
-from app.ops.backup import BackupIntegrityError
+from app.ops.backup import BackupIntegrityError, run_backup
 from app.ops.backup_restore_evidence import (
     DrillExecutionError,
     DrillInputError,
@@ -59,6 +67,18 @@ SECRET_MARKER = "PROD-PW-88d9"
 DRILL_URL = (
     f"postgresql+asyncpg://aios:{SECRET_MARKER}@127.0.0.1:5433/ai_learning_os_drill"
 )
+#: 真实 PG 演练门控：复用 test_backup_drill 同一 AIOS_PG_TEST_URL 安全门控
+#: 基础（pg_test_gate_from_env 白名单），但本测试额外要求 gate 解析到的
+#: 库名固定为 ai_learning_os_test（见 SOURCE_DB）——指向 drill 库或其他
+#: 白名单前缀变体时同样在建立任何连接前 skip
+DRILL_DB = "ai_learning_os_drill"
+PG_GATE = pg_test_gate_from_env()
+PG_URL = PG_GATE.url
+#: 第 9 节源库语义：真实端到端的源库（业务造数 + run_backup）必须固定
+#: ai_learning_os_test——gate 全局也放行 ai_learning_os_drill 及前缀变体，
+#: 但若 env 指向 drill 库，本测试会把正在使用的源库当成 drill 目标
+#: DROP+CREATE（虽不触生产，违背本测试语义），故库名不符即跳过。
+SOURCE_DB = "ai_learning_os_test"
 
 BACKUP_DATA = {
     "papers": [
@@ -174,6 +194,45 @@ def _patch_fakes(monkeypatch, fakes: _Fakes) -> None:
     monkeypatch.setattr(bre, "_alembic_upgrade_head", fakes.migrate)
     monkeypatch.setattr(bre, "run_restore", fakes.restore)
     monkeypatch.setattr(bre, "_dump_target", fakes.dump)
+
+
+def _recreate_drill_database() -> str:
+    """DROP + CREATE 独立 drill 库；返回其 URL（不碰主库数据）。"""
+    admin_url = PG_URL.rsplit("/", 1)[0] + "/postgres"
+    drill_url = PG_URL.rsplit("/", 1)[0] + "/" + DRILL_DB
+
+    async def _run():
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine as _cae
+
+        admin = _cae(admin_url, isolation_level="AUTOCOMMIT")
+        async with admin.begin() as conn:
+            await conn.execute(
+                text(f'DROP DATABASE IF EXISTS "{DRILL_DB}" WITH (FORCE)')
+            )
+            await conn.execute(text(f'CREATE DATABASE "{DRILL_DB}"'))
+        await admin.dispose()
+
+    asyncio.run(_run())
+    return drill_url
+
+
+def _drop_drill_database() -> None:
+    """演练结束清理：只删 drill 库（WITH (FORCE) 断开残留连接）。"""
+    admin_url = PG_URL.rsplit("/", 1)[0] + "/postgres"
+
+    async def _run():
+        from sqlalchemy import text
+        from sqlalchemy.ext.asyncio import create_async_engine as _cae
+
+        admin = _cae(admin_url, isolation_level="AUTOCOMMIT")
+        async with admin.begin() as conn:
+            await conn.execute(
+                text(f'DROP DATABASE IF EXISTS "{DRILL_DB}" WITH (FORCE)')
+            )
+        await admin.dispose()
+
+    asyncio.run(_run())
 
 
 def _cli(backup: Path, output: Path, *, url: str = DRILL_URL, as_json: bool = False):
@@ -847,3 +906,107 @@ def test_cutover_guidance_references_new_command() -> None:
     manual = MANUAL_ENTRIES["backup-restore"]
     assert "backup-restore-evidence" in manual["source"]
     assert "不含备份内容" in manual["redaction"]
+
+
+# --- 9. 真实 PG 端到端（门控基础同 test_backup_drill，源库必须 test 库） -------
+
+
+def _seed_exam(client) -> str:
+    """开考 + 全卷答 B + 提交；返回 exam_id（seed 卷 functions-basics）。"""
+    paper_id = client.get("/api/v1/papers").json()[0]["id"]
+    started = client.post(f"/api/v1/papers/{paper_id}/exams", json={"mode": "exam"})
+    assert started.status_code == 201, started.text
+    exam = started.json()
+    assert exam["questions"], "seed 卷必须带题目"
+    for index, question in enumerate(exam["questions"], start=1):
+        res = client.put(
+            f"/api/v1/exams/{exam['exam_id']}/answers",
+            json={"sequence": index, "question_id": question["id"], "answer": "B"},
+        )
+        assert res.status_code == 200, res.text
+    submitted = client.post(f"/api/v1/exams/{exam['exam_id']}/submit", json={})
+    assert submitted.status_code == 200, submitted.text
+    return exam["exam_id"]
+
+
+def _source_skip_reason() -> str:
+    """第 9 节专属跳过原因（无 URL/凭据）：gate 未启用沿用其 reason；
+    库名不匹配时说明源库必须固定 ai_learning_os_test，并显示 gate 已
+    解析出的隔离库名。"""
+    if not PG_GATE.enabled:
+        return PG_GATE.reason
+    return (
+        f"AIOS_PG_TEST_URL 指向隔离库 {PG_GATE.database}，但本测试的源库"
+        f"必须固定为 {SOURCE_DB}（否则 drill 目标的 DROP+CREATE 会落在"
+        "正在使用的源库上）——已跳过"
+    )
+
+
+@pytest.mark.skipif(
+    not PG_GATE.enabled or PG_GATE.database != SOURCE_DB,
+    reason=_source_skip_reason(),
+)
+def test_real_pg_end_to_end_evidence_verified(tmp_path, capsys) -> None:
+    """真实 PG 全链路：业务数据 -> 真 run_backup -> 独立 drill 库真
+    alembic 迁移 + 真 run_restore + 真只读全量导出对账 => verified=true、
+    exit 0；stdout 纯 JSON 与证据文件一致、manifest_sha256 绑定备份
+    manifest 字节、inserted_rows 对账 manifest.tables 总和、备份目录字节
+    全程不变、任何输出面零敏感（无 postgres URL/凭据/表名/业务 exam_id）。"""
+    with TestClient(create_app(PG_URL)) as client:
+        exam_id = _seed_exam(client)
+
+    backup = tmp_path / "artifacts" / "backup"
+    manifest = asyncio.run(run_backup(PG_URL, backup, None, []))
+    assert manifest["tables"]["exam_sessions"] >= 1  # 备份确有业务数据
+    assert manifest["tables"]["answer_events"] >= 1
+    assert manifest["tables"]["submissions"] >= 1
+    before = {p.name: p.read_bytes() for p in backup.rglob("*") if p.is_file()}
+
+    output = _output_path(tmp_path)
+    drill_url = _recreate_drill_database()
+    try:
+        code = cli_module._run_backup_restore_evidence(
+            SimpleNamespace(
+                backup_dir=str(backup),
+                restore_db_url=drill_url,
+                output=str(output),
+                as_json=True,
+            )
+        )
+        assert code == 0
+    finally:
+        _drop_drill_database()
+
+    captured = capsys.readouterr()
+    evidence_text = output.read_text(encoding="utf-8")
+    evidence = json.loads(evidence_text)
+    assert json.loads(captured.out) == evidence  # stdout 纯 JSON == 证据文件
+    assert evidence["restore_drill"] == {
+        "verified": True,
+        "inserted_rows": sum(manifest["tables"].values()),
+    }
+    assert evidence["manifest_sha256"] == hashlib.sha256(
+        (backup / "manifest.json").read_bytes()
+    ).hexdigest()
+    after = {p.name: p.read_bytes() for p in backup.rglob("*") if p.is_file()}
+    assert after == before, "备份目录字节必须全程不变"
+
+    # 零敏感：postgres URL 与凭据不进任何输出面（凭据按 user:pass@ 片段查，
+    # 避免裸密码与 schema_version「aios-backup-v1」之类固定值的子串误撞）
+    from sqlalchemy.engine import make_url
+
+    drill_parsed = make_url(drill_url)
+    credential = (
+        f"{drill_parsed.username}:{drill_parsed.password}@"
+        if drill_parsed.password
+        else ""
+    )
+    for surface in (evidence_text, captured.out, captured.err):
+        assert "postgresql" not in surface
+        assert drill_url not in surface and PG_URL not in surface
+        assert credential not in surface
+        assert exam_id not in surface, "业务 exam_id 不得进输出"
+    # 表名不得进证据（「evidence」表名与 TOOL_ID backup-restore-evidence 子串
+    # 碰撞，单列排除；其余表名在纯标量证据里零命中）
+    for table_name in set(manifest["tables"]) - {"evidence"}:
+        assert table_name not in evidence_text, "表名不得进证据"

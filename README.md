@@ -168,6 +168,17 @@ python -m app.ops.cli backup-restore-evidence \
 URL/凭据/备份内容/表名/业务 ID），`manifest_sha256` 绑定备份 manifest 文件
 字节。退出码：`verified=true`=0 / `verified=false`（数据或行数不一致，证据
 如实落盘、不伪装 pass）=1 / 输入或执行错误=2（不迁移、不恢复、不写输出）。
+
+测试覆盖：`test_backup_restore_evidence.py` 第 9 节复用 `test_backup_drill`
+的 `AIOS_PG_TEST_URL` 安全门控基础，但额外要求源库（业务造数 + `run_backup`
+的对象）固定为隔离库 `ai_learning_os_test`；满足时在独立 `ai_learning_os_drill`
+库（DROP+CREATE、用后即删、不碰源库）真实执行 alembic 迁移 + 恢复 + 只读
+导出全等对账 + 证据导出。env 未设置，或指向 `ai_learning_os_drill` 等其他
+白名单隔离库名（含前缀变体）时，本测试在建立任何连接前 skip——避免把
+正在使用的源库当 drill 目标 DROP+CREATE；CI 的 API job（postgres service，
+该 env 已指向 `ai_learning_os_test`）自动覆盖该路径。这只证明演练工具链
+端到端可用，**不等于生产备份已演练**。
+
 详见 docs/DEVELOPMENT.md「备份恢复演练证据导出（M11-04）」。
 
 ## 本地 Release Candidate 包（M10-17）
