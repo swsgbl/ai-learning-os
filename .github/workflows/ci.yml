@@ -10,8 +10,8 @@ jobs:
     name: Web (typecheck / lint / build)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 22
           cache: npm
@@ -43,8 +43,8 @@ jobs:
     env:
       AIOS_PG_TEST_URL: postgresql+asyncpg://aios:aios@localhost:5432/ai_learning_os_test
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.11"
           cache: pip
@@ -72,7 +72,7 @@ jobs:
     name: Docker (compose build + healthy + smoke)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build and start the full stack
         # M8-00: 真实构建启动门禁 —— compose config 渲染不等于可运行
         run: docker compose -f infra/docker-compose.yml --profile local up -d --build
