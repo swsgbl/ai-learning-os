@@ -1,0 +1,227 @@
+{
+  "milestone": "M11-08",
+  "title": "release-check local-only real-run evidence: no DB URL vs explicit safe local DB",
+  "date": "2026-09-05",
+  "branch": "feature/m11-08-release-check-local-evidence",
+  "base": {
+    "commit": "062bb519a26565693b96f539dc2fd6003392026a",
+    "short": "062bb51",
+    "kind": "main after PR #27 merge (M11-07 evidence slice merged)"
+  },
+  "executor": "Codex on local machine, repo venv, working dir services/api",
+  "env_precondition": {
+    "cleared_before_each_attempt": [
+      "DATABASE_URL",
+      "AIOS_PG_TEST_URL"
+    ],
+    "note": "both env vars unset before each of the two runs; Attempt 2 receives its DB only via explicit --db-url"
+  },
+  "safe_local_db_precondition": {
+    "kind": "one-off gitignored SQLite, local machine only, never production",
+    "path": "artifacts/m11-08/release-check.sqlite",
+    "gitignored": true,
+    "alembic_upgrade_head": "current == head == 0027_audit_chain",
+    "backup_smoke": {
+      "output": "backup ok: aios-backup-v1 tables: 30 files: 1",
+      "three_piece_dir": "artifacts/m11-08/backup-smoke/",
+      "members": [
+        "database.json",
+        "manifest.json",
+        "configs/"
+      ]
+    }
+  },
+  "attempts": [
+    {
+      "id": 1,
+      "label": "no DB URL",
+      "command": "..\\..\\.venv\\Scripts\\python.exe -m app.ops.cli release-check --local-only --json --output D:\\AI Learning OS\\ai-learning-os\\artifacts\\m11-08\\release-check-local.json",
+      "working_dir": "services/api",
+      "execution_scope": "local-only",
+      "exit_code": 1,
+      "report_file": "artifacts/m11-08/release-check-local.json",
+      "generated_at": "2026-09-05T09:25:00.092553+00:00",
+      "total": 10,
+      "passed": 5,
+      "failed": 2,
+      "not_executed": 3,
+      "failed_ids": [
+        "migration",
+        "backup"
+      ],
+      "not_executed_ids": [
+        "voice",
+        "license",
+        "e2e"
+      ],
+      "all_green": false,
+      "failure_reasons": {
+        "migration": "数据库 URL 未配置：alembic env.py _database_url raise RuntimeError（缺 DATABASE_URL，未传 sqlalchemy.url）",
+        "backup": "缺少 --db-url 或 DATABASE_URL"
+      },
+      "passed_ids": [
+        "api-lint",
+        "web-lint",
+        "web-typecheck",
+        "web-build",
+        "api-test"
+      ],
+      "api_test_detail": "1288 passed / 82 skipped in 177.50s"
+    },
+    {
+      "id": 2,
+      "label": "explicit safe local DB",
+      "command": "..\\..\\.venv\\Scripts\\python.exe -m app.ops.cli release-check --local-only --db-url sqlite+aiosqlite:///../../artifacts/m11-08/release-check.sqlite --json --output D:\\AI Learning OS\\ai-learning-os\\artifacts\\m11-08\\release-check-local-db.json",
+      "working_dir": "services/api",
+      "execution_scope": "local-only",
+      "db_url": "sqlite+aiosqlite:///../../artifacts/m11-08/release-check.sqlite",
+      "db_kind": "one-off gitignored local SQLite, not production",
+      "exit_code": 0,
+      "report_file": "artifacts/m11-08/release-check-local-db.json",
+      "generated_at": "2026-09-05T09:29:34.459451+00:00",
+      "total": 10,
+      "passed": 7,
+      "failed": 0,
+      "not_executed": 3,
+      "failed_ids": [],
+      "not_executed_ids": [
+        "voice",
+        "license",
+        "e2e"
+      ],
+      "all_green": false,
+      "passed_ids": [
+        "api-lint",
+        "web-lint",
+        "web-typecheck",
+        "web-build",
+        "api-test",
+        "migration",
+        "backup"
+      ],
+      "api_test_detail": "1288 passed / 82 skipped in 185.32s",
+      "migration_detail": "current == head == 0027_audit_chain",
+      "backup_detail": "backup ok: aios-backup-v1 tables: 30 files: 1"
+    }
+  ],
+  "final_attempt": {
+    "id": 2,
+    "exit_code": 0,
+    "local_checks_passed": "7/7",
+    "all_local_checks_pass": true,
+    "all_green": false,
+    "reason_all_green_false": "live items voice/license/e2e remain not_executed under --local-only",
+    "report_file": "artifacts/m11-08/release-check-local-db.json"
+  },
+  "checks": [
+    {
+      "id": "api-lint",
+      "kind": "command",
+      "attempt_1": "pass",
+      "attempt_2": "pass"
+    },
+    {
+      "id": "web-lint",
+      "kind": "command",
+      "attempt_1": "pass",
+      "attempt_2": "pass"
+    },
+    {
+      "id": "web-typecheck",
+      "kind": "command",
+      "attempt_1": "pass",
+      "attempt_2": "pass"
+    },
+    {
+      "id": "web-build",
+      "kind": "command",
+      "attempt_1": "pass",
+      "attempt_2": "pass"
+    },
+    {
+      "id": "api-test",
+      "kind": "command",
+      "attempt_1": "pass",
+      "attempt_2": "pass",
+      "detail": "1288 passed / 82 skipped both runs (177.50s / 185.32s)"
+    },
+    {
+      "id": "migration",
+      "kind": "command",
+      "attempt_1": "fail",
+      "attempt_2": "pass",
+      "attempt_1_reason": "数据库 URL 未配置",
+      "attempt_2_detail": "current == head == 0027_audit_chain"
+    },
+    {
+      "id": "backup",
+      "kind": "command",
+      "attempt_1": "fail",
+      "attempt_2": "pass",
+      "attempt_1_reason": "缺少 --db-url 或 DATABASE_URL",
+      "attempt_2_detail": "aios-backup-v1, 30 tables, 1 file"
+    },
+    {
+      "id": "voice",
+      "kind": "live",
+      "attempt_1": "not_executed",
+      "attempt_2": "not_executed"
+    },
+    {
+      "id": "license",
+      "kind": "live",
+      "attempt_1": "not_executed",
+      "attempt_2": "not_executed"
+    },
+    {
+      "id": "e2e",
+      "kind": "live",
+      "attempt_1": "not_executed",
+      "attempt_2": "not_executed"
+    }
+  ],
+  "hashes": {
+    "release-check-local.json": {
+      "path": "artifacts/m11-08/release-check-local.json",
+      "size_bytes": 2829,
+      "sha256": "CBDB232E8B123795D8498699F1FFAD48D68984BA2A13743A24C00A018613C478",
+      "generated_at": "2026-09-05T09:25:00.092553+00:00"
+    },
+    "release-check-local-db.json": {
+      "path": "artifacts/m11-08/release-check-local-db.json",
+      "size_bytes": 2734,
+      "sha256": "66C1226E5698BE443D0F335488FF8709911E69EEE46A0ADFE21A5D34A538F896",
+      "generated_at": "2026-09-05T09:29:34.459451+00:00"
+    },
+    "hash_verified_locally": "SHA256 recomputed on the local artifact files matches the recorded digests (case-insensitive hex)",
+    "gitignored": true
+  },
+  "boundaries": {
+    "scope_statement": "local-only runs are PROCESS evidence only; the three live checks (voice/license/e2e) were NOT executed and all_green=false in both runs; this does not replace a full release-check and does not imply production readiness",
+    "full_release_check_executed": false,
+    "live_checks_not_executed": [
+      "voice",
+      "license",
+      "e2e"
+    ],
+    "all_green": false,
+    "production_ready": false,
+    "not_performed": [
+      "production DB connection or write (Attempt 2 --db-url points only at a one-off gitignored local SQLite)",
+      "deployment",
+      "git tag creation",
+      "GitHub Release publication",
+      "image registry push",
+      "secret read or output"
+    ],
+    "artifacts_local_only": "both JSON reports, the one-off SQLite and the backup-smoke output stay under gitignored artifacts/m11-08/ and never enter git"
+  },
+  "conclusion": {
+    "production_ready": false,
+    "no_db_url_local_only_reaches_seven_of_seven": false,
+    "no_db_url_outcome": "5/7 local pass, migration+backup fail (both hard-require a DB URL), exit code 1",
+    "explicit_safe_db_outcome": "7/7 local pass, exit code 0, migration current==head==0027_audit_chain, backup aios-backup-v1 30 tables 1 file",
+    "all_green": false,
+    "statement": "Without a DB URL, --local-only cannot reach 7/7 local checks because migration and backup hard-require a database URL and fail closed with exit code 1. With an explicit one-off gitignored local SQLite passed via --db-url, all seven local checks pass and the exit code is 0. In both runs all_green stays false because the live checks voice/license/e2e are honestly not_executed under --local-only. This is local process evidence only: it is not a substitute for a full release-check and does not equal production readiness; production_ready stays false."
+  }
+}
