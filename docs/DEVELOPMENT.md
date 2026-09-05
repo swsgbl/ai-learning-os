@@ -404,6 +404,47 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   且不再打印门禁结论摘要（防半途报告被误读为完整结论）。九项门禁的命令、
   超时、环境隔离与 live 检查逻辑零改动。
 
+## 备份恢复演练证据导出（M11-04）
+
+- **CLI**：`python -m app.ops.cli backup-restore-evidence --backup-dir <备份目录>
+  --restore-db-url <隔离PG URL> --output <artifacts路径> [--json]`，实现文件
+  `services/api/app/ops/backup_restore_evidence.py`。
+- **定位**：release-readiness 的 `backup-restore` 门（M10-11）与
+  cutover-rehearsal 的 `backup-restore` 步（M10-15）需要可复现、脱敏、原子
+  落盘的演练证据（`gate`/`step`/`schema_version`/`manifest_sha256`/
+  `created_at`/`restore_drill.verified`/`restore_drill.inserted_rows`）。本
+  工具把「隔离库迁移 + 完整恢复 + 只读导出比对」编排成一条命令，复用 M6-06
+  `run_restore`/manifest 校验语义（零重构），产出同契约 JSON，可直接作为
+  readiness/rehearsal 的 `backup-restore.json` 证据文件。
+- **前置条件（操作者须知）**：备份已生成（`cli backup`，备份目录内
+  `manifest.json`/`database.json` 齐备）；restore 目标是**已存在的隔离库**
+  ——工具会对它执行 `alembic upgrade head` 并**覆盖恢复**（全量替换），因此
+  它必须是专用演练库（`ai_learning_os_drill` 或 `ai_learning_os_test` 前缀
+  变体），不是任何业务/源库。
+- **护栏（全部先于执行；违例 exit 2、不迁移/不恢复/不写输出）**：备份目录
+  必须位于 gitignore 的 artifacts/temp（复用 `is_safe_artifact_path`）、为真
+  目录（symlink 拒绝）且结构合法（schema_version=aios-backup-v1、tables 为
+  非负整数计数表）；恢复目标 URL 必须过 `app.db.test_gate`（`evaluate_pg_test_url`）
+  隔离白名单——主库 `ai_learning_os`、维护库 `postgres`、缺库名、非 PG 在
+  建立任何连接前拒绝；输出必须位于 artifacts/temp 且**不得位于备份目录内
+  或等于备份目录**（备份目录的精确文件集是 manifest 完整性校验面，添加文件
+  会破坏未来对该备份的校验）；输出 symlink 拒绝（共享原子写 `_write_report_
+  atomic`：同目录临时文件 + fsync + `os.replace`，失败保留旧文件、无 `.tmp`
+  残留）。
+- **诚实语义**：`verified=true` 仅当（a）恢复后隔离库只读全量导出
+  （`dump_database`）与备份 `database.json` 逻辑数据全等（表集合一致 + 逐表
+  行多重集合全等；行序无关——关系表行序不属于逻辑数据）且（b）
+  `inserted_rows` == manifest `tables` 计数总和。不一致 => `verified=false`
+  证据照常落盘、exit 1（如实记录失败，绝不伪装 pass）；迁移/恢复/导出失败 =>
+  错误抹 `://user:pass@` 凭据后输出、exit 2、不产证据（旧 evidence 字节
+  原样保留）。`--json` 时 stdout 纯 JSON、「报告已写入」提示走 stderr。
+- **安全边界**：只写隔离目标库（alembic 子进程显式
+  `DATABASE_URL=<隔离URL>`）；不读取/不修改备份源库（备份目录之外零数据库
+  读访问）、不写生产、备份目录字节保持不变；证据零敏感（无 DB URL/凭据/
+  备份内容/表名/业务 ID；`manifest.tables` 只取计数总和），
+  `manifest_sha256` 是备份 `manifest.json` 文件字节 SHA-256，`created_at` 是
+  演练执行时刻。
+
 ## 发布准备 readiness manifest（M10-11）
 
 - **CLI**：`python -m app.ops.cli release-readiness --evidence-dir <path>

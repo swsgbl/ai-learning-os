@@ -334,7 +334,10 @@ MANUAL_ENTRIES: dict[str, dict[str, str]] = {
     },
     "backup-restore": {
         "source": "python -m app.ops.cli backup --db-url <生产URL> --out <备份"
-        "目录>，并对隔离恢复库执行 restore 演练（verified）后导出 manifest 摘要",
+        "目录>（备份），随后 python -m app.ops.cli backup-restore-evidence "
+        "--backup-dir <备份目录> --restore-db-url <隔离PG URL> --output "
+        "<artifacts路径>（M11-04：隔离库迁移 + 恢复 + 逻辑全等校验，导出 "
+        "backup-restore.json）",
         "redaction": "schema_version/created_at/restore_drill.verified/"
         "inserted_rows 摘要字段；不含备份内容、DB URL、S3 凭据",
         "semantics": "schema_version=aios-backup-v1 且 restore_drill.verified="
