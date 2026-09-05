@@ -1,8 +1,13 @@
 "use client";
 
+// M11-01 AppShell 体验重设计：
+// - 桌面导航：active 下划线指示（scaleX 过渡）+ hover/focus 反馈 + aria-current
+// - 移动底栏：active 指示点 + 图标/字重反馈，触控目标 >=44px
+// - 路由进入过渡：PageTransition（reduced-motion 归零）
+// - 导航不遮挡内容：main 预留底栏高度的 padding
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BookOpen,
   EyeOff,
@@ -14,9 +19,12 @@ import {
   ShieldCheck,
   type LucideIcon,
 } from "lucide-react";
+import { gsap, useMotion } from "@/lib/gsap";
+import { MOTION } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/api";
 import { logout, probeAuth, type AuthState } from "@/lib/auth";
+import { PageTransition } from "./motion/page-transition";
 
 const BASE_NAV: Array<{ href: string; label: string; icon: LucideIcon }> = [
   { href: "/", label: "首页", icon: Home },
@@ -25,6 +33,10 @@ const BASE_NAV: Array<{ href: string; label: string; icon: LucideIcon }> = [
   { href: "/library", label: "学习库", icon: Library },
   { href: "/progress", label: "工作台", icon: LineChart },
 ];
+
+function isActive(pathname: string, href: string) {
+  return href === "/" ? pathname === "/" : pathname === href || pathname.startsWith(`${href}/`);
+}
 
 // M10-02: 治理入口只对 admin / 本地模式渲染（role 来自 auth/me）。
 // 这只是入口可见性——安全边界在后端 require_admin，learner 直接访问 /governance
@@ -68,7 +80,7 @@ function AuthBadge({ state, onLogout }: { state: AuthState | null; onLogout: () 
     return (
       <Link
         href="/login"
-        className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-accent-fg hover:opacity-90"
+        className="inline-flex min-h-9 items-center gap-1.5 rounded-lg bg-accent px-3 text-xs font-medium text-accent-fg transition-opacity duration-150 hover:opacity-90"
       >
         <LogIn className="size-3.5" /> 登录
       </Link>
@@ -82,12 +94,106 @@ function AuthBadge({ state, onLogout }: { state: AuthState | null; onLogout: () 
       </span>
       <button
         type="button"
-        className="text-muted hover:text-ink"
+        className="min-h-11 rounded-md px-3 text-muted transition-colors duration-150 hover:text-ink md:min-h-9 md:px-1"
         onClick={onLogout}
       >
         退出
       </button>
     </span>
+  );
+}
+
+/** 桌面导航链接：active 下划线（scaleX，transform-only）+ hover/focus 提示 */
+function NavLink({
+  href,
+  label,
+  active,
+}: {
+  href: string;
+  label: string;
+  active: boolean;
+}) {
+  return (
+    <Link
+      href={href}
+      aria-current={active ? "page" : undefined}
+      className={cn(
+        "group relative rounded-lg px-3 py-2 text-sm outline-offset-4 transition-colors duration-150",
+        active ? "text-accent-strong" : "text-muted hover:text-ink",
+      )}
+    >
+      {label}
+      <span
+        aria-hidden="true"
+        className={cn(
+          "absolute inset-x-3 -bottom-px h-0.5 origin-left rounded-full transition-transform duration-200 ease-[var(--ease-out)]",
+          active
+            ? "scale-x-100 bg-accent"
+            : "scale-x-0 bg-border-strong group-hover:scale-x-100 group-focus-visible:scale-x-100",
+        )}
+      />
+    </Link>
+  );
+}
+
+/** 移动底栏项：active 时顶部指示点 + 图标着色 + 字重反馈 */
+function TabLink({
+  href,
+  label,
+  icon: Icon,
+  active,
+}: {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  active: boolean;
+}) {
+  const ref = useRef<HTMLAnchorElement>(null);
+  const dotRef = useRef<HTMLSpanElement>(null);
+
+  // active 切换时指示点 scale 弹入（transform-only）；reduced-motion 静态显示
+  useMotion(
+    (reduced) => {
+      if (!dotRef.current) return;
+      if (reduced) {
+        gsap.set(dotRef.current, { clearProps: "transform" });
+        return;
+      }
+      gsap.fromTo(
+        dotRef.current,
+        { scale: 0 },
+        {
+          scale: 1,
+          duration: MOTION.duration.base,
+          ease: MOTION.ease.out,
+          clearProps: "transform",
+        },
+      );
+    },
+    { scope: ref, dependencies: [active] },
+  );
+
+  return (
+    <Link
+      ref={ref}
+      href={href}
+      aria-current={active ? "page" : undefined}
+      className={cn(
+        "relative flex min-h-14 flex-col items-center justify-center gap-0.5 rounded-lg px-1 py-1.5 text-[11px] outline-offset-2 transition-colors duration-150",
+        active ? "text-accent-strong" : "text-muted",
+      )}
+    >
+      <span
+        ref={dotRef}
+        aria-hidden="true"
+        className={cn(
+          "absolute top-0.5 h-1 w-6 rounded-full bg-accent",
+          !active && "hidden",
+        )}
+      />
+      <Icon className="size-5" strokeWidth={active ? 2.2 : 1.7} aria-hidden="true" />
+      <span className={cn(active && "font-medium")}>{label}</span>
+    </Link>
   );
 }
 
@@ -113,56 +219,46 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="min-h-dvh bg-bg text-ink">
-      <header className="sticky top-0 z-30 border-b border-border/80 bg-bg/90 backdrop-blur-sm">
-        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
-          <Link href="/" className="flex items-baseline gap-2">
-            <span className="font-display text-xl font-medium">砚席</span>
-            <span className="hidden text-xs text-muted sm:inline">AI Learning OS</span>
+      <header className="sticky top-0 z-30 border-b border-border/80 bg-bg/85 backdrop-blur-md">
+        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between gap-3 px-4">
+          <Link href="/" className="flex items-baseline gap-2 rounded-md outline-offset-4">
+            <span className="font-display text-xl font-medium tracking-tight">砚席</span>
+            <span className="hidden text-xs text-subtle sm:inline">AI Learning OS</span>
           </Link>
-          <nav className="hidden items-center gap-1 md:flex">
-            {nav.map((item) => {
-              const active = item.href === "/" ? pathname === "/" : pathname === item.href || pathname.startsWith(`${item.href}/`);
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    "rounded-lg px-3 py-2 text-sm transition-colors",
-                    active ? "bg-surface-2 text-ink" : "text-muted hover:text-ink",
-                  )}
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
+          <nav aria-label="主导航" className="hidden items-center gap-0.5 md:flex">
+            {nav.map((item) => (
+              <NavLink
+                key={item.href}
+                href={item.href}
+                label={item.label}
+                active={isActive(pathname, item.href)}
+              />
+            ))}
           </nav>
           <div className="flex items-center gap-2">
             <AuthBadge state={auth} onLogout={handleLogout} />
           </div>
         </div>
       </header>
-      <main className={cn("mx-auto w-full max-w-5xl px-4 py-6", immersive ? "pb-8" : "pb-24 md:pb-10")}>{children}</main>
+      <main className={cn("mx-auto w-full max-w-5xl px-4 py-6", immersive ? "pb-8" : "pb-24 md:pb-10")}>
+        <PageTransition>{children}</PageTransition>
+      </main>
       {!immersive && (
-        <nav className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-surface/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-sm md:hidden">
+        <nav
+          aria-label="底部导航"
+          className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-paper/95 pb-[env(safe-area-inset-bottom)] backdrop-blur-md md:hidden"
+        >
           <ul className={cn("grid", governanceVisible ? "grid-cols-6" : "grid-cols-5")}>
-            {nav.map((item) => {
-              const active = item.href === "/" ? pathname === "/" : pathname === item.href || pathname.startsWith(`${item.href}/`);
-              const Icon = item.icon;
-              return (
-                <li key={item.href}>
-                  <Link
-                    href={item.href}
-                    className={cn(
-                      "flex min-h-14 flex-col items-center justify-center gap-0.5 text-[11px]",
-                      active ? "text-accent" : "text-muted",
-                    )}
-                  >
-                    <Icon className="size-5" strokeWidth={active ? 2.2 : 1.7} />
-                    {item.label}
-                  </Link>
-                </li>
-              );
-            })}
+            {nav.map((item) => (
+              <li key={item.href}>
+                <TabLink
+                  href={item.href}
+                  label={item.label}
+                  icon={item.icon}
+                  active={isActive(pathname, item.href)}
+                />
+              </li>
+            ))}
           </ul>
         </nav>
       )}
