@@ -18,7 +18,8 @@ const buttonVariants = cva(
       },
       size: {
         default: "h-11 rounded-lg px-4 text-sm",
-        sm: "h-9 rounded-md px-3 text-sm",
+        // M11-01 移动端触控目标 >=44px；桌面（md+）回到紧凑密度
+        sm: "h-11 rounded-lg px-4 text-sm md:h-9 md:rounded-md md:px-3",
         lg: "h-12 rounded-xl px-5 text-base",
         icon: "size-11 rounded-lg",
       },

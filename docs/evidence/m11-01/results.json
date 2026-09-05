@@ -1,0 +1,1509 @@
+{
+  "summary": {
+    "total": 250,
+    "passed": 250,
+    "failed": 0
+  },
+  "results": [
+    {
+      "group": "desktop-1440x900",
+      "name": "login-flow",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "home-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "home-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "home-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "progress-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "progress-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "progress-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "library-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "library-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "library-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "exam-index-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "exam-index-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "exam-index-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "voice-index-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "voice-index-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "voice-index-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "governance-learner-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "governance-learner-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "governance-learner-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "login-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "login-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "desktop-1440x900",
+      "name": "login-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "login-flow",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "home-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "home-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "home-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "progress-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "progress-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "progress-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "library-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "library-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "library-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "exam-index-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "exam-index-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "exam-index-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "voice-index-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "voice-index-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "voice-index-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "governance-learner-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "governance-learner-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "governance-learner-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "login-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "login-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "tablet-820x1180",
+      "name": "login-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "login-flow",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "home-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "home-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "android-390x844",
+      "name": "home-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "home-touch-targets",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "progress-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "progress-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "android-390x844",
+      "name": "progress-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "progress-touch-targets",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "library-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "library-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "android-390x844",
+      "name": "library-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "library-touch-targets",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "exam-index-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "exam-index-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "android-390x844",
+      "name": "exam-index-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "exam-index-touch-targets",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "voice-index-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "voice-index-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "android-390x844",
+      "name": "voice-index-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "voice-index-touch-targets",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "governance-learner-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "governance-learner-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "android-390x844",
+      "name": "governance-learner-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "governance-learner-touch-targets",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "login-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "login-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "android-390x844",
+      "name": "login-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "login-touch-targets",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-390x844",
+      "name": "bottom-nav-present",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "login-flow",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "home-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "home-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "android-360x800",
+      "name": "home-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "home-touch-targets",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "progress-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "progress-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "android-360x800",
+      "name": "progress-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "progress-touch-targets",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "library-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "library-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "android-360x800",
+      "name": "library-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "library-touch-targets",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "exam-index-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "exam-index-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "android-360x800",
+      "name": "exam-index-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "exam-index-touch-targets",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "voice-index-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "voice-index-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "android-360x800",
+      "name": "voice-index-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "voice-index-touch-targets",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "governance-learner-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "governance-learner-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "android-360x800",
+      "name": "governance-learner-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "governance-learner-touch-targets",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "login-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "login-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "android-360x800",
+      "name": "login-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "login-touch-targets",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "android-360x800",
+      "name": "bottom-nav-present",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "keyboard",
+      "name": "tab-0-focus-ring(语音陪练)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "keyboard",
+      "name": "tab-1-focus-ring(考场)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "keyboard",
+      "name": "tab-2-focus-ring(语音陪练)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "keyboard",
+      "name": "tab-3-focus-ring(考场)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "keyboard",
+      "name": "tab-4-focus-ring(语音陪练)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "keyboard",
+      "name": "tab-5-focus-ring(考场)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "keyboard",
+      "name": "tab-6-focus-ring(skip-dev-overlay)",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "keyboard",
+      "name": "at-least-one-visible-focus-ring",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "keyboard",
+      "name": "library-search-filter-updates-count",
+      "pass": true,
+      "detail": "2 / 3 份"
+    },
+    {
+      "group": "keyboard",
+      "name": "library-filter-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "anonymous-header",
+      "name": "mobile-390-login-link-present",
+      "pass": true,
+      "detail": "68x44 \"登录\""
+    },
+    {
+      "group": "anonymous-header",
+      "name": "mobile-390-login-touch-target",
+      "pass": true,
+      "detail": "68x44"
+    },
+    {
+      "group": "anonymous-header",
+      "name": "mobile-360-login-link-present",
+      "pass": true,
+      "detail": "68x44 \"登录\""
+    },
+    {
+      "group": "anonymous-header",
+      "name": "mobile-360-login-touch-target",
+      "pass": true,
+      "detail": "68x44"
+    },
+    {
+      "group": "anonymous-header",
+      "name": "desktop-1440-login-link-present",
+      "pass": true,
+      "detail": "68x36 \"登录\""
+    },
+    {
+      "group": "anonymous-header",
+      "name": "desktop-1440-login-desktop-compact",
+      "pass": true,
+      "detail": "68x36"
+    },
+    {
+      "group": "exam-flow-desktop",
+      "name": "enter-exam",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-desktop",
+      "name": "answer-all-questions",
+      "pass": true,
+      "detail": "answered 3"
+    },
+    {
+      "group": "exam-flow-desktop",
+      "name": "submit-dialog-opens",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-desktop",
+      "name": "dialog-focus-moved-to-heading",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-desktop",
+      "name": "navigated-to-review",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-desktop",
+      "name": "review-score-visible",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-desktop",
+      "name": "review-items-visible",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-desktop",
+      "name": "review-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "exam-flow-desktop",
+      "name": "wrong-card-aria-expanded-toggle",
+      "pass": true,
+      "detail": "true -> false"
+    },
+    {
+      "group": "exam-flow-desktop",
+      "name": "console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-mobile-390",
+      "name": "enter-exam",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-mobile-390",
+      "name": "answer-all-questions",
+      "pass": true,
+      "detail": "answered 3"
+    },
+    {
+      "group": "exam-flow-mobile-390",
+      "name": "submit-dialog-opens",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-mobile-390",
+      "name": "dialog-focus-moved-to-heading",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-mobile-390",
+      "name": "navigated-to-review",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-mobile-390",
+      "name": "review-score-visible",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-mobile-390",
+      "name": "review-items-visible",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-mobile-390",
+      "name": "review-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "exam-flow-mobile-390",
+      "name": "review-touch-targets",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-mobile-390",
+      "name": "wrong-card-aria-expanded-toggle",
+      "pass": true,
+      "detail": "true -> false"
+    },
+    {
+      "group": "exam-flow-mobile-390",
+      "name": "console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-mobile-360",
+      "name": "enter-exam",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-mobile-360",
+      "name": "answer-all-questions",
+      "pass": true,
+      "detail": "answered 3"
+    },
+    {
+      "group": "exam-flow-mobile-360",
+      "name": "submit-dialog-opens",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-mobile-360",
+      "name": "dialog-focus-moved-to-heading",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-mobile-360",
+      "name": "navigated-to-review",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-mobile-360",
+      "name": "review-score-visible",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-mobile-360",
+      "name": "review-items-visible",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-mobile-360",
+      "name": "review-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "exam-flow-mobile-360",
+      "name": "review-touch-targets",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "exam-flow-mobile-360",
+      "name": "wrong-card-aria-expanded-toggle",
+      "pass": true,
+      "detail": "true -> false"
+    },
+    {
+      "group": "exam-flow-mobile-360",
+      "name": "console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "dialog-opens",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "focus-on-heading",
+      "pass": true,
+      "detail": "H2 \"提交试卷？\""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "focus-inside-dialog",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "body-scroll-locked",
+      "pass": true,
+      "detail": "overflow=hidden"
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "wheel-does-not-scroll-background",
+      "pass": true,
+      "detail": "scrollY 0 -> 0 (page not scrollable at this viewport)"
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "tab-heading-to-first-button",
+      "pass": true,
+      "detail": "BUTTON \"再看看\""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "tab-first-to-last-button",
+      "pass": true,
+      "detail": "BUTTON \"提交审阅\""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "tab-wraps-to-first-button",
+      "pass": true,
+      "detail": "BUTTON \"再看看\""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "shift-tab-wraps-to-last-button",
+      "pass": true,
+      "detail": "BUTTON \"提交审阅\""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "dialog-closes",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "body-scroll-restored",
+      "pass": true,
+      "detail": "overflow=visible"
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "focus-returned-to-trigger",
+      "pass": true,
+      "detail": "BUTTON \"交卷\""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "submitting-aria-busy",
+      "pass": true,
+      "detail": "aria-busy=true"
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "submitting-buttons-disabled",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "submitting-focus-in-dialog",
+      "pass": true,
+      "detail": "H2"
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "submitting-tab-stays-in-dialog",
+      "pass": true,
+      "detail": "H2 \"提交试卷？\""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "submitting-scroll-still-locked",
+      "pass": true,
+      "detail": "overflow=hidden"
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "navigated-to-review-after-submit",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-desktop",
+      "name": "console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "dialog-opens",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "focus-on-heading",
+      "pass": true,
+      "detail": "H2 \"提交试卷？\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "focus-inside-dialog",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "body-scroll-locked",
+      "pass": true,
+      "detail": "overflow=hidden"
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "wheel-does-not-scroll-background",
+      "pass": true,
+      "detail": "scrollY 0 -> 0 (page not scrollable at this viewport)"
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "tab-heading-to-first-button",
+      "pass": true,
+      "detail": "BUTTON \"再看看\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "tab-first-to-last-button",
+      "pass": true,
+      "detail": "BUTTON \"提交审阅\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "tab-wraps-to-first-button",
+      "pass": true,
+      "detail": "BUTTON \"再看看\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "shift-tab-wraps-to-last-button",
+      "pass": true,
+      "detail": "BUTTON \"提交审阅\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "dialog-closes",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "body-scroll-restored",
+      "pass": true,
+      "detail": "overflow=visible"
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "focus-returned-to-trigger",
+      "pass": true,
+      "detail": "BUTTON \"交卷\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "submitting-aria-busy",
+      "pass": true,
+      "detail": "aria-busy=true"
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "submitting-buttons-disabled",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "submitting-focus-in-dialog",
+      "pass": true,
+      "detail": "H2"
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "submitting-tab-stays-in-dialog",
+      "pass": true,
+      "detail": "H2 \"提交试卷？\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "submitting-scroll-still-locked",
+      "pass": true,
+      "detail": "overflow=hidden"
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "navigated-to-review-after-submit",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390",
+      "name": "console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "dialog-opens",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "focus-on-heading",
+      "pass": true,
+      "detail": "H2 \"提交试卷？\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "focus-inside-dialog",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "body-scroll-locked",
+      "pass": true,
+      "detail": "overflow=hidden"
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "page-scrolled-before-lock",
+      "pass": true,
+      "detail": "scrollY=85"
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "wheel-does-not-scroll-background",
+      "pass": true,
+      "detail": "scrollY 85 -> 85"
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "tab-heading-to-first-button",
+      "pass": true,
+      "detail": "BUTTON \"再看看\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "tab-first-to-last-button",
+      "pass": true,
+      "detail": "BUTTON \"提交审阅\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "tab-wraps-to-first-button",
+      "pass": true,
+      "detail": "BUTTON \"再看看\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "shift-tab-wraps-to-last-button",
+      "pass": true,
+      "detail": "BUTTON \"提交审阅\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "dialog-closes",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "body-scroll-restored",
+      "pass": true,
+      "detail": "overflow=visible"
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "focus-returned-to-trigger",
+      "pass": true,
+      "detail": "BUTTON \"交卷\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "submitting-aria-busy",
+      "pass": true,
+      "detail": "aria-busy=true"
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "submitting-buttons-disabled",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "submitting-focus-in-dialog",
+      "pass": true,
+      "detail": "H2"
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "submitting-tab-stays-in-dialog",
+      "pass": true,
+      "detail": "H2 \"提交试卷？\""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "submitting-scroll-still-locked",
+      "pass": true,
+      "detail": "overflow=hidden"
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "navigated-to-review-after-submit",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "dialog-a11y-mobile-390-short",
+      "name": "console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "governance",
+      "name": "tabs-present",
+      "pass": true,
+      "detail": "count=5"
+    },
+    {
+      "group": "governance",
+      "name": "arrow-key-tab-switch",
+      "pass": true,
+      "detail": "selected=课程生成"
+    },
+    {
+      "group": "governance",
+      "name": "tab-课程导入-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "governance",
+      "name": "tab-课程生成-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "governance",
+      "name": "tab-试卷抽取-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "governance",
+      "name": "tab-变式题-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "governance",
+      "name": "tab-审计日志-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "governance",
+      "name": "audit-entries-visible",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "governance",
+      "name": "audit-row-expand",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "governance",
+      "name": "mobile-390-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "governance",
+      "name": "mobile-390-touch-targets",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "governance",
+      "name": "mobile-console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "governance",
+      "name": "console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-desktop-1440x900",
+      "name": "home-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-desktop-1440x900",
+      "name": "home-no-invisible-stuck",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-desktop-1440x900",
+      "name": "progress-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-desktop-1440x900",
+      "name": "progress-no-invisible-stuck",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-desktop-1440x900",
+      "name": "library-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-desktop-1440x900",
+      "name": "library-no-invisible-stuck",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-desktop-1440x900",
+      "name": "exam-index-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-desktop-1440x900",
+      "name": "exam-index-no-invisible-stuck",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-desktop-1440x900",
+      "name": "voice-index-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-desktop-1440x900",
+      "name": "voice-index-no-invisible-stuck",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-desktop-1440x900",
+      "name": "console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-android-360x800",
+      "name": "home-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-android-360x800",
+      "name": "home-no-invisible-stuck",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-android-360x800",
+      "name": "progress-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-android-360x800",
+      "name": "progress-no-invisible-stuck",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-android-360x800",
+      "name": "library-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-android-360x800",
+      "name": "library-no-invisible-stuck",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-android-360x800",
+      "name": "exam-index-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-android-360x800",
+      "name": "exam-index-no-invisible-stuck",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-android-360x800",
+      "name": "voice-index-content",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-android-360x800",
+      "name": "voice-index-no-invisible-stuck",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "reduced-android-360x800",
+      "name": "console-clean",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "voice",
+      "name": "voice-question-renders",
+      "pass": true,
+      "detail": "options=4"
+    },
+    {
+      "group": "voice",
+      "name": "voice-option-select-feedback",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "voice",
+      "name": "voice-390-no-overflow-x",
+      "pass": true,
+      "detail": "overflowX=0px"
+    },
+    {
+      "group": "voice",
+      "name": "voice-390-touch-targets",
+      "pass": true,
+      "detail": ""
+    },
+    {
+      "group": "voice",
+      "name": "console-clean",
+      "pass": true,
+      "detail": ""
+    }
+  ]
+}

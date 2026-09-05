@@ -3,11 +3,14 @@
 // M10-02 治理草稿队列：四类草稿端点同构（list/get/approve/reject），
 // 本组件用每类的「摘要 / 元数据 / 详情」投影函数泛化，队列交互只写一遍。
 // 动作语义：pending_review -> approved | rejected 终态不可逆，重复审核 409 有明确反馈。
-import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, RefreshCw, X } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import type { DraftStatus } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { gsap, useMotion } from "@/lib/gsap";
+import { MOTION, staggerFor } from "@/lib/motion";
+import { ErrorState, LoadingState, EmptyState } from "@/components/states";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -130,24 +133,45 @@ export function DraftQueue<T>({ config }: { config: DraftKindConfig<T> }) {
 
   // 展开详情时持有的最新版本（详情接口 / 动作结果写入，比列表行更实时）
   const [detailDraft, setDetailDraft] = useState<T | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  // 队列变化（加载/过滤/审核后刷新）时行卡片编排入场——保持信息密度，
+  // 只做一次克制的 stagger；reduced-motion 直接显示
+  const visibleSignature = drafts ? drafts.map(config.idOf).join(",") : "";
+  useMotion(
+    (reduced) => {
+      const root = rootRef.current;
+      if (!root) return;
+      const rows = root.querySelectorAll<HTMLElement>("[data-queue-row]");
+      if (rows.length === 0) return;
+      if (reduced) {
+        gsap.set(rows, { clearProps: "all" });
+        return;
+      }
+      gsap.fromTo(
+        rows,
+        { autoAlpha: 0, y: MOTION.distance.rise },
+        {
+          autoAlpha: 1,
+          y: 0,
+          duration: MOTION.duration.base,
+          ease: MOTION.ease.out,
+          stagger: staggerFor(rows.length),
+          clearProps: "opacity,visibility,transform",
+        },
+      );
+    },
+    { scope: rootRef, dependencies: [visibleSignature, filter] },
+  );
 
   if (forbidden) {
-    return (
-      <Card className="p-5 text-sm text-muted">需要管理员权限才能查看该队列。</Card>
-    );
+    return <EmptyState title="需要管理员权限才能查看该队列。" />;
   }
   if (error) {
-    return (
-      <Card className="flex items-center justify-between gap-3 p-5 text-sm text-bad">
-        <span>队列加载失败：{error}</span>
-        <Button variant="outline" size="sm" onClick={() => void reload()}>
-          重试
-        </Button>
-      </Card>
-    );
+    return <ErrorState title="队列加载失败" detail={error} onRetry={() => void reload()} />;
   }
   if (!drafts) {
-    return <Card className="p-5 text-sm text-muted">正在读取队列……</Card>;
+    return <LoadingState title="正在读取队列" />;
   }
 
   const pending = drafts.filter((draft) => config.statusOf(draft) === "pending_review").length;
@@ -156,39 +180,41 @@ export function DraftQueue<T>({ config }: { config: DraftKindConfig<T> }) {
   const visible = filter === "all" ? drafts : drafts.filter((draft) => config.statusOf(draft) === filter);
 
   return (
-    <div className="space-y-3">
+    <div ref={rootRef} className="space-y-3">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex flex-wrap items-center gap-2 text-sm text-muted">
-          <span className="tabular-nums">
+          <span className="tabular-nums" aria-live="polite">
             共 {drafts.length} 条 · 待审 {pending} · 已通过 {approved} · 已驳回 {rejected}
           </span>
         </div>
         <div className="flex items-center gap-2">
-          <div className="flex gap-1 overflow-x-auto">
+          <div className="flex gap-1 overflow-x-auto" role="group" aria-label="按状态过滤">
             {FILTERS.map((item) => (
               <button
                 key={item.key}
                 type="button"
+                aria-pressed={filter === item.key}
                 onClick={() => setFilter(item.key)}
                 className={cn(
-                  "rounded-full px-3 py-1.5 text-xs whitespace-nowrap",
-                  filter === item.key ? "bg-accent text-accent-fg" : "bg-surface-2 text-muted",
+                  "min-h-11 rounded-full px-3 text-xs whitespace-nowrap transition-colors duration-150 md:min-h-9 md:px-3",
+                  filter === item.key ? "bg-accent text-accent-fg" : "bg-surface-2 text-muted hover:text-ink",
                 )}
               >
                 {item.label}
               </button>
             ))}
           </div>
-          <Button variant="ghost" size="icon" title="刷新队列" onClick={() => void reload()}>
-            <RefreshCw className={cn(drafts === null && "animate-spin")} />
+          <Button variant="ghost" size="icon" title="刷新队列" aria-label="刷新队列" onClick={() => void reload()}>
+            <RefreshCw aria-hidden="true" />
           </Button>
         </div>
       </div>
 
       {visible.length === 0 ? (
-        <Card className="p-5 text-sm text-muted">
-          {filter === "pending_review" ? "该队列为空：没有等待审核的草稿。" : "该状态下暂无草稿。"}
-        </Card>
+        <EmptyState
+          title={filter === "pending_review" ? "该队列为空" : "该状态下暂无草稿"}
+          detail={filter === "pending_review" ? "没有等待审核的草稿。" : undefined}
+        />
       ) : (
         <div className="space-y-3">
           {visible.map((draft) => {
@@ -197,10 +223,11 @@ export function DraftQueue<T>({ config }: { config: DraftKindConfig<T> }) {
             const detail = open ? (detailDraft ?? draft) : null;
             const status = config.statusOf(detail ?? draft);
             return (
-              <Card key={id} className="overflow-hidden">
+              <Card key={id} data-queue-row className="overflow-hidden">
                 <button
                   type="button"
-                  className="flex w-full items-start justify-between gap-3 p-4 text-left"
+                  aria-expanded={open}
+                  className="flex w-full items-start justify-between gap-3 p-4 text-left outline-offset-[-4px]"
                   onClick={() => {
                     const next = open ? null : id;
                     setOpenId(next);
@@ -256,7 +283,7 @@ export function DraftQueue<T>({ config }: { config: DraftKindConfig<T> }) {
                               disabled={acting}
                               onClick={() => void act("approve")}
                             >
-                              <Check /> 通过
+                              <Check aria-hidden="true" /> {acting ? "处理中…" : "通过"}
                             </Button>
                             <Button
                               size="sm"
@@ -264,7 +291,7 @@ export function DraftQueue<T>({ config }: { config: DraftKindConfig<T> }) {
                               disabled={acting}
                               onClick={() => void act("reject")}
                             >
-                              <X /> 驳回
+                              <X aria-hidden="true" /> {acting ? "处理中…" : "驳回"}
                             </Button>
                           </div>
                         </>
@@ -275,13 +302,15 @@ export function DraftQueue<T>({ config }: { config: DraftKindConfig<T> }) {
                       )}
                       {actionFeedback && (
                         <p
+                          role="status"
                           className={cn(
-                            "mt-2 text-xs",
+                            "mt-2 text-xs font-medium",
                             actionFeedback.kind === "ok" && "text-good",
                             actionFeedback.kind === "conflict" && "text-warn",
                             actionFeedback.kind === "error" && "text-bad",
                           )}
                         >
+                          {actionFeedback.kind === "ok" ? "✓ " : actionFeedback.kind === "error" ? "✗ " : "⚠ "}
                           {actionFeedback.text}
                         </p>
                       )}

@@ -13,8 +13,8 @@ import type { GenerationDraft, ImportDraft, PaperDraft, VariantDraft } from "@/l
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
 import { AuditLog } from "@/components/governance/audit-log";
+import { GovTabs } from "@/components/governance/gov-tabs";
 import { DraftQueue, formatTime, type DraftKindConfig } from "@/components/governance/draft-queue";
 
 // --- 四类草稿的展示投影（字段各异，统一降级为 元数据行 + 详情正文） ---
@@ -195,8 +195,13 @@ const variantQueue: DraftKindConfig<VariantDraft> = {
   ),
 };
 
-const TAB_LABELS = ["课程导入", "课程生成", "试卷抽取", "变式题"] as const;
-const TAB_ICONS = [ClipboardList, Cog, FileText, Shuffle] as const;
+const GOV_TABS = [
+  { id: "import", label: "课程导入", icon: ClipboardList },
+  { id: "generation", label: "课程生成", icon: Cog },
+  { id: "paper", label: "试卷抽取", icon: FileText },
+  { id: "variant", label: "变式题", icon: Shuffle },
+  { id: "audit", label: "审计日志", icon: ScrollText },
+] as const;
 
 // --- 页面 ---
 
@@ -214,7 +219,7 @@ function NoAccess({ hint }: { hint?: ReactNode }) {
 
 export default function GovernancePage() {
   const [auth, setAuth] = useState<AuthState | null>(null);
-  const [tab, setTab] = useState<number>(0); // 0-3 四类草稿，4 审计
+  const [tab, setTab] = useState<string>("import"); // 四类草稿 + 审计
 
   useEffect(() => {
     let active = true;
@@ -266,44 +271,15 @@ export default function GovernancePage() {
       )}
       {showPanel && (
         <>
-            <div className="flex gap-1 overflow-x-auto">
-              {TAB_LABELS.map((label, index) => {
-                const Icon = TAB_ICONS[index];
-                return (
-                  <button
-                    key={label}
-                    type="button"
-                    onClick={() => setTab(index)}
-                    className={cn(
-                      "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs whitespace-nowrap",
-                      tab === index ? "bg-accent text-accent-fg" : "bg-surface-2 text-muted",
-                    )}
-                  >
-                    <Icon className="size-3.5" />
-                    {label}
-                  </button>
-                );
-              })}
-              <button
-                type="button"
-                onClick={() => setTab(4)}
-                className={cn(
-                  "inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs whitespace-nowrap",
-                  tab === 4 ? "bg-accent text-accent-fg" : "bg-surface-2 text-muted",
-                )}
-              >
-                <ScrollText className="size-3.5" />
-                审计日志
-              </button>
-            </div>
-            {/* 分支渲染而非数组索引：保持每个队列的具体泛型类型 */}
-            {tab === 0 && <DraftQueue config={importQueue} />}
-            {tab === 1 && <DraftQueue config={generationQueue} />}
-            {tab === 2 && <DraftQueue config={paperQueue} />}
-            {tab === 3 && <DraftQueue config={variantQueue} />}
-            {tab === 4 && <AuditLog />}
-          </>
-        )}
+          <GovTabs tabs={GOV_TABS.map((entry) => ({ ...entry }))} active={tab} onChange={setTab} />
+          {/* 分支渲染而非数组索引：保持每个队列的具体泛型类型 */}
+          {tab === "import" && <DraftQueue config={importQueue} />}
+          {tab === "generation" && <DraftQueue config={generationQueue} />}
+          {tab === "paper" && <DraftQueue config={paperQueue} />}
+          {tab === "variant" && <DraftQueue config={variantQueue} />}
+          {tab === "audit" && <AuditLog />}
+        </>
+      )}
     </div>
   );
 }

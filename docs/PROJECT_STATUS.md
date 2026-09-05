@@ -9,7 +9,20 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-**M10-17 本地 Release Candidate 包构建已提交待审**（feature/m10-17-release-candidate，基于 origin/main `0513aaa0428b1cac03917d4c4849fa05911cfba8` 精确 commit 创建分支；PR #19 https://github.com/swsgbl/ai-learning-os/pull/19 state=OPEN；远程 head `938cf4dae601df4d652db3ad76c31655dc60a72e`——github.com:443 git 传输端点被网络重置/超时（直连 5 次 + 代理 7892 + gh-proxy 镜像 push 均失败，api.github.com 可达），分支经 GitHub REST API 逐对象上传（blobs/tree/commit/ref），全部 8 个文件 blob 取自本地提交的规范化字节、树内容与本地逐字节一致，仅 commit 元数据（时间戳/committer）致 SHA 与本地 `efdb085` 不同；远端 CI/合并证据待回填；**真实生产 DB 零连接零执行，未读取/输出任何 key/token/password，未打 git 标签、未发 GitHub Release、未推镜像 registry、未做生产部署/生产发布**）：
+**M11-01 全站 GSAP 体验重设计已提交待审**（feature/m11-01-gsap-experience-redesign，基于 main `d20b544` 创建分支；仅改 `apps/web`，API 路由/请求语义/考试权威边界/判分归属零改动）：
+
+- **定位**：学习工作台（非营销站）的全站体验升级——引入 GSAP 动效体系 + 视觉从米黄升级为瓷白/墨色/深青/琥珀信号色，保持「砚席」克制可用的产品气质；明确不做 AI 紫渐变、装饰性循环动画、卡中卡。
+- **动效基座**：锁定 `gsap@3.15.0` + `@gsap/react@2.1.2`（精确版本）；`lib/gsap.ts` 唯一注册点（registerPlugin(useGSAP, Flip)，按需不引 ScrollTrigger——工作台无装饰性滚动需求，控制包体）+ `useMotion` 封装（gsap.matchMedia 双条件 reduce/no-preference + mm.revert 清理，useGSAP scope 隔离）；`lib/motion.ts` MOTION 令牌（时长/缓动/位移/staggerFor）避免过度抽象。全部动效在客户端叶子组件（页面组件保持服务端承担数据/路由职责），transform/opacity 优先，reduced-motion 全功能保留。
+- **逐面重设计**（10 个面全覆盖）：AppShell（桌面 active 下划线 scaleX 指示 + hover/focus、移动底栏指示点、路由进入过渡、底栏不遮内容、退出按钮 44px）；首页（hero→统计→模式 timeline 编排 + CountUp）；学习库（搜索/难度过滤 Flip 布局过渡 + 骨架屏/空态/错误态）；考场（题目方向感知切换、选项 aria-pressed 反馈、题号导航、倒计时 <60s 一次性脉冲、交卷确认对话框 role=dialog + 焦点管理 + Esc/遮罩关闭——计时与提交语义不变：服务端权威计时、幂等提交、断点续答）；语音（仅活跃时运行的聆听波形、跟读按钮状态反馈）；审阅（得分 CountUp、掌握度 RevealProgress、错题 aria-expanded 展开）；工作台（任务卡片编排、薄弱概念层级、遗忘风险）；治理（GovTabs role=tablist + 方向键/Home/End、队列变化编排、审计行展开，保持信息密度）；登录（错误 shake + 图标双通道、busy 态）；通用三态组件 LoadingState/EmptyState/ErrorState。
+- **可访问性**：全局 :focus-visible 焦点环；移动端触控目标 >=44px（`min-h-11 md:min-h-9` 模式，桌面回到密度）；反馈图标+文字双通道（非仅颜色）；对话框焦点移入标题 + 关闭后还原触发元素。
+- **修复的关键缺陷**：SubmitDialog 入场由 autoAlpha 改 opacity（visibility:hidden 会把聚焦的 h2 焦点丢回 body）；语音跟读输入框 flex-1 与 h-11 在 flex-col 下高度塌陷（326x17px 触控目标）→ `w-full sm:flex-1`；Button/Progress 语义补全（role=progressbar + aria-valuenow）。
+- **验证**：`npm install`（两包精确锁定）/`typecheck`/`lint`/`build` 全绿（First Load JS 156-162kB）；真实浏览器 Playwright 套件 **186/186 通过**——1440x900 / 820x1180 / 390x844 / 360x800 四档视口 × 全部核心路由（内容渲染、路由切换、控制台零错误、零横向溢出、触控目标 >=44px、键盘焦点环、reduced-motion 全功能 + 无 opacity:0 卡死）、考场全流程（进入试卷→作答→交卷确认→提交→审阅，桌面/390/360 三档）、治理（admin 五 tab + 方向键切换 + 审计展开 + 移动端）、语音；隔离环境 = 本地 API 8001（SQLite 临时库 + 一次性 AUTH_SECRET）+ web dev 3001，账号仅存于隔离库；22 张截图 + results.json 存证 `docs/evidence/m11-01/`。API 未改动，API 测试未重跑（按任务边界）。
+- **安全边界**：真实生产 DB 零连接零执行；未读取/输出任何 key/token/password（验证用 secret 为本地临时文件生成、chmod 600、命令替换传递未打印）；未打 git 标签、未发 GitHub Release、未推镜像 registry、未做生产部署。
+- **PR#20 审查修复（Codex 独立审查两个交互缺口）**：① 匿名 header「登录」链接 `min-h-9`（36px）移动端触控不足 → `min-h-11 md:min-h-9`（移动 44px / 桌面紧凑保持 36px）；② SubmitDialog 补齐焦点圈定与滚动锁定——Tab/Shift+Tab 循环限制在对话框内（首/尾环绕 + tabIndex=-1 标题与焦点逃逸边界处理，capture 阶段拦截）、打开期间锁定 body 滚动（overflow 传播到视口 + 滚动条宽度补偿）并在卸载时恢复、提交中 `aria-busy` + 双按钮禁用时焦点回落标题（防禁用丢焦到 body）、监听仅挂载一次不随 onCancel/submitting 变化重挂；提交 API 与考试语义零改动。验证：`typecheck`/`lint`/`build` 全绿；Playwright 全量重跑 **250/250 通过**（新增 `anonymous-header` 6 项 + `dialog-a11y` 三视口 58 项：Tab 循环/边界环绕/滚动锁定与恢复/提交中焦点安全，短视口 390×568 下背景 scrollY=85 滚轮不动的真实锁定证据），results.json + 6 张新截图存证 `docs/evidence/m11-01/`。
+
+## 前一任务（M10-17 本地 Release Candidate 包构建，PR #19 已合并）
+
+**M10-17 本地 Release Candidate 包构建已完成并合并 main**（feature/m10-17-release-candidate，基于 origin/main `0513aaa0428b1cac03917d4c4849fa05911cfba8` 精确 commit 创建分支；PR #19 https://github.com/swsgbl/ai-learning-os/pull/19 已由 d20b544 合并；远程 head `938cf4dae601df4d652db3ad76c31655dc60a72e`——github.com:443 git 传输端点被网络重置/超时（直连 5 次 + 代理 7892 + gh-proxy 镜像 push 均失败，api.github.com 可达），分支经 GitHub REST API 逐对象上传（blobs/tree/commit/ref），全部 8 个文件 blob 取自本地提交的规范化字节、树内容与本地逐字节一致，仅 commit 元数据（时间戳/committer）致 SHA 与本地 `efdb085` 不同；远端 CI/合并证据待回填；**真实生产 DB 零连接零执行，未读取/输出任何 key/token/password，未打 git 标签、未发 GitHub Release、未推镜像 registry、未做生产部署/生产发布**）：
 
 - **定位**：M10 系列收尾的发布物料切片——交付**本地** Release Candidate 包构建器：在干净 worktree 上同源构建 api/web 两镜像（钉本地 tag），compose local profile 冒烟通过后 `docker save` 独立归档，配 `release-manifest.json`（版本/commit/镜像 ID/compose 哈希/归档哈希与大小/边界声明）+ `SHA256SUMS`（恰覆盖两归档 + manifest 自身），并提供不加载镜像的独立 verify。产物是本地 RC，**不是 production readiness 声明，不授权部署**。
 - **实现**（新增 `infra/build_release_candidate.sh` + `services/api/app/ops/release_candidate.py` + `app.ops.cli release-candidate manifest|verify` 子命令 + `.github/workflows/release-candidate.yml` 手动 workflow）：① 构建序列 fail-closed——tag 严格 vX.Y.Z 且与 VERSION 逐字一致、worktree 干净并记录完整 SHA、输出目录必须在 gitignore 的 artifacts/temp 内新目录（symlink 组件/`..` 越界/非空已存在/artifacts-temp 本身一律拒绝）；② compose 冒烟用隔离项目名 `aios-rc-<tag>` + `AIOS_IMAGE_TAG=<tag>` + `--no-build`，`trap cleanup EXIT` 保证 `down --remove-orphans` 永不带 `-v`（绝不删卷）；③ manifest/SHA256SUMS 同目录临时文件 + `os.replace` 原子落盘，失败清理全部最终文件与临时文件（不留看似有效的半成品）；④ verify 只读本地文件重算 SHA-256（schema/必填字段/version-tag-VERSION 三方一致性/校验和覆盖面/逐档哈希+大小复核），「自洽篡改」（改 manifest 后重算 SHA256SUMS）由 schema/一致性门拦下；⑤ manifest 助手 AST 级守卫零 `os.environ`/零 subprocess/零网络 DB 引用；⑥ workflow 仅 `workflow_dispatch`（静态测试锁定无 push/pull_request/schedule），`permissions: contents: read`，产物以 upload-artifact 上传（保留 14 天，非 GitHub Release）。
@@ -167,7 +180,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
   - **表述口径**：不声称「生产零连接」——准确说法是 Claude 实现与测试未连接生产，Codex 只做了生产只读复核；生产未执行迁移、零写入。
 - **剩余风险**：生产主库执行 0027 前生产审计仍为 append-only 无链形态（verify 会如实报表缺失 exit 1，不误报；生产执行按 DEVELOPMENT.md「审计」节 runbook：先备份 + quiesce 审计写入方，迁移后 verify valid exit 0 才恢复服务）；整链重算检测需后续切片引入外部锚定（head_hash 库外存证）。
 
-## 前一任务（M10-03 生产数据与安全基线）
+## 更早任务（M10-03 生产数据与安全基线）
 
 **M10-03 生产数据与安全基线已完成本阶段验收**（feature/M10-03-production-data-security；试卷归属基线提交 `2027d16`，Web cookie 收尾 `8149a65`，数据盘点/清理 `47052ae`）：
 
