@@ -1,0 +1,86 @@
+{
+  "milestone": "M11-06",
+  "title": "Latest main Release Candidate evidence refresh",
+  "date": "2026-09-05",
+  "branch": "feature/m11-06-latest-main-rc-evidence",
+  "branch_base": {
+    "local_commit": "58016b7",
+    "tree": "d56a893f3488a58718370d778abeecf382734a6a",
+    "tree_identical_to_remote_main_merge_commit": "f169c47c29f9529e7f0ff6c465bdf8bc1f617dd8"
+  },
+  "collection": {
+    "method": "read-only GitHub Actions / Artifacts API queries (runs, jobs, steps, artifacts)",
+    "rc_trigger": "manual workflow_dispatch by ops",
+    "boundaries": [
+      "zero production writes throughout",
+      "no secret values read or output",
+      "no git tag, no GitHub Release, no image registry push, no deployment, no production DB connection"
+    ]
+  },
+  "production_ready": false,
+  "remote_main": {
+    "head": "f169c47c29f9529e7f0ff6c465bdf8bc1f617dd8",
+    "kind": "PR #25 merge commit",
+    "merged_at": "2026-09-05T08:23:42Z",
+    "pr_head": "58016b7"
+  },
+  "post_merge_main_ci": {
+    "run_id": 33955138480,
+    "commit": "f169c47c29f9529e7f0ff6c465bdf8bc1f617dd8",
+    "jobs": { "web": "success", "api": "success", "docker": "success" },
+    "api_pytest": { "passed": 1365, "skipped": 5 }
+  },
+  "latest_main_rc": {
+    "workflow": "Release Candidate (manual only)",
+    "run_id": 33955603683,
+    "event": "workflow_dispatch",
+    "head_branch": "main",
+    "head_sha": "f169c47c29f9529e7f0ff6c465bdf8bc1f617dd8",
+    "status": "success",
+    "started_at": "2026-09-05T08:33:50Z",
+    "completed_at": "2026-09-05T08:37:37Z",
+    "url": "https://github.com/swsgbl/ai-learning-os/actions/runs/33955603683",
+    "job": {
+      "name": "Build RC package (local scope, no publish)",
+      "all_steps_success": true,
+      "steps_included": [
+        "build API image",
+        "build Web image",
+        "compose smoke",
+        "standalone verify",
+        "artifact upload"
+      ]
+    },
+    "standalone_verify": {
+      "result": "manifest, checksums, and per-file hashes all consistent",
+      "docker_images_loaded": false,
+      "sha256sums_covers_exactly": [
+        "aios-api-v0.1.0.tar",
+        "aios-web-v0.1.0.tar",
+        "release-manifest.json"
+      ]
+    },
+    "artifact": {
+      "id": 9966304718,
+      "name": "release-candidate-v0.1.0",
+      "size_in_bytes": 189076705,
+      "digest": "sha256:04025053a205f069474cfa6d7b8accec157d06af24838b11760c6de19f85924c",
+      "digest_scope": "GitHub artifact outer zip digest (Artifacts API digest field); NOT a substitute representation of the in-package SHA256SUMS entries — different objects and purposes, not interchangeable",
+      "created_at": "2026-09-05T08:37:34Z",
+      "expires_at": "2026-09-19T08:37:16Z",
+      "expired": false
+    }
+  },
+  "conclusion": {
+    "production_ready": false,
+    "rc_success_does_not_imply_production_ready": true,
+    "not_performed": [
+      "git tag",
+      "GitHub Release publication",
+      "image registry push",
+      "deployment",
+      "production DB connection or write",
+      "secret read or output"
+    ]
+  }
+}
