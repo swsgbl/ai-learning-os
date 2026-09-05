@@ -209,8 +209,12 @@ STEPS: tuple[StepSpec, ...] = (
         "release-check 发布门禁九字面汇总（M7-05）",
         "pre-window",
         "release-check.json",
-        "lint/typecheck/test/build/E2E/migration/backup/voice/license 全绿",
-        "本地执行 python -m app.ops.cli release-check --local-only 后导出汇总",
+        "lint/typecheck/test/build/E2E/migration/backup/voice/license 全绿"
+        "（完整门禁 = full 模式含 live 三项；--local-only 只是本地证据，"
+        "all_green=false，不得记 pass——M11-03）",
+        "执行 python -m app.ops.cli release-check --output <artifacts路径>"
+        "（--api-base 提供运行中服务，live 三项真实执行）全绿后导出；"
+        "--local-only 导出只能作本地过程证据，不能替代完整门禁/live 检查",
     ),
     StepSpec(
         "search-smoke",

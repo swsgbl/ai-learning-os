@@ -12,19 +12,28 @@ backup / voice / license 全绿。
 
 run_release_check 为纯编排（execute 可注入），任一项 fail 则整体不绿；
 CLI 汇总每项一行状态与退出码。
+
+M11-03 机器可读证据导出：build_release_check_evidence 把执行结果组装成
+契约兼容 release-readiness / cutover-rehearsal 的 JSON（--json / --output）。
+--local-only 下 live 项如实 not_executed、all_green=false——缺席不冒充
+pass，也不算 fail；CLI 退出码仍按已执行门禁判定（证据与退出码分工：
+退出码回答「已执行的门禁过没过」，证据回答「完整门禁是否可宣称全绿」）。
 """
 from __future__ import annotations
 
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 from app.db.test_gate import (
     evaluate_pg_test_url,  # M10-04: PG 测试 URL 门控（唯一实现）
 )
+from app.ops.production_preflight import redact_secrets
 from app.ops.version import REPO_ROOT  # M8-00: 同源探测，兼容容器布局
 
 # 验收九字面 -> 检查项 id 的映射（测试用它守卫「无漏项」）
@@ -298,3 +307,74 @@ def summarize(results: list[CheckResult]) -> tuple[bool, str]:
 
 def build_release_checks(db_url: str | None = None) -> tuple[list[CommandCheck], list[LiveCheck]]:
     return default_command_checks(db_url=db_url), list(DEFAULT_LIVE_CHECKS)
+
+
+# ---------------------------------------------------------------- 证据导出 --
+
+
+#: live 项在 --local-only 模式下的证据状态：未执行（既不是 pass 也不是 fail）
+STATUS_NOT_EXECUTED = "not_executed"
+
+
+def build_release_check_evidence(
+    results: list[CheckResult],
+    *,
+    skipped_live_checks: Sequence[LiveCheck] = (),
+    execution_scope: str = "full",
+) -> dict[str, Any]:
+    """把执行结果组装为机器可读证据 JSON（M11-03）。
+
+    契约与两个下游消费方兼容（同一份文件可直接作 release-readiness 的
+    release-check.json / cutover-rehearsal 的 release-check.json 证据）：
+    同时自声明 `gate`（readiness 消费）与 `step`（rehearsal 消费），白名单
+    提取面 all_green / total / passed / failed_ids 与两侧评估器一致，计数
+    自洽（passed + len(failed_ids) + len(not_executed_ids) == total；
+    all_green=true 仅当全部项真实 pass）。
+
+    `--local-only` 下 live 项未执行：以 not_executed 如实进 checks 与
+    not_executed_ids、all_green=false——缺席不冒充 pass，也不算 fail
+    （failed_ids 只放真实 fail 的项）。full 模式传 live_checks 但
+    client=None 时 live 项仍由 run_release_check 如实判 fail（进
+    failed_ids），不在此重复处理。detail 过 redact_secrets 抹
+    `://user:pass@` 形态凭据；字段名不含敏感键模式，可直接过下游
+    证据装载层的敏感键/内嵌凭据扫描。
+    """
+    checks: list[dict[str, Any]] = [
+        {
+            "id": r.id,
+            "title": r.title,
+            "kind": r.kind,
+            "status": r.status,
+            "detail": redact_secrets(r.detail),
+        }
+        for r in results
+    ]
+    checks.extend(
+        {
+            "id": lc.id,
+            "title": lc.title,
+            "kind": "live",
+            "status": STATUS_NOT_EXECUTED,
+            "detail": "--local-only 跳过 live 项（未执行，不构成完整门禁证据）",
+        }
+        for lc in skipped_live_checks
+    )
+    passed = sum(1 for c in checks if c["status"] == "pass")
+    failed_ids = [c["id"] for c in checks if c["status"] == "fail"]
+    not_executed_ids = [
+        c["id"] for c in checks if c["status"] == STATUS_NOT_EXECUTED
+    ]
+    total = len(checks)
+    return {
+        "tool": "release-check",
+        "gate": "release-check",
+        "step": "release-check",
+        "generated_at": datetime.now(UTC).isoformat(),
+        "execution_scope": execution_scope,
+        "all_green": passed == total and not failed_ids and not not_executed_ids,
+        "total": total,
+        "passed": passed,
+        "failed_ids": failed_ids,
+        "not_executed_ids": not_executed_ids,
+        "checks": checks,
+    }
