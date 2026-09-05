@@ -1,0 +1,199 @@
+{
+  "milestone": "M11-11",
+  "title": "production-like read-only preflight + backup with local integrity verification + unauthenticated read-only API baseline",
+  "date": "2026-09-05",
+  "branch": "feature/m11-11-production-readonly-baseline",
+  "base_commit": "9b24880d8e9087748bb86de27bf1b22fd8200946",
+  "executor": "Claude Code on local machine (repo venv, working dir services/api), supervised by Codex; local commit only, not pushed",
+  "scope_statement": "read-only baseline plus backup verification against the currently running local production-like stack; NOT production readiness",
+  "production_ready": false,
+  "env_injection": {
+    "method": "temporary Python runner (gitignored temp/, deleted after use) read the running API container environment via docker inspect in-memory, translated only the container-internal service host/port to host-side loopback (postgres service address -> 127.0.0.1:5433, minio service address -> 127.0.0.1:9000), stripped inherited same-name vars, then injected DATABASE_URL/S3_* into the child process environment",
+    "credentials_or_db_names_changed": false,
+    "secrets_on_command_line": false,
+    "secrets_printed": false,
+    "secrets_written_to_disk": false
+  },
+  "preflight": {
+    "command": "python -m app.ops.cli production-preflight --phase pre-migration --json --output artifacts/m11-11/production-readonly-01/production-preflight.json",
+    "via": "env injection (DATABASE_URL); no --db-url on the command line",
+    "exit_code": 0,
+    "generated_at": "2026-09-05T15:01:05.033130+00:00",
+    "phase": "pre-migration",
+    "read_only": true,
+    "summary": {
+      "pass": 1,
+      "pending": 4,
+      "fail": 0,
+      "not_configured": 0
+    },
+    "checks": [
+      {
+        "id": "db-connect",
+        "status": "pass",
+        "detail_safe": "postgresql dialect, connection ok"
+      },
+      {
+        "id": "alembic",
+        "status": "pending",
+        "detail_safe": "behind head: current=0026_paper_owner -> head=0027_audit_chain; migration deliberately NOT executed in this slice"
+      },
+      {
+        "id": "audit-chain",
+        "status": "pending",
+        "detail_safe": "pending_migration: chain tables missing is the expected pre-0027 shape; anchoring/verify deferred to the cutover window"
+      },
+      {
+        "id": "legacy-governance",
+        "status": "pending",
+        "detail_safe": "798 items pending human ownership decisions (792 unowned non-seed papers, 3 course-generation NULL-owner drafts, 3 variant-question NULL-owner drafts); aggregate counts only, no IDs output"
+      },
+      {
+        "id": "audit-anchor",
+        "status": "pending",
+        "detail_safe": "expected_pending: anchoring scheduled after the 0027 migration per runbook"
+      }
+    ],
+    "pending_preserved_as_pending": true,
+    "artifact": {
+      "dir": "artifacts/m11-11/production-readonly-01/",
+      "file": "production-preflight.json",
+      "size_bytes": 2354,
+      "sha256": "e03f1daca4e48176133c75252f0407f0750fb1e420bb154980cdfdb480016044",
+      "sha256_recomputed_locally_match": true,
+      "gitignored": true
+    }
+  },
+  "backup": {
+    "command": "python -m app.ops.cli backup --out artifacts/m11-11/backup-01/",
+    "via": "env injection (DATABASE_URL + S3_*); reads the production-like DB and object store, writes only to the local gitignored backup directory",
+    "exit_code": 0,
+    "stdout_summary": "backup ok: aios-backup-v1 tables: 28 files: 6",
+    "created_at": "2026-09-05T15:01:22.716183+00:00",
+    "schema_version": "aios-backup-v1",
+    "artifact_dir": "artifacts/m11-11/backup-01/",
+    "gitignored": true,
+    "restore_invoked": false,
+    "verification": {
+      "manifest_parses": true,
+      "referenced_files_exist": "6/6",
+      "all_paths_contained_in_backup_dir": true,
+      "sha256_recomputed_match": "6/6",
+      "sha256_all_match": true,
+      "file_set_matches_manifest": true,
+      "files_on_disk_including_manifest": 7,
+      "payload_bytes_manifest_referenced": 6050071,
+      "total_bytes_including_manifest": 6051782,
+      "table_count": 28,
+      "total_table_rows": 12966,
+      "per_table_rows": {
+        "alembic_version": 1,
+        "answer_events": 2926,
+        "audit_log": 69,
+        "chunks": 18,
+        "concept_dag_versions": 203,
+        "concept_edges": 106,
+        "concepts": 11,
+        "course_generation_drafts": 4,
+        "course_import_drafts": 17,
+        "eval_runs": 9,
+        "evidence": 18,
+        "exam_sessions": 1984,
+        "misconception_candidates": 476,
+        "paper_question_drafts": 5,
+        "papers": 807,
+        "parse_jobs": 0,
+        "questions": 1520,
+        "resources": 18,
+        "search_queries": 12,
+        "sources": 26,
+        "student_concept_states": 575,
+        "submissions": 1348,
+        "users": 26,
+        "variant_question_drafts": 4,
+        "voice_answer_events": 166,
+        "voice_sessions": 496,
+        "voice_trace_spans": 2032,
+        "voice_transcripts": 89
+      },
+      "business_ids_extracted": false,
+      "row_contents_read": false
+    },
+    "manifest_sha256": "fff6a4ea66c21fb5a42531ba1db4ca0b989a9f8507bb4d1fc3a8b096330c7eee"
+  },
+  "api_baseline": {
+    "method": "unauthenticated read-only GET only; no login, no state-changing request",
+    "base": "http://127.0.0.1:8000",
+    "endpoints": [
+      {
+        "path": "/health",
+        "method": "GET",
+        "http_status": 200,
+        "response_summary": {
+          "status": "ok",
+          "service": "ai-learning-os-api"
+        }
+      },
+      {
+        "path": "/api/v1/version",
+        "method": "GET",
+        "http_status": 200,
+        "response_summary": {
+          "version": "0.1.0",
+          "git_commit": "not_available",
+          "alembic_current": "not_available",
+          "alembic_head": "not_available"
+        }
+      }
+    ]
+  },
+  "containers": {
+    "note": "six containers in the running local production-like stack, all kept running and healthy for the whole slice; none stopped or restarted; this slice directly used web/api/postgres/minio (livekit/redis kept running but not directly exercised)",
+    "web": "ai-learning-os-web-1 healthy",
+    "api": "ai-learning-os-api-1 healthy",
+    "livekit": "ai-learning-os-livekit-1 healthy",
+    "postgres": "ai-learning-os-postgres-1 healthy",
+    "redis": "ai-learning-os-redis-1 healthy",
+    "minio": "ai-learning-os-minio-1 healthy",
+    "directly_used_by_this_slice": ["web", "api", "postgres", "minio"]
+  },
+  "validation": {
+    "json_tool_summary_json": "ok",
+    "pytest_focused": "68 passed, 4 skipped in 13.55s (test_production_preflight.py + test_backup_drill.py + test_backup_restore_evidence.py)",
+    "ruff_check_services_api": "All checks passed",
+    "git_diff_check": "clean",
+    "git_status_short": "only docs/PROJECT_STATUS.md modified and docs/evidence/m11-11/ added; no artifact or temp runner staged",
+    "git_check_ignore": "all backup/preflight artifacts and temp runners confirmed ignored by .gitignore (artifacts/, temp/)"
+  },
+  "codex_independent_review": {
+    "date": "2026-09-05",
+    "artifact_hash_and_file_set_verification": "VERIFY OK",
+    "strict_business_id_scan": "0 hits",
+    "json_tool_summary_json": "ok",
+    "pytest_focused": "68 passed, 4 skipped in 14.58s",
+    "ruff_check_services_api": "All checks passed",
+    "git_diff_check": "clean",
+    "api_endpoints_independently_rechecked": "/health 200 and /api/v1/version 200",
+    "accuracy_correction": "container evidence corrected from four to six: all six containers (web/api/livekit/postgres/redis/minio) stayed running and healthy; this slice directly used web/api/postgres/minio"
+  },
+  "prohibited_actions": {
+    "production_business_data_write": false,
+    "production_migration_executed": false,
+    "governance_cleanup_or_ownership_migration": false,
+    "audit_chain_anchoring_or_worm_handling": false,
+    "restore_into_production_or_production_like_db": false,
+    "deployment": false,
+    "service_or_container_stopped_or_restarted": false,
+    "git_tag_created": false,
+    "github_release_published": false,
+    "image_registry_push": false,
+    "pr_created": false,
+    "branch_pushed": false,
+    "secrets_or_connection_values_printed_or_written": false,
+    "business_ids_or_backup_contents_in_docs": false
+  },
+  "conclusion": {
+    "production_ready": false,
+    "statement": "Against the currently running local production-like stack: production-preflight (pre-migration) exited 0 with pass=1/pending=4/fail=0 and all pending states preserved as pending (alembic behind head 0026_paper_owner->0027_audit_chain, audit chain pending migration, 798 governance items pending human decisions, anchor pending post-migration); backup succeeded (aios-backup-v1, 28 tables, 6 files) with local integrity verification fully matching (6/6 SHA256, file set exact, 6,051,782 total bytes); unauthenticated read-only API baseline returned 200 for /health and /api/v1/version. This is a read-only baseline plus backup verification, NOT production readiness; production_ready stays false."
+  }
+}
