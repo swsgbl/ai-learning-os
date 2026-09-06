@@ -53,7 +53,7 @@
 ## M12 原生 Android
 
 - [x] M12-01 App Shell + API/Auth 基础（Compose M3 壳、五屏、登录/会话、可配置 API 地址、Keystore 加密 token）
-- [ ] 考试/学习业务接入
+- [ ] 考试/学习业务接入（M12-02 已在分支 `feature/m12-02-android-exam-flow` 完成——学习试卷列表、考场状态机、审阅报告；未合并 main，未跑模拟器/真机）
 - [ ] 语音能力接入
 - [ ] 搜索接入
 - [ ] 治理与发布链路接入

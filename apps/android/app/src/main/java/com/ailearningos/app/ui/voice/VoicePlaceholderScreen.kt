@@ -1,7 +1,7 @@
 package com.ailearningos.app.ui.voice
 
 import androidx.compose.runtime.Composable
-import com.ailearningos.app.ui.study.PlaceholderPage
+import com.ailearningos.app.ui.common.PlaceholderPage
 
 /** 语音陪练占位（M12-01）：只说明后续能力，不进行任何录音或联网语音请求 */
 @Composable

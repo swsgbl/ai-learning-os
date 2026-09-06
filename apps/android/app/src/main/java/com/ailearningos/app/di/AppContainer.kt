@@ -6,9 +6,13 @@ import com.ailearningos.app.data.ApiConfigProvider
 import com.ailearningos.app.data.ApiProvider
 import com.ailearningos.app.data.AuthGateway
 import com.ailearningos.app.data.AuthRepository
+import com.ailearningos.app.data.ExamGateway
+import com.ailearningos.app.data.ExamRepository
 import com.ailearningos.app.data.SessionTokenCache
 import com.ailearningos.app.data.SystemGateway
+import com.ailearningos.app.data.local.DataStoreExamResumeStore
 import com.ailearningos.app.data.local.DataStoreSettingsStore
+import com.ailearningos.app.data.local.ExamResumeStore
 import com.ailearningos.app.data.local.KeystoreTokenStore
 import com.ailearningos.app.data.local.SettingsStore
 import com.ailearningos.app.data.local.TokenStore
@@ -28,6 +32,9 @@ class AppContainer(context: Context) {
 
     val settingsStore: SettingsStore = DataStoreSettingsStore(context.applicationContext)
 
+    /** 断线恢复槽：本地只保存 exam_id（恢复提示），不保存答案/时间/判分 */
+    val examResumeStore: ExamResumeStore = DataStoreExamResumeStore(context.applicationContext)
+
     private val tokenCache = SessionTokenCache(tokenStore)
 
     private val apiProvider = ApiProvider(
@@ -40,4 +47,6 @@ class AppContainer(context: Context) {
     val authGateway: AuthGateway = repository
 
     val systemGateway: SystemGateway = repository
+
+    val examGateway: ExamGateway = ExamRepository(apiProvider)
 }
