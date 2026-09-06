@@ -33,11 +33,11 @@ import com.ailearningos.app.ui.session.SessionViewModel
 import com.ailearningos.app.ui.settings.SettingsScreen
 import com.ailearningos.app.ui.study.StudyScreen
 import com.ailearningos.app.ui.study.StudyViewModel
-import com.ailearningos.app.ui.voice.VoicePlaceholderScreen
+import com.ailearningos.app.ui.voice.VoiceScreen
 
 /**
- * 壳 + 考试业务导航（M12-02）：单 Activity + Navigation + 底部导航。
- * 登录页/考场/审阅不占底栏位；考场与审阅为全屏流程页。
+ * 壳 + 考试/语音业务导航（M12-02/M12-03）：单 Activity + Navigation + 底部导航。
+ * 登录页/考场/审阅不占底栏位；考场、审阅与语音陪练流程页为全屏。
  */
 enum class AiosDestination(val route: String, val label: String, val icon: ImageVector) {
     Home("home", "首页", Icons.Filled.Home),
@@ -50,6 +50,8 @@ const val LOGIN_ROUTE = "login"
 const val EXAM_PAPER_ROUTE = "exam-paper/{paperId}"
 const val EXAM_RESUME_ROUTE = "exam/{examId}"
 const val REVIEW_ROUTE = "review/{examId}"
+const val VOICE_PAPER_ROUTE = "voice-paper/{paperId}"
+const val VOICE_SESSION_ROUTE = "voice-session/{sessionId}"
 
 @Composable
 fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
@@ -109,12 +111,34 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
                     viewModel = studyViewModel,
                     onStartPaper = { paperId -> navController.navigateExamPaper(paperId) },
                     onResumeExam = { examId -> navController.navigateExamResume(examId) },
+                    onStartVoicePaper = { paperId -> navController.navigateVoicePaper(paperId) },
                 )
             }
             composable(AiosDestination.Voice.route) {
-                VoicePlaceholderScreen(
+                val voiceViewModel: com.ailearningos.app.ui.voice.VoiceViewModel =
+                    viewModel(factory = viewModelFactory)
+                VoiceScreen(
+                    viewModel = voiceViewModel,
                     onBack = { navController.popBackStack() },
-                    onOpenSettings = { navController.navigate(AiosDestination.Settings.route) },
+                    onOpenVoiceSession = { sessionId -> navController.navigateVoiceSession(sessionId) },
+                )
+            }
+            composable(VOICE_PAPER_ROUTE) {
+                val voiceViewModel: com.ailearningos.app.ui.voice.VoiceViewModel =
+                    viewModel(factory = viewModelFactory)
+                VoiceScreen(
+                    viewModel = voiceViewModel,
+                    onBack = { navController.popBackStack() },
+                    onOpenVoiceSession = { sessionId -> navController.navigateVoiceSession(sessionId) },
+                )
+            }
+            composable(VOICE_SESSION_ROUTE) {
+                val voiceViewModel: com.ailearningos.app.ui.voice.VoiceViewModel =
+                    viewModel(factory = viewModelFactory)
+                VoiceScreen(
+                    viewModel = voiceViewModel,
+                    onBack = { navController.popBackStack() },
+                    onOpenVoiceSession = { sessionId -> navController.navigateVoiceSession(sessionId) },
                 )
             }
             composable(AiosDestination.Settings.route) {
@@ -169,6 +193,14 @@ private fun NavHostController.navigateExamPaper(paperId: String) {
 
 private fun NavHostController.navigateExamResume(examId: String) {
     navigate("exam/$examId") { launchSingleTop = true }
+}
+
+private fun NavHostController.navigateVoicePaper(paperId: String) {
+    navigate("voice-paper/$paperId") { launchSingleTop = true }
+}
+
+private fun NavHostController.navigateVoiceSession(sessionId: String) {
+    navigate("voice-session/$sessionId") { launchSingleTop = true }
 }
 
 /** 交卷后进审阅：清掉考场页（不能回退到已交卷的考场） */
