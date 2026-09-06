@@ -515,6 +515,105 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   rehearsal、covered 状态与独立 rehearsal 运行逐步一致）——全部用临时
   目录与本地文件，不连数据库、不发网络请求。
 
+## 生产证据目录只读索引器 evidence-inventory（M11-20）
+
+- **CLI**：`python -m app.ops.cli evidence-inventory --evidence-dir <path>
+  [--evidence-dir <path> ...] [--output <artifacts/temp路径>] [--json]`，
+  实现文件 `services/api/app/ops/evidence_inventory.py`。
+- **定位**：production-evidence-gap（M11-18）要求一个完整 cutover evidence
+  目录才能给缺口结论，而本机现状是证据分散——`artifacts/m11-02/cutover-evidence`
+  是明确隔离 fixture/模板脚手架、`artifacts/m11-11` 只有 preflight 与 backup
+  碎片、`docs/evidence` 还有历史汇总。本工具回答「这些目录里到底有什么、
+  能否适用生产、缺什么」：对一或多个调用方显式提供的本地目录做只读
+  **inventory**——逐文件列出 name/相对路径/size/SHA-256/mtime/分类/适用性，
+  按目录与总体汇总 13 步覆盖/缺失、重复 sha256、可解析计数。**不做**
+  cutover-rehearsal 的 13 步放行判定（`cutover_steps` 覆盖只看 root 顶层
+  是否存在**精确证据文件名**——与 rehearsal 只消费 `root/<evidence_file>`
+  的口径一致，嵌套同名文件列入 inventory 但不推进覆盖；与
+  pass/pending/blocked 结论无关，完整时间线判定仍以 cutover-rehearsal
+  manifest 为准——13 步清单直接复用 `cutover_rehearsal.STEPS`，不重新
+  定义，测试交叉锁定）。
+- **背景结论（Codex 已实测，2026-09-06，只读口径）**：对
+  `artifacts/m11-02/cutover-evidence` 只读运行 production-evidence-gap 的
+  结论是 `overall=blocked`（governance=pending、audit-chain=blocked、
+  provider-smoke=not_executed、approval=not_executed），且该目录 README 自
+  声明隔离 fixture——**不代表真实生产通过**，本工具不改变该结论。
+- **文件分类（白名单枚举，按序判定）**：`cutover_template`
+  （`*.template.json` / `*.jsonl.template`——cutover-evidence-pack 模板命名
+  约定）、`audit_anchor_copy`（`audit-anchor.jsonl` supporting 副本）、
+  `cutover_step_evidence`（13 步精确证据文件名）、`production_preflight`
+  （`production-preflight*.json`）、`backup_manifest`（`manifest.json`）、
+  `other`（其余全部——含 `database.json` 与 `docs/evidence` 历史汇总）。
+- **适用性（诚实口径，枚举只有三值——本工具绝无 `production_verified`）**：
+  模板一律 `not_applicable`（模板不是证据）；目录顶层 `README.md` 明确包含
+  「隔离 fixture」声明（或英文 `isolation fixture` 变体，≤1MB UTF-8）时，
+  该目录**非模板**条目标 `isolation_fixture` 并在目录 summary 记录依据
+  （`fixture_declaration_source=README.md`）；无声明/超限/无 README 则
+  `scope=unknown`、条目一律 `unverified`。生产适用性必须由运维按 runbook
+  人工判定，工具绝不自动标生产。
+- **白名单元数据（零内容回显 + 显示名脱敏）**：只按文件字节计算
+  SHA-256/size/mtime（分块哈希，内存占用恒定），不回显文件正文；输出不
+  使用绝对路径（目录以调用顺序 `#N` 编号）；**文件显示名脱敏**——文件名/
+  相对路径本身可能携带业务 ID、key/token/password 等敏感值，只有 root
+  顶层的「已知精确安全文件名」白名单（`SAFE_DISPLAY_FILENAMES`：13 步
+  证据文件 + 锚副本 + README.md）原样显示，未知文件名与任何嵌套路径
+  （父目录名未证明安全）一律 `[redacted]`，`duplicate_sha256_groups` 的
+  paths 用同一安全显示口径；内部排序、hash、coverage 判断可用真实相对
+  路径，进入 manifest/summary 的显示字段必须是安全值；已知分类的
+  `.json` 才尝试解析为
+  object 并提取极小白名单 `declared`（`step`/`phase`/`result` 仅当值命中
+  受控枚举、`schema_version` 仅当命中安全标量模式、布尔字段仅当真是布尔、
+  时间字段仅当 ≤64 字符且合法 ISO——任何不匹配/缺失一律 null），不输出解析
+  错误文本、业务 ID、标题、正文、URL、endpoint、key/token；敏感键只报
+  `sensitive_key_detected` 布尔（键名与值从不回显）；未知/非 JSON/模板/
+  锚副本不解析内容；超过 1MB 的已知类别文件只做哈希元数据
+  （`parse_status=skipped_size`——database.json 这类大文件）。最终 manifest
+  整体过 `scrub_sensitive` 纵深防御。
+- **输出语义**：顶层固定 `production_ready=false` 与
+  isolation/no_execution/scope notes + `exit_code=0`；每目录一节
+  （root_index/fixture 声明与依据/scope/文件与子目录计数/分类、适用性、
+  解析状态计数/13 步覆盖与缺失/目录内重复 sha256 文件数/文件条目）；
+  总体 summary（roots/files/dirs 计数、三组分类计数、13 步并集覆盖/缺失、
+  跨目录重复 sha256 组——组内 `#N/相对路径` 标识）。
+- **安全边界**：纯本地只读——不连接数据库、不调用 API、不访问网络、不
+  读取任何环境变量（`os.environ` 零引用）、不运行任何 provider、不执行
+  任何迁移/治理/锚定/备份/部署/启停/发布/回滚——命令没有 `--yes` 执行
+  形态；对输入目录零写入（文件字节与 mtime 保持不变）。
+- **路径护栏与 IO（exit 2）**：每个 `--evidence-dir` 必须已存在、为真目录、
+  非 symlink，**递归枚举遇到任何 symlink 文件/目录（含 dangling）一律
+  fail-closed 拒绝、绝不跟随**，**目录枚举本身失败（不可读/访问被拒绝的
+  子目录）同样 fail-closed**——`os.walk` 显式提供 `onerror`，枚举错误转
+  `EvidenceInventoryInputError`（exit 2），绝不静默跳过、绝不输出不完整
+  清单或部分报告文件；同一目录不得重复传入、目录间不得互相嵌套
+  （`resolve` + `os.path.normcase` 归一）；`--output` 必须位于 gitignore 的
+  artifacts/temp（复用 `is_safe_artifact_path`）、任何已存在路径组件是
+  symlink 即拒绝、已存在且不是常规文件拒绝、不得位于任一证据目录内或
+  等于任一目录根——输出护栏先于任何目录枚举（测试锁定冲突形态下零枚举）；
+  落盘复用 CLI 共享原子写（失败旧文件字节原样、无 `.tmp` 残留、不打印
+  盘点结论）。`--json` 时 stdout 纯 JSON、提示走 stderr。退出码：成功盘点
+  =0 / 输入或路径与 IO 问题=2（inventory 没有失败语义——缺什么是清单
+  内容，不是命令失败）。
+- **fixture / production-like / 真实生产的区别（防误判）**：fixture 目录
+  （README 声明隔离，如 `artifacts/m11-02/cutover-evidence`）即使含已填
+  step 文件也只是 `isolation_fixture`；production-like 目录（无声明、含
+  preflight/backup 碎片，如 `artifacts/m11-11`）只能 `unverified`——工具
+  无法也不试图自证「这些证据来自真实生产」；真实生产证据的适用性判定
+  属于运维按 runbook 的人工职责。本清单是盘点事实记录，不是放行依据。
+- **测试**：`services/api/tests/test_evidence_inventory.py`
+  （覆盖矩阵：CLI 注册/分发/无 --yes、m11-02 与 m11-11 真实形态、分类与
+  适用性矩阵（README 声明/无声明/无 marker/超限）、declared 白名单正反
+  用例（毒化值全 null、安全标量透出）、大文件只哈希、元数据与独立计算
+  一致、多目录汇总与 13 步交叉锁定（嵌套同名 step 文件列入 inventory 但
+  不推进覆盖）、重复 sha256 组、exact allowlist
+  schema（顶层/summary/roots/files/declared 七层键集合）、
+  production_ready 恒 false、symlink/重复与嵌套 root/枚举错误 onerror
+  fail-closed（build 层 + CLI 层零部分输出）/输出冲突（含 `..`
+  折叠与 Windows 大小写）/原子写护栏（先于枚举）、敏感 marker 三面零泄漏
+  （内容 marker 与文件名/父目录名 marker 两种形态；显示名脱敏白名单
+  可读性保留）、零绝对路径、只读性（字节与 mtime 不变）、源码守卫（零
+  env/DB/网络/subprocess、import 面恰为三个共享层 + 标准库、parser 块
+  无 --yes））——全部用临时目录与本地文件，不连数据库、不发网络请求。
+
 ## 生产切换 preflight（M10-07）
 
 `python -m app.ops.cli production-preflight --db-url <生产URL> --phase pre-migration|post-migration

@@ -1474,6 +1474,81 @@ def _run_production_evidence_gap(args) -> int:
     return exit_code
 
 
+def _run_evidence_inventory(args) -> int:
+    """python -m app.ops.cli evidence-inventory --evidence-dir DIR
+    [--evidence-dir DIR ...] [--output <artifacts/temp路径>] [--json]
+
+    M11-20 生产证据目录只读索引器：对一或多个本地证据目录做 inventory——
+    逐文件列出 name/相对路径/size/SHA-256/mtime/分类/适用性（模板
+    not_applicable、README 声明隔离 fixture 的目录非模板条目
+    isolation_fixture、其余一律 unverified——绝无 production_verified），
+    对已知证据文件名做极小白名单 JSON 提取（database.json 这类大文件只哈希
+    元数据），按目录与总体汇总 13 步文件名覆盖/缺失、重复 sha256、可解析
+    计数。coverage 只看 root 顶层是否存在精确证据文件名（嵌套同名文件列入
+    inventory 但不推进覆盖），不是 cutover-rehearsal 的放行判定。
+    纯本地只读：不连接数据库、不调用 API、不访问网络、不读取任何环境
+    变量、不运行任何 provider、不执行任何生产操作——命令没有 --yes 执行
+    形态；输出不使用绝对路径、不回显文件正文或解析错误文本；文件显示名
+    脱敏——只有 root 顶层的已知精确安全文件名白名单成员原样显示，未知
+    文件名与任何嵌套路径一律 [redacted]（重复 sha256 组 paths 同口径）。
+
+    护栏先于任何目录枚举（exit 2、不写输出）：每个 --evidence-dir 必须
+    已存在、为真目录、非 symlink，递归枚举遇到任何 symlink 文件/目录
+    （含 dangling）一律 fail-closed 拒绝、绝不跟随，目录枚举本身失败
+    （不可读/访问被拒绝的子目录，os.walk onerror）同样 fail-closed、
+    绝不输出不完整清单；同一目录不得重复传入、
+    目录间不得互相嵌套；--output 必须位于 gitignore 的 artifacts/temp
+    （symlink 组件拒绝）且不得位于任一证据目录内或等于任一目录根；原子
+    落盘，写入失败 exit 2、旧文件字节原样、无 .tmp 残留且不打印盘点结论。
+    --json 时 stdout 纯 JSON、提示走 stderr。
+    退出码：成功盘点=0 / 输入或路径与 IO 问题=2（inventory 没有失败语义，
+    缺什么是清单内容，不是命令失败）。
+    """
+    import json as _json
+
+    from app.ops.evidence_inventory import (
+        EvidenceInventoryInputError,
+        build_evidence_inventory,
+        format_inventory_summary,
+    )
+
+    try:
+        report = build_evidence_inventory(args.evidence_dir or [], args.output)
+    except EvidenceInventoryInputError as cause:
+        print(f"拒绝执行（输入或路径问题，未产生清单）: {cause}")
+        return 2
+    except OSError as cause:
+        print(
+            f"证据读取失败（IO 问题，未产生清单）: {type(cause).__name__}: {cause}"
+        )
+        return 2
+    if args.output:
+        try:
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            _write_report_atomic(
+                output_path,
+                _json.dumps(report, ensure_ascii=False, indent=2),
+            )
+        except OSError as cause:
+            # 目录无法创建/权限/磁盘满/replace 失败：清单未落盘或旧文件原样
+            # 保留（原子写不产生 partial），不得再打印盘点结论摘要。
+            print(
+                f"报告写入失败（路径/权限/磁盘问题，未产生报告文件）: "
+                f"{type(cause).__name__}: {cause}"
+            )
+            return 2
+        print(
+            f"报告已写入: {args.output}",
+            file=sys.stderr if args.as_json else sys.stdout,
+        )
+    if args.as_json:
+        print(_json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(format_inventory_summary(report))
+    return report["exit_code"]
+
+
 def _run_release_candidate(args) -> int:
     """python -m app.ops.cli release-candidate manifest --output-dir DIR ...
     python -m app.ops.cli release-candidate verify --package-dir DIR
@@ -2140,6 +2215,41 @@ def main() -> None:
         action="store_true",
         help="stdout 输出纯 JSON manifest（提示走 stderr）",
     )
+    p_ei = sub.add_parser(
+        "evidence-inventory",
+        help=(
+            "生产证据目录只读索引器（M11-20；一或多个目录的文件级 inventory："
+            "分类/适用性/SHA-256/mtime/白名单元数据 + 13 步覆盖与重复 sha256 "
+            "汇总；不连 DB/网络、不读密钥、不执行任何生产操作，无 --yes 形态；"
+            "适用性绝无 production_verified）"
+        ),
+    )
+    p_ei.add_argument(
+        "--evidence-dir",
+        action="append",
+        required=True,
+        metavar="DIR",
+        help=(
+            "本地证据目录（可重复提供多个；必须已存在、为真目录、非 symlink，"
+            "递归枚举遇到任何 symlink 文件/目录一律拒绝；同一目录不得重复"
+            "传入、目录间不得互相嵌套）"
+        ),
+    )
+    p_ei.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "写 JSON manifest 到文件（必须位于 gitignore 的 artifacts/ 或 temp/ "
+            "目录，且不得位于任一证据目录内或等于任一目录根；原子落盘：临时"
+            "文件 + rename，失败保留旧报告、symlink 拒绝；默认不落盘）"
+        ),
+    )
+    p_ei.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="stdout 输出纯 JSON manifest（提示走 stderr）",
+    )
     p_ep = sub.add_parser(
         "cutover-evidence-pack",
         help=(
@@ -2301,6 +2411,8 @@ def main() -> None:
         raise SystemExit(_run_provider_smoke_aggregate(args))
     if args.command == "production-evidence-gap":
         raise SystemExit(_run_production_evidence_gap(args))
+    if args.command == "evidence-inventory":
+        raise SystemExit(_run_evidence_inventory(args))
     if args.command == "cutover-evidence-pack":
         raise SystemExit(_run_cutover_evidence_pack(args))
     if args.command == "release-candidate":
