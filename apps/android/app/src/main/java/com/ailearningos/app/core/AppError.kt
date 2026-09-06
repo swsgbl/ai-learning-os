@@ -19,6 +19,9 @@ enum class AppErrorKind {
     /** 404 */
     NOT_FOUND,
 
+    /** 409：与服务端状态冲突（考试序号冲突、考试已结束等） */
+    CONFLICT,
+
     /** 5xx 或其它服务端失败 */
     SERVER,
 
@@ -46,6 +49,7 @@ class AppError(
             AppErrorKind.UNAUTHORIZED -> "登录状态已失效，请重新登录"
             AppErrorKind.FORBIDDEN -> "当前账号没有权限执行该操作"
             AppErrorKind.NOT_FOUND -> "请求的内容不存在"
+            AppErrorKind.CONFLICT -> "操作与服务端状态冲突，已按服务端状态对齐"
             AppErrorKind.SERVER -> "服务暂时不可用，请稍后重试"
             AppErrorKind.BAD_RESPONSE -> "API 返回数据格式异常"
             AppErrorKind.BAD_CONFIG -> "API 地址未配置或无效，请在设置中修改"

@@ -1,4 +1,4 @@
-package com.ailearningos.app.ui.study
+package com.ailearningos.app.ui.common
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -18,27 +18,9 @@ import androidx.compose.ui.unit.dp
 import com.ailearningos.app.ui.components.SectionCard
 import com.ailearningos.app.ui.theme.Subtle
 
-/**
- * 学习/考场占位（M12-01）：只说明后续能力，不虚构已接入功能。
- */
+/** 通用「未接入」占位页（M12-01 语音等页面沿用；不虚构已接入功能） */
 @Composable
-fun StudyPlaceholderScreen(
-    onBack: () -> Unit,
-    onOpenSettings: () -> Unit,
-) {
-    PlaceholderPage(
-        title = "学习 / 考场",
-        tag = "占位",
-        body = "后续版本将在这里接入：试卷抽取与组卷、考场作答与交卷、审阅报告与掌握度。" +
-            "当前版本（M12-01 第一切片）只提供应用壳与认证/API 基础，尚未接入考试业务，" +
-            "本页面不提供任何作答或提交入口。",
-        onBack = onBack,
-        onOpenSettings = onOpenSettings,
-    )
-}
-
-@Composable
-internal fun PlaceholderPage(
+fun PlaceholderPage(
     title: String,
     tag: String,
     body: String,

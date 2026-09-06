@@ -20,6 +20,7 @@ fun Throwable.asAppError(): AppError = when (this) {
         401 -> AppError(AppErrorKind.UNAUTHORIZED, this)
         403 -> AppError(AppErrorKind.FORBIDDEN, this)
         404 -> AppError(AppErrorKind.NOT_FOUND, this)
+        409 -> AppError(AppErrorKind.CONFLICT, this)
         in 500..599 -> AppError(AppErrorKind.SERVER, this)
         else -> AppError(AppErrorKind.BAD_RESPONSE, this)
     }

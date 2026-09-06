@@ -1268,7 +1268,8 @@ bash infra/smoke_docker.sh
 Jetpack Compose Material 3 + Navigation，五个界面（首页 / 学习占位 / 语音占位 /
 设置与 API 配置 / 登录），Retrofit + OkHttp + kotlinx.serialization 对接
 `GET /health`、`GET/POST /api/v1/auth/*`、`GET /api/v1/system/privacy`。
-考试 / 语音 / 搜索 / 治理等业务后续里程碑再接入。
+语音 / 搜索 / 治理等业务后续里程碑再接入（考试 / 学习 / 审阅已由
+M12-02 接入，见下节）。
 
 ### 本地环境
 
@@ -1289,8 +1290,8 @@ apps\android\gradlew.bat testDebugUnitTest lintDebug assembleDebug
 sh apps/android/gradlew testDebugUnitTest lintDebug assembleDebug
 ```
 
-- 全绿标准：103 个 JVM 单测 0 失败、lint 无 error（允许依赖版本提示类
-  warning）、产出 `apps/android/app/build/outputs/apk/debug/app-debug.apk`。
+- 全绿标准：JVM 单测 0 失败（M12-02 后共 170 项）、lint 无 error（允许
+  依赖版本提示类 warning）、产出 `apps/android/app/build/outputs/apk/debug/app-debug.apk`。
 - `gradlew` 不带可执行位入库存放，统一经 `sh ./gradlew` 调用，CI 无需
   `chmod +x`。
 - 测试不连真实 API、不连数据库：远端交互全部走 MockWebServer fixture（显式绑
@@ -1347,3 +1348,85 @@ sh apps/android/gradlew testDebugUnitTest lintDebug assembleDebug
   `sh ./gradlew testDebugUnitTest lintDebug assembleDebug`；契约测试
   `services/api/tests/test_workflow_actions_runtime.py` 锁定 action 版本、
   Java 17、wrapper 校验先于构建、无 lint baseline）。
+
+## 考试/学习业务闭环（M12-02）
+
+在 M12-01 壳上接入考试域三个真实界面与完整业务闭环：学习（试卷列表 +
+恢复提示）→ 考场（开考/恢复/作答/倒计时/交卷）→ 审阅（报告优先，404
+诚实降级）。全部走服务端权威语义，本地不缓存答案、不本地判分。
+
+### 数据层
+
+- `data/remote/ExamDtos.kt`：`GET /api/v1/papers`、`POST /papers/{id}/exams`、
+  `GET/PUT /api/v1/exams/*`、submit / submission / report 的 DTO，
+  snake_case 与服务端 Pydantic 契约一一对应；`ignoreUnknownKeys` 容忍
+  服务端新增字段，不猜语义（`ExamDtoParsingTest` 锁定解析矩阵）。
+- `data/ExamRepository.kt`：`ExamGateway` 接口的 Retrofit 实现（经
+  M12-01 的 `ApiProvider`/token 拦截器复用认证链路）；错误经
+  `RemoteErrors` 归类，新增 409 → `AppErrorKind.CONFLICT`（`core/AppError`
+  文案「已按服务端状态对齐」）。`ExamRepositoryTest`（MockWebServer）锁定
+  端点契约与错误分类。
+- `data/model/ExamModels.kt`：领域视图。`nextSequence` 只来自服务端响应，
+  状态字符串保留服务端原词（created/active/submitted/expired/
+  report_ready），未知值不猜测、按非进行中处理。
+- `data/local/ExamResumeStore.kt`：断线/进程重启恢复槽。**本地只允许保存
+  exam_id 一个值且只作「恢复提示」**——恢复时必须 GET /exams/{id} 对齐
+  answers / next_sequence / 剩余时间，答案绝不本地缓存当真相源
+  （`ExamResumeStoreGuardTest` 源码级锁定只写 exam_id 键）。
+
+### 考场状态机（`ui/exam/ExamViewModel`）
+
+- **服务端权威序号**：`next_sequence` 只从服务端响应推进，PUT 失败绝不
+  消耗序号；重试沿用同序号（服务端同 (sequence, question_id, answer)
+  幂等）。同卷作答串行 drain，序号严格递增无重复。
+- **同步失败对齐重放**：PUT 失败（网络/409）先 GET 对齐服务端
+  answers/next_sequence/剩余时间，再以对齐后的序号重放未生效答案；
+  断网时保留待同步答案停在可重试态；服务端持续拒绝同一答案时不无限
+  对齐-重放（连续失败上限后停在可重试态，交卷按服务端已有答案结算）。
+- **倒计时**：由 `server_end_at` + 可注入时钟推算（`server_remaining_seconds`
+  为初值），归零自动交卷一次；**交卷幂等 + 防抖**（submitted 标志 + 在途
+  Job 检查），交卷前补交待同步答案。
+- 开考入口语义：有恢复槽先尝试续考（同卷 active 才续）；恢复槽 404 清槽
+  按点击意图开新考；服务端状态未知（网络失败）**不盲目开新考**；已提交/
+  已过期考试直接收口进审阅。
+
+### 审阅（`ui/review/ReviewViewModel`）
+
+优先 GET report（总分/题分/概念掌握/错题/解析/补救任务）；report 404
+诚实降级 GET submission（概要 + 明确标注「详细报告暂不可用」）；两者
+皆 404 → 「审阅报告尚未生成」。**绝不本地判分**：correct/expected/score
+全部来自服务端响应（`ReviewViewModelTest` 锁定 report-first 流程）。
+
+### UI
+
+`ui/study`（试卷列表四态 + exam_id-only 恢复卡，替换 M12-01 占位页）、
+`ui/exam`（题卡 / 单选 / 多选 / 简答输入、题目导航、倒计时、同步状态、
+交卷确认）、`ui/review`（报告分区呈现）；`ui/common/QuestionTypes.kt`
+题型显示名与 Web 端对齐，未知题型如实显示「作答」。语音页仍为占位
+（`ui/common/PlaceholderPage.kt` 通用化，不虚构功能）。导航与 VM 工厂
+经 route 参数注入（`AiosApp` / `AiosViewModelFactory` + CreationExtras）。
+
+### 测试与调度约定（防挂死）
+
+`ExamViewModelTest`（25 项）覆盖开考/恢复矩阵、append-only 序号、同步
+失败不耗序号、409 对齐重放、倒计时归零自动交卷、交卷防抖与补交。考试
+VM 持有 `while + delay` 常驻 ticker，测试约定（文件头注释锁定）：
+`runTest` 与 `MainDispatcherRule` 共享同一 `TestCoroutineScheduler`
+（`runTest(mainDispatcherRule.testDispatcher.scheduler)`），且每个用例经
+`runExamTest` 包装在测试体内 `finally` 先 `cancel` 全部 `viewModelScope`
+再让 runTest 收尾——否则 runTest 的 idle 检测因常驻 ticker 挂死。
+
+### M12-02 验证状态与边界
+
+- 分支 `feature/m12-02-android-exam-flow`（基于 `origin/main@5954862`），
+  **完成但未合并**：未 push、未开 PR。
+- 验证命令（2026-09-06，Windows 11 + JDK 17 本地实测）：
+  `apps/android/gradlew.bat testDebugUnitTest lintDebug assembleDebug --rerun-tasks`
+  → BUILD SUCCESSFUL；test-results XML 汇总 **170 tests / 0 failures /
+  0 errors / 0 skipped**（17 个测试类）；lint 0 error（20 warning，
+  同 M12-01 依赖版本提示类）；产出 `app/build/outputs/apk/debug/app-debug.apk`。
+- **未跑模拟器/真机**：全部验证为 JVM 单测（MockWebServer / fake
+  gateway / fake 存储），Compose UI 与 Keystore/DataStore 行为未经
+  真机验证。
+- 测试不触网、不连数据库；不读取/不输出任何 key/token/password；
+  `production_ready=false` 语义不变。

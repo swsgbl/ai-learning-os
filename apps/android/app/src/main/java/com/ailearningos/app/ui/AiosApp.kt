@@ -19,21 +19,25 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.ailearningos.app.ui.exam.ExamScreen
 import com.ailearningos.app.ui.home.HomeScreen
 import com.ailearningos.app.ui.icons.AiosIcons
 import com.ailearningos.app.ui.login.LoginScreen
+import com.ailearningos.app.ui.review.ReviewScreen
 import com.ailearningos.app.ui.session.SessionViewModel
 import com.ailearningos.app.ui.settings.SettingsScreen
-import com.ailearningos.app.ui.study.StudyPlaceholderScreen
+import com.ailearningos.app.ui.study.StudyScreen
+import com.ailearningos.app.ui.study.StudyViewModel
 import com.ailearningos.app.ui.voice.VoicePlaceholderScreen
 
 /**
- * M12-01 壳：单 Activity + Navigation + 底部导航（4 个主页面）。
- * 登录页不占底栏位，从用户状态卡片进入。
+ * 壳 + 考试业务导航（M12-02）：单 Activity + Navigation + 底部导航。
+ * 登录页/考场/审阅不占底栏位；考场与审阅为全屏流程页。
  */
 enum class AiosDestination(val route: String, val label: String, val icon: ImageVector) {
     Home("home", "首页", Icons.Filled.Home),
@@ -43,6 +47,9 @@ enum class AiosDestination(val route: String, val label: String, val icon: Image
 }
 
 const val LOGIN_ROUTE = "login"
+const val EXAM_PAPER_ROUTE = "exam-paper/{paperId}"
+const val EXAM_RESUME_ROUTE = "exam/{examId}"
+const val REVIEW_ROUTE = "review/{examId}"
 
 @Composable
 fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
@@ -97,9 +104,11 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
                 )
             }
             composable(AiosDestination.Study.route) {
-                StudyPlaceholderScreen(
-                    onBack = { navController.popBackStack() },
-                    onOpenSettings = { navController.navigate(AiosDestination.Settings.route) },
+                val studyViewModel: StudyViewModel = viewModel(factory = viewModelFactory)
+                StudyScreen(
+                    viewModel = studyViewModel,
+                    onStartPaper = { paperId -> navController.navigateExamPaper(paperId) },
+                    onResumeExam = { examId -> navController.navigateExamResume(examId) },
                 )
             }
             composable(AiosDestination.Voice.route) {
@@ -124,6 +133,48 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
                     },
                 )
             }
+            composable(EXAM_PAPER_ROUTE) {
+                val examViewModel: com.ailearningos.app.ui.exam.ExamViewModel =
+                    viewModel(factory = viewModelFactory)
+                ExamScreen(
+                    viewModel = examViewModel,
+                    onOpenReview = { examId -> navController.navigateReviewFromExam(examId) },
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable(EXAM_RESUME_ROUTE) {
+                val examViewModel: com.ailearningos.app.ui.exam.ExamViewModel =
+                    viewModel(factory = viewModelFactory)
+                ExamScreen(
+                    viewModel = examViewModel,
+                    onOpenReview = { examId -> navController.navigateReviewFromExam(examId) },
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable(REVIEW_ROUTE) {
+                val reviewViewModel: com.ailearningos.app.ui.review.ReviewViewModel =
+                    viewModel(factory = viewModelFactory)
+                ReviewScreen(
+                    viewModel = reviewViewModel,
+                    onBack = { navController.popBackStack() },
+                )
+            }
         }
+    }
+}
+
+private fun NavHostController.navigateExamPaper(paperId: String) {
+    navigate("exam-paper/$paperId") { launchSingleTop = true }
+}
+
+private fun NavHostController.navigateExamResume(examId: String) {
+    navigate("exam/$examId") { launchSingleTop = true }
+}
+
+/** 交卷后进审阅：清掉考场页（不能回退到已交卷的考场） */
+private fun NavHostController.navigateReviewFromExam(examId: String) {
+    navigate("review/$examId") {
+        launchSingleTop = true
+        popUpTo(AiosDestination.Study.route)
     }
 }
