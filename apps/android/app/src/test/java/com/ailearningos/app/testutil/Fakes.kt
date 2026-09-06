@@ -5,9 +5,12 @@ import com.ailearningos.app.core.AppErrorKind
 import com.ailearningos.app.data.AuthGateway
 import com.ailearningos.app.data.ExamGateway
 import com.ailearningos.app.data.SystemGateway
+import com.ailearningos.app.data.VoiceGateway
 import com.ailearningos.app.data.local.ExamResumeStore
 import com.ailearningos.app.data.local.SettingsStore
 import com.ailearningos.app.data.local.TokenStore
+import com.ailearningos.app.data.local.VoiceResumeSlot
+import com.ailearningos.app.data.local.VoiceResumeStore
 import com.ailearningos.app.data.model.Angles
 import com.ailearningos.app.data.model.ConceptScore
 import com.ailearningos.app.data.model.ExamQuestion
@@ -23,6 +26,22 @@ import com.ailearningos.app.data.model.RemediationTask
 import com.ailearningos.app.data.model.ReportItem
 import com.ailearningos.app.data.model.ReviewQuestion
 import com.ailearningos.app.data.model.UserProfile
+import com.ailearningos.app.data.model.VoiceAnswerResult
+import com.ailearningos.app.data.model.VoiceCommandResult
+import com.ailearningos.app.data.model.VoiceIntentResult
+import com.ailearningos.app.data.model.VoiceMistakeSummary
+import com.ailearningos.app.data.model.VoiceProviderView
+import com.ailearningos.app.data.model.VoiceProviders
+import com.ailearningos.app.data.model.VoiceQuestion
+import com.ailearningos.app.data.model.VoiceRemediationSummary
+import com.ailearningos.app.data.model.VoiceReport
+import com.ailearningos.app.data.model.VoiceResume
+import com.ailearningos.app.data.model.VoiceSession
+import com.ailearningos.app.data.model.VoiceTranscription
+import com.ailearningos.app.voice.AudioCaptureEngine
+import com.ailearningos.app.voice.AudioEngineException
+import com.ailearningos.app.voice.AudioPlaybackEngine
+import com.ailearningos.app.voice.WavCodec
 
 /** 测试专用内存 token 存储（真实 Keystore 实现不上 JVM 测试） */
 class FakeTokenStore : TokenStore {
@@ -526,4 +545,477 @@ fun reportFixture(
         RemediationTask(kind = "review_concept", title = "复习「极值」", detail = "结合变式练习巩固。", questionId = "q2"),
     ),
     evidenceIds = listOf("ev-1"),
+)
+
+// ====================================================================
+// M12-03 语音域：fake 存储 / 迷你服务端 fake / 音频引擎 fake / fixtures
+// ====================================================================
+
+/** 测试专用内存语音恢复槽（真实 DataStore 实现不上 JVM 测试） */
+class FakeVoiceResumeStore : VoiceResumeStore {
+
+    var stored: VoiceResumeSlot? = null
+        private set
+
+    var saveCount = 0
+        private set
+
+    var clearCount = 0
+        private set
+
+    fun seed(slot: VoiceResumeSlot?) {
+        stored = slot
+    }
+
+    override suspend fun load(): VoiceResumeSlot? = stored
+
+    override suspend fun save(slot: VoiceResumeSlot) {
+        stored = slot
+        saveCount++
+    }
+
+    override suspend fun clear() {
+        stored = null
+        clearCount++
+    }
+}
+
+/** 录音指令记录（fake 引擎观察面） */
+class FakeAudioCaptureEngine : AudioCaptureEngine {
+
+    var startError: AudioEngineException? = null
+
+    var stopBytes: ByteArray? = null
+
+    var stopError: AudioEngineException? = null
+
+    var startCalls = 0
+        private set
+
+    var stopCalls = 0
+        private set
+
+    private var activeFlag = false
+
+    override val isActive: Boolean get() = activeFlag
+
+    override suspend fun start() {
+        startError?.let { throw it }
+        startCalls++
+        activeFlag = true
+    }
+
+    override suspend fun stop(): ByteArray {
+        stopCalls++
+        activeFlag = false
+        stopError?.let { throw it }
+        return stopBytes ?: WavCodec.wrapPcm16(byteArrayOf(1, 2, 3, 4))
+    }
+}
+
+class FakeAudioPlaybackEngine : AudioPlaybackEngine {
+
+    val played = mutableListOf<ByteArray>()
+
+    var playError: Exception? = null
+
+    var stopCalls = 0
+        private set
+
+    override suspend fun play(wav: ByteArray) {
+        playError?.let { throw it }
+        played.add(wav)
+    }
+
+    override fun stop() {
+        stopCalls++
+    }
+}
+
+/**
+ * 迷你语音服务端 fake：内置 M4-03 FSM 语义（迁移表与服务端 voice_session_fsm 一致）——
+ * - 非法迁移 → CONFLICT(409)；未知会话 → NOT_FOUND；
+ * - answer_proposed 需 question_id+answer（缺 → BAD_RESPONSE/422 同形）并落 answers；
+ * - NEXT_QUESTION 后 start_reading 推进题号；越界 → CONFLICT；
+ * - report_ready 透出题数；end/report_ready 进 REPORT_READY 终态；
+ * - resume 只读投影当前题/权威答案；终态 → CONFLICT。
+ * intent 默认按「选 X」绑定当前题提交；复杂场景用 [intentHandler] 覆盖。
+ */
+class FakeVoiceGateway(
+    private val questions: List<VoiceQuestion> = listOf(
+        voiceQuestionFixture(),
+        voiceQuestionFixture(id = "q2", stem = "函数 f(x)=x^2 在 (0,+∞) 上是？"),
+    ),
+) : VoiceGateway {
+
+    var providersResult: Result<VoiceProviders> = Result.success(voiceProvidersFixture())
+
+    var transcribeResult: Result<VoiceTranscription> =
+        Result.success(VoiceTranscription(text = "选 B", confidence = 0.9, provider = "fake"))
+
+    var synthesizeResult: Result<ByteArray> = Result.success(WavCodec.wrapPcm16(ByteArray(160)))
+
+    var reportResult: Result<VoiceReport> = Result.success(voiceReportFixture())
+
+    var traceError: AppError? = null
+
+    /** 一次性错误注入：下一次 resume 抛出（之后恢复默认语义） */
+    var failNextResume: AppError? = null
+
+    /** 意图覆盖钩子：返回 null 走默认「选 X」逻辑 */
+    var intentHandler: (suspend (transcript: String) -> VoiceIntentResult?)? = null
+
+    val createdSessions = mutableListOf<String>()
+
+    val commands = mutableListOf<Pair<String, String>>()
+
+    val intents = mutableListOf<String>()
+
+    val submittedAnswers = mutableListOf<String>()
+
+    val traces = mutableListOf<Triple<String, Long, String?>>()
+
+    val synthesizeTexts = mutableListOf<String>()
+
+    /** sessionId -> 可变服务端状态（会话 + exam answers 投影） */
+    val sessions = linkedMapOf<String, Pair<VoiceSession, MutableMap<String, String>>>()
+
+    private var nextSessionNumber = 0
+
+    override suspend fun providers(): VoiceProviders = providersResult.getOrThrow()
+
+    override suspend fun createSession(examId: String): VoiceSession {
+        createdSessions.add(examId)
+        val sessionId = "vs-fixture-%04d".format(++nextSessionNumber)
+        val session = voiceSessionFixture(sessionId = sessionId, examId = examId)
+        sessions[sessionId] = session to linkedMapOf()
+        return session
+    }
+
+    override suspend fun sessions(examId: String): List<VoiceSession> =
+        sessions.values.map { it.first }.filter { it.examId == examId }
+
+    override suspend fun session(sessionId: String): VoiceSession {
+        val record = sessions[sessionId] ?: throw AppError(AppErrorKind.NOT_FOUND)
+        return record.first
+    }
+
+    override suspend fun resume(sessionId: String): VoiceResume {
+        failNextResume?.let { error ->
+            failNextResume = null
+            throw error
+        }
+        val record = sessions[sessionId] ?: throw AppError(AppErrorKind.NOT_FOUND)
+        val (session, answers) = record
+        if (session.isReportReady) throw AppError(AppErrorKind.CONFLICT)
+        val index = session.questionIndex
+        val question = questions.getOrNull(index)
+        return VoiceResume(
+            session = session,
+            question = question,
+            committedAnswer = question?.let { answers[it.id] },
+            questionTotal = questions.size,
+        )
+    }
+
+    override suspend fun command(
+        sessionId: String,
+        type: String,
+        questionId: String?,
+        answer: String?,
+    ): VoiceCommandResult {
+        commands.add(sessionId to type)
+        val record = sessions.entries.find { it.key == sessionId } ?: throw AppError(AppErrorKind.NOT_FOUND)
+        val (session, answers) = record.value
+        if (type !in events) throw AppError(AppErrorKind.BAD_RESPONSE)
+        val target = try {
+            transition(session.status, type)
+        } catch (cause: IllegalArgumentException) {
+            throw AppError(AppErrorKind.CONFLICT)
+        }
+
+        var clarifiedQuestion: String? = null
+        var questionIndex = session.questionIndex
+        var questionTotal: Int? = null
+
+        when (type) {
+            "answer_proposed", "answer_clarify" -> {
+                if (questionId == null || answer == null) throw AppError(AppErrorKind.BAD_RESPONSE)
+                if (questions.none { it.id == questionId }) throw AppError(AppErrorKind.BAD_RESPONSE)
+                if (type == "answer_proposed") {
+                    answers[questionId] = answer
+                } else {
+                    clarifiedQuestion = "没有听清，请再说一遍具体选项。"
+                }
+            }
+            "start_reading" -> if (session.status == "NEXT_QUESTION") {
+                questionIndex = session.questionIndex + 1
+                if (questionIndex >= questions.size) throw AppError(AppErrorKind.CONFLICT)
+            }
+            "report_ready" -> questionTotal = questions.size
+        }
+
+        val updated = session.copy(
+            status = target,
+            questionIndex = questionIndex,
+            revision = session.revision + 1,
+        )
+        record.setValue(updated to answers)
+        return VoiceCommandResult(
+            appliedEvent = type,
+            fromStatus = session.status,
+            session = updated,
+            clarifiedQuestion = clarifiedQuestion,
+            questionTotal = questionTotal,
+        )
+    }
+
+    override suspend fun intent(sessionId: String, transcript: String): VoiceIntentResult {
+        intents.add(transcript)
+        val record = sessions[sessionId] ?: throw AppError(AppErrorKind.NOT_FOUND)
+        intentHandler?.invoke(transcript)?.let { return it }
+        val letter = Regex("选\\s*([A-Z])").find(transcript)?.groupValues?.get(1)
+        return if (letter == null) {
+            VoiceIntentResult(
+                transcript = transcript,
+                intent = "unknown",
+                letter = null,
+                ordinal = null,
+                ambiguous = false,
+                fsmCommand = null,
+                fsmApplied = false,
+                appliedEvent = null,
+                session = null,
+                clarifiedQuestion = null,
+            )
+        } else {
+            val question = questions[record.first.questionIndex]
+            val out = command(sessionId, "answer_proposed", question.id, letter)
+            VoiceIntentResult(
+                transcript = transcript,
+                intent = "choose",
+                letter = letter,
+                ordinal = null,
+                ambiguous = false,
+                fsmCommand = "answer_proposed",
+                fsmApplied = true,
+                appliedEvent = out.appliedEvent,
+                session = out.session,
+                clarifiedQuestion = null,
+            )
+        }
+    }
+
+    override suspend fun submitAnswer(
+        sessionId: String,
+        transcript: String,
+        eventId: String,
+    ): VoiceAnswerResult {
+        submittedAnswers.add(eventId)
+        val record = sessions[sessionId] ?: throw AppError(AppErrorKind.NOT_FOUND)
+        val (session, _) = record
+        val question = questions[session.questionIndex]
+        val letter = Regex("选\\s*([A-Z])").find(transcript)?.groupValues?.get(1)
+        return if (letter == null) {
+            VoiceAnswerResult(
+                eventId = eventId,
+                idempotent = false,
+                accepted = false,
+                normalizedAnswer = null,
+                intent = "unknown",
+                questionId = question.id,
+                session = session,
+                clarifiedQuestion = "答案无法识别。",
+            )
+        } else {
+            val out = command(sessionId, "answer_proposed", question.id, letter)
+            VoiceAnswerResult(
+                eventId = eventId,
+                idempotent = false,
+                accepted = true,
+                normalizedAnswer = letter,
+                intent = "choose",
+                questionId = question.id,
+                session = out.session,
+                clarifiedQuestion = null,
+            )
+        }
+    }
+
+    override suspend fun report(sessionId: String): VoiceReport {
+        val record = sessions[sessionId] ?: throw AppError(AppErrorKind.NOT_FOUND)
+        if (!record.first.isReportReady) throw AppError(AppErrorKind.CONFLICT)
+        return reportResult.getOrThrow()
+    }
+
+    override suspend fun transcribe(wav: ByteArray): VoiceTranscription = transcribeResult.getOrThrow()
+
+    override suspend fun synthesize(text: String): ByteArray {
+        synthesizeTexts.add(text)
+        return synthesizeResult.getOrThrow()
+    }
+
+    override suspend fun reportTrace(
+        stage: String,
+        durationMillis: Long,
+        sessionId: String?,
+        examId: String?,
+        questionId: String?,
+    ) {
+        traceError?.let { throw it }
+        traces.add(Triple(stage, durationMillis, questionId))
+    }
+
+    // ---------- FSM 迁移表（与服务端 voice_session_fsm._TRANSITIONS 一致） ----------
+
+    private val transitions: Map<String, Map<String, String>> = mapOf(
+        "SESSION_READY" to mapOf(
+            "start_reading" to "READING_QUESTION",
+            "end" to "REPORT_READY",
+            "pause" to "SESSION_READY",
+            "resume" to "SESSION_READY",
+        ),
+        "READING_QUESTION" to mapOf(
+            "question_read" to "READING_OPTIONS",
+            "repeat_question" to "READING_QUESTION",
+            "slow_down" to "READING_QUESTION",
+            "barge_in" to "WAITING_ANSWER",
+            "pause" to "READING_QUESTION",
+            "resume" to "READING_QUESTION",
+            "end" to "REPORT_READY",
+        ),
+        "READING_OPTIONS" to mapOf(
+            "options_read" to "WAITING_ANSWER",
+            "repeat_options" to "READING_OPTIONS",
+            "slow_down" to "READING_OPTIONS",
+            "barge_in" to "WAITING_ANSWER",
+            "pause" to "READING_OPTIONS",
+            "resume" to "READING_OPTIONS",
+            "end" to "REPORT_READY",
+        ),
+        "WAITING_ANSWER" to mapOf(
+            "answer_proposed" to "ANSWER_COMMITTED",
+            "answer_clarify" to "CLARIFYING",
+            "skip" to "NEXT_QUESTION",
+            "repeat_question" to "WAITING_ANSWER",
+            "repeat_options" to "WAITING_ANSWER",
+            "slow_down" to "WAITING_ANSWER",
+            "barge_in" to "WAITING_ANSWER",
+            "pause" to "WAITING_ANSWER",
+            "resume" to "WAITING_ANSWER",
+            "end" to "REPORT_READY",
+        ),
+        "CLARIFYING" to mapOf(
+            "answer_proposed" to "ANSWER_COMMITTED",
+            "answer_clarify" to "CLARIFYING",
+            "skip" to "NEXT_QUESTION",
+            "barge_in" to "CLARIFYING",
+            "pause" to "CLARIFYING",
+            "resume" to "CLARIFYING",
+            "end" to "REPORT_READY",
+        ),
+        "ANSWER_COMMITTED" to mapOf(
+            "commit_confirmed" to "NEXT_QUESTION",
+            "answer_proposed" to "ANSWER_COMMITTED",
+            "answer_clarify" to "CLARIFYING",
+            "skip" to "NEXT_QUESTION",
+            "repeat_question" to "ANSWER_COMMITTED",
+            "repeat_options" to "ANSWER_COMMITTED",
+            "slow_down" to "ANSWER_COMMITTED",
+            "pause" to "ANSWER_COMMITTED",
+            "resume" to "ANSWER_COMMITTED",
+            "end" to "REPORT_READY",
+        ),
+        "NEXT_QUESTION" to mapOf(
+            "start_reading" to "READING_QUESTION",
+            "report_ready" to "REPORT_READY",
+            "end" to "REPORT_READY",
+            "pause" to "NEXT_QUESTION",
+            "resume" to "NEXT_QUESTION",
+        ),
+        "REPORT_READY" to emptyMap(),
+    )
+
+    private val events = setOf(
+        "start_reading", "question_read", "options_read", "answer_proposed", "answer_clarify",
+        "commit_confirmed", "skip", "repeat_question", "repeat_options", "slow_down",
+        "end", "pause", "resume", "barge_in", "report_ready",
+    )
+
+    private fun transition(state: String, event: String): String {
+        val target = transitions[state]?.get(event)
+            ?: throw IllegalArgumentException("语音会话状态 $state 不接受事件 $event")
+        return target
+    }
+}
+
+// ---------- 语音 fixtures（显式假值；对应服务端 voice 契约形态，非真实数据） ----------
+
+fun voiceQuestionFixture(
+    id: String = "q1",
+    stem: String = "函数 f(x)=x^3-3x 在 (0, +∞) 上的单调递增区间是？",
+) = VoiceQuestion(
+    id = id,
+    type = "mcq",
+    stem = stem,
+    options = listOf(
+        QuestionOption("A", "(0,1)"),
+        QuestionOption("B", "(1,+∞)"),
+        QuestionOption("C", "(0,+∞)"),
+        QuestionOption("D", "不存在"),
+    ),
+)
+
+fun voiceSessionFixture(
+    sessionId: String = "vs-fixture-0001",
+    examId: String = "exam-fixture-0001",
+    status: String = "SESSION_READY",
+    questionIndex: Int = 0,
+    revision: Int = 1,
+) = VoiceSession(
+    sessionId = sessionId,
+    examId = examId,
+    status = status,
+    questionIndex = questionIndex,
+    revision = revision,
+    createdAt = "2026-09-06T22:00:00+00:00",
+    updatedAt = "2026-09-06T22:00:00+00:00",
+)
+
+fun voiceProvidersFixture(
+    voiceMode: String = "local",
+) = VoiceProviders(
+    voiceMode = voiceMode,
+    asr = VoiceProviderView(requested = null, provider = "fake", fallback = false),
+    tts = VoiceProviderView(requested = null, provider = "tone", fallback = false),
+    privacyStoreAudio = false,
+    privacySendContextToCloud = false,
+)
+
+fun voiceReportFixture(
+    sessionId: String = "vs-fixture-0001",
+    examId: String = "exam-fixture-0001",
+) = VoiceReport(
+    sessionId = sessionId,
+    examId = examId,
+    spokenText = "考试完成！本次答对 1 题（共 2 题），得分 50 分，共有 1 道错题。",
+    mistakes = listOf(
+        VoiceMistakeSummary(
+            questionId = "q2",
+            stemPreview = "函数 f(x)=x^2 在 (0,+∞) 上是？…",
+            yourAnswer = "A",
+            correctAnswer = "B",
+            concepts = listOf("函数"),
+            diagnosis = "概念不清",
+        ),
+    ),
+    remediations = listOf(
+        VoiceRemediationSummary(
+            concept = "函数",
+            actions = listOf("review_concept"),
+            detail = "复习概念「函数」后完成变式练习",
+            questionIds = listOf("q2"),
+        ),
+    ),
+    writtenReportUrl = "/api/v1/exams/$examId/report",
 )

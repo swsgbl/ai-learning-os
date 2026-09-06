@@ -13,6 +13,8 @@ import com.ailearningos.app.ui.review.ReviewViewModel
 import com.ailearningos.app.ui.session.SessionViewModel
 import com.ailearningos.app.ui.settings.SettingsViewModel
 import com.ailearningos.app.ui.study.StudyViewModel
+import com.ailearningos.app.ui.voice.VoiceEntry
+import com.ailearningos.app.ui.voice.VoiceViewModel
 
 /**
  * 手工装配的 ViewModel 工厂（无 DI 框架）。
@@ -62,6 +64,15 @@ class AiosViewModelFactory(
                 examId = handle.get<String>(KEY_EXAM_ID).orEmpty(),
             ) as T
 
+            modelClass.isAssignableFrom(VoiceViewModel::class.java) -> VoiceViewModel(
+                voice = container.voiceGateway,
+                exam = container.examGateway,
+                resumeStore = container.voiceResumeStore,
+                capture = container.audioCaptureEngine,
+                playback = container.audioPlaybackEngine,
+                entry = voiceEntry(handle),
+            ) as T
+
             else -> throw IllegalArgumentException("Unknown ViewModel: ${modelClass.name}")
         }
     }
@@ -77,8 +88,20 @@ class AiosViewModelFactory(
         }
     }
 
+    /** 语音页入口：会话恢复路由带 sessionId，按试卷开新带 paperId，tab 无参进 Picker */
+    private fun voiceEntry(handle: SavedStateHandle): VoiceEntry {
+        val sessionId = handle.get<String>(KEY_SESSION_ID)
+        val paperId = handle.get<String>(KEY_PAPER_ID)
+        return when {
+            !sessionId.isNullOrBlank() -> VoiceEntry.Resume(sessionId)
+            !paperId.isNullOrBlank() -> VoiceEntry.Start(paperId)
+            else -> VoiceEntry.Picker
+        }
+    }
+
     private companion object {
         const val KEY_EXAM_ID = "examId"
         const val KEY_PAPER_ID = "paperId"
+        const val KEY_SESSION_ID = "sessionId"
     }
 }

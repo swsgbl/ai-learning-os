@@ -1290,7 +1290,7 @@ apps\android\gradlew.bat testDebugUnitTest lintDebug assembleDebug
 sh apps/android/gradlew testDebugUnitTest lintDebug assembleDebug
 ```
 
-- 全绿标准：JVM 单测 0 失败（M12-02 后共 170 项）、lint 无 error（允许
+- 全绿标准：JVM 单测 0 失败（M12-03 后共 256 项）、lint 无 error（允许
   依赖版本提示类 warning）、产出 `apps/android/app/build/outputs/apk/debug/app-debug.apk`。
 - `gradlew` 不带可执行位入库存放，统一经 `sh ./gradlew` 调用，CI 无需
   `chmod +x`。
@@ -1438,3 +1438,137 @@ VM 持有 `while + delay` 常驻 ticker，测试约定（文件头注释锁定�
   真机验证。
 - 测试不触网、不连数据库；不读取/不输出任何 key/token/password；
   `production_ready=false` 语义不变。
+
+## 语音陪练业务闭环（M12-03）
+
+在 M12-02 壳与考试域之上接入语音陪练第一切片（分支
+`feature/m12-03-android-voice-flow`，基于 `main@5065585`；本地已提交、
+未 push、未开 PR）。目标：用户从学习页选试卷即可开始/继续/结束语音陪练，
+界面呈现服务端状态、当前题、选项、已提交答案、恢复提示与错误降级——
+复杂留给系统，简单留给用户。
+
+### 服务端契约（只消费不重造）
+
+全部端点以 `services/api/app/api/routes/voice.py` 及其测试为准
+（`test_voice_session_fsm.py` / `test_voice_resume.py` /
+`test_voice_report.py` / `test_voice_trace.py` / `test_voice_providers.py`）：
+
+- `GET /api/v1/voice/providers`（链路概要，Picker 态展示）
+- `POST /api/v1/voice/sessions`（为进行中考试创建语音会话）
+- `GET /api/v1/voice/sessions?exam_id=`、`GET /sessions/{id}`、
+  `GET /sessions/{id}/resume`（断线恢复视图：状态 + 当前题公开字段 +
+  服务端权威已提交答案）
+- `POST /sessions/{id}/commands`（15 种 FSM 命令：start_reading /
+  question_read / options_read / answer_proposed / answer_clarify /
+  commit_confirmed / skip / repeat_* / slow_down / end / pause / resume /
+  barge_in / report_ready）
+- `POST /sessions/{id}/intents`（transcript → 服务端解析 → FSM 应用，
+  作答主路径）、`POST /sessions/{id}/answers`（event_id 幂等规范化提交，
+  仓储面已接入并测试，UI 主路径走 intents）
+- `GET /sessions/{id}/report`（REPORT_READY 后的语音播报投影）
+- `POST /api/v1/voice/transcribe`（multipart WAV → 文本）、
+  `POST /api/v1/voice/synthesize`（文本 → WAV 字节）、
+  `POST /api/v1/voice/trace`（客户端实测耗时 span，尽力而为）
+
+状态枚举保留服务端原词（SESSION_READY / READING_QUESTION /
+READING_OPTIONS / WAITING_ANSWER / CLARIFYING / ANSWER_COMMITTED /
+NEXT_QUESTION / REPORT_READY）；错误码经 M12-02 的 `AppError` 语义映射
+（409 → CONFLICT 先 GET resume 对齐再提示，404 清恢复槽，503/5xx → SERVER）。
+
+### 实现结构（apps/android 主源码）
+
+- `data/remote/VoiceDtos.kt`：语音 DTO（snake_case 对齐服务端 Pydantic）。
+- `data/model/VoiceModels.kt`：领域视图（状态原词、未知值不猜）。
+- `data/VoiceRepository.kt`：`VoiceGateway` 的 Retrofit 实现，复用 M12-01
+  认证链路（`ApiProvider` / token 拦截器 / `withRemoteError`），不复制
+  第二套 HTTP 基础设施。
+- `data/local/VoiceResumeStore.kt`：恢复槽（DataStore）——只保存
+  session_id / exam_id 两个最小元数据键；语音音频、transcript、答案、
+  判分绝不落本地（`VoiceResumeStoreGuardTest` 源码级锁定）。
+- `voice/WavCodec.kt`：WAV RIFF 封装/解析纯逻辑——`PcmSpec` 暴露
+  dataOffset/dataBytes 边界（LIST/fact 等合法前置 chunk 使 data 不在 44，
+  播放从 dataOffset 消费；声称长度超出文件实际即拒绝）；播放参数以
+  header 实际采样率为准（服务端本地 TTS 为 8kHz）。
+- `voice/AudioEngines.kt`：`AudioCaptureEngine` / `AudioPlaybackEngine`
+  可注入接口 + Android 实现（AudioRecord 16kHz/mono/PCM16 采集）。
+  播放走 `WavPlaybackSession`（JVM 可测编排）+ `WavPlaybackDriver`
+  （可注入驱动；生产=AudioTrack，marker=播放头到达终点帧才回调完成）：
+  **写完 ≠ 播完**——数据全部入队后挂起等待驱动侧完成信号才返回，
+  question_read/options_read 不会过早推进服务端 FSM；**取消状态属于
+  单次播放尝试**（每次 play 一个 `Attempt`：独立取消标志 + 完成信号 +
+  自己的轨道快照，新播放顶掉旧播放时取消旧尝试自己的状态并立即
+  pause 旧轨道——旧音频不与新播报重叠——绝不重置），停止立即唤醒
+  挂起播放（取消语义，不当作已播完）、取消与 pause 配对在同一尝试、
+  各次播放释放自己的轨道、不忙等。
+  调度边界：引擎注入 `CoroutineDispatcher`（默认 Dispatchers.IO）——
+  AudioTrack 创建、PCM 写入、等待完成与 release 全部在 IO 执行，
+  ViewModel 的 Main 调用 play 不阻塞主线程；stop 的立即部分（标志 +
+  唤醒）同步执行，停止时刻轨道快照交 IO pause/flush
+  （`WavPlaybackSessionTest` 以单线程 executor 断言阻塞驱动操作绝不
+  落在调用方 dispatcher，并以真实线程门控测试锁定并发顶替语义）。
+  失败抛固定脱敏文案的 `AudioEngineException`，绝不静默假装成功。
+- `ui/voice/VoiceViewModel.kt`：服务端权威状态机——读题→读选项→倾听由
+  「播报完成」驱动链式推进（question_read/options_read 在 TTS 播完后发）；
+  播报失败停在当前状态显示可重试错误；409 以 resume 对齐；恢复槽 404/409
+  清理；trace 上报（asr/tts 客户端实测）失败静默吞掉不扰动业务。
+- `ui/voice/VoiceScreen.kt`：Picker（链路概要 + 恢复卡 + 选卷引导）/
+  进行中（状态卡、题面与已提交答案高亮、澄清提示、播放控制、录音 +
+  文字双作答入口、推进主按钮、结束）/ 报告（spoken_text + 错题摘要 +
+  补救建议）三态。录音按钮先请求 RECORD_AUDIO 运行时授权，拒绝则保留
+  文字作答（诚实降级，不冒充已录音）；录音中有可见状态提示。
+- 导航：学习页试卷卡新增「语音陪练」入口（`voice-paper/{paperId}`）、
+  恢复卡（`voice-session/{sessionId}`）、语音 tab（Picker）。RECORD_AUDIO
+  权限加入 main manifest。
+
+### M12-03 验证状态与边界
+
+- 验证命令（2026-09-07，Windows 11 + JDK 17 本地实测，PowerShell）：
+  `apps/android/gradlew.bat testDebugUnitTest lintDebug assembleDebug --rerun-tasks`
+  → **BUILD SUCCESSFUL**（44s，55 任务全量执行）；test-results XML 汇总
+  **256 tests / 0 failures / 0 errors / 0 skipped**（23 个测试类，其中
+  M12-03 新增 6 类 86 项：VoiceViewModelTest 29 / VoiceRepositoryTest 23 /
+  VoiceDtoParsingTest 12 / VoiceResumeStoreGuardTest 3 / WavCodecTest 9 /
+  WavPlaybackSessionTest 10）；
+  lint **0 error / 19 warning**（依赖版本提示类，同 M12-01/02 基线构成）；
+  产出 `app/build/outputs/apk/debug/app-debug.apk`。
+- 测试期间修复的真实缺陷（如实记录）：① `VoiceRepositoryTest` 两处对同一
+  请求调用两次 `server.takeRequest()`（第二次无限等待下一请求导致
+  worker 挂死），改为一次取请求后复用变量断言 path 与 body——Codex 已用
+  PowerShell 独立复验挂死用例修复；② Codex 验收提出的两个阻塞项——
+  播放引擎原实现 write 后立即 stop/release（write 返回只代表入队，会截断
+  播报并让 question_read/options_read 过早推进服务端 FSM），重写为
+  `WavPlaybackSession` + `WavPlaybackDriver`（AudioTrack marker=播放头
+  到达终点帧的完成回调；停止/取消立即唤醒并释放，不忙等），并以
+  `WavPlaybackSessionTest` 锁定「写完 ≠ 播完」推进条件；`PcmSpec` 原缺失
+  data chunk 偏移（播放硬编码 44 起），改为暴露并校验 dataOffset/dataBytes
+  边界（前置 LIST/fact chunk、截断/谎报长度均覆盖测试）；③ Codex 验收
+  第二轮阻塞项——播放重构后 AudioTrack 创建/PCM 写入/release 曾直接跑在
+  调用方（Main）dispatcher，引擎注入 `CoroutineDispatcher`（默认
+  Dispatchers.IO）把全部阻塞路径移出 Main（stop 的立即唤醒同步、停止时刻
+  轨道快照交 IO pause/flush），并以单线程 executor 的调度边界测试锁定
+  阻塞驱动操作绝不落在调用方 dispatcher；端点计数失真修正（文档/提交
+  信息误写 13，实际契约 12 个端点）；④ Codex 验收第三轮阻塞项——全局
+  `stopRequested` 布尔在「旧 play 阻塞在 write、新 play 顶掉后立即重置
+  标志」的真实线程交错下会让旧会话失去取消语义，重构为每次播放尝试
+  私有的 `Attempt`（独立取消标志 + 完成信号，`current`/`activeHandle`
+  @Volatile），并以 wait/notify 条件等待 + latch 门控的真实线程测试锁定
+  （旧会话取消收尾且不再写已暂停轨道、新会话由自己的 marker 完成）；
+  `WavCodec.pcmSpec` chunk 遍历改 Long 累加防 Int 溢出（恶意/损坏 WAV
+  的巨大 chunkSize fail-closed 返回 null，不异常不死循环，含溢出测试）；
+  ⑤ Codex 验收第四轮两个阻塞项——新播放顶替旧播放时只取消旧尝试
+  不 pause 旧轨道（旧音频在旧协程退出前继续播、与新播报重叠），改为
+  顶替时对旧尝试自己的轨道快照立即 pause 再启动新驱动，并以真实线程
+  测试锁定旧 handle 在顶替路径被 pause 恰好一次；`requestStop` 先读全局
+  `activeHandle` 再读 `current` 的两次独立读存在错配竞态（可能取消新尝试
+  却 pause 旧轨道），重构为每次尝试私有 `@Volatile` handle 快照并移除全局
+  `activeHandle`，`requestStop` 只读一次 `current`、对同一尝试取消并返回
+  其快照，以真实线程交错测试锁定外部停止的取消与 pause 配对在同一尝试上。
+- **未跑模拟器/真机**：全部验证为 JVM 单测（MockWebServer 显式绑
+  loopback / fake gateway / fake 引擎 / fake 存储）；Compose UI 渲染、
+  AudioRecord/AudioTrack 实机行为（含 marker 回调时序）、运行时授权弹窗、
+  DataStore 真机行为均未验证。
+- **未接真实 provider**：transcribe/synthesize 在测试中全部走 fake /
+  MockWebServer fixture；未读取任何真实 key/token/password；测试不触网。
+- `answers` 端点已在仓储面接入并测试；UI 作答主路径走 `intents`
+  （服务端解析绑定当前题，含糊进澄清不落库）。
+- 本切片不 push、不建 PR、不打 tag；`production_ready=false` 语义不变。

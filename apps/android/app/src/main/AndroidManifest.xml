@@ -5,6 +5,9 @@
     <!-- API 基础（/health、auth、system/privacy）需要网络访问 -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- 语音陪练录音（M12-03）：运行时另需用户授权；拒绝则降级文本作答 -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
     <application
         android:name=".AiosApplication"
         android:allowBackup="false"

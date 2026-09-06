@@ -10,6 +10,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -24,14 +25,16 @@ import com.ailearningos.app.ui.components.SectionCard
 import com.ailearningos.app.ui.theme.Subtle
 
 /**
- * 学习 / 考场首屏（M12-02）：真实试卷列表（加载/空态/错误/重试）、
- * 断线恢复提示（仅 exam_id，点击进入考场后以 GET 结果为准）、点击开考。
+ * 学习 / 考场首屏（M12-02，M12-03 增语音陪练入口）：真实试卷列表
+ * （加载/空态/错误/重试）、断线恢复提示（仅 exam_id，点击进入考场后以 GET
+ * 结果为准）、点击开考或语音陪练。
  */
 @Composable
 fun StudyScreen(
     viewModel: StudyViewModel,
     onStartPaper: (String) -> Unit,
     onResumeExam: (String) -> Unit,
+    onStartVoicePaper: (String) -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
 
@@ -69,7 +72,11 @@ fun StudyScreen(
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
                     items(papers, key = { it.id }) { paper ->
-                        PaperCard(paper = paper, onStart = { onStartPaper(paper.id) })
+                        PaperCard(
+                            paper = paper,
+                            onStart = { onStartPaper(paper.id) },
+                            onStartVoice = { onStartVoicePaper(paper.id) },
+                        )
                     }
                 }
             },
@@ -96,6 +103,7 @@ private fun ResumeBanner(onResume: () -> Unit) {
 private fun PaperCard(
     paper: PaperSummary,
     onStart: () -> Unit,
+    onStartVoice: () -> Unit,
 ) {
     SectionCard(title = paper.title) {
         Text(
@@ -119,6 +127,7 @@ private fun PaperCard(
             )
         }
         Button(onClick = onStart, modifier = Modifier.fillMaxWidth()) { Text("开始考试") }
+        OutlinedButton(onClick = onStartVoice, modifier = Modifier.fillMaxWidth()) { Text("语音陪练") }
     }
 }
 
