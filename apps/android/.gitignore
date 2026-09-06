@@ -1,0 +1,11 @@
+# Android 构建产物与本机路径不入库（M12-01）。
+# local.properties 含本机 Android SDK 绝对路径，禁止提交。
+local.properties
+.gradle/
+build/
+app/build/
+*.iml
+.idea/
+captures/
+.externalNativeBuild/
+.cxx/

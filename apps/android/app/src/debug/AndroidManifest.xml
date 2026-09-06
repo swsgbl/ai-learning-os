@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 仅 debug 变体放行明文 HTTP（模拟器 10.0.2.2 / 局域网调试 API）。
+     release 变体不合并此 overlay，保持系统默认禁止明文，与 baseUrl 策略一致。 -->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application android:usesCleartextTraffic="true" />
+
+</manifest>
