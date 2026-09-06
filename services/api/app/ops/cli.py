@@ -1400,6 +1400,80 @@ def _run_provider_smoke_aggregate(args) -> int:
     return exit_code
 
 
+def _run_production_evidence_gap(args) -> int:
+    """python -m app.ops.cli production-evidence-gap --evidence-dir DIR
+    [--output <artifacts/temp路径>] [--json]
+
+    M11-18 生产证据缺口 manifest（只读聚合器、fail-closed）：只消费
+    cutover-rehearsal（M10-15）对本地 evidence 目录的只读评估结果，把四类
+    生产前置证据缺口（governance：legacy-papers/draft-ownership；audit-chain：
+    audit-chain-verify/anchor；provider-smoke：search/cloud-voice/llm 三冒烟；
+    cutover-approval）聚合为逐类缺口清单（状态/缺口/已覆盖步骤/既有工具/
+    缺失证据/运维动作/agent 可安全动作/授权边界）。状态聚合诚实优先：类别
+    内全 pass 才 pass，blocked > pending > not_executed；production_ready 恒为
+    false——缺口清单不构成生产放行。不连接数据库、不调用 API、不访问网络、
+    不读取任何环境变量；不执行任何迁移/治理/锚定/备份/部署/启停/发布/回滚、
+    不运行任何 provider 冒烟——命令没有 --yes 执行形态。--output 必须位于
+    gitignore 的 artifacts/temp（symlink 组件拒绝）且不得位于证据目录内
+    （拒绝覆盖证据输入），护栏先于任何证据读取；原子落盘，写入失败 exit 2
+    且不打印缺口结论摘要。
+    退出码：四类全 pass=0 / 任一类非 pass=1 / 目录或路径与 IO 问题=2。
+    """
+    import json as _json
+
+    from app.ops.evidence_kit import EvidenceInputError
+    from app.ops.legacy_papers import is_safe_artifact_path
+    from app.ops.production_evidence_gap import (
+        ProductionGapInputError,
+        build_production_evidence_gap,
+        format_gap_summary,
+    )
+
+    if args.output and not is_safe_artifact_path(args.output):
+        print(
+            f"拒绝写入 {args.output}：缺口清单只能写入 gitignore 的 artifacts/ 或 temp/ 目录"
+        )
+        return 2
+    try:
+        report, exit_code = build_production_evidence_gap(
+            args.evidence_dir, args.output
+        )
+    except (ProductionGapInputError, EvidenceInputError) as cause:
+        print(f"证据输入无效（目录或路径问题，未产生 manifest）: {cause}")
+        return 2
+    except OSError as cause:
+        print(
+            "证据读取失败（IO 问题，未产生 manifest）: "
+            f"{type(cause).__name__}: {cause}"
+        )
+        return 2
+    if args.output:
+        try:
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            _write_report_atomic(
+                output_path,
+                _json.dumps(report, ensure_ascii=False, indent=2),
+            )
+        except OSError as cause:
+            # 目录无法创建/权限/磁盘满/replace 失败：manifest 未落盘或旧文件
+            # 原样保留（原子写不产生 partial），不得再打印缺口结论摘要。
+            print(
+                f"报告写入失败（路径/权限/磁盘问题，未产生报告文件）: "
+                f"{type(cause).__name__}: {cause}"
+            )
+            return 2
+        print(
+            f"报告已写入: {args.output}",
+            file=sys.stderr if args.as_json else sys.stdout,
+        )
+    if args.as_json:
+        print(_json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(format_gap_summary(report))
+    return exit_code
+
+
 def _run_release_candidate(args) -> int:
     """python -m app.ops.cli release-candidate manifest --output-dir DIR ...
     python -m app.ops.cli release-candidate verify --package-dir DIR
@@ -2035,6 +2109,37 @@ def main() -> None:
         action="store_true",
         help="stdout 输出纯 JSON 证据（提示走 stderr；契约兼容 release-readiness）",
     )
+    p_pg = sub.add_parser(
+        "production-evidence-gap",
+        help=(
+            "生产证据缺口清单（M11-18；只读聚合 cutover-rehearsal 评估结果为"
+            "治理/审计链/provider 冒烟/审批四类缺口，production_ready 恒 false；"
+            "不连 DB/网络、不读密钥、不执行任何生产操作，无 --yes 形态）"
+        ),
+    )
+    p_pg.add_argument(
+        "--evidence-dir",
+        required=True,
+        help=(
+            "本地证据目录（复用 cutover-rehearsal 目录护栏与证据校验，"
+            "本工具不重复实现 schema 校验）"
+        ),
+    )
+    p_pg.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "写 JSON manifest 到文件（必须位于 gitignore 的 artifacts/ 或 temp/ "
+            "目录，且不得位于证据目录内；原子落盘：临时文件 + rename，失败保留"
+            "旧报告、symlink 拒绝；默认不落盘）"
+        ),
+    )
+    p_pg.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="stdout 输出纯 JSON manifest（提示走 stderr）",
+    )
     p_ep = sub.add_parser(
         "cutover-evidence-pack",
         help=(
@@ -2194,6 +2299,8 @@ def main() -> None:
         raise SystemExit(_run_provider_smoke_export(args))
     if args.command == "provider-smoke-aggregate":
         raise SystemExit(_run_provider_smoke_aggregate(args))
+    if args.command == "production-evidence-gap":
+        raise SystemExit(_run_production_evidence_gap(args))
     if args.command == "cutover-evidence-pack":
         raise SystemExit(_run_cutover_evidence_pack(args))
     if args.command == "release-candidate":

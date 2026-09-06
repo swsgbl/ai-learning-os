@@ -437,6 +437,84 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   runner/stub 与本地文件，不执行任何真实外网冒烟**（唯一真实子进程是
   `python -c` 探针，仅验证 cwd=仓库根与环境继承，零网络）。
 
+## 生产证据缺口清单 production-evidence-gap（M11-18）
+
+- **CLI**：`python -m app.ops.cli production-evidence-gap --evidence-dir <path>
+  [--output <artifacts/temp路径>] [--json]`，实现文件
+  `services/api/app/ops/production_evidence_gap.py`。
+- **定位**：cutover-rehearsal（M10-15）回答「13 步演练时间线证据齐不齐」，
+  本工具回答「离实际生产切换还差哪几块证据」——把台账「下一任务」定义的
+  四类生产前置证据缺口从 rehearsal 的**只读评估结果**中聚合为逐类缺口清单
+  （不是 rehearsal 的改名复制：不重新解析证据文件、不重复实现证据 schema
+  校验，`build` 恰调用一次 `run_cutover_rehearsal`，步骤状态与
+  reason/next_action 全部复用其白名单提取）。四类之外的 5 步（CI、
+  release-check、preflight×2、备份恢复）不在本清单范围，`source.`
+  `steps_covered`/`steps_total` 如实透出覆盖面，完整时间线仍以
+  cutover-rehearsal manifest 为准——**四类全 pass 不代表 13 步全 pass**。
+- **类别矩阵**（输出顺序固定；steps 必须是 rehearsal step id，测试与
+  `STEP_IDS` 交叉锁定防漂移）：`governance`（历史治理批次执行与计数归零：
+  legacy-papers、draft-ownership）、`audit-chain`（0027 建链、校验与库外
+  锚定：audit-chain-verify、audit-chain-anchor）、`provider-smoke`（真实
+  provider 冒烟证据：search/cloud-voice/llm 三冒烟步）、`cutover-approval`
+  （切换审批与发布窗口）。
+- **输出语义（每类固定白名单字段）**：`category`/`title`/`basis`/`status`/
+  `gap`/`covered_steps`（每项仅 `step`/`status`/`reason`/`next_action`）/
+  `existing_tools`（证据从哪来的既有工具与 runbook）/`missing_evidence`
+  （非 pass 步清单，每项仅 `step`/`status`）/`operator_actions`（非 pass 步
+  的运维动作，来自 rehearsal 的 next_action——真实执行全归运维）/
+  `agent_safe_actions`（agent 可安全执行的只读/本地动作，如纯本地文件
+  推导与 DRAFT 底稿生成）/`authorization_required`（必须运维显式授权的
+  边界：真实 key、生产连接、`--yes` 执行、审批签署）。
+- **状态聚合（诚实优先）**：类别内全部步骤 pass 才 pass；有 blocked 优先
+  blocked（敏感键/结构不符/结论为否/哈希失配——rehearsal 的 malformed/
+  tampered/fail 已统一映射为 blocked，透传即可）；否则 pending；否则
+  not_executed（missing/冒烟 not run/缺审批）。绝不把部分通过伪装成
+  pass；跨类组合同理（一类 blocked + 一类 pending => overall=blocked）。
+- **`production_ready` 恒为 `false`**：本输出是缺口清单，不构成生产放行、
+  不构成 production readiness，也不授权任何生产操作（全 pass 时 exit 0
+  只说明四类无缺口，该字段仍为 false 并附 `production_ready_note`）。
+- **安全边界**：只读本地证据——不连接数据库、不调用 API、不访问网络、
+  不读取任何环境变量（`os.environ` 零引用）；不执行任何迁移/治理/锚定/
+  备份/部署/启停/发布/回滚、不运行任何 provider 冒烟——命令没有 `--yes`
+  执行形态，是纯汇总器；对证据目录零写入。输出零敏感、零生产业务 ID：
+  只透传 rehearsal 白名单文本 + 模块静态指引常量；来自 rehearsal 的
+  reason/next_action 逐字段过 `scrub_sensitive` 纵深防御（静态常量是代码
+  内字面量零敏感、不经运行时 scrub——通用 scrub 会按敏感**键名**模式把
+  `authorization_required` 这类白名单字段误抹成占位符）；证据目录内的
+  敏感键证据已由 rehearsal 按 blocked（malformed）语义处理，值从不回显。
+- **路径护栏与 IO（exit 2）**：`--evidence-dir` 护栏复用 rehearsal
+  （不存在/普通文件/symlink/目录内 symlink 拒绝）；`--output` 必须位于
+  gitignore 的 artifacts/temp（复用 `is_safe_artifact_path`）、任何已存在
+  路径组件是 symlink 即拒绝、已存在且不是常规文件拒绝、**不得位于证据
+  目录内或等于证据目录**（拒绝覆盖证据输入，`resolve` +
+  `os.path.normcase` 归一比较，Windows 大小写/`..` 折叠不构成绕过）——
+  输出护栏先于任何证据内容读取（冲突形态下 rehearsal 零调用，测试锁定）；
+  落盘复用 CLI 共享原子写（同目录临时文件 + fsync + os.replace，失败旧
+  文件字节原样、无 `.tmp` 残留、不打印缺口结论）。退出码：四类全
+  pass=0 / 任一类非 pass=1 / 目录或路径与 IO 问题=2。
+- **后续真实运维动作（本工具只列不做）**：① 治理批次——运维以
+  legacy-paper-report / draft-owner-report 复核后逐批精确 ID +
+  `--yes` 执行（批次报告原生落盘，M11-13），再以 governance-evidence
+  推导导出；② 审计锚定——按「审计」节 `0027_audit_chain` 生产迁移
+  runbook 对主库建链（备份 -> quiesce -> upgrade -> verify -> 锚定 -> WORM
+  归档，head_hash 库外存证）；③ 真实 provider 冒烟——运维显式注入
+  key/端点并执行三个冒烟脚本，以 provider-smoke-export 导出单步证据、
+  provider-smoke-aggregate 聚合；④ 审批与发布窗口——审批人从
+  approval-draft 底稿从零组装 cutover-approval.json 并确认回滚预案与
+  发布窗口（外部 coturn 部署模板同步纳入评估）。硬边界：真实 key、生产
+  连接与执行批准必须由运维显式提供与授予，agent 不得虚拟生产就绪或代行
+  任何生产操作。
+- **测试**：`services/api/tests/test_production_evidence_gap.py`
+  （覆盖矩阵：CLI 注册/分发、类别矩阵与 rehearsal `STEP_IDS` 交叉锁定、
+  状态聚合参数化矩阵、四类映射形态（全 pass/空目录/pending/敏感键 blocked/
+  链 invalid/冒烟 fail/缺审批/跨类组合优先级）、exact allowlist schema、
+  `production_ready` 恒 false、路径/原子写/symlink/覆盖输入护栏（护栏先于
+  证据读取）、零敏感三面 marker 扫描、只读性（输入字节不变）、源码级守卫
+  （零 env/DB/网络引用、import 面恰为三个共享层、不含证据校验原语——
+  复用而非重实现）、`--json` 纯 JSON 与落盘一致、build 恰调用一次
+  rehearsal、covered 状态与独立 rehearsal 运行逐步一致）——全部用临时
+  目录与本地文件，不连数据库、不发网络请求。
+
 ## 生产切换 preflight（M10-07）
 
 `python -m app.ops.cli production-preflight --db-url <生产URL> --phase pre-migration|post-migration
