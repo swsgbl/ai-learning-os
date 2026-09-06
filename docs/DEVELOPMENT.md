@@ -1442,8 +1442,8 @@ VM 持有 `while + delay` 常驻 ticker，测试约定（文件头注释锁定�
 ## 语音陪练业务闭环（M12-03）
 
 在 M12-02 壳与考试域之上接入语音陪练第一切片（分支
-`feature/m12-03-android-voice-flow`，基于 `main@5065585`；本地已提交、
-未 push、未开 PR）。目标：用户从学习页选试卷即可开始/继续/结束语音陪练，
+`feature/m12-03-android-voice-flow`，基于 `main@5065585`；已随
+PR #47 合并收口）。目标：用户从学习页选试卷即可开始/继续/结束语音陪练，
 界面呈现服务端状态、当前题、选项、已提交答案、恢复提示与错误降级——
 复杂留给系统，简单留给用户。
 
@@ -1522,6 +1522,18 @@ NEXT_QUESTION / REPORT_READY）；错误码经 M12-02 的 `AppError` 语义映�
 
 ### M12-03 验证状态与边界
 
+- **PR #47 已合并**（2026-09-07 回填，Codex 核验口径，merged_at
+  `2026-09-06T17:52:22Z`）：base `main@506558566ed5`，最终 head 分支
+  `feature/m12-03-android-voice-flow`、head
+  `85fc01e6dc55edf16217c429debb2a21d0bed415`（`feat(m12-03): add
+  Android voice workflow`），merge commit
+  `2bbeb072cde1e33660f60fbc742c22951d2704ff`（parents `5065585` +
+  `85fc01e6`，本地 git 可验证），功能 head tree 与远端 merge tree 均为
+  `a59b122d`（内容等价）；PR CI run `34049713374` 四项 SUCCESS
+  （API / Android / Docker / Web），merge 后 main CI run `34049946924`
+  四项 SUCCESS；远端功能分支已删除。「本地已提交、未 push、未开 PR」
+  为实现时点状态，已由 PR #47 收口。远端事实为 Codex 核验提供，
+  本回填切片不触网。
 - 验证命令（2026-09-07，Windows 11 + JDK 17 本地实测，PowerShell）：
   `apps/android/gradlew.bat testDebugUnitTest lintDebug assembleDebug --rerun-tasks`
   → **BUILD SUCCESSFUL**（44s，55 任务全量执行）；test-results XML 汇总
@@ -1571,4 +1583,6 @@ NEXT_QUESTION / REPORT_READY）；错误码经 M12-02 的 `AppError` 语义映�
   MockWebServer fixture；未读取任何真实 key/token/password；测试不触网。
 - `answers` 端点已在仓储面接入并测试；UI 作答主路径走 `intents`
   （服务端解析绑定当前题，含糊进澄清不落库）。
-- 本切片不 push、不建 PR、不打 tag；`production_ready=false` 语义不变。
+- 「不 push、不建 PR、不打 tag」为实现时点约束，已由 PR #47 合并收口
+  （不打 tag、不发 Release 仍然成立）；`production_ready=false` 语义不变，
+  本切片不构成任何 production readiness。
