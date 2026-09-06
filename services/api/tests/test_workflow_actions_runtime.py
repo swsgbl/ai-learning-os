@@ -42,19 +42,25 @@ UPLOAD_ARTIFACT_MAJOR = 4
 
 # 每个 workflow 中各目标 action 的预期出现次数（ci 四个 job 各一次
 # checkout（web/api/docker/android），setup-node 仅 web job，setup-python 仅
-# api job，setup-java 仅 android job；RC 单 job）。
+# api job；RC 单 job）。setup-java 不在此映射——它钉 v6（上游真实最高主版本），
+# 由下方独立契约锁定，不随 node24 v7 批量断言。
 EXPECTED_USES = {
     CI_WORKFLOW: {
         "actions/checkout": 4,
         "actions/setup-node": 1,
         "actions/setup-python": 1,
-        "actions/setup-java": 1,
     },
     RC_WORKFLOW: {
         "actions/checkout": 1,
         "actions/setup-python": 1,
     },
 }
+
+# M12-01 远端实证修复：首次远端 run 34034480478 的 android job 因
+# actions/setup-java@v7 不存在而失败（git ls-remote 与 GitHub releases/latest
+# 均确认上游当前最高主版本为 v6）。setup-java 必须钉 v6，防止再随
+# node24 v7 批量升级漂移回不存在的 v7。
+SETUP_JAVA_MAJOR = 6
 
 # M12-01：Gradle wrapper 校验 action 的钉定主版本（官方 gradle/actions
 # 的 wrapper-validation 当前主流稳定主版本）。
@@ -143,7 +149,7 @@ def test_node24_runtime_actions_pinned_to_v7(path: Path) -> None:
             )
 
 
-# --- 1b. M12-01 android job 契约（Java 17 / wrapper validation / 门禁命令）------
+# --- 1b. M12-01 android job 契约（setup-java v6 / Java 17 / wrapper validation / 门禁命令）
 
 
 def _ci_android_job() -> dict:
@@ -161,6 +167,18 @@ def test_android_job_pins_java_17() -> None:
     assert str(with_block.get("java-version")) == "17", (
         f"android job 必须保持 Java 17: {with_block}"
     )
+
+
+def test_setup_java_pinned_to_v6_not_nonexistent_v7() -> None:
+    """setup-java 必须钉 v6——上游当前最高主版本就是 v6，v7 不存在
+    （远端 run 34034480478 android job 解析 @v7 失败实证）；防止回归。"""
+    refs = _refs_for(_load_workflow(CI_WORKFLOW), "actions/setup-java")
+    assert len(refs) == 1, f"setup-java 预期恰一处（android job）: {refs}"
+    for ref in refs:
+        assert _major(ref) == SETUP_JAVA_MAJOR, (
+            f"setup-java 上游真实最高主版本为 v{SETUP_JAVA_MAJOR}，"
+            f"v7 不存在（run 34034480478 已实证失败）: {ref}"
+        )
 
 
 def test_android_job_validates_gradle_wrapper_before_build() -> None:
