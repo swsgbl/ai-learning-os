@@ -1260,3 +1260,90 @@ Docker 生产本地版冒烟（全服务 healthy + 端点 + 上传重启读回�
 docker compose -f infra/docker-compose.yml --profile local up -d --build
 bash infra/smoke_docker.sh
 ```
+
+## Android 壳工程（M12-01）
+
+原生 Android App Shell，位于 `apps/android`（模块 `:app`，包名
+`com.ailearningos.app`）。第一切片只做壳与认证/API 基础：单 Activity +
+Jetpack Compose Material 3 + Navigation，五个界面（首页 / 学习占位 / 语音占位 /
+设置与 API 配置 / 登录），Retrofit + OkHttp + kotlinx.serialization 对接
+`GET /health`、`GET/POST /api/v1/auth/*`、`GET /api/v1/system/privacy`。
+考试 / 语音 / 搜索 / 治理等业务后续里程碑再接入。
+
+### 本地环境
+
+- JDK 17（`gradle.properties` 与模块编译均按 17）。
+- Android SDK：通过仓库外的 `apps/android/local.properties`（gitignored）
+  写 `sdk.dir=<本机 SDK 路径>`，或设 `ANDROID_HOME`。
+  **不要提交 local.properties 或任何本机绝对路径。**
+- Gradle 使用 wrapper（8.13），不要手改 `gradle/wrapper/gradle-wrapper.properties`；
+  依赖版本集中在 `gradle/libs.versions.toml`（AGP 8.13.1 / Kotlin 2.0.21 /
+  compose 1.7.0 / retrofit 2.11.0 / okhttp 4.12.0 等，全部 pin 死）。
+
+### 构建与测试
+
+```powershell
+# PowerShell（Windows）
+apps\android\gradlew.bat testDebugUnitTest lintDebug assembleDebug
+# POSIX / CI
+sh apps/android/gradlew testDebugUnitTest lintDebug assembleDebug
+```
+
+- 全绿标准：103 个 JVM 单测 0 失败、lint 无 error（允许依赖版本提示类
+  warning）、产出 `apps/android/app/build/outputs/apk/debug/app-debug.apk`。
+- `gradlew` 不带可执行位入库存放，统一经 `sh ./gradlew` 调用，CI 无需
+  `chmod +x`。
+- 测试不连真实 API、不连数据库：远端交互全部走 MockWebServer fixture（显式绑
+  loopback），ViewModel 走 fake gateway；token 存储用内存 fake（真实 Keystore
+  实现无法上 JVM）。
+
+### 调试 API 地址
+
+- debug 构建默认 `http://10.0.2.2:8000/`（模拟器回环访问宿主机 API）。
+- 设置页可改 base URL（普通配置走 DataStore，非敏感）；保存后立即重新探测。
+- 规则（`core/BaseUrlPolicy` + `BaseUrlPolicyTest` / `ApiConfigProviderTest` 锁定）：
+  - 存储层不做静默修复：读到的原始值（含首尾/内部空白）直接交给策略
+    fail-closed；首尾空白只允许发生在设置页输入层（保存前 trim）；
+  - 拒绝空白 / query（`?`）/ fragment（`#`）/ 反斜杠 / userinfo（`@`）/
+    控制字符，规范化 scheme、host、端口与恰好一个尾部斜杠；
+  - debug 允许 http 仅限 loopback（`localhost` / `127.0.0.0/8` / `10.0.2.2` /
+    `10.0.3.2` / `::1`）或局域网（RFC1918 / `.local` / 单标签主机名），
+    公网 http 一律拒绝；
+  - release（`ALLOW_INSECURE_HTTP=false`）强制 https；错误态可在设置页修正后恢复，
+    不做静默改写。
+
+### 安全边界
+
+- Bearer token：`data/local/KeystoreTokenStore` 用 AndroidKeyStore AES-256/GCM
+  加密后，密文（Base64(iv‖ct)）存 DataStore；密钥不出系统密钥库，解密失败
+  fail-closed（当作未登录并清残留密文）。**token 不允许明文落盘**
+  （`TokenStorageGuardTest` 源码级守卫锁定）。
+- token 全链路 fail-closed、零静默修整：登录响应的 accessToken 不 trim——空值或
+  含任何空白（首尾/内部）一律 `BAD_RESPONSE` 且不落任何存储；OkHttp 拦截器
+  同样不 trim，读到空白/异常 token 时不拼 `Authorization` 头
+  （`AuthRepositoryTest` 锁定）。
+- 用户名全链路不静默 trim：`LoginViewModel.validateCredentials` 对含首尾空白的
+  用户名直接判非法；`AuthRepository.login` 原样提交，不做双重修复
+  （`LoginViewModelTest` / `AuthRepositoryTest` 锁定 `" alice "` 形态）。
+- `/me` 探测的 401/403 语义：401 = 凭据失效，清本地 token 回落未登录；
+  403 = 权限不足，凭据仍有效，抛 `FORBIDDEN` 并保留 token，绝不把无权限
+  静默降级成已登出。登录后 `/me` 失败（含被取消）不留半个会话：
+  `NonCancellable` 清理 token，取消按 `CancellationException` 原样透传。
+- 内存 token 缓存（`SessionTokenCache`）经 Mutex 串行化 ensureLoaded/save/clear，
+  并发的 clear 与在途 load 不可能交错（杜绝「clear 后被旧 load 复活」）；
+  配置变更广播（`ConfigurationBus`）replay=1，事件先于订阅发生也不丢。
+- 会话探测并发契约（`SessionViewModel`）：`refresh()` 最新请求胜出——新探测/登出
+  先取消在途探测 Job，再以代际号保护状态写入（旧探测即便已过挂起点、晚完成也
+  不得覆盖新结果）；取消按 `CancellationException` 收场，绝不把「被取消」误写成
+  `Unavailable`；登出同样作废在途探测，晚放行的旧探测不得把已登出状态复活成
+  `Authenticated`（`SessionViewModelTest` 闸门式确定性并发测试锁定）。
+- 密码只在登录请求内存中存在，不保存；logout 只清本地 token 与用户状态，
+  不请求服务端。
+- `data/`、`ui/` 层零日志（无 println / Log / printStackTrace，守卫测试锁定），
+  错误文案统一脱敏映射（`core/AppError`），不暴露 token、完整 URL 查询串或
+  底层异常细节。
+- CI：`.github/workflows/ci.yml` 的 `android` job（temurin 17 +
+  `gradle/actions/wrapper-validation@v4` +
+  `sh ./gradlew testDebugUnitTest lintDebug assembleDebug`；契约测试
+  `services/api/tests/test_workflow_actions_runtime.py` 锁定 action 版本、
+  Java 17、wrapper 校验先于构建、无 lint baseline）。

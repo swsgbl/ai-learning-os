@@ -40,19 +40,28 @@ NODE24_MAJOR = 7
 # 本切片明确不升级 upload-artifact（保持 v4）。
 UPLOAD_ARTIFACT_MAJOR = 4
 
-# 每个 workflow 中各目标 action 的预期出现次数（ci 三个 job 各一次
-# checkout，setup-node 仅 web job，setup-python 仅 api job；RC 单 job）。
+# 每个 workflow 中各目标 action 的预期出现次数（ci 四个 job 各一次
+# checkout（web/api/docker/android），setup-node 仅 web job，setup-python 仅
+# api job，setup-java 仅 android job；RC 单 job）。
 EXPECTED_USES = {
     CI_WORKFLOW: {
-        "actions/checkout": 3,
+        "actions/checkout": 4,
         "actions/setup-node": 1,
         "actions/setup-python": 1,
+        "actions/setup-java": 1,
     },
     RC_WORKFLOW: {
         "actions/checkout": 1,
         "actions/setup-python": 1,
     },
 }
+
+# M12-01：Gradle wrapper 校验 action 的钉定主版本（官方 gradle/actions
+# 的 wrapper-validation 当前主流稳定主版本）。
+WRAPPER_VALIDATION_ACTION = "gradle/actions/wrapper-validation"
+WRAPPER_VALIDATION_MAJOR = 4
+ANDROID_JOB_NAME = "android"
+ANDROID_GRADLE_TASKS = ("testDebugUnitTest", "lintDebug", "assembleDebug")
 
 PUBLISH_VERBS = (
     "docker push", "docker login", "git push", "git tag", "gh release",
@@ -132,6 +141,67 @@ def test_node24_runtime_actions_pinned_to_v7(path: Path) -> None:
                 f"{path.name} 的 {action} 必须钉 v{NODE24_MAJOR}"
                 f"（node24 runtime），发现旧 node20 主版本: {ref}"
             )
+
+
+# --- 1b. M12-01 android job 契约（Java 17 / wrapper validation / 门禁命令）------
+
+
+def _ci_android_job() -> dict:
+    data = _load_workflow(CI_WORKFLOW)
+    job = data.get("jobs", {}).get(ANDROID_JOB_NAME)
+    assert isinstance(job, dict), "ci.yml 必须有 android job"
+    return job
+
+
+def test_android_job_pins_java_17() -> None:
+    steps = _steps_for(_load_workflow(CI_WORKFLOW), "actions/setup-java")
+    assert len(steps) == 1, "setup-java 仅 android job 一处"
+    with_block = steps[0].get("with")
+    assert isinstance(with_block, dict), "setup-java 必须带 with"
+    assert str(with_block.get("java-version")) == "17", (
+        f"android job 必须保持 Java 17: {with_block}"
+    )
+
+
+def test_android_job_validates_gradle_wrapper_before_build() -> None:
+    """wrapper validation 必须存在，且排在构建步骤之前。"""
+    steps = _ci_android_job()["steps"]
+    validation_indexes = [
+        i for i, step in enumerate(steps)
+        if isinstance(step, dict)
+        and str(step.get("uses", "")).rpartition("@")[0] == WRAPPER_VALIDATION_ACTION
+    ]
+    assert len(validation_indexes) == 1, (
+        f"android job 恰一处 {WRAPPER_VALIDATION_ACTION}: {steps}"
+    )
+    validation_index = validation_indexes[0]
+    ref = steps[validation_index]["uses"]
+    assert _major(ref) == WRAPPER_VALIDATION_MAJOR, (
+        f"wrapper-validation 必须钉 v{WRAPPER_VALIDATION_MAJOR}: {ref}"
+    )
+    build_indexes = [
+        i for i, step in enumerate(steps)
+        if isinstance(step, dict) and "gradlew" in str(step.get("run", ""))
+    ]
+    assert build_indexes, "android job 必须有 gradlew 构建步骤"
+    assert all(validation_index < i for i in build_indexes), (
+        "wrapper validation 必须先于任何 gradlew 构建步骤执行"
+    )
+
+
+def test_android_job_runs_full_gate_without_lint_baseline() -> None:
+    """构建门禁恰为三个任务，且不得引入 lint baseline 掩盖问题。"""
+    run_lines = [
+        str(step.get("run", ""))
+        for step in _ci_android_job()["steps"] if isinstance(step, dict)
+    ]
+    joined = "\n".join(run_lines)
+    for task in ANDROID_GRADLE_TASKS:
+        assert task in joined, f"android job 门禁必须包含 {task}: {joined}"
+    assert "baseline" not in joined.lower(), (
+        "不得用 lint baseline 掩盖 lint 问题"
+    )
+    assert "updateLintBaseline" not in joined
 
 
 # --- 2. upload-artifact 不随本切片升级 -------------------------------------------

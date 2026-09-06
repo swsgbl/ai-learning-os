@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- M12-01 视觉系统与 Web（apps/web/src/app/globals.css）同一套 porcelain/ink/deep teal 体系 -->
+<resources>
+    <color name="app_background">#F6F5F1</color>
+    <color name="ic_launcher_background">#0D5B55</color>
+</resources>
