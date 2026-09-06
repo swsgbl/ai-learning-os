@@ -1418,8 +1418,16 @@ VM 持有 `while + delay` 常驻 ticker，测试约定（文件头注释锁定�
 
 ### M12-02 验证状态与边界
 
-- 分支 `feature/m12-02-android-exam-flow`（基于 `origin/main@5954862`），
-  **完成但未合并**：未 push、未开 PR。
+- **PR #45 已合并**（2026-09-06，Codex 实测口径，merged_at `15:16:55Z`）：
+  base `main`，最终 head 分支 `feature/m12-02-android-exam-flow`、head
+  `4713aa8ef6dd46325a151e0d6bf07d9a097129a3`（`feat(m12-02): add Android
+  exam workflow`），merge commit `47c553a7d3b0b0bcd31cf35f10270cbd0eff72fc`
+  （parents `5954862` + `4713aa8`），远端 main merge tree `7f569a0` 与
+  head tree 完全一致；PR CI run `34041549579` 全绿（API 4m41s /
+  Android 2m03s / Docker 2m23s / Web 1m24s），merge 后 main CI run
+  `34041811291` success（headSha `47c553a7`，15:16:57Z 创建、15:20:55Z
+  完成）；远端功能分支已删除。「未 push、未开 PR」为实现时点状态，已由
+  PR #45 收口。
 - 验证命令（2026-09-06，Windows 11 + JDK 17 本地实测）：
   `apps/android/gradlew.bat testDebugUnitTest lintDebug assembleDebug --rerun-tasks`
   → BUILD SUCCESSFUL；test-results XML 汇总 **170 tests / 0 failures /
