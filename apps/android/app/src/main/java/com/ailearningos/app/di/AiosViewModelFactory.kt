@@ -10,6 +10,7 @@ import com.ailearningos.app.ui.exam.ExamViewModel
 import com.ailearningos.app.ui.home.HomeViewModel
 import com.ailearningos.app.ui.login.LoginViewModel
 import com.ailearningos.app.ui.review.ReviewViewModel
+import com.ailearningos.app.ui.search.SearchViewModel
 import com.ailearningos.app.ui.session.SessionViewModel
 import com.ailearningos.app.ui.settings.SettingsViewModel
 import com.ailearningos.app.ui.study.StudyViewModel
@@ -71,6 +72,10 @@ class AiosViewModelFactory(
                 capture = container.audioCaptureEngine,
                 playback = container.audioPlaybackEngine,
                 entry = voiceEntry(handle),
+            ) as T
+
+            modelClass.isAssignableFrom(SearchViewModel::class.java) -> SearchViewModel(
+                search = container.searchGateway,
             ) as T
 
             else -> throw IllegalArgumentException("Unknown ViewModel: ${modelClass.name}")

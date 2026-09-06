@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -29,6 +30,8 @@ import com.ailearningos.app.ui.home.HomeScreen
 import com.ailearningos.app.ui.icons.AiosIcons
 import com.ailearningos.app.ui.login.LoginScreen
 import com.ailearningos.app.ui.review.ReviewScreen
+import com.ailearningos.app.ui.search.SearchScreen
+import com.ailearningos.app.ui.search.SearchViewModel
 import com.ailearningos.app.ui.session.SessionViewModel
 import com.ailearningos.app.ui.settings.SettingsScreen
 import com.ailearningos.app.ui.study.StudyScreen
@@ -36,12 +39,13 @@ import com.ailearningos.app.ui.study.StudyViewModel
 import com.ailearningos.app.ui.voice.VoiceScreen
 
 /**
- * 壳 + 考试/语音业务导航（M12-02/M12-03）：单 Activity + Navigation + 底部导航。
+ * 壳 + 考试/语音/搜索业务导航（M12-02/M12-03/M12-04）：单 Activity + Navigation + 底部导航。
  * 登录页/考场/审阅不占底栏位；考场、审阅与语音陪练流程页为全屏。
  */
 enum class AiosDestination(val route: String, val label: String, val icon: ImageVector) {
     Home("home", "首页", Icons.Filled.Home),
     Study("study", "学习", AiosIcons.School),
+    Search("search", "搜索", Icons.Filled.Search),
     Voice("voice", "语音", AiosIcons.Mic),
     Settings("settings", "设置", Icons.Filled.Settings),
 }
@@ -113,6 +117,10 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
                     onResumeExam = { examId -> navController.navigateExamResume(examId) },
                     onStartVoicePaper = { paperId -> navController.navigateVoicePaper(paperId) },
                 )
+            }
+            composable(AiosDestination.Search.route) {
+                val searchViewModel: SearchViewModel = viewModel(factory = viewModelFactory)
+                SearchScreen(viewModel = searchViewModel)
             }
             composable(AiosDestination.Voice.route) {
                 val voiceViewModel: com.ailearningos.app.ui.voice.VoiceViewModel =

@@ -11,7 +11,7 @@ import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
 
-/** M12-01 壳与认证 + M12-02 考试业务 + M12-03 语音业务端点面 */
+/** M12-01 壳与认证 + M12-02 考试业务 + M12-03 语音业务 + M12-04 搜索业务端点面 */
 interface AiosApi {
 
     @GET("health")
@@ -108,4 +108,18 @@ interface AiosApi {
 
     @POST("api/v1/voice/trace")
     suspend fun voiceTrace(@Body body: VoiceTraceRequest): VoiceTraceResponse
+
+    // ---------- M12-04 搜索业务 ----------
+
+    @GET("api/v1/search/providers")
+    suspend fun searchProviders(): SearchProvidersResponse
+
+    @POST("api/v1/search/plan")
+    suspend fun searchPlan(@Body body: SearchPlanRequest): SearchPlanResponse
+
+    @POST("api/v1/search/queries")
+    suspend fun searchQueries(@Body body: SearchQueryRequest): SearchQueryResponse
+
+    @GET("api/v1/search/queries/{query_id}")
+    suspend fun searchRecord(@Path("query_id") queryId: Long): SearchRecordResponse
 }
