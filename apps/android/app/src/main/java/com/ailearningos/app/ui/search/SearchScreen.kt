@@ -1,5 +1,9 @@
 package com.ailearningos.app.ui.search
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.widget.Toast
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -16,13 +20,19 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
+import androidx.core.net.toUri
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.ailearningos.app.core.ResultUrlPolicy
+import com.ailearningos.app.core.ResultUrlProblem
+import com.ailearningos.app.core.ResultUrlValidation
 import com.ailearningos.app.data.model.SearchOutcome
 import com.ailearningos.app.data.model.SearchPlan
 import com.ailearningos.app.data.model.SearchProviderEntry
@@ -262,6 +272,7 @@ private fun ResultCard(item: SearchResultItem) {
             style = MaterialTheme.typography.bodySmall,
             color = Subtle,
         )
+        SourceUrlRow(item.url)
     }
 }
 
@@ -337,12 +348,76 @@ private fun RecordBody(record: SearchRecord) {
                         style = MaterialTheme.typography.bodySmall,
                         color = Subtle,
                     )
+                    SourceUrlRow(item.url)
                 }
             }
         } else {
             Text("该次搜索没有结果。", style = MaterialTheme.typography.bodySmall, color = Subtle)
         }
     }
+}
+
+// ---------- 来源 URL（可溯源展示 + 仅 https 可打开） ----------
+
+/**
+ * 结果来源 URL 行：执行结果与回查记录共用。
+ *
+ * 呈现边界：URL 原文可溯源展示——不截断、不改写、不隐藏，长 URL 经
+ * [ResultUrlPolicy.wrapForDisplay] 断行防小屏横向溢出；只有 [ResultUrlPolicy]
+ * 校验通过的 https 链接提供「打开」（ACTION_VIEW 交给系统浏览器），未通过
+ * （非 https / malformed）禁用打开并如实附上原因，不做「猜意图」的修复。
+ */
+@Composable
+private fun SourceUrlRow(url: String) {
+    val context = LocalContext.current
+    val validation = ResultUrlPolicy.validate(url)
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(modifier = Modifier.weight(1f)) {
+            val lines = ResultUrlPolicy.wrapForDisplay(url)
+            if (lines.isEmpty()) {
+                Text("（来源链接缺失）", style = MaterialTheme.typography.bodySmall, color = Subtle)
+            } else {
+                lines.forEach { line ->
+                    Text(
+                        line,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            if (validation is ResultUrlValidation.Invalid && validation.problem != ResultUrlProblem.EMPTY) {
+                Text(
+                    "链接未通过安全校验（${urlProblemLabel(validation.problem)}），已禁用打开。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Subtle,
+                )
+            }
+        }
+        if (validation is ResultUrlValidation.Valid) {
+            TextButton(onClick = { openExternally(context, validation.url) }) { Text("打开") }
+        } else {
+            TextButton(onClick = {}, enabled = false) { Text("打开") }
+        }
+    }
+}
+
+/** 只有校验通过的 https URL 允许走到这里；无应用可接管时如实提示，不静默 */
+private fun openExternally(context: Context, url: String) {
+    try {
+        context.startActivity(Intent(Intent.ACTION_VIEW, url.toUri()))
+    } catch (_: ActivityNotFoundException) {
+        Toast.makeText(context, "没有找到可打开链接的应用", Toast.LENGTH_SHORT).show()
+    }
+}
+
+/** 校验失败原因的如实措辞；未知形态落到 BAD_SCHEME/BAD_CHARACTERS 的兜底文案 */
+private fun urlProblemLabel(problem: ResultUrlProblem): String = when (problem) {
+    ResultUrlProblem.EMPTY -> "链接为空"
+    ResultUrlProblem.BAD_SCHEME -> "非 https 或无法解析"
+    ResultUrlProblem.BAD_CHARACTERS -> "含空白/控制字符/userinfo"
 }
 
 // ---------- 辅助 ----------

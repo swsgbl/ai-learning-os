@@ -1290,7 +1290,7 @@ apps\android\gradlew.bat testDebugUnitTest lintDebug assembleDebug
 sh apps/android/gradlew testDebugUnitTest lintDebug assembleDebug
 ```
 
-- 全绿标准：JVM 单测 0 失败（M12-03 后共 256 项）、lint 无 error（允许
+- 全绿标准：JVM 单测 0 失败（M12-04 后共 318 项）、lint 无 error（允许
   依赖版本提示类 warning）、产出 `apps/android/app/build/outputs/apk/debug/app-debug.apk`。
 - `gradlew` 不带可执行位入库存放，统一经 `sh ./gradlew` 调用，CI 无需
   `chmod +x`。
@@ -1591,7 +1591,8 @@ NEXT_QUESTION / REPORT_READY）；错误码经 M12-02 的 `AppError` 语义映�
 
 在 M12-01/02/03 基座上接入搜索域第一切片（分支
 `feature/m12-04-android-search-flow`，基于 `main@144bbf7`（PR #48 merge
-commit）；**本地已提交、未 push、未开 PR**）。目标：Android 搜索页从无到有
+commit）；**本地已提交（来源 URL 安全行返工与模拟器冒烟证据未提交）、
+未 push、未开 PR**）。目标：Android 搜索页从无到有
 ——复杂留给系统，简单留给用户：进入页面即见搜索源可用性与禁用原因，输入
 查询词即可预览计划或执行搜索，结果/排序理由/弃用原因全部如实呈现，可按
 query_id 回查服务端记录；本地不持久化任何搜索历史。
@@ -1658,7 +1659,22 @@ Long 承接。
   providers_requested 概要 + 逐条 title/snippet/source·provider·authority/
   rank_reason + skipped 逐条原因 + 零结果空态）、按编号回查卡片
   （输入 query_id → 服务端记录全字段 + created_at）。沿用 SectionCard /
-  StateViews 视觉体系，无营销页/占位页。
+  StateViews 视觉体系，无营销页/占位页；结果与回查逐条共用 `SourceUrlRow`
+  ——来源 URL 原文断行展示（可溯源：不截断、不改写、不隐藏），仅
+  `ResultUrlPolicy` 校验通过的 https 提供「打开」（ACTION_VIEW 交给系统
+  浏览器，无应用接管如实 Toast），未通过（非 https / malformed）禁用打开
+  并附原因，不做「猜意图」的修复。
+- `core/ResultUrlPolicy.kt`（返工新增）：结果来源 URL 安全校验与展示断行
+  纯函数（JVM 单测 `ResultUrlPolicyTest` 15 项锁定）。与 `BaseUrlPolicy`
+  的语义差异：结果 URL 是服务端返回的完整链接（path/query/fragment 属
+  正常形态，予以保留），不是客户端配置的 API base URL；但交给 ACTION_VIEW
+  前收紧为仅 https（大小写不敏感——不存在「debug 放行 http」的例外），
+  拒绝空白/控制字符/反斜杠、authority 内 userinfo（`good.com@evil.com`
+  视觉混淆面；query 里的 `@` 不误伤）与非 ASCII 原文（JDK 17 实测
+  `java.net.URI` 对原文非 ASCII path 并不抛异常，必须显式拦截）；通过
+  校验的 URL 原样返回不规范化。`wrapForDisplay` 长 URL 断行：`/ ? & =`
+  优先断行（断点字符留行尾），窗口内无断点才硬切，每行 ≤40 字符
+  （bodySmall 12sp 下 360dp 屏不横向溢出）。
 - 导航：底部导航扩为 Home/Study/**Search**/Voice/Settings 五位
   （`AiosApp.kt` 的 `AiosDestination.Search`，Icons.Filled.Search），
   `AppContainer` 注册 `searchGateway`、`AiosViewModelFactory` 装配
@@ -1675,6 +1691,24 @@ Long 承接。
   17）；lint **0 error / 19 warning**（依赖版本提示类 + 既有文件基线，
   无一条指向本切片新增文件）；产出
   `app/build/outputs/apk/debug/app-debug.apk`；`git diff --check` 干净。
+- 返工（2026-09-07，改动未提交）：Codex 验收确认前版 `SourceUrlRow` 未写完
+  （引用与导入就位但 composable 缺失，无法编译），并要求执行结果与回查
+  结果可溯源展示来源 URL、仅合法 https 可经 ACTION_VIEW 打开、非 https /
+  malformed 禁用打开且如实展示、小屏不横向溢出——补 `core/ResultUrlPolicy.kt`
+  + SearchScreen 两侧 `SourceUrlRow` + `ResultUrlPolicyTest` 后同命令复跑 →
+  **BUILD SUCCESSFUL**（55 任务全量执行）——test-results XML 汇总 **27 类 /
+  318 tests / 0 failures / 0 errors / 0 skipped**（303→318，新增
+  ResultUrlPolicyTest 15：校验矩阵 10 + 断行矩阵 5），lint **0 error /
+  19 warning**（与基线同构成：GradleDependency/NewerVersionAvailable ×13、
+  ObsoleteLintCustomCheck ×3、ModifierParameter/DataExtractionRules/
+  ObsoleteSdkInt 各 1，无一条指向本切片文件），APK 重产出
+  （11,405,252 bytes）。返工修复的真实缺陷（如实记录）：① 首版
+  `wrapForDisplay` 硬切分支 off-by-one——每行超宽 1 字符（41/40），与其
+  「每行不超过 maxLine」自述矛盾，被新增单测当场抓获后修复；② 首版实现
+  与自身文档「非 ASCII 原文按 malformed 拒绝」矛盾——`java.net.URI`（JDK
+  17 实测）对原文非 ASCII path 不抛异常而放行，补显式 ASCII 拦截
+  （BAD_SCHEME）并以独立 JVM 探针核实解析行为；③ 首版 lint 多 1 条
+  UseKtx 指向 `Uri.parse`，改 core-ktx `String.toUri()` 后回到 19 条基线。
 - 测试覆盖：DTO nullable 字段与 snake_case（providers/plan/queries/
   record 四形态、未知键容忍、缺必填拒绝、全空槽位、authority null 与
   official、skipped 原因原样）；仓储契约（路径/方法/body——`providers=null`
@@ -1695,12 +1729,66 @@ Long 承接。
   `tokenStore.seed` 未 `ensureLoaded`——AuthInterceptor 只读内存缓存
   （`SessionTokenCache.peek`），token 未进缓存导致断言失败，改为 seed 后
   `ensureLoaded()`（与真实启动惰性加载路径一致）。
-- **未跑模拟器/真机**：全部验证为 JVM 单测（MockWebServer 显式绑
-  loopback / fake gateway）；Compose UI 渲染、底栏五位导航实机行为均
-  未验证。
-- **未接真实 provider**：search 测试全部走 MockWebServer fixture /
-  FakeSearchGateway，不触网、不访问任何真实 search/cloud-web 端点；未
-  读取任何真实 key/token/password。
+- **模拟器 mock 冒烟（2026-09-07，已通过，证据 `docs/evidence/m12-04-android-search/`
+  ——README + summary.json + 9 组 uiautomator dump 截图/XML + Chrome 接管
+  dumpsys 前后对比 + mock_requests.log + 9603 行 logcat-full.txt.gz + 归档
+  mock_api_used.py。logcat 以无损 gzip 归档：**不做任何清洗**——.gz 解压
+  SHA256 与原始捕获文件逐字节一致（`5d2c76c2…908c112`，1,283,682 字节；
+  与此前 autocrlf 归一化纯文本暂存 blob 仅差行尾 CR、CR 增删往返核对
+  一致），原始 CRLF 行尾与系统日志行自带尾随空白原样保留；gzip 使 git
+  按二进制 blob 处理，避免 `git diff --check` 把 raw 文本当文本 diff 检查
+  ——前版纯文本暂存时曾报 549 条尾随空白告警（全部位于该证据文件、属
+  逐字证据原文，源码与文档零告警），换 .gz 后通过）**：
+  Android 16 `emulator-5554`（AVD Medium_Phone，SDK 36，1080x2400@420dpi
+  ≈ 411dp 宽）`adb install -r` + `pm clear` 后安装 08:32:46 构建的 debug
+  APK（晚于全部工作区源码修改，返工 `ResultUrlPolicy` 已核实编入
+  classes5/classes8.dex）；mock 当次运行于 `.verify/m12-04-android-smoke/
+  mock_api.py`（gitignored，纯标准库、仅绑 127.0.0.1:8000、模拟器经
+  10.0.2.2:8000 即 debug 默认 base URL 访问，自建自停、端口已复核释放），
+  该无密钥 mock 契约已归档为证据目录内 `mock_api_used.py`（据此可复现），
+  固定 JSON 覆盖
+  /health、/auth/status、/system/privacy、/search/providers、POST /plan、
+  POST /queries（query_id=9001）、GET /queries/9001。**已验证**：①五位
+  底栏导航（首页/学习/搜索/语音/设置各恰 1 节点）；②搜索源注册表
+  （local-corpus 可用 / cloud-web 不可用 + 禁用原因原文）；③计划预览
+  （未执行标注 + 六槽位 + local-corpus 将搜索 / cloud-web 不会执行 +
+  原因）；④执行搜索（#9001 / 2 条 / 12 ms / 请求的源 / skipped cloud-web
+  原因原样透出；mock 请求日志逐端点核对，POST /queries body 54B 含干净
+  查询词 `2024 tsinghua advanced math mcq` + limit:10）；⑤结果与回查来源
+  URL **原文恰两行断行**（长 ASCII URL 首行恰 40 字符于 `?` 断开 + 第二行
+  query 串，行宽 ≤40 无横向溢出、不截断不改写不隐藏）；⑥「打开」仅对
+  通过 `ResultUrlPolicy` 校验的 https 启用，点按后 ACTION_VIEW 由 Chrome
+  接管（dumpsys 前后对比：mCurrentFocus/ResumedActivity 从
+  `com.ailearningos.app/.MainActivity` 变为 `com.android.chrome` 首运行页
+  `FirstRunActivity`）；⑦返回 App 后按编号回查 9001，记录全字段（原查询
+  词/结果数/耗时/记录时间/请求的源/结果列表含 URL 两行断行/skipped 原因）；
+  ⑧全程 logcat 9603 行 FATAL EXCEPTION=0、ANR=0、AndroidRuntime+本包 0 行。
+  未发现应用缺陷（summary.json 五例 observations 均为工具/环境口径说明，
+  非缺陷）。
+- **冒烟口径边界（不夸大）**：Chrome 接管只证明 VIEW intent 焦点转移——
+  模拟器 Chrome 从未启动、ACTION_VIEW 落在首运行页 `FirstRunActivity`
+  （未接受 ToS，不触发 Chrome 侧页面加载/联网行为——整机层面的 OS 自动
+  探测与此无关，见下条），**不声称页面加载成功**；mock 结果
+  URL 固定 `https://localhost/m12-04/smoke-source?trace=local&suite=android-360`，
+  host 是 localhost（不出设备），**不代表外网真实 provider 可用**；查询词为
+  ASCII（adb input text 无法注入 CJK——输入注入工具限制，mock 固定中文
+  槽位/计划/结果文案仍覆盖中文渲染）；首页对 mock 非枚举路由字符串如实
+  渲染「未知」（呈现边界，不虚报）。
+- **未接真实 provider**：search 冒烟与测试全部走自建 loopback mock /
+  MockWebServer fixture（显式绑 loopback）/ FakeSearchGateway，App 与
+  测试不触外网、不访问任何真实 search/cloud-web 端点；未读取任何真实
+  key/token/password。「不触外网」为 App/mock 口径而非整机口径：冒烟
+  logcat 含模拟器系统层自动网络行为——NetworkMonitor（system_server）
+  对 connectivitycheck.gstatic.com（HTTP 204 实际出网成功）/
+  www.google.com / play.googleapis.com 的联网探测，及 Gboard 在输入框
+  获焦时自 gstatic 请求词典/模型清单；均为 OS/系统输入法组件行为、非
+  本 App 流量、不涉及任何 AI provider/生产服务（详见证据 README 结论）。
+- **仍未验证**：真机（Compose 渲染/导航/ACTION_VIEW 实机行为）；**非
+  https / malformed URL 禁用态的模拟器交互**——冒烟中「打开」仅出现在
+  通过校验的 https 结果旁，禁用态 UI（附原因文案、不可点击）未在模拟器
+  上实际验证，该禁用逻辑由 `ResultUrlPolicyTest` 15 项 JVM 单测覆盖；
+  无浏览器接管时的 Toast 降级实机形态；生产可用（mock 冒烟不构成任何
+  production readiness）。
 - UI 第一切片固定默认 limit=10（契约 1..50 值域由仓储层透传，未做 UI
   limit 选择器）、未做 providers 勾选过滤（默认全部已注册源执行，skipped
   语义自然呈现）——留给后续切片按真实使用反馈决定。
