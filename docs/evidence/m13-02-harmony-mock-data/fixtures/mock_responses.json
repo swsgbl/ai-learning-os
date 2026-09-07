@@ -1,0 +1,57 @@
+{
+  "health": {
+    "status": "ok",
+    "service": "aios-mock-android-smoke"
+  },
+  "auth": {
+    "auth_enabled": false
+  },
+  "privacy": {
+    "model_route": "local",
+    "voice_mode": "local",
+    "search_mode": "local",
+    "store_audio": false,
+    "send_context_to_cloud": false
+  },
+  "version": {
+    "version": "0.12.5-mock",
+    "git_commit": "m1205mockgit",
+    "alembic_current": "m1205mockrev",
+    "alembic_head": "m1205mockrev"
+  },
+  "ops_snapshot": {
+    "generated_at": "2026-09-07T12:00:00+00:00",
+    "database_backend": "postgresql",
+    "users_by_role": {"admin": 2, "learner": 128},
+    "papers_total": 34,
+    "resources_by_parse_status": {"parsed": 40, "pending": 3},
+    "parse_jobs_by_status": {"succeeded": 33, "queued": 2},
+    "pending_review_drafts": {"course_import": 1, "course_generation": 2, "paper_question": 4, "variant_question": 5},
+    "voice_sessions_by_status": {"completed": 90, "failed": 2},
+    "search_queries_total": 456,
+    "audit_entries_total": 1024,
+    "worker_running": true
+  },
+  "audit": [
+    {
+      "id": 1001,
+      "actor_id": "u-mock-admin-001",
+      "actor_username": "mock_admin",
+      "action": "paper.publish",
+      "target_type": "paper",
+      "target_id": "paper-m1205",
+      "request_id": "req-m1205-1001",
+      "created_at": "2026-09-07T12:00:01+00:00"
+    },
+    {
+      "id": 1002,
+      "actor_id": null,
+      "actor_username": null,
+      "action": "worker.tick",
+      "target_type": "job",
+      "target_id": "job-m1205",
+      "request_id": "req-m1205-1002",
+      "created_at": "2026-09-07T12:00:02+00:00"
+    }
+  ]
+}
