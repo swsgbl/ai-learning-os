@@ -7,10 +7,11 @@ names or remote paths cannot be interpreted as shell syntax.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import time
 from dataclasses import dataclass, field
-from typing import Callable, Optional, Sequence
+from typing import Callable, Optional, Sequence, Tuple
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,39 @@ class AdbError(Exception):
     def __init__(self, message: str, result: Optional[AdbCommandResult] = None):
         super().__init__(message)
         self.result = result
+
+
+# ``wm size`` 输出行："Physical size: 720x1600" / "Override size: 1080x2400"
+_SCREEN_SIZE_RE = re.compile(
+    r"^(Physical|Override) size:\s*(\d+)\s*x\s*(\d+)\s*$", re.MULTILINE
+)
+
+
+def parse_screen_size(text: str) -> Tuple[int, int]:
+    """解析 ``wm size`` 输出为 ``(width, height)``；Override 优先于 Physical。
+
+    设有显示尺寸覆盖（``wm size WxH``）时 adb 仍会打印 Physical size，
+    但设备实际渲染按 Override——滚动坐标必须按实际渲染尺寸换算。
+    无任何可解析行（如设备脱机时的错误输出）抛 :class:`AdbError`。
+    """
+    if not isinstance(text, str):
+        raise AdbError(
+            "wm size output must be a string, got %s" % type(text).__name__
+        )
+    override: Optional[Tuple[int, int]] = None
+    physical: Optional[Tuple[int, int]] = None
+    for kind, width, height in _SCREEN_SIZE_RE.findall(text):
+        size = (int(width), int(height))
+        if size[0] <= 0 or size[1] <= 0:
+            continue
+        if kind == "Override":
+            override = size
+        else:
+            physical = size
+    chosen = override if override is not None else physical
+    if chosen is None:
+        raise AdbError("cannot parse wm size output: %r" % (text[:200],))
+    return chosen
 
 
 def _sanitize(args: Sequence[str]) -> tuple:
@@ -119,8 +153,36 @@ class AdbClient:
     def start_activity(self, package: str, activity: str) -> AdbCommandResult:
         return self.run(["shell", "am", "start", "-W", "-n", "%s/%s" % (package, activity)])
 
+    def reverse_tcp(self, port: int) -> AdbCommandResult:
+        """Forward device loopback ``tcp:<port>`` to host loopback (physical runs).
+
+        ``--no-rebind`` fails instead of silently rebinding when a mapping
+        already exists, so a stale listener from an earlier run surfaces
+        immediately instead of being masked.
+        """
+        return self.run(
+            ["reverse", "--no-rebind", "tcp:%d" % port, "tcp:%d" % port]
+        )
+
+    def reverse_remove_tcp(self, port: int, check: bool = True) -> AdbCommandResult:
+        """Remove the reverse mapping for ``tcp:<port>`` (cleanup path)."""
+        return self.run(["reverse", "--remove", "tcp:%d" % port], check=check)
+
     def clear_logcat(self) -> AdbCommandResult:
         return self.run(["logcat", "-c"])
+
+    def screen_size(self) -> Tuple[int, int]:
+        """实测屏幕渲染尺寸 ``(width, height)``，供滚动坐标按屏换算。
+
+        走 ``adb shell wm size``（参数列表形式），Override 优先于 Physical
+        （见 :func:`parse_screen_size`）。
+        """
+        result = self.run(["shell", "wm", "size"])
+        return parse_screen_size(result.stdout.decode("utf-8", errors="replace"))
+
+    def dumpsys_input_method(self) -> bytes:
+        """``dumpsys input_method`` 原始输出，供判断软键盘是否打开。"""
+        return self.run(["shell", "dumpsys", "input_method"]).stdout
 
     def dump_logcat(self) -> bytes:
         return self.run(["logcat", "-d"]).stdout

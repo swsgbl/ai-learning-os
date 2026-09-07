@@ -9,7 +9,9 @@ from tools.android_smoke.interaction import (
     UiNotFoundError,
     UiTimeoutError,
     find,
+    ime_shown_from_dumpsys,
     parse_ui_dump,
+    swipe_up_args,
 )
 
 XML = (
@@ -54,26 +56,47 @@ class TestParseUiDump(unittest.TestCase):
         self.assertEqual(sign_in.klass, "android.widget.Button")
         self.assertEqual(sign_in.content_desc, "login button")
 
-    def test_invalid_bounds_rejected(self):
-        bad = (
-            b'<hierarchy><node text="x" bounds="[10,20][5,60]"/></hierarchy>'
+    def test_invalid_bounds_skipped_not_fatal(self):
+        # r9 真机证据：退化 bounds 节点（零面积/倒置）不可见不可点，
+        # 跳过即可；同 dump 的正常节点必须照常解析出来。
+        dump = (
+            b'<hierarchy>'
+            b'<node text="bad" bounds="[10,20][5,60]"/>'
+            b'<node text="ok" bounds="[0,0][50,50]"/>'
+            b'</hierarchy>'
         )
-        with self.assertRaises(UiError):
-            parse_ui_dump(bad)
+        els = parse_ui_dump(dump)
+        self.assertEqual([el.text for el in els], ["ok"])
 
-    def test_malformed_bounds_rejected(self):
-        bad = b'<hierarchy><node text="x" bounds="10,20,30,40"/></hierarchy>'
-        with self.assertRaises(UiError):
-            parse_ui_dump(bad)
+    def test_zero_size_bounds_skipped(self):
+        # EMUI 治理页 'pending：3' 实测携带 [0,0][0,0]（r9）：
+        # 整个 dump 不能因此解析失败
+        dump = (
+            '<hierarchy>'
+            '<node text="pending：3" bounds="[0,0][0,0]"/>'
+            '<node text="审计留痕" bounds="[0,100][200,180]"/>'
+            '</hierarchy>'
+        ).encode("utf-8")
+        els = parse_ui_dump(dump)
+        self.assertEqual([el.text for el in els], ["审计留痕"])
+
+    def test_malformed_bounds_skipped(self):
+        dump = b'<hierarchy><node text="x" bounds="10,20,30,40"/></hierarchy>'
+        self.assertEqual(parse_ui_dump(dump), [])
 
     def test_root_without_bounds_ok(self):
         els = parse_ui_dump(b'<hierarchy><node text="x" bounds="[0,0][10,10]"/></hierarchy>')
         self.assertEqual(len(els), 1)
 
-    def test_node_without_bounds_rejected(self):
-        bad = b'<hierarchy><node text="x"/></hierarchy>'
-        with self.assertRaises(UiError):
-            parse_ui_dump(bad)
+    def test_node_without_bounds_skipped(self):
+        dump = (
+            b'<hierarchy>'
+            b'<node text="gone"/>'
+            b'<node text="present" bounds="[0,0][10,10]"/>'
+            b'</hierarchy>'
+        )
+        els = parse_ui_dump(dump)
+        self.assertEqual([el.text for el in els], ["present"])
 
 
 class TestFind(unittest.TestCase):
@@ -303,6 +326,119 @@ class TestBack(unittest.TestCase):
         ctl = make_controller(XML, tap)
         ctl.back()
         self.assertEqual(tap.calls, [["input", "keyevent", "4"]])
+
+
+class TestKeyEvents(unittest.TestCase):
+    def test_single_and_multiple_codes_in_one_invocation(self):
+        tap = FakeTap()
+        ctl = make_controller(XML, tap)
+        ctl.key_events(["123"])
+        ctl.key_events(["123", "67", "67"])
+        self.assertEqual(
+            tap.calls,
+            [
+                ["input", "keyevent", "123"],
+                ["input", "keyevent", "123", "67", "67"],
+            ],
+        )
+
+    def test_rejects_empty(self):
+        ctl = make_controller(XML, FakeTap())
+        with self.assertRaises(ValueError):
+            ctl.key_events([])
+
+    def test_rejects_non_string_and_empty_string_codes(self):
+        ctl = make_controller(XML, FakeTap())
+        with self.assertRaises(TypeError):
+            ctl.key_events(["123", 67])
+        with self.assertRaises(TypeError):
+            ctl.key_events(["123", ""])
+
+
+class TestSwipeUpArgs(unittest.TestCase):
+    def test_emulator_size_reproduces_proven_coordinates(self):
+        # 1080x2400（模拟器实测）：默认百分比映射必须逐值复现
+        # M12-06 手工验证过的滚动坐标——模拟器行为零变化。
+        self.assertEqual(swipe_up_args(1080, 2400), (540, 1800, 540, 600, 400))
+
+    def test_physical_720x1600_stays_in_screen(self):
+        # r8 物理首跑证据：旧硬编码 y=1800 超出 1600 高度的屏幕；
+        # 百分比换算后起止点都落在屏幕内。
+        args = swipe_up_args(720, 1600)
+        self.assertEqual(args, (360, 1200, 360, 400, 400))
+        self.assertTrue(0 <= args[1] < 1600)
+        self.assertTrue(0 <= args[3] < 1600)
+
+    def test_custom_percent_and_duration(self):
+        self.assertEqual(
+            swipe_up_args(1000, 2000, 0.5, 0.8, 0.2, 300),
+            (500, 1600, 500, 400, 300),
+        )
+
+    def test_invalid_dimensions_raise(self):
+        for bad in (
+            lambda: swipe_up_args(0, 1600),
+            lambda: swipe_up_args(1080, 0),
+            lambda: swipe_up_args(-1080, 2400),
+            lambda: swipe_up_args("1080", 2400),
+            lambda: swipe_up_args(True, 2400),
+        ):
+            with self.assertRaises(ValueError):
+                bad()
+
+    def test_invalid_percents_raise(self):
+        for bad in (
+            lambda: swipe_up_args(1080, 2400, 0.0, 0.75, 0.25),
+            lambda: swipe_up_args(1080, 2400, 1.0, 0.75, 0.25),
+            lambda: swipe_up_args(1080, 2400, 0.5, 0.0, 0.25),
+            lambda: swipe_up_args(1080, 2400, 0.5, 1.0, 0.25),
+            lambda: swipe_up_args(1080, 2400, 0.5, 0.75, 0.0),
+            lambda: swipe_up_args(1080, 2400, 0.5, 0.75, 1.0),
+            lambda: swipe_up_args(1080, 2400, 1, 0.75, 0.25),  # int 不是 float
+        ):
+            with self.assertRaises(ValueError):
+                bad()
+
+    def test_non_upward_direction_rejected(self):
+        # from <= to 意味着不向上滚（甚至倒退），拒绝以免静默点错区域
+        with self.assertRaises(ValueError):
+            swipe_up_args(1080, 2400, 0.5, 0.25, 0.75)
+        with self.assertRaises(ValueError):
+            swipe_up_args(1080, 2400, 0.5, 0.5, 0.5)
+
+    def test_invalid_duration_rejected(self):
+        for bad in (-1, True, "400"):
+            with self.assertRaises(ValueError):
+                swipe_up_args(1080, 2400, 0.5, 0.75, 0.25, bad)
+
+
+class TestImeShownFromDumpsys(unittest.TestCase):
+    def test_true_flag(self):
+        self.assertTrue(ime_shown_from_dumpsys("  mInputShown=true\n"))
+
+    def test_false_flag(self):
+        self.assertFalse(ime_shown_from_dumpsys("  mInputShown=false\n"))
+
+    def test_input_view_variant(self):
+        self.assertTrue(ime_shown_from_dumpsys("mInputViewShown=true"))
+        self.assertFalse(ime_shown_from_dumpsys("mInputViewShown=false"))
+
+    def test_any_true_wins(self):
+        # IMMS 与 InputMethodService 两段输出都带标记时任一 true 即打开
+        text = "mInputViewShown=false\n  mInputShown=true\n"
+        self.assertTrue(ime_shown_from_dumpsys(text))
+
+    def test_all_false_means_closed(self):
+        text = "mInputViewShown=false\n  mInputShown=false\n"
+        self.assertFalse(ime_shown_from_dumpsys(text))
+
+    def test_no_flag_conservative_true(self):
+        # 厂商/版本差异导致标记缺失时，保守视为打开（调用方会收键盘）
+        self.assertTrue(ime_shown_from_dumpsys("Current Input Method Manager state:\n"))
+
+    def test_non_string_conservative_true(self):
+        self.assertTrue(ime_shown_from_dumpsys(None))
+        self.assertTrue(ime_shown_from_dumpsys(b"mInputShown=false"))
 
 
 if __name__ == "__main__":

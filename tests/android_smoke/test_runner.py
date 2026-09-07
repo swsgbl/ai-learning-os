@@ -13,30 +13,39 @@ import pytest
 
 import tools.android_smoke.runner as runner_module
 import tools.android_smoke.server as server_module
+from tools.android_smoke.interaction import swipe_up_args
 from tools.android_smoke.runner import (
     ACTIVITY_NAME,
     AUDIT_PATH,
+    CLEAR_TEXT_BACKSPACE_COUNT,
     DEFAULT_HOST,
     DEFAULT_PORT,
     EXPECTED_ENDPOINTS,
-    GOVERNANCE_AUDIT_SCROLL_ARGS,
     GOVERNANCE_ENTRY_TEXT,
     GOVERNANCE_HOME_TEXT,
     GOVERNANCE_SECTIONS,
+    HOME_API_HEALTH_TEXT,
+    HOME_API_OK_TEXT,
     HOME_TEXT,
     HOME_WAIT_TIMEOUT,
+    KEYCODE_DEL,
+    KEYCODE_MOVE_END,
     LOOKUP_INPUT_HINT,
     LOOKUP_KEYBOARD_DISMISS_SECONDS,
     LOOKUP_QUERY,
-    LOOKUP_SCROLL_ARGS,
     LOOKUP_RESULT_TEXT,
     LOOKUP_RUN_TEXT,
     LOOKUP_SCROLL_SETTLE_SECONDS,
     PACKAGE_NAME,
+    PHYSICAL_BASE_URL_TEMPLATE,
     PLAN_PREVIEW_TEXT,
     PREVIEW_PLAN_TEXT,
     RunnerConfig,
     RunnerError,
+    SCROLL_DURATION_MS,
+    SCROLL_FROM_Y_PERCENT,
+    SCROLL_TO_Y_PERCENT,
+    SCROLL_X_PERCENT,
     SEARCH_INPUT_HINT,
     SEARCH_PROVIDERS_TEXT,
     SEARCH_QUERY,
@@ -44,6 +53,11 @@ from tools.android_smoke.runner import (
     SEARCH_RUN_TEXT,
     SEARCH_SUMMARY_TEXT,
     SEARCH_TAB_TEXT,
+    SETTINGS_API_SECTION_TEXT,
+    SETTINGS_FIELD_LABEL,
+    SETTINGS_SAVED_NOTICE_TEXT,
+    SETTINGS_SAVE_TEXT,
+    SETTINGS_TAB_TEXT,
     STAGE_WAIT_TIMEOUT,
     SmokeRunner,
     StageRecorder,
@@ -66,9 +80,21 @@ def make_config(**overrides) -> RunnerConfig:
         apk=None,
         output=None,
         skip_install=True,
+        device_type="emulator",
     )
     kwargs.update(overrides)
     return RunnerConfig(**kwargs)
+
+
+# r2：滚动坐标按实测屏幕尺寸换算（FakeAdb 默认 1080x2400 = 模拟器）。
+# 百分比映射必须逐值复现 M12-06 验证过的 (540,1800,540,600,400)；
+# 720x1600 物理屏上则换算为全程落屏内的 (360,1200,360,400,400)。
+EMULATOR_SWIPE = swipe_up_args(
+    1080, 2400, SCROLL_X_PERCENT, SCROLL_FROM_Y_PERCENT, SCROLL_TO_Y_PERCENT, SCROLL_DURATION_MS
+)
+PHYSICAL_SWIPE = swipe_up_args(
+    720, 1600, SCROLL_X_PERCENT, SCROLL_FROM_Y_PERCENT, SCROLL_TO_Y_PERCENT, SCROLL_DURATION_MS
+)
 
 
 class TestBuildConfig:
@@ -263,10 +289,29 @@ class TestAtomicWrites:
 # ---------------------------------------------------------------------------
 
 
+class FakeAdbResult:
+    """reverse_remove_tcp 的返回对象（check=False 不抛错，返回结果）。"""
+
+    def __init__(self, returncode=0, timeout=False):
+        self.returncode = returncode
+        self.timeout = timeout
+
+
 class FakeAdb:
-    def __init__(self, fail_at=None, logcat_text=""):
+    def __init__(
+        self,
+        fail_at=None,
+        logcat_text="",
+        remove_returncode=0,
+        screen=(1080, 2400),
+        ime_shown=True,
+    ):
         self.fail_at = fail_at or set()
         self.logcat_text = logcat_text
+        self.remove_returncode = remove_returncode
+        # 实测屏幕尺寸（wm size 默认输出模拟器 1080x2400）与 IME 状态
+        self.screen = screen
+        self.ime_shown = ime_shown
         self.calls = []
 
     def _call(self, name, *args):
@@ -288,6 +333,23 @@ class FakeAdb:
 
     def start_activity(self, package, activity):
         self._call("start_activity", package, activity)
+
+    def reverse_tcp(self, port):
+        self._call("reverse_tcp", port)
+
+    def reverse_remove_tcp(self, port, check=True):
+        self._call("reverse_remove_tcp", port, check)
+        return FakeAdbResult(returncode=self.remove_returncode)
+
+    def screen_size(self):
+        self._call("screen_size")
+        return self.screen
+
+    def dumpsys_input_method(self):
+        self._call("dumpsys_input_method")
+        # 真实 dumpsys input_method 含 mInputShown 标记（API 34 实测格式）
+        flag = "true" if self.ime_shown else "false"
+        return ("  mInputShown=%s\n" % flag).encode("utf-8")
 
     def dump_ui(self):
         self._call("dump_ui")
@@ -314,6 +376,8 @@ class FakeUi:
         # 每次 swipe 时已等待文本的快照，用于断言“滚动发生在哪些等待之间”
         self.swipe_wait_snapshots = []
         self.backs = 0
+        # key_events 序列（如 Settings 清空输入框的 MOVE_END + DEL*64）
+        self.key_event_sequences = []
         # 按发生顺序记录 swipe/back，用于断言“back 在两次 swipe 之前”
         self.actions = []
 
@@ -349,6 +413,9 @@ class FakeUi:
         self.backs += 1
         self.actions.append(("back",))
 
+    def key_events(self, codes):
+        self.key_event_sequences.append(list(codes))
+
 
 class FakeServer:
     def __init__(self, stop_error=None):
@@ -374,10 +441,14 @@ def make_runner(
     skip_install=True,
     apk=None,
     sleep=lambda seconds: None,
+    device_type="emulator",
+    serial="emulator-5554",
 ):
     output = tmp_path / "out"
     output.mkdir()
-    config = make_config(skip_install=skip_install, apk=apk)
+    config = make_config(
+        skip_install=skip_install, apk=apk, device_type=device_type, serial=serial
+    )
     holder = {}
 
     def server_factory(log_path, port):
@@ -829,22 +900,22 @@ class TestSearchFlow:
         # 搜索执行按钮必须走 tap_text_occurrence 且 occurrence=1（第 2 个
         # exact "搜索"），不能退回 tap_text 点到页面标题或底部导航。
         assert ui.occurrence_clicked == [(SEARCH_RUN_TEXT, 1, False)]
-        # 回查前先 back() 收起软键盘（查询框仍持有焦点，直接 swipe 会落在
-        # 输入法区域被当成手势输入），等 IME 收起后再两次向上滚动到回查
-        # 区域，中间等 LazyColumn settle（见 test_lookup_scroll_settle_timing）。
+        # 执行搜索后先按需收起软键盘（查询框仍持有焦点，直接 swipe 会落在
+        # 输入法区域被当成手势输入），再把结果卡滚进视口、等待结果概要，
+        # 随后第二次滚动到回查区域（顺序见 test_search_scroll_ordering）。
         assert ui.actions[:3] == [
             ("back",),
-            ("swipe", LOOKUP_SCROLL_ARGS),
-            ("swipe", LOOKUP_SCROLL_ARGS),
+            ("swipe", EMULATOR_SWIPE),
+            ("swipe", EMULATOR_SWIPE),
         ]
         # 回查输入 9001 后键盘仍打开，「回查记录」按钮坐标被 IME 覆盖，
         # 点击会被输入法转换成字符（r6 证据：输入框出现 "9001g"）；先
         # back() + sleep 等 IME 收起再点按钮（顺序见 timing 测试）。
         assert ui.actions.count(("back",)) == 3
         assert ui.swipes == [
-            LOOKUP_SCROLL_ARGS,
-            LOOKUP_SCROLL_ARGS,
-            GOVERNANCE_AUDIT_SCROLL_ARGS,
+            EMULATOR_SWIPE,
+            EMULATOR_SWIPE,
+            EMULATOR_SWIPE,
         ]
         assert ui.backs == 3  # 搜索收键盘 + 回查收键盘 + 治理返回
         # 输入只含 ASCII，先查询后回查
@@ -890,9 +961,9 @@ class TestSearchFlow:
         assert ui.actions[:5] == [
             ("back",),
             ("sleep", 0.8),
-            ("swipe", LOOKUP_SCROLL_ARGS),
+            ("swipe", EMULATOR_SWIPE),
             ("sleep", 0.8),
-            ("swipe", LOOKUP_SCROLL_ARGS),
+            ("swipe", EMULATOR_SWIPE),
         ]
         # 回查输入后：back -> sleep(0.8) 收起 IME，之后才点「回查记录」。
         # FakeUi 不记录 tap 进 actions，故第二个 back 之后紧跟 sleep；
@@ -902,7 +973,7 @@ class TestSearchFlow:
         # 回查收键盘的 sleep 之后再无 sleep；治理阶段只有 swipe 与 back
         assert not any(a[0] == "sleep" for a in ui.actions[7:])
         assert ui.actions[7:] == [
-            ("swipe", GOVERNANCE_AUDIT_SCROLL_ARGS),
+            ("swipe", EMULATOR_SWIPE),
             ("back",),
         ]
 
@@ -934,11 +1005,12 @@ class TestGovernanceFlow:
         assert ui.backs == 3  # 搜索收键盘 + 回查收键盘 + 治理返回
         # 治理阶段没有任何输入（只读，无写操作）
         assert ui.typed == [SEARCH_QUERY, LOOKUP_QUERY]
-        # 成功流程 swipe 总数：搜索两次 + 治理一次
+        # 成功流程 swipe 总数：搜索两次（结果卡 + 回查区）+ 治理一次，
+        # 坐标全部由实测屏幕尺寸按百分比换算
         assert ui.swipes == [
-            LOOKUP_SCROLL_ARGS,
-            LOOKUP_SCROLL_ARGS,
-            GOVERNANCE_AUDIT_SCROLL_ARGS,
+            EMULATOR_SWIPE,
+            EMULATOR_SWIPE,
+            EMULATOR_SWIPE,
         ]
 
     def test_governance_scroll_between_sections(self, tmp_path):
@@ -948,7 +1020,7 @@ class TestGovernanceFlow:
         runner = make_runner(tmp_path, ui=ui)
         summary = runner.run()
         assert stage_by_name(summary, "governance")["status"] == "passed"
-        assert ui.swipes[-1] == GOVERNANCE_AUDIT_SCROLL_ARGS
+        assert ui.swipes[-1] == EMULATOR_SWIPE
         snapshot = ui.swipe_wait_snapshots[-1]
         # 滚动时前两个治理区块已等待出现（快照元素是 (text, timeout) 元组）
         assert any(text == "发布版本" for text, _timeout in snapshot)
@@ -968,7 +1040,489 @@ class TestGovernanceFlow:
         # 失败发生在治理返回 back 之前（仅剩搜索/回查各收键盘的 2 次 back）
         assert ui.backs == 2
         # 治理滚动已发生（在前两个区块等待后、审计等待前）
-        assert ui.swipes[-1] == GOVERNANCE_AUDIT_SCROLL_ARGS
+        assert ui.swipes[-1] == EMULATOR_SWIPE
+
+
+# ---------------------------------------------------------------------------
+# M13-04 r2：屏幕相对滚动 / IME 按需收起 / finalize 韧性
+# （r8 物理首跑：720x1600 上结果卡在视口外 + 设备掉线后 summary 缺席）
+# ---------------------------------------------------------------------------
+
+
+class TestRelativeScrolling:
+    def test_percent_mapping_reproduces_emulator_coordinates(self):
+        # 模拟器（1080x2400）逐值复现 M12-06 硬编码坐标：零行为变化
+        assert EMULATOR_SWIPE == (540, 1800, 540, 600, 400)
+        # 物理机（720x1600）换算后全程落屏内；旧 y=1800 越界
+        assert PHYSICAL_SWIPE == (360, 1200, 360, 400, 400)
+        assert max(PHYSICAL_SWIPE[1], PHYSICAL_SWIPE[3]) < 1600
+
+    def test_scroll_uses_measured_screen_size(self, tmp_path):
+        adb = FakeAdb(screen=(720, 1600))
+        ui = FakeUi()
+        runner = make_runner(tmp_path, adb=adb, ui=ui)
+        summary = runner.run()
+        assert ("screen_size",) in adb.calls
+        assert summary["overall_status"] == "passed"
+        # 搜索 2 次 + 治理 1 次，全部按 720x1600 换算
+        assert ui.swipes == [PHYSICAL_SWIPE, PHYSICAL_SWIPE, PHYSICAL_SWIPE]
+
+    def test_screen_size_queried_once_and_cached(self, tmp_path):
+        adb = FakeAdb()
+        make_runner(tmp_path, adb=adb).run()
+        assert adb.calls.count(("screen_size",)) == 1
+
+    def test_screen_size_failure_fails_search_stage(self, tmp_path):
+        adb = FakeAdb(fail_at={"screen_size"})
+        runner = make_runner(tmp_path, adb=adb)
+        with pytest.raises(RuntimeError, match="screen_size failed"):
+            runner.run()
+        summary = load_summary(runner)
+        assert summary["overall_status"] == "failed"
+        stage = stage_by_name(summary, "search")
+        assert stage["status"] == "failed"
+        assert "screen_size failed" in stage["detail"]
+
+
+class TestSearchScrollOrdering:
+    def test_first_scroll_between_execute_and_result_waits(self, tmp_path):
+        # r8 物理首跑教训：执行搜索后结果卡在计划卡下方视口外——第一滚
+        # 必须发生在点击「执行搜索」(occurrence=1) 之后、等待「搜索结果
+        # 概要」/「#9001」之前；第二滚（回查区域）在两者之后。
+        ui = FakeUi()
+        make_runner(tmp_path, ui=ui).run()
+        assert ui.occurrence_clicked == [(SEARCH_RUN_TEXT, 1, False)]
+        snap1 = [text for text, _timeout in ui.swipe_wait_snapshots[0]]
+        assert PLAN_PREVIEW_TEXT in snap1  # 预览计划已等过（执行已点击）
+        assert SEARCH_SUMMARY_TEXT not in snap1
+        assert SEARCH_QUERY_ID_TEXT not in snap1
+        snap2 = [text for text, _timeout in ui.swipe_wait_snapshots[1]]
+        assert SEARCH_SUMMARY_TEXT in snap2
+        assert SEARCH_QUERY_ID_TEXT in snap2
+        assert LOOKUP_RESULT_TEXT not in snap2
+
+    def test_ime_dismiss_skipped_when_dumpsys_says_closed(self, tmp_path):
+        adb = FakeAdb(ime_shown=False)
+        ui = FakeUi()
+        runner = make_runner(tmp_path, adb=adb, ui=ui)
+        summary = runner.run()
+        assert summary["overall_status"] == "passed"
+        # 两处收键盘动作都被跳过：只剩治理返回的 1 次 back；滚动照常
+        assert ui.backs == 1
+        assert ui.swipes == [EMULATOR_SWIPE, EMULATOR_SWIPE, EMULATOR_SWIPE]
+
+    def test_ime_dismiss_conservative_when_dumpsys_fails(self, tmp_path):
+        adb = FakeAdb(fail_at={"dumpsys_input_method"})
+        ui = FakeUi()
+        runner = make_runner(tmp_path, adb=adb, ui=ui)
+        summary = runner.run()
+        assert summary["overall_status"] == "passed"
+        # 判断失败按「打开」保守处理：2 次收键盘 + 1 次治理返回
+        assert ui.backs == 3
+        assert ui.swipes == [EMULATOR_SWIPE, EMULATOR_SWIPE, EMULATOR_SWIPE]
+
+
+class TestLogcatUnavailableFinalize:
+    def test_dump_logcat_failure_still_writes_summary(self, tmp_path):
+        # 设备阶段全部通过、收尾 dump logcat 失败（如 USB 掉线）：
+        # summary 必须照常写出，dump-logcat 记 failed，不得隐性通过。
+        adb = FakeAdb(fail_at={"dump_logcat"})
+        runner = make_runner(tmp_path, adb=adb)
+        summary = runner.run()
+        assert summary["overall_status"] == "failed"
+        assert summary["exit_code"] == 1
+        assert summary["has_blocking_issue"] is True
+        stage = stage_by_name(summary, "dump-logcat")
+        assert stage["status"] == "failed"
+        assert "logcat dump unavailable" in stage["detail"]
+        assert summary["logcat"]["unavailable"] is True
+        assert summary["logcat"]["total_lines"] == 0
+        assert summary["logcat"]["has_blocking_issue"] is False
+        # logcat 文件未产出（不能伪装成通过），summary 与其余证据都在
+        assert not (runner.output_dir / "logcat-full.txt").exists()
+        assert (runner.output_dir / "summary.json").is_file()
+        assert stage_by_name(summary, "search")["status"] == "passed"
+
+    def test_offline_after_search_failure_keeps_full_summary(self, tmp_path):
+        # r8 物理首跑完整复现：搜索等待超时 -> 设备掉线 -> reverse 移除
+        # 失败 + dump logcat 失败；所有失败阶段都必须在 summary 里可见。
+        adb = FakeAdb(fail_at={"dump_logcat"}, remove_returncode=1)
+        ui = FakeUi(fail_wait=SEARCH_SUMMARY_TEXT)
+        runner = make_physical_runner(tmp_path, adb=adb, ui=ui)
+        with pytest.raises(RuntimeError, match="timed out"):
+            runner.run()
+        summary = load_summary(runner)
+        assert summary["overall_status"] == "failed"
+        assert summary["exit_code"] == 1
+        assert stage_by_name(summary, "search")["status"] == "failed"
+        remove_stage = stage_by_name(summary, "remove-adb-reverse")
+        assert remove_stage["status"] == "failed"
+        assert "returncode=1" in remove_stage["detail"]
+        assert stage_by_name(summary, "dump-logcat")["status"] == "failed"
+        assert summary["logcat"]["unavailable"] is True
+
+    def test_detail_sanitized_single_line_and_bounded(self):
+        from tools.android_smoke.runner import _sanitize_detail
+
+        noisy = "line1\nline2\twith\ttabs\x00\x1b[31m and " + "x" * 300
+        cleaned = _sanitize_detail(noisy)
+        assert "\n" not in cleaned
+        assert "\t" not in cleaned
+        assert "\x00" not in cleaned
+        assert "\x1b" not in cleaned
+        assert len(cleaned) <= 200
+
+
+# ---------------------------------------------------------------------------
+# M13-04：--device-type 配置校验
+# ---------------------------------------------------------------------------
+
+
+class TestDeviceTypeConfig:
+    def test_default_is_emulator(self):
+        config = build_config(["--serial", "emulator-5554", "--skip-install"])
+        assert config.device_type == "emulator"
+
+    def test_explicit_flag_parsed(self):
+        config = build_config(
+            ["--serial", "USB12345", "--skip-install", "--device-type", "physical"]
+        )
+        assert config.device_type == "physical"
+        assert config.serial == "USB12345"
+
+    def test_invalid_device_type_rejected(self):
+        for bad in ("phone", "", "EMULATOR", "real"):
+            with pytest.raises(RunnerError, match="device_type"):
+                build_config(
+                    ["--serial", "S", "--skip-install", "--device-type", bad]
+                )
+
+    def test_invalid_device_type_rejected_in_config(self):
+        with pytest.raises(RunnerError, match="device_type"):
+            make_config(device_type="phone")
+
+    def test_physical_rejects_emulator_serial(self):
+        # physical 模式必须使用显式 USB 物理 serial；emulator-* 属误用
+        with pytest.raises(RunnerError, match="physical expects a USB"):
+            make_config(device_type="physical", serial="emulator-5554")
+
+    def test_physical_accepts_usb_serial(self):
+        config = make_config(device_type="physical", serial="USB12345")
+        assert config.device_type == "physical"
+
+    def test_emulator_accepts_emulator_serial(self):
+        config = make_config(device_type="emulator", serial="emulator-5554")
+        assert config.device_type == "emulator"
+
+
+# ---------------------------------------------------------------------------
+# M13-04：物理模式阶段顺序 / 证据编号 / reverse 清理
+# ---------------------------------------------------------------------------
+
+
+PHYSICAL_STAGE_NAMES = [
+    "wait-device",
+    "setup-adb-reverse",
+    "clear-app",
+    "clear-logcat",
+    "start-activity",
+    "wait-home",
+    "configure-base-url",
+    "tab-home",
+    "tab-study",
+    "tab-search",
+    "tab-voice",
+    "tab-settings",
+    "search",
+    "governance",
+    "remove-adb-reverse",
+    "mock-contract",
+    "dump-logcat",
+]
+
+EMULATOR_STAGE_NAMES = [
+    "wait-device",
+    "install-apk",
+    "clear-app",
+    "clear-logcat",
+    "start-activity",
+    "wait-home",
+    "tab-home",
+    "tab-study",
+    "tab-search",
+    "tab-voice",
+    "tab-settings",
+    "search",
+    "governance",
+    "mock-contract",
+    "dump-logcat",
+]
+
+
+def make_physical_runner(tmp_path, *, adb=None, ui=None, server=None, **kwargs):
+    return make_runner(
+        tmp_path,
+        adb=adb,
+        ui=ui,
+        server=server,
+        device_type="physical",
+        serial="USB12345",
+        **kwargs,
+    )
+
+
+class TestPhysicalMode:
+    def test_stage_order_and_all_passed(self, tmp_path):
+        adb = FakeAdb()
+        runner = make_physical_runner(tmp_path, adb=adb)
+        summary = runner.run()
+        names = [s["name"] for s in summary["stages"]]
+        assert names == PHYSICAL_STAGE_NAMES
+        assert all(s["status"] == "passed" for s in summary["stages"])
+        assert summary["overall_status"] == "passed"
+        assert summary["exit_code"] == 0
+        assert summary["device_type"] == "physical"
+
+    def test_reverse_setup_before_app_start_remove_at_teardown(self, tmp_path):
+        adb = FakeAdb()
+        runner = make_physical_runner(tmp_path, adb=adb)
+        summary = runner.run()
+        assert stage_by_name(summary, "setup-adb-reverse")["status"] == "passed"
+        assert stage_by_name(summary, "remove-adb-reverse")["status"] == "passed"
+        call_names = [c[0] for c in adb.calls]
+        # reverse 建立在 wait_device 之后、start_activity 之前（App 启动前）
+        assert call_names.index("reverse_tcp") > call_names.index("wait_device")
+        assert call_names.index("reverse_tcp") < call_names.index("start_activity")
+        # reverse 移除发生在成功路径收尾（start_activity 之后）
+        assert call_names.index("reverse_remove_tcp") > call_names.index(
+            "start_activity"
+        )
+        assert ("reverse_tcp", DEFAULT_PORT) in adb.calls
+        assert ("reverse_remove_tcp", DEFAULT_PORT, False) in adb.calls
+
+    def test_physical_evidence_numbering_shifted(self, tmp_path):
+        runner = make_physical_runner(tmp_path)
+        summary = runner.run()
+        # artifacts 按阶段顺序列出：configure 阶段先于 tab 巡检，但其证据
+        # 编号占用 06（tab 1..5 之后的下一个编号），search/governance 顺延
+        artifacts = [
+            artifact
+            for s in summary["stages"]
+            for artifact in s["artifacts"]
+        ]
+        assert artifacts == [
+            "06-configure-base-url.xml", "06-configure-base-url.png",
+            "01-tab-home.xml", "01-tab-home.png",
+            "02-tab-study.xml", "02-tab-study.png",
+            "03-tab-search.xml", "03-tab-search.png",
+            "04-tab-voice.xml", "04-tab-voice.png",
+            "05-tab-settings.xml", "05-tab-settings.png",
+            "07-search.xml", "07-search.png",
+            "08-governance.xml", "08-governance.png",
+        ]
+        for artifact in artifacts:
+            assert (runner.output_dir / artifact).is_file()
+
+    def test_device_failure_still_removes_reverse(self, tmp_path):
+        # 设备阶段失败（如启动 Activity 失败）时，finally 仍移除 reverse
+        adb = FakeAdb(fail_at={"start_activity"})
+        runner = make_physical_runner(tmp_path, adb=adb)
+        with pytest.raises(RuntimeError, match="start_activity failed"):
+            runner.run()
+        summary = load_summary(runner)
+        assert summary["overall_status"] == "failed"
+        assert stage_by_name(summary, "setup-adb-reverse")["status"] == "passed"
+        assert stage_by_name(summary, "remove-adb-reverse")["status"] == "passed"
+        assert ("reverse_remove_tcp", DEFAULT_PORT, False) in adb.calls
+
+    def test_setup_reverse_failure_marks_stage_and_still_cleans(self, tmp_path):
+        adb = FakeAdb(fail_at={"reverse_tcp"})
+        runner = make_physical_runner(tmp_path, adb=adb)
+        with pytest.raises(RuntimeError, match="reverse_tcp failed"):
+            runner.run()
+        summary = load_summary(runner)
+        assert stage_by_name(summary, "setup-adb-reverse")["status"] == "failed"
+        # 清理仍执行且成功
+        assert stage_by_name(summary, "remove-adb-reverse")["status"] == "passed"
+
+    def test_reverse_remove_nonzero_marks_stage_failed(self, tmp_path):
+        # 移除返回非零（如设备已离线）：不抛出，阶段 failed，overall failed
+        adb = FakeAdb(remove_returncode=1)
+        runner = make_physical_runner(tmp_path, adb=adb)
+        summary = runner.run()
+        stage = stage_by_name(summary, "remove-adb-reverse")
+        assert stage["status"] == "failed"
+        assert "returncode=1" in stage["detail"]
+        assert summary["overall_status"] == "failed"
+        assert summary["exit_code"] == 1
+
+    def test_reverse_remove_exception_marks_stage_failed(self, tmp_path):
+        adb = FakeAdb(fail_at={"reverse_remove_tcp"})
+        runner = make_physical_runner(tmp_path, adb=adb)
+        summary = runner.run()
+        stage = stage_by_name(summary, "remove-adb-reverse")
+        assert stage["status"] == "failed"
+        assert "RuntimeError" in stage["detail"]
+        assert summary["overall_status"] == "failed"
+
+
+# ---------------------------------------------------------------------------
+# M13-04：物理模式 Settings URL 编辑序列
+# ---------------------------------------------------------------------------
+
+
+class TestConfigureBaseUrlFlow:
+    def test_settings_editing_sequence(self, tmp_path):
+        ui = FakeUi()
+        runner = make_physical_runner(tmp_path, ui=ui)
+        summary = runner.run()
+        base_url = PHYSICAL_BASE_URL_TEMPLATE % DEFAULT_PORT
+        assert stage_by_name(summary, "configure-base-url")["status"] == "passed"
+        # 点击序列：进设置 -> 点输入框（label 即输入区）-> 保存 -> 回首页，
+        # 之后才是 5 个 tab 巡检（首页/学习/搜索/语音/设置）
+        assert ui.clicked[:4] == [
+            SETTINGS_TAB_TEXT,
+            SETTINGS_FIELD_LABEL,
+            SETTINGS_SAVE_TEXT,
+            HOME_TEXT,
+        ]
+        assert ui.clicked[4:9] == ["首页", "学习", "搜索", "语音", "设置"]
+        # 输入：先回环 URL，再搜索查询与回查编号
+        assert ui.typed == [base_url, SEARCH_QUERY, LOOKUP_QUERY]
+        # 清空序列：光标移到末尾（MOVE_END）后连发 DEL 覆盖既有/默认值
+        assert ui.key_event_sequences == [
+            [KEYCODE_MOVE_END] + [KEYCODE_DEL] * CLEAR_TEXT_BACKSPACE_COUNT
+        ]
+        # 等待序列：首页就绪 -> API 地址卡片 -> 已保存提示 -> 当前生效 URL
+        # -> 首页 /health 探测为「正常」（App 在用新地址）
+        waited = [text for text, _timeout in ui.waited_for]
+        assert waited[:6] == [
+            HOME_TEXT,
+            SETTINGS_API_SECTION_TEXT,
+            SETTINGS_SAVED_NOTICE_TEXT,
+            base_url,
+            HOME_API_HEALTH_TEXT,
+            HOME_API_OK_TEXT,
+        ]
+        for text, timeout in ui.waited_for[1:6]:
+            assert timeout == STAGE_WAIT_TIMEOUT
+
+    def test_clear_backspace_count_covers_known_urls(self):
+        # DEL 次数必须覆盖 App 可能持有的默认/已存值长度（10.0.2.2 默认与
+        # 回环 URL 均 22 字符），多余 DEL 在空输入框上是 no-op
+        base_url = PHYSICAL_BASE_URL_TEMPLATE % DEFAULT_PORT
+        assert CLEAR_TEXT_BACKSPACE_COUNT >= len("http://10.0.2.2:8000/")
+        assert CLEAR_TEXT_BACKSPACE_COUNT >= len(base_url)
+        assert CLEAR_TEXT_BACKSPACE_COUNT >= 32
+
+    def test_custom_port_flows_into_base_url(self, tmp_path):
+        ui = FakeUi()
+        output = tmp_path / "out"
+        output.mkdir()
+        config = make_config(
+            device_type="physical", serial="USB12345", port=9123
+        )
+        runner = SmokeRunner(
+            config=config,
+            adb=FakeAdb(),
+            ui=ui,
+            server_factory=lambda log_path, port: FakeServer(),
+            output_dir=output,
+            now=lambda: datetime(2026, 9, 7, tzinfo=timezone.utc),
+        )
+        summary = runner.run()
+        assert summary["overall_status"] == "passed"
+        assert ui.typed[0] == "http://127.0.0.1:9123/"
+        assert ("reverse_tcp", 9123) in runner.adb.calls
+        assert ("reverse_remove_tcp", 9123, False) in runner.adb.calls
+
+    def test_configure_failure_marks_stage_failed(self, tmp_path):
+        # 保存成功提示未出现（保存失败/校验拒绝）时阶段 failed
+        ui = FakeUi(fail_wait=SETTINGS_SAVED_NOTICE_TEXT)
+        runner = make_physical_runner(tmp_path, ui=ui)
+        with pytest.raises(RuntimeError, match="timed out"):
+            runner.run()
+        summary = load_summary(runner)
+        assert summary["overall_status"] == "failed"
+        assert stage_by_name(summary, "configure-base-url")["status"] == "failed"
+        # 清理仍执行
+        assert stage_by_name(summary, "remove-adb-reverse")["status"] == "passed"
+
+    def test_home_health_not_ok_fails_configure(self, tmp_path):
+        # 回首页后 /health 探测未显示「正常」＝App 未用上新地址
+        ui = FakeUi(fail_wait=HOME_API_OK_TEXT)
+        runner = make_physical_runner(tmp_path, ui=ui)
+        with pytest.raises(RuntimeError, match="timed out"):
+            runner.run()
+        summary = load_summary(runner)
+        assert stage_by_name(summary, "configure-base-url")["status"] == "failed"
+
+
+# ---------------------------------------------------------------------------
+# M13-04：emulator 模式无回归
+# ---------------------------------------------------------------------------
+
+
+class TestEmulatorNoRegression:
+    def test_emulator_never_calls_reverse(self, tmp_path):
+        adb = FakeAdb()
+        runner = make_runner(tmp_path, adb=adb)
+        summary = runner.run()
+        assert summary["device_type"] == "emulator"
+        reverse_calls = [
+            c for c in adb.calls if c[0] in ("reverse_tcp", "reverse_remove_tcp")
+        ]
+        assert reverse_calls == []
+        names = [s["name"] for s in summary["stages"]]
+        for physical_only in (
+            "setup-adb-reverse",
+            "configure-base-url",
+            "remove-adb-reverse",
+        ):
+            assert physical_only not in names
+
+    def test_emulator_stage_list_unchanged_15_stages(self, tmp_path):
+        # 带 install 的完整 15 阶段与 M12-06 完全一致（无物理阶段插入）
+        apk = tmp_path / "app.apk"
+        apk.write_bytes(b"apk")
+        runner = make_runner(
+            tmp_path, skip_install=False, apk=str(apk)
+        )
+        summary = runner.run()
+        names = [s["name"] for s in summary["stages"]]
+        assert names == EMULATOR_STAGE_NAMES
+        assert len(names) == 15
+
+    def test_emulator_never_touches_settings_url(self, tmp_path):
+        # 模拟器走 10.0.2.2 默认 base URL：不进 Settings 配置 URL
+        ui = FakeUi()
+        runner = make_runner(tmp_path, ui=ui)
+        summary = runner.run()
+        assert summary["overall_status"] == "passed"
+        assert ui.typed == [SEARCH_QUERY, LOOKUP_QUERY]
+        assert ui.key_event_sequences == []
+        assert SETTINGS_FIELD_LABEL not in ui.clicked
+        assert SETTINGS_SAVE_TEXT not in ui.clicked
+        # 「设置」只作为 tab 巡检第 5 个 tab 出现
+        assert ui.clicked[:5] == ["首页", "学习", "搜索", "语音", "设置"]
+
+    def test_emulator_evidence_numbering_unchanged(self, tmp_path):
+        runner = make_runner(tmp_path)
+        summary = runner.run()
+        artifacts = [
+            artifact
+            for s in summary["stages"]
+            for artifact in s["artifacts"]
+        ]
+        assert artifacts == [
+            "01-tab-home.xml", "01-tab-home.png",
+            "02-tab-study.xml", "02-tab-study.png",
+            "03-tab-search.xml", "03-tab-search.png",
+            "04-tab-voice.xml", "04-tab-voice.png",
+            "05-tab-settings.xml", "05-tab-settings.png",
+            "06-search.xml", "06-search.png",
+            "07-governance.xml", "07-governance.png",
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -1098,3 +1652,36 @@ class TestMain:
         instance = runner_module._make_server_factory()(Path("x.log"), 8123)
         assert isinstance(instance, FakeLoopbackServer)
         assert created == [(Path("x.log"), 8123)]
+
+    def test_physical_device_type_flows_through_cli(self, tmp_path, monkeypatch):
+        monkeypatch.chdir(tmp_path)
+        adb, ui, server = patch_cli_dependencies(monkeypatch, tmp_path)
+        code = main(
+            ["--serial", "USB12345", "--skip-install", "--device-type", "physical"]
+        )
+        assert code == 0
+        assert server.started and server.stopped
+        summary = json.loads(
+            (tmp_path / ".verify" / "android-smoke" / "summary.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        assert summary["device_type"] == "physical"
+        assert summary["overall_status"] == "passed"
+        names = [s["name"] for s in summary["stages"]]
+        assert names == PHYSICAL_STAGE_NAMES
+        assert ("reverse_tcp", DEFAULT_PORT) in adb.calls
+        assert ("reverse_remove_tcp", DEFAULT_PORT, False) in adb.calls
+        # Settings URL 编辑序列真实执行
+        assert ui.typed[0] == PHYSICAL_BASE_URL_TEMPLATE % DEFAULT_PORT
+
+    def test_cli_rejects_physical_with_emulator_serial(self, tmp_path, monkeypatch, capsys):
+        monkeypatch.chdir(tmp_path)
+        patch_cli_dependencies(monkeypatch, tmp_path)
+        code = main(
+            ["--serial", "emulator-5554", "--skip-install", "--device-type", "physical"]
+        )
+        assert code == 1
+        assert "physical expects a USB" in capsys.readouterr().err
+        # 配置校验在输出目录创建之前失败，不产出任何证据目录
+        assert not (tmp_path / ".verify").exists()

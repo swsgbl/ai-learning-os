@@ -18,6 +18,10 @@ from .adb import AdbClient
 
 _BOUNDS_RE = re.compile(r"^\[(\d+),(\d+)\]\[(\d+),(\d+)\]$")
 
+# dumpsys input_method 中的软键盘可见性标记（IMMS/InputMethodService 两段
+# 输出都可能带，取所有匹配里任一 true 即视为打开——保守方向）。
+_IME_SHOWN_RE = re.compile(r"mInput(?:View)?Shown\s*=\s*(true|false)")
+
 
 class UiError(Exception):
     """Base class for UI interaction errors."""
@@ -77,7 +81,12 @@ class UiElement:
 
 
 def parse_ui_dump(xml_bytes: bytes) -> List[UiElement]:
-    """Decode (utf-8) and parse a uiautomator dump into ``UiElement``s."""
+    """Decode (utf-8) and parse a uiautomator dump into ``UiElement``s.
+
+    真机 dump 常含退化 bounds 的节点（零尺寸/格式异常，如 EMUI 治理页
+    'pending：3' 的 ``[0,0][0,0]``，r9 物理证据）——这类节点不可见、
+    不可点，跳过即可，不能让整次解析失败。
+    """
     if isinstance(xml_bytes, bytes):
         text = xml_bytes.decode("utf-8")
     else:
@@ -87,9 +96,13 @@ def parse_ui_dump(xml_bytes: bytes) -> List[UiElement]:
 
     def walk(node, is_root=False):
         # The XML root (<hierarchy>) carries no bounds; only <node> elements
-        # are UI elements and must have valid bounds.
+        # are UI elements. Nodes with degenerate/missing bounds are skipped
+        # (invisible and untappable); valid siblings are still parsed.
         if not (is_root and node.get("bounds") is None):
-            elements.append(UiElement.from_node(node))
+            try:
+                elements.append(UiElement.from_node(node))
+            except UiError:
+                pass
         for child in node:
             walk(child)
 
@@ -147,6 +160,70 @@ def _summarize_xml(xml_bytes: bytes, limit: int = 400) -> str:
         len(names),
         "first=%s last=%s" % (names[0], names[-1]) if names else "",
     )[:limit]
+
+
+def swipe_up_args(
+    width: int,
+    height: int,
+    x_percent: float = 0.5,
+    from_y_percent: float = 0.75,
+    to_y_percent: float = 0.25,
+    duration_ms: int = 400,
+) -> tuple:
+    """按实测屏幕尺寸换算「向上滚动」swipe 的五个位置参数。
+
+    返回值与 :meth:`AndroidUiController.swipe` 的五个参数一一对应
+    ``(start_x, start_y, end_x, end_y, duration_ms)``。默认百分比在
+    1080x2400 模拟器上等价于 M12-06 硬编码的 ``(540, 1800, 540, 600,
+    400)``，在 720x1600 物理机上得到 ``(360, 1200, 360, 400, 400)``——
+    硬编码 y=1800 在 1600 高度的屏幕上越界（r8 物理首跑证据：swipe
+    落点出屏、搜索结果卡始终在视口外）。
+
+    校验：width/height 正整数；百分比均须在开区间 (0, 1)；from > to
+    （向上滚动）；duration_ms 非负整数。
+    """
+    for name, value in (("width", width), ("height", height)):
+        if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+            raise ValueError(
+                "swipe_up_args %s must be a positive int, got %r" % (name, value)
+            )
+    for name, value in (
+        ("x_percent", x_percent),
+        ("from_y_percent", from_y_percent),
+        ("to_y_percent", to_y_percent),
+    ):
+        if not isinstance(value, float) or not 0.0 < value < 1.0:
+            raise ValueError(
+                "swipe_up_args %s must be a float in (0, 1), got %r" % (name, value)
+            )
+    if from_y_percent <= to_y_percent:
+        raise ValueError(
+            "swipe_up_args requires from_y_percent > to_y_percent "
+            "(upward scroll), got from=%r to=%r" % (from_y_percent, to_y_percent)
+        )
+    if not isinstance(duration_ms, int) or isinstance(duration_ms, bool) or duration_ms < 0:
+        raise ValueError(
+            "swipe_up_args duration_ms must be a non-negative int, got %r"
+            % (duration_ms,)
+        )
+    x = int(round(width * x_percent))
+    return (x, int(round(height * from_y_percent)), x, int(round(height * to_y_percent)), duration_ms)
+
+
+def ime_shown_from_dumpsys(text: str) -> bool:
+    """从 ``dumpsys input_method`` 输出判断软键盘是否打开（尽力而为）。
+
+    匹配 ``mInputShown=`` / ``mInputViewShown=`` 标记：任一为 true 即视为
+    打开；全部为 false 才视为收起。输出里找不到任何标记（厂商/版本差异）
+    或入参不是字符串时，保守返回 True——调用方会执行 back() 收起键盘，
+    与既有证据路径（查询框持有焦点时 back 只收键盘不导航）一致。
+    """
+    if not isinstance(text, str):
+        return True
+    flags = _IME_SHOWN_RE.findall(text)
+    if not flags:
+        return True
+    return any(flag == "true" for flag in flags)
 
 
 class AndroidUiController:
@@ -281,3 +358,18 @@ class AndroidUiController:
 
     def back(self) -> object:
         return self.tap(["input", "keyevent", "4"])
+
+    def key_events(self, codes: Sequence[str]) -> object:
+        """Send ``input keyevent`` with one or more key codes, as a list.
+
+        用于文本框清空等序列（如先 MOVE_END 再多次 DEL）：所有码校验为
+        非空字符串后走参数列表形式的 ``adb shell input keyevent``，不拼接
+        任意 shell 字符串。
+        """
+        parts = list(codes)
+        if not parts:
+            raise ValueError("key_events requires at least one key code")
+        for code in parts:
+            if not isinstance(code, str) or not code:
+                raise TypeError("key_events codes must be non-empty strings")
+        return self.tap(["input", "keyevent"] + parts)

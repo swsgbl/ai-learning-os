@@ -1932,6 +1932,62 @@ Long 承接。
   `.verify/<output>/summary.json`（15 stage 状态、mock
   expected/unexpected/total、logcat 指标）与截图/dump/mock 请求日志。
 
+- USB 物理设备冒烟（M13-04，前置：`adb devices` 已列出该物理 serial；
+  mock 仍只绑定宿主机 `127.0.0.1`，不暴露 LAN）：
+
+  ```bash
+  python -m tools.android_smoke.runner \
+    --serial <物理serial> \
+    --device-type physical \
+    --apk apps/android/app/build/outputs/apk/debug/app-debug.apk \
+    --port 8000
+  ```
+
+  `--device-type`（默认 `emulator`）：`physical` 时在 App 启动前执行
+  `adb reverse --no-rebind tcp:<port> tcp:<port>`（设备侧 `127.0.0.1:<port>`
+  即宿主机 mock），首次启动后经真实 Settings UI 把 base URL 配成
+  `http://127.0.0.1:<port>/`（点输入框 → 光标移末尾连发 DEL 清空 → 输入
+  → 保存 → 等「已保存」提示与「当前生效」→ 回首页等 /health 显示「正常」），
+  收尾无论成败在 finally 中 `adb reverse --remove` 清理映射。物理模式多出
+  `setup-adb-reverse` / `configure-base-url` / `remove-adb-reverse` 三个
+  stage；`emulator` 模式行为与 M12-06 完全一致（默认 base URL
+  `http://10.0.2.2:8000/`，不触 Settings）。物理 serial 传
+  `emulator-*` 会被配置校验拒绝。
+
+- M13-04 物理首跑与两轮修正（证据见
+  `.verify/m13-04-android-physical-smoke/physical-EYFBB22923201473{,-r2,-r3}/`，
+  gitignored 本地证据）：
+
+  - **首跑（r1）**：安装/reverse/Settings 配置/首页健康检查/tab 巡检/
+    搜索执行全通过，但 720x1600 屏上「搜索结果概要」卡在计划卡下方
+    视口外——搜索阶段等待超时；随后 USB 掉线，`dump_logcat` 抛错导致
+    `_finalize` 失败、summary.json 缺席，已记录的 failed search 阶段与
+    reverse 清理状态被掩盖。
+  - **修正 1（屏幕相对滚动 + finalize 韧性）**：删除硬编码 swipe 坐标
+    （旧值 y=1800 在 1600 高度屏幕上越界），改为 `adb shell wm size`
+    实测尺寸（Override 优先）+ 百分比换算（x=50%、75%→25%、400ms；
+    在 1080x2400 模拟器上逐值等价于旧坐标）；搜索流程改为执行后先经
+    `dumpsys input_method` 按需收起 IME，再滚动结果卡进视口，然后才等
+    「搜索结果概要」/「#9001」，回查与治理滚动共用同一相对滚动；
+    `_finalize` 捕获 logcat 采集失败——dump-logcat 阶段记 failed
+    （缺失的 logcat 不得隐性通过）、stats 置零并标记 `unavailable`，
+    summary 照常写出。
+  - **修正 2（真机 dump/logcat 加固，r2 暴露）**：真机 uiautomator dump
+    含零尺寸 bounds 节点（EMUI 治理页 `pending：3` 的 `[0,0][0,0]`），
+    `parse_ui_dump` 由整 dump 抛错改为跳过不可见节点；ANR 匹配由裸
+    子串改为词边界（`fileCanRead:false` 的 "CanRead" 内嵌 "anr" 子串
+    曾把 dump-logcat 误判成 blocking）。
+  - **r3 实跑通过**：serial `EYFBB22923201473`（Huawei MGA-AL00，
+    720x1600）18/18 stage 全 passed（8 个启动/配置：wait-device、
+    setup-adb-reverse、install-apk、clear-app、clear-logcat、
+    start-activity、wait-home、configure-base-url ＋ 5 个 tab 巡检 ＋
+    search、governance ＋ 3 个收尾：remove-adb-reverse、mock-contract、
+    dump-logcat）、mock expected 19 / unexpected 0、
+    logcat 本包 FATAL/ANR/crash 0、`adb reverse --list` 收尾为空；
+    模拟器回归（`--device-type emulator`）15 stage 仍全 passed。
+    物理验证成立**不改变** `production_ready=false` 边界：mock 数据、
+    无真实 provider、无生产后端/DB、无凭据。
+
 - 根 `tests/__init__.py` 约定：仓库根**不放** `tests/__init__.py`——它会让
   根 `tests` 成为常规 Python 包并与 `services/api` 同名测试目录的
   pytest 收集/包导入冲突（首提交曾引入、`e505716` 已删除修复，PR #53
