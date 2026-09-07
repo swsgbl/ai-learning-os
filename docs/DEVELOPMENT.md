@@ -1886,3 +1886,111 @@ Long 承接。
   四项 SUCCESS 已实证**；两轮 CI 不扩大验证范围，仍不代表真机、真实
   provider、生产后端/生产 DB、治理写操作或生产可用。
 - 不打 tag、不发 Release、不部署；`production_ready=false` 不变。
+
+## Android loopback 冒烟 harness（M12-06）
+
+### 范围与结构
+
+- 分支 `feature/m12-06-android-smoke-harness`，基于
+  `main@4ef912f2e168caa654f74331826aac65afec08d7`；**已随 PR #53 合并**
+  （merge commit `4cbdfd2512891b36443c2caa5d967769567fcfac`，合并状态见
+  `docs/PROJECT_STATUS.md` M12-06 条目）。
+- 仅新增 `tools/android_smoke/`（9 模块）与 `tests/android_smoke/`（9 个
+  测试文件，18 files / +4566）；apps/android 主源码与服务端零改动。
+- 模块分工：`adb`（设备编排封装）、`interaction`（uiautomator dump 解析 +
+  坐标点击）、`server`（loopback mock，纯标准库、仅绑 127.0.0.1）、
+  `mock_contract`（预期请求清单与 JSONL 断言）、`logcat_analysis`
+  （FATAL/ANR/AndroidRuntime/本包 crash 行纯文本计数，`has_blocking_issue`
+  仅由 FATAL/ANR 触发，AndroidRuntime 行仅诊断计数）、`sanitize`（脱敏）、
+  `summary`（机器可读 summary.json）、`runner`（15 stage 编排 CLI）。
+- mock 请求日志只记 method/path/query_keys/body_len，不记请求 header 与
+  body（无凭据面）。
+
+### 最小可复现命令
+
+- 纯 Python 单测（不触网、不依赖真机/adb）：
+
+  ```bash
+  python -m pytest tests/android_smoke -q
+  ```
+
+  口径 **215 passed / 1 skipped**（skip 为 `test_runner.py:216` Windows
+  符号链接需特权、仅显式开启时运行——平台限制非缺陷）。
+
+- 真实模拟器冒烟（前置：adb 在 PATH、Android 模拟器已运行、APK 已构建）：
+
+  ```bash
+  python -m tools.android_smoke.runner \
+    --serial emulator-5554 \
+    --apk apps/android/app/build/outputs/apk/debug/app-debug.apk \
+    --port 8000
+  ```
+
+  参数：`--serial` 必填；`--output` 显式输出目录（必须不存在，默认
+  `.verify/` 下自动生成）；`--host` 仅允许 127.0.0.1；`--skip-install`
+  跳过安装；`--keep-output` 保留输出目录。产物为
+  `.verify/<output>/summary.json`（15 stage 状态、mock
+  expected/unexpected/total、logcat 指标）与截图/dump/mock 请求日志。
+
+- 根 `tests/__init__.py` 约定：仓库根**不放** `tests/__init__.py`——它会让
+  根 `tests` 成为常规 Python 包并与 `services/api` 同名测试目录的
+  pytest 收集/包导入冲突（首提交曾引入、`e505716` 已删除修复，PR #53
+  净 diff 不含该文件）。
+
+### 验证状态与边界
+
+- r8 实跑（`.verify/m12-06-android-smoke-r8/`，gitignored 本地证据）：15
+  stage 全 passed、mock expected 18 / unexpected 0 / total 18、logcat 本包
+  FATAL/ANR/crash 均 0；AndroidRuntime 标签行 145 为 uiautomator 工具进程
+  生命周期日志的仅诊断计数（87 D + 58 I、0 条 FATAL EXCEPTION），不夸大
+  为「全局 AndroidRuntime 行为 0」。Gradle 门禁由 CI `Android (unit test /
+  lint / assemble)` job 承载（PR run `34132047633` 与 main run
+  `34132434939` 均 SUCCESS），本 harness 切片未在本地重跑 Gradle。
+- loopback mock 口径：mock 仅绑 127.0.0.1、固定 mock 值，不代表真机、
+  真实 provider、生产后端/生产 DB 或生产可用；harness 是测试工具不是
+  产品功能；`.verify/` 证据不入库、不可由远端 CI 复核。
+
+## HarmonyOS 只读壳与设置（M13-01）
+
+### 范围与契约
+
+- 分支 `feature/m13-01-harmony-shell-api-auth`，基于
+  `main@4cbdfd2512891b36443c2caa5d967769567fcfac`；**已随 PR #54 合并**
+  （merge commit `cedf862e4b940d7c637378eea40be2247ba4249d`，合并状态见
+  `docs/PROJECT_STATUS.md` M13-01 条目）。
+- `apps/harmony`（ArkTS）：bundle `com.ailearningos.app`，EntryAbility +
+  `pages/Index` 五 Tab（首页/学习/搜索/语音/设置）；`AiosApi.ets` 只读
+  GET 六端点（health / auth-status / privacy / version / ops-snapshot /
+  audit?limit=100，`METHOD_GET` 硬编码拒绝其它 method，单次 GET 失败
+  如实返回不重试）；`UrlPolicy.ets` base URL 白名单纯函数（仅 http/https、
+  禁 userinfo/query/fragment/控制字符/反斜杠）；`SettingsStore.ets` 只存
+  base URL（preferences 名 `aios_settings`、唯一键 `api_base_url`，零
+  token/password/key）；Study/Search/Voice 只读占位，不虚构功能。
+- `module.json5` 仅申请 `ohos.permission.INTERNET`；根 `.gitignore` 新增
+  `apps/harmony/entry/build/`（构建产物不入库）。
+
+### 构建/安装/验收（最小可复现，本地模拟器口径）
+
+- 前置：DevEco Studio / hvigor 工具链 + 本地 HarmonyOS 模拟器（验收时
+  `hdc -t 127.0.0.1:5557`）。
+- clean 构建：在 `apps/harmony` 下 `assembleHap`（BUILD SUCCESSFUL，产物
+  `entry/build/default/outputs/default/entry-default-unsigned.hap`，
+  190,715 bytes）。
+- 安装与启动：`hdc -t 127.0.0.1:5557 install
+  entry-default-unsigned.hap`（未签名 HAP 直装）→ `aa start` 拉起
+  `com.ailearningos.app`。
+- 验收：依次点击五个 Tab，每 Tab 采集截图 + layout 转储；Home 页上滑
+  验证审计日志区滚入可见。完整步骤、六张 1320x2856 截图清单与已知警告见
+  `docs/evidence/m13-01-harmony-shell-api-auth/README.md`。
+
+### 边界
+
+- 未签名 HAP 直装是本地验收形态，不构成发布形态（签名配置留待 AGC/正式
+  流程）；验收环境为本地模拟器，非真机。
+- 仅 INTERNET 权限、只读 GET、只存 base URL；未接真实 provider、生产
+  DB、生产后端与治理写链路；Home 区块「网络请求失败」为无后端时的如实
+  失败（错误态 + 重试，非崩溃）。
+- CI 无 HarmonyOS job（四项仍为 API/Android/Docker/Web），HarmonyOS
+  构建与验收为本地口径，不构成远端 CI 结论。
+- 不打 tag、不发 Release、不部署；不读取/不输出 key/token/password；
+  `production_ready=false` 不变。
