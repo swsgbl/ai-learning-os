@@ -4,6 +4,7 @@ import com.ailearningos.app.core.AppError
 import com.ailearningos.app.core.AppErrorKind
 import com.ailearningos.app.data.AuthGateway
 import com.ailearningos.app.data.ExamGateway
+import com.ailearningos.app.data.GovernanceGateway
 import com.ailearningos.app.data.SearchGateway
 import com.ailearningos.app.data.SystemGateway
 import com.ailearningos.app.data.VoiceGateway
@@ -18,12 +19,16 @@ import com.ailearningos.app.data.model.ExamQuestion
 import com.ailearningos.app.data.model.ExamReport
 import com.ailearningos.app.data.model.ExamSession
 import com.ailearningos.app.data.model.ExamSubmission
+import com.ailearningos.app.data.model.GovernanceAuditEntry
 import com.ailearningos.app.data.model.GradedItem
 import com.ailearningos.app.data.model.MistakeEntry
+import com.ailearningos.app.data.model.OpsSnapshot
 import com.ailearningos.app.data.model.PaperSummary
+import com.ailearningos.app.data.model.PendingReviewDrafts
 import com.ailearningos.app.data.model.PrivacySnapshot
 import com.ailearningos.app.data.model.QuestionOption
 import com.ailearningos.app.data.model.RemediationTask
+import com.ailearningos.app.data.model.ReleaseVersion
 import com.ailearningos.app.data.model.ReportItem
 import com.ailearningos.app.data.model.SearchOutcome
 import com.ailearningos.app.data.model.SearchPlan
@@ -1175,4 +1180,126 @@ fun searchRecordFixture(
         ),
     ),
     createdAt = "2026-09-07T02:00:00+00:00",
+)
+
+// ====================================================================
+// M12-05 治理域：迷你服务端 fake / fixtures
+// ====================================================================
+
+/**
+ * 迷你治理服务端 fake：默认返回成功 fixture；结果/异常经 Result 字段可控，
+ * 时序类用例（顺序刷新/错误恢复）用 *Handler 覆盖钩子（返回 null 走默认）。
+ * auditCalls 记录每次传入的 limit（size 即调用次数）。
+ */
+class FakeGovernanceGateway : GovernanceGateway {
+
+    var versionResult: Result<ReleaseVersion> = Result.success(governanceVersionFixture())
+
+    var opsSnapshotResult: Result<OpsSnapshot> = Result.success(opsSnapshotFixture())
+
+    /** 默认两条：一条带 actor 的用户动作，一条 actor 为 null 的系统动作 */
+    var auditResult: Result<List<GovernanceAuditEntry>> = Result.success(
+        listOf(
+            governanceAuditEntryFixture(),
+            governanceAuditEntryFixture(id = 2, actorId = null, actorUsername = null, action = "worker.tick", targetType = "job", targetId = "job-1"),
+        ),
+    )
+
+    /** 版本覆盖钩子：返回 null 走 [versionResult] 默认 */
+    var versionHandler: (suspend () -> ReleaseVersion?)? = null
+
+    /** 快照覆盖钩子：返回 null 走 [opsSnapshotResult] 默认 */
+    var opsSnapshotHandler: (suspend () -> OpsSnapshot?)? = null
+
+    /** 审计覆盖钩子：返回 null 走 [auditResult] 默认 */
+    var auditHandler: (suspend (limit: Int) -> List<GovernanceAuditEntry>?)? = null
+
+    var versionCalls = 0
+        private set
+
+    var opsSnapshotCalls = 0
+        private set
+
+    /** auditEntries 每次调用传入的 limit（size 即调用次数） */
+    val auditCalls = mutableListOf<Int>()
+
+    override suspend fun version(): ReleaseVersion {
+        versionCalls++
+        return versionHandler?.invoke() ?: versionResult.getOrThrow()
+    }
+
+    override suspend fun opsSnapshot(): OpsSnapshot {
+        opsSnapshotCalls++
+        return opsSnapshotHandler?.invoke() ?: opsSnapshotResult.getOrThrow()
+    }
+
+    override suspend fun auditEntries(limit: Int): List<GovernanceAuditEntry> {
+        auditCalls.add(limit)
+        return auditHandler?.invoke(limit) ?: auditResult.getOrThrow()
+    }
+}
+
+// ---------- 治理 fixtures（显式假值；对应服务端 version/ops-snapshot/audit 契约形态，非真实数据） ----------
+
+fun governanceVersionFixture(
+    version: String = "0.14.0",
+    gitCommit: String = "1a2b3c4",
+    alembicCurrent: String = "a1b2c3d4e5f6",
+    alembicHead: String = "a1b2c3d4e5f6",
+) = ReleaseVersion(
+    version = version,
+    gitCommit = gitCommit,
+    alembicCurrent = alembicCurrent,
+    alembicHead = alembicHead,
+)
+
+fun opsSnapshotFixture(
+    generatedAt: String = "2026-09-07T02:00:00+00:00",
+    databaseBackend: String = "postgresql",
+    usersByRole: Map<String, Int> = mapOf("admin" to 1, "learner" to 2),
+    papersTotal: Int = 3,
+    resourcesByParseStatus: Map<String, Int> = mapOf("parsed" to 2, "pending" to 1),
+    parseJobsByStatus: Map<String, Int> = mapOf("succeeded" to 1),
+    pendingReviewDrafts: PendingReviewDrafts = PendingReviewDrafts(
+        courseImport = 0,
+        courseGeneration = 0,
+        paperQuestion = 0,
+        variantQuestion = 0,
+    ),
+    voiceSessionsByStatus: Map<String, Int> = mapOf("REPORT_READY" to 1),
+    searchQueriesTotal: Int = 7,
+    auditEntriesTotal: Int = 12,
+    workerRunning: Boolean = true,
+) = OpsSnapshot(
+    generatedAt = generatedAt,
+    databaseBackend = databaseBackend,
+    usersByRole = usersByRole,
+    papersTotal = papersTotal,
+    resourcesByParseStatus = resourcesByParseStatus,
+    parseJobsByStatus = parseJobsByStatus,
+    pendingReviewDrafts = pendingReviewDrafts,
+    voiceSessionsByStatus = voiceSessionsByStatus,
+    searchQueriesTotal = searchQueriesTotal,
+    auditEntriesTotal = auditEntriesTotal,
+    workerRunning = workerRunning,
+)
+
+fun governanceAuditEntryFixture(
+    id: Long = 1,
+    actorId: String? = "u1",
+    actorUsername: String? = "alice",
+    action: String = "resource.create",
+    targetType: String = "resource",
+    targetId: String = "res-1",
+    requestId: String = "req-fixture-0001",
+    createdAt: String = "2026-09-07T01:00:00+00:00",
+) = GovernanceAuditEntry(
+    id = id,
+    actorId = actorId,
+    actorUsername = actorUsername,
+    action = action,
+    targetType = targetType,
+    targetId = targetId,
+    requestId = requestId,
+    createdAt = createdAt,
 )

@@ -11,7 +11,7 @@ import retrofit2.http.Part
 import retrofit2.http.Path
 import retrofit2.http.Query
 
-/** M12-01 壳与认证 + M12-02 考试业务 + M12-03 语音业务 + M12-04 搜索业务端点面 */
+/** M12-01 壳与认证 + M12-02 考试业务 + M12-03 语音业务 + M12-04 搜索业务 + M12-05 治理业务端点面 */
 interface AiosApi {
 
     @GET("health")
@@ -122,4 +122,15 @@ interface AiosApi {
 
     @GET("api/v1/search/queries/{query_id}")
     suspend fun searchRecord(@Path("query_id") queryId: Long): SearchRecordResponse
+
+    // ---------- M12-05 治理业务 ----------
+
+    @GET("api/v1/version")
+    suspend fun version(): VersionResponse
+
+    @GET("api/v1/system/ops-snapshot")
+    suspend fun opsSnapshot(): OpsSnapshotResponse
+
+    @GET("api/v1/audit")
+    suspend fun audit(@Query("limit") limit: Int): List<AuditEntryResponse>
 }

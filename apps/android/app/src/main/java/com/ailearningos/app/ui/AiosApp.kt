@@ -26,6 +26,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import com.ailearningos.app.ui.exam.ExamScreen
+import com.ailearningos.app.ui.governance.GovernanceScreen
+import com.ailearningos.app.ui.governance.GovernanceViewModel
 import com.ailearningos.app.ui.home.HomeScreen
 import com.ailearningos.app.ui.icons.AiosIcons
 import com.ailearningos.app.ui.login.LoginScreen
@@ -54,6 +56,7 @@ const val LOGIN_ROUTE = "login"
 const val EXAM_PAPER_ROUTE = "exam-paper/{paperId}"
 const val EXAM_RESUME_ROUTE = "exam/{examId}"
 const val REVIEW_ROUTE = "review/{examId}"
+const val GOVERNANCE_ROUTE = "governance"
 const val VOICE_PAPER_ROUTE = "voice-paper/{paperId}"
 const val VOICE_SESSION_ROUTE = "voice-session/{sessionId}"
 
@@ -107,6 +110,9 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
                     onOpenStudy = { navController.navigate(AiosDestination.Study.route) },
                     onOpenVoice = { navController.navigate(AiosDestination.Voice.route) },
                     onOpenSettings = { navController.navigate(AiosDestination.Settings.route) },
+                    onOpenGovernance = {
+                        navController.navigate(GOVERNANCE_ROUTE) { launchSingleTop = true }
+                    },
                 )
             }
             composable(AiosDestination.Study.route) {
@@ -188,6 +194,15 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
                     viewModel(factory = viewModelFactory)
                 ReviewScreen(
                     viewModel = reviewViewModel,
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable(GOVERNANCE_ROUTE) {
+                val governanceViewModel: GovernanceViewModel =
+                    viewModel(factory = viewModelFactory)
+                GovernanceScreen(
+                    viewModel = governanceViewModel,
+                    sessionViewModel = sessionViewModel,
                     onBack = { navController.popBackStack() },
                 )
             }

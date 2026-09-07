@@ -1,0 +1,193 @@
+{
+  "milestone": "M12-05",
+  "title": "Android 治理 / 发布只读面（Governance & Release）本机冒烟与证据归档",
+  "date_local": "2026-09-07",
+  "captured_at_utc": "2026-09-07T04:00:35Z ~ 2026-09-07T04:06:20Z (UI 采集窗口)；归档时间 2026-09-07 12:2x 本地",
+  "git": {
+    "branch": "feature/m12-05-android-governance-release",
+    "head": "b6475c02071c280ec4c154f91989c54db94a432c"
+  },
+  "apk": {
+    "path": "apps/android/app/build/outputs/apk/debug/app-debug.apk",
+    "sha256": "56119e1a28199712b7ac0c7e9dbb54fee19c4bad52a23b3c85afd218a44c59a8",
+    "size_bytes": 11454463,
+    "build_type": "debug",
+    "mtime_local": "2026-09-07T11:49:02"
+  },
+  "emulator": {
+    "serial": "emulator-5554",
+    "android_release": "16",
+    "sdk": 36,
+    "model": "sdk_gphone64_x86_64",
+    "manufacturer": "Google",
+    "resolution": "1080x2400",
+    "density_dpi": 420,
+    "app_pid_at_capture": 11852,
+    "app_pid_alive_at_archive": true
+  },
+  "mock": {
+    "script": "mock_api_used.py（即 .verify/m12-05-android-governance/mock_api.py 副本）",
+    "pid": 41452,
+    "host_bind": "127.0.0.1:8000（仅 loopback，不对外）",
+    "device_side_base_url": "http://10.0.2.2:8000（Android 模拟器宿主机 loopback 别名）",
+    "endpoints": [
+      "/health",
+      "/api/v1/auth/status",
+      "/api/v1/system/privacy",
+      "/api/v1/version",
+      "/api/v1/system/ops-snapshot",
+      "/api/v1/audit?limit=100"
+    ],
+    "mode": "GET-only 固定 JSON；写方法与其余路径一律 404；不代理不转发不触网不读密钥",
+    "log": "mock_requests.log（每请求一行：utc/method/path/body_len，无 header 无 body）"
+  },
+  "mock_request_log_assertions": {
+    "total_entries": 12,
+    "structure": {
+      "lines_1_6_host_selfcheck": {
+        "window_utc": "2026-09-07T04:00:35",
+        "paths": [
+          "/health",
+          "/api/v1/auth/status",
+          "/api/v1/system/privacy",
+          "/api/v1/version",
+          "/api/v1/system/ops-snapshot",
+          "/api/v1/audit?limit=100"
+        ],
+        "count": 6,
+        "passed": true
+      },
+      "lines_7_9_home_app": {
+        "window_utc": "2026-09-07T04:03:29",
+        "paths": [
+          "/health",
+          "/api/v1/auth/status",
+          "/api/v1/system/privacy"
+        ],
+        "count": 3,
+        "passed": true
+      },
+      "lines_10_12_governance_app": {
+        "window_utc": "2026-09-07T04:06:20",
+        "paths": [
+          "/api/v1/audit?limit=100",
+          "/api/v1/version",
+          "/api/v1/system/ops-snapshot"
+        ],
+        "count": 3,
+        "passed": true
+      }
+    },
+    "app_request_total": 6,
+    "all_method_get": true,
+    "no_unexpected_paths": true,
+    "passed": true
+  },
+  "ui_capture_assertions": {
+    "home": {
+      "captures": [
+        "01-home-governance-entry.png",
+        "01-home-governance-entry.xml"
+      ],
+      "passed_items": 3,
+      "assertions": [
+        "home_shows_governance_release_entry",
+        "home_shows_local_mode",
+        "home_shows_health_ok"
+      ],
+      "all_passed": true
+    },
+    "governance_version": {
+      "captures": [
+        "02-governance-version.png",
+        "02-governance-version.xml"
+      ],
+      "passed_items": 5,
+      "assertions": [
+        "governance_title",
+        "governance_local_mode",
+        "governance_version_number(0.12.5-mock)",
+        "governance_git_commit(m1205mockgit)",
+        "governance_alembic_current_and_target(均为 m1205mockrev)"
+      ],
+      "all_passed": true,
+      "note": "采集时 mock 日志 9→12 行，恰为治理页三请求"
+    },
+    "ops_snapshot": {
+      "captures": [
+        "03-governance-ops-snapshot.png",
+        "03-governance-ops-snapshot.xml"
+      ],
+      "passed_items": 18,
+      "assertions": [
+        "generatedAt",
+        "databaseBackend(postgresql)",
+        "workerRunning(true)",
+        "papersTotal(34)",
+        "searchQueriesTotal(456)",
+        "auditEntriesTotal(1024)",
+        "pendingReviewDrafts(courseImport/courseGeneration/paperQuestion/variantQuestion = 1/2/4/5)",
+        "usersByRole(admin 2 / learner 128)",
+        "resourcesParsed(parsed 40 / pending 3)",
+        "parseJobs(succeeded 33 / queued 2)",
+        "voiceSessions(completed 90 / failed 2)"
+      ],
+      "all_passed": true
+    },
+    "audit": {
+      "captures": [
+        "04-governance-audit.png",
+        "04-governance-audit.xml"
+      ],
+      "passed_contains": 13,
+      "passed_not_contains": 4,
+      "assertions": [
+        "审计留痕标题",
+        "条目1001(id/actor=mock_admin/action=paper.publish/target=paper-m1205/request_id/created_at)",
+        "条目1002(id/actor=null/action=worker.tick/target=job-m1205/request_id/created_at)",
+        "不渲染 M12_05_BEFORE_SHOULD_NOT_RENDER",
+        "不渲染 M12_05_AFTER_SHOULD_NOT_RENDER",
+        "不出现「before：」「after：」文本"
+      ],
+      "all_passed": true
+    },
+    "all_passed": true
+  },
+  "logcat_crash_stats": {
+    "source": "logcat-full.txt.gz（adb -s emulator-5554 logcat -d 全量缓冲，4453 行 / 原始 564905 字节）",
+    "fatal_exception": 0,
+    "anr": 0,
+    "androidruntime": 0,
+    "com_ailearningos_app_crash_lines": 0,
+    "androidruntime_tag_note": "AndroidRuntime 标签原始出现 75 行，全部为 uiautomator dump 工具进程(com.android.commands.uiautomator.Launcher)生命周期日志(START/boot image/lock profiling/Calling main entry/Shutting down VM，15 组 × 5 行)，无任何崩溃输出，不计入崩溃统计",
+    "app_pid_11852_alive_after_session": true,
+    "passed": true
+  },
+  "android_full_gate": {
+    "unit_tests": {
+      "total": 347,
+      "failures": 0,
+      "errors": 0,
+      "suites": 30,
+      "includes_new": [
+        "GovernanceDtoParsingTest",
+        "GovernanceRepositoryTest",
+        "GovernanceViewModelTest"
+      ]
+    },
+    "lint": {
+      "errors": 0,
+      "warnings": 19
+    },
+    "assemble_debug": "success（app-debug.apk 11,454,463 bytes）",
+    "passed": true
+  },
+  "conclusion": "M12-05 Android 治理/发布只读面冒烟通过：入口可达、三端点(version/ops-snapshot/audit?limit=100)数据正确渲染、审计 before/after 载荷不渲染、无崩溃/无 ANR、Android 全量门禁(347/0/0、lint 0 error、assembleDebug)通过。",
+  "scope_and_limits": [
+    "本证据基于本机 loopback mock（127.0.0.1:8000，模拟器经 10.0.2.2 访问），全部为固定 mock 值（版本 0.12.5-mock / m1205mockgit / m1205mockrev / 快照计数 / 审计条目）",
+    "不代表真机（Pixel/三星等）行为；仅在 sdk_gphone64_x86_64 / API 36 模拟器验证",
+    "不代表真实 provider / 生产后端行为：未连接任何真实服务、数据库或密钥；auth 为 disabled（mock 返回 auth_enabled=false）",
+    "mock 仅实现 GET 只读端点，未验证任何写路径；治理面为只读展示，不含操作行为",
+    "logcat 统计覆盖本会话缓冲区，非长期稳定性结论"
+  ]
+}

@@ -1,0 +1,34 @@
+{
+  "total_entries": 12,
+  "host_selfcheck_count": 6,
+  "host_selfcheck_paths": [
+    "/health",
+    "/api/v1/auth/status",
+    "/api/v1/system/privacy",
+    "/api/v1/version",
+    "/api/v1/system/ops-snapshot",
+    "/api/v1/audit?limit=100"
+  ],
+  "home_app_count": 3,
+  "home_app_paths": [
+    "/health",
+    "/api/v1/auth/status",
+    "/api/v1/system/privacy"
+  ],
+  "governance_app_count": 3,
+  "governance_app_paths": [
+    "/api/v1/audit?limit=100",
+    "/api/v1/version",
+    "/api/v1/system/ops-snapshot"
+  ],
+  "app_request_total": 6,
+  "assertions": {
+    "host_first6": true,
+    "home_3": true,
+    "governance_3": true,
+    "all_get": true,
+    "home_timestamps_clustered": true,
+    "governance_timestamps_clustered": true
+  },
+  "pass": true
+}

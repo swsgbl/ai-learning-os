@@ -1,0 +1,15 @@
+{
+  "source": "logcat-full.txt.gz",
+  "total_lines": 4453,
+  "crash_indicators": {
+    "FATAL EXCEPTION": 0,
+    "ANR (exact)": 0,
+    "ANR (case-insensitive)": 0,
+    "AndroidRuntime crash lines (FATAL/Process:/Error type/Exception)": 0,
+    "com.ailearningos.app crash lines": 0
+  },
+  "androidruntime_tag_total": 75,
+  "androidruntime_note": "75 lines all from com.android.commands.uiautomator.Launcher lifecycle (START/boot image/lock profiling/Calling main entry/Shutting down VM), 15 groups x 5 lines; none are crash output",
+  "com_ailearningos_app_any_lines": 35,
+  "pass": true
+}
