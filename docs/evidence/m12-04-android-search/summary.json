@@ -1,0 +1,72 @@
+{
+  "milestone": "M12-04",
+  "title": "Android search flow simulator smoke (loopback mock + emulator-5554)",
+  "date": "2026-09-07",
+  "branch": "feature/m12-04-android-search-flow",
+  "head_commit": "23fb626",
+  "working_tree": "dirty (SearchScreen.kt modified; ResultUrlPolicy.kt/ResultUrlPolicyTest.kt untracked; docs modified) — smoke ran against working-tree code; APK built 2026-09-07T08:32:46+08:00 contains ResultUrlPolicy (verified in classes5/classes8.dex)",
+  "executor": "Claude Code on local Windows machine; no real provider, no production service, no keys; external-network isolation is app/mock scope, not whole-device (Android system auto probes present in logcat, see observations_not_defects)",
+  "committed": false,
+  "pushed": false,
+  "environment": {
+    "emulator": "emulator-5554 (AVD Medium_Phone, Android 16 / SDK 36, 1080x2400 @420dpi)",
+    "apk": "apps/android/app/build/outputs/apk/debug/app-debug.apk (debug, install -r after pm clear)",
+    "mock": "run location at the time: .verify/m12-04-android-smoke/mock_api.py (gitignored, stdlib only, bind 127.0.0.1:8000; reached via 10.0.2.2:8000 debug default base URL); the same keyless mock contract used by the smoke is archived for reproduction at docs/evidence/m12-04-android-search/mock_api_used.py",
+    "result_url_fixed": "https://localhost/m12-04/smoke-source?trace=local&suite=android-360"
+  },
+  "steps": [
+    "adb install -r app-debug.apk",
+    "pm clear com.ailearningos.app; logcat -c; am start -W com.ailearningos.app/.MainActivity (TotalTime 1008ms)",
+    "bottom nav: home dump -> five items each exactly once",
+    "tap nav 搜索 -> providers card loads from mock",
+    "query input '2024 tsinghua advanced math mcq' (ASCII; adb input text cannot inject CJK)",
+    "预览计划 -> plan card (slots + per-provider will-run/will-not-run)",
+    "搜索 -> outcome #9001, 2 results, skipped cloud-web",
+    "result URL rendered verbatim, wrapped to 2 lines (first line exactly 40 chars cut at '?')",
+    "tap 打开 -> ACTION_VIEW: focus com.ailearningos.app/.MainActivity -> com.android.chrome firstrun.FirstRunActivity (dumpsys before/after)",
+    "BACK -> app; 按编号回查 input 9001 -> 回查记录 -> record meta + results + URL verbatim"
+  ],
+  "evidence_files": [
+    "01-home-five-nav.png/.xml",
+    "02-search-providers.png/.xml",
+    "03-search-plan.png/.xml",
+    "04-search-results-top.png/.xml",
+    "05-search-results-result-a.png/.xml",
+    "06-search-results-result-b-skipped.png/.xml",
+    "07-action-view-chrome-takeover.png/.xml/.txt",
+    "08-record-lookup-9001.png/.xml",
+    "09-record-meta.png/.xml",
+    "mock_requests.log",
+    "mock_api_used.py",
+    "logcat-full.txt.gz",
+    "README.md"
+  ],
+  "logcat_archive": {
+    "file": "logcat-full.txt.gz",
+    "description": "lossless gzip of the raw logcat captured verbatim during the smoke; NO cleaning or editing was applied",
+    "decompressed_sha256": "5d2c76c221d65e3e0058ea0f9556b34424b98a50c9a375d335d3e7f5b908c112",
+    "decompressed_bytes": 1283682,
+    "lines": 9603,
+    "note": "decompressed SHA256 matches the original captured file byte-for-byte; original CRLF line endings and system-log trailing whitespace are preserved inside the archive; it differs from the earlier staged plain-text blob only by core.autocrlf CRLF->LF normalization (that blob: SHA256 351d2a49fb55a46599f564949610be3e1fd10232ae08765c612c83c97b7d94e1, 1274079 bytes; CR strip/re-add roundtrip verified identical). Archived as gzip so git stores a binary blob and git diff --check does not run text-diff whitespace checks on raw evidence (the earlier plain-text staging produced 549 trailing-whitespace warnings, all inside this evidence file and all verbatim raw content; sources and docs had zero warnings)."
+  },
+  "results": {
+    "five_item_navigation": "pass (01 xml: 首页/学习/搜索/语音/设置 each 1 node in bottom bar)",
+    "providers_registry": "pass (02 xml: local-corpus 可用; cloud-web 不可用 + reason verbatim)",
+    "plan_preview": "pass (03 xml: slots 学科/学校/年份/题型 + local-corpus 将搜索 / cloud-web 不会执行)",
+    "search_execution": "pass (04 xml: #9001, 2 条, 12 ms, local-corpus、cloud-web; mock log POST /queries body 54B)",
+    "result_url_display": "pass (05/06 xml: URL verbatim across exactly 2 wrapped lines <=40 chars; no truncation/rewrite)",
+    "open_button": "pass (打开 enabled only next to https-validated URL)",
+    "action_view_browser_takeover": "pass (07 txt: mCurrentFocus/ResumedActivity com.android.chrome FirstRunActivity after tap)",
+    "record_lookup_9001": "pass (08/09 xml: 原查询词/结果数/耗时/记录时间/请求的源/results URL/skipped)",
+    "no_fatal_no_anr": "pass (logcat-full.txt.gz decompresses to the raw 9603-line logcat: FATAL EXCEPTION=0, ANR=0, AndroidRuntime+pkg=0)"
+  },
+  "observations_not_defects": [
+    "adb shell input text cannot type CJK (input-injection limitation); smoke used ASCII query text. mock echoes query verbatim; slots/plan/results carry fixed Chinese fixtures.",
+    "a swipe performed while Gboard was open glide-typed ' by' into the query field AFTER the search had executed; actual POST /queries body verified clean ('2024 tsinghua advanced math mcq' + limit:10). No app defect; tooling artifact.",
+    "Chrome on this emulator had never been launched: ACTION_VIEW lands on firstrun.FirstRunActivity instead of a page load. ToS not accepted (no Chrome-side page load or request; unrelated OS-level Android auto probes are documented in a separate observation below). Takeover still proven via window/activity focus transition. URL host is localhost, which never leaves the device.",
+    "home screen renders mock's non-enum privacy route strings (model_route/voice_mode/search_mode) as 未知 and booleans faithfully (否/否); /health shows 正常 — honest projection, matches design boundary.",
+    "logcat contains Android system-level automatic network traffic unrelated to this app's own networking (so 'no external network' must not be overstated to whole-device scope): NetworkMonitor (system_server PID 1169) probed connectivitycheck.gstatic.com (DNS OK; HTTP generate_204 actually served from the network, X-Android-Response-Source=[NETWORK 204]), www.google.com HTTPS and play.googleapis.com fallback (both timed out; isCaptivePortal -> isPartialConnectivity=true); Gboard (com.google.android.inputmethod.latin PID 1662) requested dictionarypack/emoji/next-word-predictor manifests from www.gstatic.com when the query field gained focus. OS/IME component behavior, not app traffic — app+mock stayed loopback-only per mock_requests.log; no AI provider or production service involved."
+  ],
+  "defects_found": [],
+  "mock_lifecycle": "started by this run (127.0.0.1:8000, PID 46572), stopped by this run (taskkill /F); port 8000 verified free afterwards"
+}

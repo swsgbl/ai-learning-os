@@ -1,0 +1,3 @@
+    topResumedActivity=ActivityRecord{36208234 u0 com.android.chrome/org.chromium.chrome.browser.firstrun.FirstRunActivity t8}
+  ResumedActivity: ActivityRecord{36208234 u0 com.android.chrome/org.chromium.chrome.browser.firstrun.FirstRunActivity t8}
+  mCurrentFocus=Window{526f46e u0 com.android.chrome/org.chromium.chrome.browser.firstrun.FirstRunActivity}

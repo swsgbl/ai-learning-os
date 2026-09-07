@@ -4,6 +4,7 @@ import com.ailearningos.app.core.AppError
 import com.ailearningos.app.core.AppErrorKind
 import com.ailearningos.app.data.AuthGateway
 import com.ailearningos.app.data.ExamGateway
+import com.ailearningos.app.data.SearchGateway
 import com.ailearningos.app.data.SystemGateway
 import com.ailearningos.app.data.VoiceGateway
 import com.ailearningos.app.data.local.ExamResumeStore
@@ -24,6 +25,14 @@ import com.ailearningos.app.data.model.PrivacySnapshot
 import com.ailearningos.app.data.model.QuestionOption
 import com.ailearningos.app.data.model.RemediationTask
 import com.ailearningos.app.data.model.ReportItem
+import com.ailearningos.app.data.model.SearchOutcome
+import com.ailearningos.app.data.model.SearchPlan
+import com.ailearningos.app.data.model.SearchPlanItem
+import com.ailearningos.app.data.model.SearchPlanSlots
+import com.ailearningos.app.data.model.SearchProviderEntry
+import com.ailearningos.app.data.model.SearchRecord
+import com.ailearningos.app.data.model.SearchResultItem
+import com.ailearningos.app.data.model.SearchSkipped
 import com.ailearningos.app.data.model.ReviewQuestion
 import com.ailearningos.app.data.model.UserProfile
 import com.ailearningos.app.data.model.VoiceAnswerResult
@@ -1018,4 +1027,152 @@ fun voiceReportFixture(
         ),
     ),
     writtenReportUrl = "/api/v1/exams/$examId/report",
+)
+
+// ====================================================================
+// M12-04 搜索域：迷你服务端 fake / fixtures
+// ====================================================================
+
+/** search 调用记录（查询词/源过滤/limit 三元组） */
+data class RecordedSearch(val query: String, val providers: List<String>?, val limit: Int)
+
+/**
+ * 迷你搜索服务端 fake：默认返回成功 fixture；结果/异常经 Result 字段可控，
+ * 时序类用例（顺序竞争/门控响应）用 *Handler 覆盖钩子（返回 null 走默认）。
+ */
+class FakeSearchGateway : SearchGateway {
+
+    var providersResult: Result<List<SearchProviderEntry>> = Result.success(searchProvidersFixture())
+
+    var planResult: Result<SearchPlan> = Result.success(searchPlanFixture())
+
+    var searchResult: Result<SearchOutcome> = Result.success(searchOutcomeFixture())
+
+    var recordResult: Result<SearchRecord> = Result.success(searchRecordFixture())
+
+    var providersHandler: (suspend () -> List<SearchProviderEntry>)? = null
+
+    var planHandler: (suspend (query: String) -> SearchPlan?)? = null
+
+    var searchHandler: (suspend (query: String) -> SearchOutcome?)? = null
+
+    var recordHandler: (suspend (queryId: Long) -> SearchRecord?)? = null
+
+    val planCalls = mutableListOf<String>()
+
+    val searchCalls = mutableListOf<RecordedSearch>()
+
+    val recordCalls = mutableListOf<Long>()
+
+    override suspend fun providers(): List<SearchProviderEntry> =
+        providersHandler?.invoke() ?: providersResult.getOrThrow()
+
+    override suspend fun plan(query: String, providers: List<String>?): SearchPlan {
+        planCalls.add(query)
+        return planHandler?.invoke(query) ?: planResult.getOrThrow()
+    }
+
+    override suspend fun search(query: String, providers: List<String>?, limit: Int): SearchOutcome {
+        searchCalls.add(RecordedSearch(query, providers, limit))
+        return searchHandler?.invoke(query) ?: searchResult.getOrThrow()
+    }
+
+    override suspend fun record(queryId: Long): SearchRecord {
+        recordCalls.add(queryId)
+        return recordHandler?.invoke(queryId) ?: recordResult.getOrThrow()
+    }
+}
+
+// ---------- 搜索 fixtures（显式假值；对应服务端 search 契约形态，非真实数据） ----------
+
+fun searchProviderFixture(
+    name: String = "local-corpus",
+    kind: String = "local-corpus",
+    enabled: Boolean = true,
+    unavailableReason: String? = null,
+) = SearchProviderEntry(name = name, kind = kind, enabled = enabled, unavailableReason = unavailableReason)
+
+fun searchProvidersFixture() = listOf(
+    searchProviderFixture(),
+    searchProviderFixture(
+        name = "cloud-web",
+        kind = "web",
+        enabled = false,
+        unavailableReason = "SEARCH_MODE=local：检索路由本地语料，cloud-web 不出站",
+    ),
+)
+
+fun searchPlanFixture(
+    query: String = "高等数学 选择题",
+) = SearchPlan(
+    query = query,
+    slots = SearchPlanSlots(
+        subject = null,
+        school = null,
+        year = "2024",
+        course = "高等数学",
+        questionType = "选择题",
+        publicity = null,
+    ),
+    items = listOf(
+        SearchPlanItem(provider = "local-corpus", query = "高等数学 选择题 2024", enabled = true, unavailableReason = null),
+        SearchPlanItem(
+            provider = "cloud-web",
+            query = "高等数学 选择题 2024",
+            enabled = false,
+            unavailableReason = "SEARCH_MODE=local：检索路由本地语料，cloud-web 不出站",
+        ),
+    ),
+)
+
+fun searchOutcomeFixture(
+    queryId: Long = 7,
+    query: String = "正弦定理",
+    resultCount: Int = 1,
+) = SearchOutcome(
+    queryId = queryId,
+    query = query,
+    providersRequested = listOf("local-corpus", "cloud-web"),
+    results = listOf(
+        SearchResultItem(
+            title = "正弦定理的内容",
+            url = "https://example.invalid/doc/1",
+            snippet = "a/sinA=b/sinB，正弦定理的内容",
+            source = "local-corpus",
+            provider = "local-corpus",
+            authority = null,
+            rankReason = "本地语料命中：关键词重叠",
+        ),
+    ),
+    skipped = listOf(
+        SearchSkipped(provider = "cloud-web", reason = "SEARCH_MODE=local：检索路由本地语料，cloud-web 不出站"),
+    ),
+    resultCount = resultCount,
+    durationMs = 12,
+)
+
+fun searchRecordFixture(
+    id: Long = 7,
+    query: String = "正弦定理",
+) = SearchRecord(
+    id = id,
+    query = query,
+    providersRequested = listOf("local-corpus", "cloud-web"),
+    skipped = listOf(
+        SearchSkipped(provider = "cloud-web", reason = "SEARCH_MODE=local：检索路由本地语料，cloud-web 不出站"),
+    ),
+    resultCount = 1,
+    durationMs = 12,
+    results = listOf(
+        SearchResultItem(
+            title = "正弦定理的内容",
+            url = "https://example.invalid/doc/1",
+            snippet = "a/sinA=b/sinB，正弦定理的内容",
+            source = "local-corpus",
+            provider = "local-corpus",
+            authority = null,
+            rankReason = "本地语料命中：关键词重叠",
+        ),
+    ),
+    createdAt = "2026-09-07T02:00:00+00:00",
 )
