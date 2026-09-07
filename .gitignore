@@ -23,3 +23,6 @@ services/api/.pytest-*
 # M10-04 治理报告/导出（含生产 ID 清单，禁止提交）
 artifacts/
 temp/
+
+# M13-01 HarmonyOS 构建产物(HAP/cache/intermediates/绝对路径)禁止入库
+apps/harmony/entry/build/

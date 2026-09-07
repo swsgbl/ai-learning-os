@@ -1,0 +1,9 @@
+/oh_modules/
+/build/
+/.hvigor/
+/.clangd/
+/.clang-format/
+/.clang-tidy/
+/local.properties
+/.tmp-test/
+/entry/.hvigor/

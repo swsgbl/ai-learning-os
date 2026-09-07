@@ -1,0 +1,2 @@
+# Define project specific obfuscation rules here.
+# (obfuscation disabled in build-profile; file kept for structure parity)
