@@ -1809,7 +1809,7 @@ Long 承接。
 
 - 分支 `feature/m12-05-android-governance-release`，基于
   `main@b6475c02071c280ec4c154f91989c54db94a432c`；本地实现与模拟器 mock
-  冒烟完成，当前**未 commit/push/开 PR/合并**，PR/merge CI 未产生。
+  冒烟完成，**已随 PR #51 合并**（PR/merge CI 与收口细节见下文「合并状态」）。
 - Android 只消费既有 `GET /api/v1/version`、`GET /api/v1/system/ops-snapshot`、
   `GET /api/v1/audit?limit=100`；不新增服务端端点、不做治理写操作。
 - 首页入口仅在 AuthDisabled 或 admin 用户状态显示；入口可见性不放宽服务端
@@ -1861,11 +1861,28 @@ Long 承接。
   崩溃行=0；AndroidRuntime 75 行为 uiautomator 工具生命周期日志，非崩溃。
   证据 `docs/evidence/m12-05-android-governance/`。
 
+### 合并状态
+
+- **PR #51 已合并**（2026-09-07T05:04:30Z）：base
+  `main@b6475c02071c280ec4c154f91989c54db94a432c`，head
+  `cd25805e877c9e34f6d31dec61c9df3301e48173`（分支
+  `feature/m12-05-android-governance-release`），merge commit
+  `8c6fe6b6354c504e8e61beb078bfe2675b7f558a`；功能 head tree 与 merge
+  commit tree 均为 `79f0bacfcde7a135e83f6d889475a01a2d33a9b0`（本地原提交
+  `7c929f168265a1a67cb5cf49979177f5fb2ec2a2` tree 相同——远端提交经 GitHub
+  Git Data API 创建、提交消息尾部换行被去掉致 SHA 不同，非内容差异）。
+- PR 变更 32 files changed / 1967 insertions / 6 deletions；PR CI run
+  `34085123408` 与 merge 后 main CI run `34085414607` 均
+  API/Android/Docker/Web 四项 SUCCESS；远端功能分支已删除；未打 tag、
+  未发 GitHub Release、未部署。
+
 ### 边界
 
 - 模拟器与固定 mock 数据，不代表真机、真实 provider、生产后端/生产 DB 或
   生产可用。
 - 只读 GET，不覆盖治理写路径；未连接真实服务/数据库；不读取/不输出
   key/token/password。
-- 未 commit/push/开 PR/合并；无 PR/merge CI 结论；不打 tag、不发 Release、
-  不部署；`production_ready=false` 不变。
+- **PR #51 与 merge 后 main CI 两轮 run（`34085123408` / `34085414607`）
+  四项 SUCCESS 已实证**；两轮 CI 不扩大验证范围，仍不代表真机、真实
+  provider、生产后端/生产 DB、治理写操作或生产可用。
+- 不打 tag、不发 Release、不部署；`production_ready=false` 不变。
