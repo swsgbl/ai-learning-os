@@ -1,10 +1,13 @@
 /**
- * HomePane.ets — 首页六区只读面板(M13-01 第 3c-1 小步)
+ * HomePane.ets — 首页六区只读面板(M13-01 第 3c-1 小步, M13-03 使用官方 emitter API)
  *
  * 功能(刻意收窄):
  *   - 六个只读区块:服务健康 / 认证状态 / 隐私模式 / 服务版本 / 运维快照 / 审计日志;
  *   - aboutToAppear 经 getUIContext().getHostContext() 取上下文,loadBaseUrl 读
- *     已保存地址(缺省 DEFAULT_API_BASE_URL),然后整体刷新一次;
+ *     已保存地址(缺省 DEFAULT_API_BASE_URL),然后整体刷新一次(仅一次);
+ *   - 通过 emitter.on 订阅 SettingsStore.saveBaseUrl 成功通知:收到新 URL 后重新读取
+ *     持久化 URL(防御跨进程/其他写入者),更新服务地址显示,并刷新六区;
+ *   - aboutToDisappear 退订以避免重复触发和内存泄漏;
  *   - 每区独立 idle/loading/success/error 状态机 + 独立重试按钮;失败如实展示
  *     原始错误(HTTP 状态 / 网络层错误 / URL 校验文案),绝不虚构数据;
  *   - 只调用 6 个只读 GET:getHealth / getAuthStatus / getPrivacy / getVersion /
@@ -14,9 +17,17 @@
  *     绝不渲染 before/after(UI 契约不投影载荷字段);
  *   - Record<string,number> 经 Object.keys 转成 key/value 行;空表显示「暂无数据」;
  *   - 全程无 token/password/key,不做路由接线(接线由后续小步负责)。
+ *
+ * M13-03 Supervisor Feedback 修正:
+ *   1. 事件 ID 由 SettingsStore 统一管理导出,HomePane 只导入
+ *   2. 使用回调专用 off 重载,避免移除其他订阅者
+ *   3. 无非空断言,this.hostContext 用闭包捕获或显式检查
+ *   4. HomePane 始终以 loadBaseUrl 为权威来源,不依赖 emit payload
+ *   5. aboutToAppear 先 off 再 on,防止多次注册堆叠回调
  */
 
 import { common } from '@kit.AbilityKit';
+import { emitter } from '@kit.BasicServicesKit';
 import {
   ApiResult,
   AuditEntry,
@@ -32,7 +43,11 @@ import {
   getPrivacy,
   getVersion
 } from '../AiosApi';
-import { DEFAULT_API_BASE_URL, loadBaseUrl } from './SettingsStore';
+import {
+  DEFAULT_API_BASE_URL,
+  EVENT_ID_URL_CHANGED,
+  loadBaseUrl
+} from './SettingsStore';
 
 /** 区块状态机(六区共用同一枚举,各自持有一份状态) */
 enum ZoneStatus {
@@ -93,6 +108,17 @@ export struct HomePane {
   @State auditData: Array<AuditEntry> = [];
   @State auditError: string = '';
   private hostContext: common.Context | undefined = undefined;
+  /** 唯一回调引用,用于精确退订(emitter.off(eventId, callback)) */
+  private urlChangeListener: (event: emitter.EventData) => void = (event: emitter.EventData) => {
+    const ctx: common.Context | undefined = this.hostContext;
+    if (ctx === undefined || ctx === null) {
+      return;
+    }
+    loadBaseUrl(ctx).then((freshUrl: string) => {
+      this.baseUrl = freshUrl;
+      this.refreshAll();
+    });
+  };
 
   async aboutToAppear(): Promise<void> {
     const ctx: common.Context | undefined =
@@ -102,8 +128,20 @@ export struct HomePane {
       return;
     }
     this.hostContext = ctx;
+    // 初始化加载一次持久化 URL
     this.baseUrl = await loadBaseUrl(this.hostContext);
+    // 注册 URL 变更订阅:SettingsStore.saveBaseUrl 成功后触发刷新
+    // 先 off 再 on:防止 aboutToAppear 被多次调用时堆叠回调
+    emitter.off(EVENT_ID_URL_CHANGED, this.urlChangeListener);
+    emitter.on(EVENT_ID_URL_CHANGED, this.urlChangeListener);
+    // 初始加载后刷新一次
     this.refreshAll();
+  }
+
+  aboutToDisappear(): void {
+    // 组件销毁时退订,防止重复触发和内存泄漏
+    // 使用带 callback 的 off 重载,仅移除本组件的订阅,不影响其他订阅者
+    emitter.off(EVENT_ID_URL_CHANGED, this.urlChangeListener);
   }
 
   /** 整体刷新:六区并行发起,各自独立推进状态机 */

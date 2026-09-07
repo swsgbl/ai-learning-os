@@ -2027,8 +2027,35 @@ python tools/harmony_mock/server.py --host 0.0.0.0 --port 8765
 
 ### 已知生命周期边界
 
-`HomePane` 仅在 `aboutToAppear` 读取一次 base URL；Settings 保存新地址后，已挂载的 Home 不会自动刷新该地址。M13-02 按当前设计重启 App 完成验证，不在本切片修改生产源码；该问题列为后续独立优化项。
+`HomePane` 仅在 `aboutToAppear` 读取一次 base URL；Settings 保存新地址后，已挂载的 Home 不会自动刷新该地址。M13-02 按当前设计重启 App 完成验证，不在本切片修改生产源码；该问题列为后续独立优化项。（注：该生命周期缺口已由 M13-03 修复，见下方 M13-03 节。）
 
 ### 边界
 
 本验收是本地模拟器 + mock only 口径，不代表真机、真实 provider、生产后端、生产 DB、治理写链路或生产可用。未签名 HAP 直装只是本地验收形态，不构成发布形态；未使用 AGC key、签名配置或自动签名。CI 无 HarmonyOS job，后续 PR 的 API/Android/Docker/Web 结果不能扩大为 HarmonyOS 远端验证；`production_ready=false` 语义不变。以上为提交前本地验收快照；远端 PR/CI/合并状态以后续 PROJECT_STATUS 回填为准。
+
+## HarmonyOS Home 地址变更自动刷新（M13-03）
+
+### 范围与契约
+
+- 分支 `feature/m13-03-harmony-home-refresh`，基于 `origin/main@0b125319f8b2ef4f05428d75925e8293c3e8d4a6`（PR #56 merge commit，本地 git 可验证）；修复 M13-02 记录的已知生命周期缺口——Settings 保存新 base URL 后，已挂载的 Home 不会自动刷新该地址。
+- 生产改动仅两个文件（`apps/harmony/entry/src/main/ets/components/`）：`SettingsStore.ets` 与 `HomePane.ets`；服务端 / Android / Web / infra / mock 工具零改动。
+- 事件机制（官方 `@kit.BasicServicesKit` `emitter`，进程内）：
+  - 事件 ID 集中由 SettingsStore 导出：`EVENT_ID_URL_CHANGED = 'aios://settings/url_changed'`；订阅方（HomePane）只导入，不自持字符串。
+  - SettingsStore 仅在 UrlPolicy 校验、preferences `put`、`flush` 三步全部成功后才 `emitter.emit`；校验失败不写盘不发事件，写入/flush 失败如实报错同样不发事件。emit 附带的 URL payload 仅作观测用途，订阅方不信赖。
+  - HomePane 持有一个稳定回调引用（类字段 `urlChangeListener`）；`aboutToAppear` 先 `off` 再 `on` 防止重复注册堆叠；`aboutToDisappear` 使用带回调的 `emitter.off` 精确退订，仅移除本组件订阅、不影响其他订阅者。
+  - 回调不信任事件 payload：始终 `loadBaseUrl(context)` 重读持久化存储作为权威来源（防御其他写入者），更新地址显示后 `refreshAll()`。
+  - `aboutToAppear` 仍只做一次初始 URL 加载（`loadBaseUrl`）与一次初始刷新（`refreshAll`）；事件路径不重复首刷语义。
+- 入库证据为 `docs/evidence/m13-03-harmony-home-refresh/README.md`（唯一入库文件）；原始验收证据在 gitignored `.verify/m13-03-harmony-home-refresh/`，不入库。
+
+### 构建与验收（最小可复现，本地模拟器口径）
+
+- 前置：DevEco Studio / hvigor 工具链 + 本地 HarmonyOS 模拟器（验收时 `hdc -t 127.0.0.1:5557`）；在 `apps/harmony` 所在 PowerShell 进程设置 `DEVECO_SDK_HOME=C:\DevEco-Studio\sdk`。
+- clean 构建：`hvigorw.bat clean --no-daemon` → `hvigorw.bat assembleHap --no-daemon`，均 exit 0 / BUILD SUCCESSFUL；产物 `entry-default-unsigned.hap` 197,338 bytes，SHA256 `C06327CED5973DD5A634E8A974C2DF9C26D6991CBF815F2BE9416BC8C1938960`。
+- 正向流（全程不重启 App）：全新安装首启默认 `http://127.0.0.1:8000`，六区真实网络错误态；supervisor 仅为本运行启动 `python tools/harmony_mock/server.py --host 0.0.0.0 --port 8766`，模拟器使用 `http://192.168.8.3:8766/`；真实 Settings UI 经系统文本菜单清除旧地址、输入 mock URL、点击「保存」（`已保存: http://192.168.8.3:8766/`）；返回已挂载 Home，`服务地址` 与六区刷新为 mock 数据（服务健康/认证/隐私/版本/运维/审计，before/after 载荷不渲染）。
+- 负向流（同样不重启 App）：停止 mock（端口无残留监听）；Settings 清除有效地址输入 `javascript:alert` 被拒（`URL 校验失败 [4]: 缺少 scheme:// (仅允许 http/https)`）；已挂载 Home 保留先前数据、不刷新为网络错误态——证明被拒保存未写盘也未 emit 事件。
+- Stage A 干净首屏：同一 M13-03 HAP 卸载重装后重采首屏与滚动视口，六区全覆盖真实错误态，无 mock 数据。
+- 完整证据清单、断言明细与截图/布局文件对应关系见 `docs/evidence/m13-03-harmony-home-refresh/README.md`。
+
+### 边界
+
+本验收是本地模拟器 + mock only 口径，不代表真机、真实 provider、生产后端、生产 DB、治理写链路或生产可用。未签名 HAP 直装只是本地验收形态，不构成发布形态；未使用 AGC key、签名配置或自动签名。CI 无 HarmonyOS job，后续 PR 的 API/Android/Docker/Web 结果不能扩大为 HarmonyOS 远端验证；不打 tag、不发 Release、不部署；`production_ready=false` 语义不变。以上为提交前本地验收快照；远端 PR/CI/合并状态以后续 PROJECT_STATUS 回填为准。
