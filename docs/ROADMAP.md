@@ -55,5 +55,5 @@
 - [x] M12-01 App Shell + API/Auth 基础（Compose M3 壳、五屏、登录/会话、可配置 API 地址、Keystore 加密 token）
 - [x] 考试/学习业务接入（M12-02 已随 PR #45 合并 main——学习试卷列表、考场状态机、审阅报告，PR CI 与 merge 后 main CI 全绿实证；仍未跑模拟器/真机）
 - [x] 语音能力接入（M12-03 第一切片已随 PR #47 合并 main，merge commit `2bbeb072`——服务端权威语音陪练：创建/恢复会话、读题播报链、命令/意图作答、打断/暂停/跳过/结束、录音转写代理、全卷报告、trace 上报；PR CI run `34049713374` 与 merge 后 main CI run `34049946924` 四项全绿实证；仍未跑模拟器/真机、未接真实 provider）
-- [ ] 搜索接入（M12-04 第一切片已本地实现并提交于分支 `feature/m12-04-android-search-flow`（来源 URL 安全行返工与模拟器冒烟证据未提交），未 push、未开 PR——服务端权威搜索：搜索源可用性、计划预览、执行搜索与 skipped 原因、query_id 回查，结果/回查来源 URL 原文可溯源展示且仅合法 https 可经 ACTION_VIEW 打开，本地门禁 318 JVM 单测（首轮 303 + 返工新增 15）/ lint 0 error / 19 warning（基线同构成）；Android 16 emulator-5554 loopback mock 冒烟已通过（2026-09-07，证据 `docs/evidence/m12-04-android-search/`——五位导航、providers/plan/search/record、结果与回查 URL 原文两行断行、合法 https ACTION_VIEW 由 Chrome 接管、无 FATAL/ANR；Chrome 停在首运行页不代表页面加载成功，mock URL 为 localhost 不代表外网 provider）；未验真机、真实 provider、非 https 禁用态的模拟器交互（该禁用逻辑由 ResultUrlPolicyTest JVM 覆盖）与生产可用，待 Codex 验收）
+- [x] 搜索接入（M12-04 第一切片已随 PR #49 合并 main，merge commit `64e26caeb83645e49a8f2db87dbcbfd97ea524e0`，PR CI run `34073874737` 与 merge 后 main CI run `34074112566` 四项全绿——服务端权威搜索 providers/plan/search/record、318 JVM 单测、lint 0 error；Android 16 emulator-5554 loopback mock 冒烟已通过；仍未验真机、真实 provider、非 https 禁用态模拟器交互与生产可用边界）
 - [ ] 治理与发布链路接入

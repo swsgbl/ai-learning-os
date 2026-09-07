@@ -1591,8 +1591,9 @@ NEXT_QUESTION / REPORT_READY）；错误码经 M12-02 的 `AppError` 语义映�
 
 在 M12-01/02/03 基座上接入搜索域第一切片（分支
 `feature/m12-04-android-search-flow`，基于 `main@144bbf7`（PR #48 merge
-commit）；**本地已提交（来源 URL 安全行返工与模拟器冒烟证据未提交）、
-未 push、未开 PR**）。目标：Android 搜索页从无到有
+commit）；**PR #49 已合并，最终 head `dba0a6c3`，merge commit
+`64e26ca`，来源 URL 安全行返工与模拟器冒烟证据均随 PR 入库，PR 与
+merge 后 main CI 四项全绿（详见后文合并状态回填）**）。目标：Android 搜索页从无到有
 ——复杂留给系统，简单留给用户：进入页面即见搜索源可用性与禁用原因，输入
 查询词即可预览计划或执行搜索，结果/排序理由/弃用原因全部如实呈现，可按
 query_id 回查服务端记录；本地不持久化任何搜索历史。
@@ -1792,6 +1793,12 @@ Long 承接。
 - UI 第一切片固定默认 limit=10（契约 1..50 值域由仓储层透传，未做 UI
   limit 选择器）、未做 providers 勾选过滤（默认全部已注册源执行，skipped
   语义自然呈现）——留给后续切片按真实使用反馈决定。
-- 不 push、不建 PR、不打 tag、不发 GitHub Release（待 Codex 验收后另行
-  收口）；`production_ready=false` 语义不变，本切片不构成任何
+- **合并状态回填（2026-09-07）**：PR #49 已合并（base main@144bbf7，最终
+  head dba0a6c3，merged_at 2026-09-07T01:46:44Z，merge commit 64e26ca）；
+  PR CI run 34073874737 与 merge 后 main CI run 34074112566 均为
+  API/Android/Docker/Web 四项 SUCCESS；远端功能分支已删除。未打 tag、
+  未发 Release、未部署；真机、真实 provider、生产可用仍未验证，
+  production_ready=false。
+- PR #49 已合并收口（不打 tag、不发 GitHub Release、不部署仍然成立）；
+  `production_ready=false` 语义不变，本切片不构成任何
   production readiness。
