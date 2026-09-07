@@ -1994,3 +1994,41 @@ Long 承接。
   构建与验收为本地口径，不构成远端 CI 结论。
 - 不打 tag、不发 Release、不部署；不读取/不输出 key/token/password；
   `production_ready=false` 不变。
+
+## HarmonyOS Home mock 数据与降级验收（M13-02）
+
+### 范围与契约
+
+- 分支 `feature/m13-02-harmony-mock-data`，基于 `main@a88ed80a20bbd2d6961d53f29407f9c59aca859f`；本切片只新增验收工具，不改 Harmony 生产源码。
+- `tools/harmony_mock/server.py` 复用 `tools.android_smoke.mock_contract.ReadOnlyMockContract`，仅暴露 M13-01 Home 六个 GET 端点：`/health`、`/api/v1/auth/status`、`/api/v1/system/privacy`、`/api/v1/version`、`/api/v1/system/ops-snapshot`、`/api/v1/audit?limit=100`。
+- 非 GET 或未支持 method（如 HEAD/OPTIONS/FOO）、未知路径、audit 缺少/非 `limit=100` 或含多余 query 均返回 404；纯 Python 标准库，不触网，不读取密钥，不记录请求 header/body。
+- 默认绑定 `127.0.0.1`；仅本地 HarmonyOS 模拟器验收显式使用 `--host 0.0.0.0`，不得用于生产。
+- 入库证据为 `docs/evidence/m13-02-harmony-mock-data/README.md` 与 `fixtures/mock_responses.json`；原始验收证据在 gitignored `.verify/m13-02-harmony-mock-data/`，不入库。
+
+### 运行与复验
+
+```powershell
+python tools/harmony_mock/test_contract.py --host 127.0.0.1 --port 18765
+python tools/harmony_mock/test_contract.py --host 127.0.0.1 --port 28765
+python -m py_compile tools/harmony_mock/server.py tools/harmony_mock/test_contract.py
+
+# 仅本地模拟器验收；不要在生产暴露该服务
+python tools/harmony_mock/server.py --host 0.0.0.0 --port 8765
+```
+
+### 验收事实（2026-09-07）
+
+- 契约测试实现时首验：端口 18765 与 28765 均 **15/15 passed**；Codex 审查发现未支持的 HEAD/OPTIONS/FOO 曾落入 501，补充三个未支持 method 负例并修复 fail-closed 501 缺口后，最终两端口复验均 **18/18 passed**；`python -m py_compile` 通过。
+- 在单次 PowerShell 进程内设置 `DEVECO_SDK_HOME=C:\DevEco-Studio\sdk` 后，clean `assembleHap` 通过；未签名 HAP 194715 bytes，SHA256 `990906DA88FEC6F769705106BE156FDA33F2CD34576B300A3E566BEBF4A1CA30`。
+- `hdc -t 127.0.0.1:5557 install` 安装成功，`aa start` 启动成功；重启后 App PID `22710`。
+- HarmonyOS 模拟器网络中宿主地址使用 `http://192.168.8.3:8765/`；通过 Settings 真实 UI 保存并点击「测试连接」，layout 显示 `连接成功: aios-mock-android-smoke`。
+- 重启后 Home 六区均渲染 mock 数据：服务健康 `status: ok` / `service: aios-mock-android-smoke`；认证为本地模式（认证未开启）；隐私模式 local/local/local/关/关；版本 `0.12.5-mock` / `m1205mockgit` / `m1205mockrev`；运维快照 `postgresql`、papers 34、search 456、audit total 1024、worker 是；审计显示 `#1001 paper.publish` 与 `#1002 worker.tick`，before/after 载荷不渲染。
+- 停止 mock 监听并释放 8765 端口后点击「整体刷新」，六区最终显示 `网络请求失败: [object Object]` 并保留各自「重试」按钮；App PID 保持 `22710` 未崩溃，学习/搜索/语音/设置四 Tab 仍可切换。
+
+### 已知生命周期边界
+
+`HomePane` 仅在 `aboutToAppear` 读取一次 base URL；Settings 保存新地址后，已挂载的 Home 不会自动刷新该地址。M13-02 按当前设计重启 App 完成验证，不在本切片修改生产源码；该问题列为后续独立优化项。
+
+### 边界
+
+本验收是本地模拟器 + mock only 口径，不代表真机、真实 provider、生产后端、生产 DB、治理写链路或生产可用。未签名 HAP 直装只是本地验收形态，不构成发布形态；未使用 AGC key、签名配置或自动签名。CI 无 HarmonyOS job，后续 PR 的 API/Android/Docker/Web 结果不能扩大为 HarmonyOS 远端验证；`production_ready=false` 语义不变。以上为提交前本地验收快照；远端 PR/CI/合并状态以后续 PROJECT_STATUS 回填为准。
