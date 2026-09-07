@@ -1,0 +1,12 @@
+{"utc": "2026-09-07T04:00:35.105500+00:00", "method": "GET", "path": "/health", "body_len": 0}
+{"utc": "2026-09-07T04:00:35.117279+00:00", "method": "GET", "path": "/api/v1/auth/status", "body_len": 0}
+{"utc": "2026-09-07T04:00:35.129000+00:00", "method": "GET", "path": "/api/v1/system/privacy", "body_len": 0}
+{"utc": "2026-09-07T04:00:35.139534+00:00", "method": "GET", "path": "/api/v1/version", "body_len": 0}
+{"utc": "2026-09-07T04:00:35.150908+00:00", "method": "GET", "path": "/api/v1/system/ops-snapshot", "body_len": 0}
+{"utc": "2026-09-07T04:00:35.161079+00:00", "method": "GET", "path": "/api/v1/audit?limit=100", "body_len": 0}
+{"utc": "2026-09-07T04:03:29.797538+00:00", "method": "GET", "path": "/health", "body_len": 0}
+{"utc": "2026-09-07T04:03:29.797538+00:00", "method": "GET", "path": "/api/v1/auth/status", "body_len": 0}
+{"utc": "2026-09-07T04:03:29.852532+00:00", "method": "GET", "path": "/api/v1/system/privacy", "body_len": 0}
+{"utc": "2026-09-07T04:06:20.639093+00:00", "method": "GET", "path": "/api/v1/audit?limit=100", "body_len": 0}
+{"utc": "2026-09-07T04:06:20.640120+00:00", "method": "GET", "path": "/api/v1/version", "body_len": 0}
+{"utc": "2026-09-07T04:06:20.642223+00:00", "method": "GET", "path": "/api/v1/system/ops-snapshot", "body_len": 0}

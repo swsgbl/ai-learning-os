@@ -26,6 +26,7 @@ import com.ailearningos.app.ui.components.SessionCard
 import com.ailearningos.app.ui.components.StatusRow
 import com.ailearningos.app.ui.components.privacyLabel
 import com.ailearningos.app.ui.components.statusColor
+import com.ailearningos.app.ui.session.SessionState
 import com.ailearningos.app.ui.session.SessionViewModel
 import com.ailearningos.app.ui.theme.BrandStyle
 import com.ailearningos.app.ui.theme.Subtle
@@ -38,10 +39,18 @@ fun HomeScreen(
     onOpenStudy: () -> Unit,
     onOpenVoice: () -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenGovernance: () -> Unit,
 ) {
     val sessionState by sessionViewModel.state.collectAsStateWithLifecycle()
     val sessionNotice by sessionViewModel.notice.collectAsStateWithLifecycle()
     val homeState by homeViewModel.state.collectAsStateWithLifecycle()
+
+    // 治理入口可见性：本地免鉴权模式，或已登录的管理员（与后端治理接口的准入一致）
+    val governanceEntryVisible = when (val state = sessionState) {
+        SessionState.AuthDisabled -> true
+        is SessionState.Authenticated -> state.user.isAdmin
+        else -> false
+    }
 
     LaunchedEffect(Unit) {
         homeViewModel.refresh()
@@ -119,19 +128,24 @@ fun HomeScreen(
         SectionCard(title = "功能入口") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(onClick = onOpenStudy, modifier = Modifier.fillMaxWidth()) {
-                    Text("学习 / 考场（占位）")
+                    Text("学习 / 考场")
                 }
                 OutlinedButton(onClick = onOpenVoice, modifier = Modifier.fillMaxWidth()) {
-                    Text("语音陪练（占位）")
+                    Text("语音陪练")
                 }
                 OutlinedButton(onClick = onOpenSettings, modifier = Modifier.fillMaxWidth()) {
                     Text("设置 / API 配置")
+                }
+                if (governanceEntryVisible) {
+                    OutlinedButton(onClick = onOpenGovernance, modifier = Modifier.fillMaxWidth()) {
+                        Text("治理 / 发布")
+                    }
                 }
             }
         }
 
         Text(
-            "第一切片只包含应用壳与认证/API 基础：考试、语音、检索、治理业务尚未接入。",
+            "当前边界：学习/考场、语音、检索与治理/发布已接入客户端；搜索切片通过模拟器 mock 冒烟，真机与真实 provider 仍未验证。",
             style = MaterialTheme.typography.bodySmall,
             color = Subtle,
         )

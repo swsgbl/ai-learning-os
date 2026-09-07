@@ -7,6 +7,7 @@ import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.CreationExtras
 import com.ailearningos.app.ui.exam.ExamEntry
 import com.ailearningos.app.ui.exam.ExamViewModel
+import com.ailearningos.app.ui.governance.GovernanceViewModel
 import com.ailearningos.app.ui.home.HomeViewModel
 import com.ailearningos.app.ui.login.LoginViewModel
 import com.ailearningos.app.ui.review.ReviewViewModel
@@ -76,6 +77,10 @@ class AiosViewModelFactory(
 
             modelClass.isAssignableFrom(SearchViewModel::class.java) -> SearchViewModel(
                 search = container.searchGateway,
+            ) as T
+
+            modelClass.isAssignableFrom(GovernanceViewModel::class.java) -> GovernanceViewModel(
+                governance = container.governanceGateway,
             ) as T
 
             else -> throw IllegalArgumentException("Unknown ViewModel: ${modelClass.name}")

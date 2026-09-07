@@ -1802,3 +1802,70 @@ Long 承接。
 - PR #49 已合并收口（不打 tag、不发 GitHub Release、不部署仍然成立）；
   `production_ready=false` 语义不变，本切片不构成任何
   production readiness。
+
+## 治理与发布只读第一切片（M12-05）
+
+### 范围与契约
+
+- 分支 `feature/m12-05-android-governance-release`，基于
+  `main@b6475c02071c280ec4c154f91989c54db94a432c`；本地实现与模拟器 mock
+  冒烟完成，当前**未 commit/push/开 PR/合并**，PR/merge CI 未产生。
+- Android 只消费既有 `GET /api/v1/version`、`GET /api/v1/system/ops-snapshot`、
+  `GET /api/v1/audit?limit=100`；不新增服务端端点、不做治理写操作。
+- 首页入口仅在 AuthDisabled 或 admin 用户状态显示；入口可见性不放宽服务端
+  admin-only 权限。
+- 服务端审计响应包含 before/after 载荷；Android DTO 不建模、领域模型不保留、
+  UI 不渲染。
+
+### 实现结构
+
+- `data/remote/GovernanceDtos.kt`：snake_case DTO；
+  `AuditEntryResponse.actorId/actorUsername` 使用 `RequiredNullableString`，
+  字段键必须存在、值可为显式 null；原因是全局 `AiosJson` `explicitNulls=false`
+  会让普通 `String?` 缺键静默变 null；不改全局配置。
+- `data/model/GovernanceModels.kt`：版本、运行快照、审计领域投影；审计投影
+  不含 before/after。
+- `data/GovernanceRepository.kt`：`GovernanceGateway` + Retrofit 实现，复用
+  `ApiProvider`、认证拦截器、`AppError/RemoteErrors` 映射；审计固定
+  limit=100。
+- `ui/governance/GovernanceViewModel.kt`：三区并发加载，每区独立 Job 与请求
+  序号守卫；迟到旧响应不得覆盖新响应；单区刷新失败保留旧数据并只显示该区
+  错误。
+- `ui/governance/GovernanceScreen.kt`：Compose M3 版本/运行快照/审计三区，
+  服务端字段原词呈现，不虚构数据；actor null 如实显示。
+- `AiosApi/AppContainer/AiosViewModelFactory/AiosApp/HomeScreen`：端点、装配、
+  治理路由与按会话状态显示入口。
+
+### 测试与验证
+
+- 新增 `GovernanceDtoParsingTest`、`GovernanceRepositoryTest`、
+  `GovernanceViewModelTest`；`Fakes.kt` 新增 `FakeGovernanceGateway`。
+- 本地全量门禁：`apps/android/gradlew.bat testDebugUnitTest lintDebug
+  assembleDebug --rerun-tasks --console=plain`，**BUILD SUCCESSFUL**，55 任务；
+  347 tests / 0 failures / 0 errors / 0 skipped；lint 0 error / 19 warnings；
+  APK 11,454,463 bytes，SHA256
+  `56119e1a28199712b7ac0c7e9dbb54fee19c4bad52a23b3c85afd218a44c59a8`——
+  该 SHA256 为**模拟器冒烟证据 APK**指纹（已归档
+  `docs/evidence/m12-05-android-governance/summary.json`）。
+- 文档/注释回填后 Codex 提交前最终复验（同命令
+  `--rerun-tasks --console=plain`）：**BUILD SUCCESSFUL**，55 任务；
+  347 tests / 0 failures / 0 errors / 0 skipped；lint 0 error / 19 warnings；
+  APK 重产出同为 11,454,463 bytes，SHA256
+  `da54763fd63454aaa80f3d00dac1f1bffeec6d534070cd1d9a34bbb89687c570`——
+  该 SHA256 为**提交前最终复验构建 APK**指纹，与证据 APK 指纹不同，
+  两者如实区分、互不替换（复验指纹不得回写为证据指纹）。
+- Android 16 `emulator-5554`（API 36，`sdk_gphone64_x86_64`，1080x2400@420dpi）
+  loopback mock 冒烟通过：mock 仅绑 127.0.0.1:8000，App 经 10.0.2.2:8000 访问，
+  auth disabled；入口/版本/运行快照/审计断言通过；App 仅 6 条预期 GET；
+  logcat 4453 行，FATAL EXCEPTION=0、ANR=0、AndroidRuntime 崩溃行=0、本包
+  崩溃行=0；AndroidRuntime 75 行为 uiautomator 工具生命周期日志，非崩溃。
+  证据 `docs/evidence/m12-05-android-governance/`。
+
+### 边界
+
+- 模拟器与固定 mock 数据，不代表真机、真实 provider、生产后端/生产 DB 或
+  生产可用。
+- 只读 GET，不覆盖治理写路径；未连接真实服务/数据库；不读取/不输出
+  key/token/password。
+- 未 commit/push/开 PR/合并；无 PR/merge CI 结论；不打 tag、不发 Release、
+  不部署；`production_ready=false` 不变。
