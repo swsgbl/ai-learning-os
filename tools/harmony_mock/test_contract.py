@@ -1,19 +1,33 @@
-"""M13-02 / M13-05 HarmonyOS mock 后端契约测试脚本。
+"""M13-02 / M13-05 / M13-06 HarmonyOS mock 后端契约测试脚本。
 
-在宿主机上启动 mock 服务器并验证（契约测试共 20 项）：
+在宿主机上启动 mock 服务器并验证（契约测试共 30 项）：
 - 6 个 Home GET 端点返回 200 与关键字段（M13-02）
 - 1 个论文 GET 端点返回 200 与关键字段（M13-05 新增）
+- 1 个检索 providers GET 端点返回 200 与固定形状（M13-06 新增：
+  items 数组含启用项与禁用项,禁用项必须带非空 unavailable_reason）
 - POST/PUT/PATCH/DELETE 返回 METHOD_NOT_ALLOWED (404)
 - POST /api/v1/papers 返回 404（M13-05 新增负断言）
+- POST /api/v1/search/providers 返回 404（M13-06 新增负断言:仅 GET）
+- POST 与 GET /api/v1/search/plan、/api/v1/search/queries 返回 404
+  （M13-06 新增负断言:M12-04 其余 search 端点对 Harmony 保持关闭,
+  GET 形式同样不允许）
+- GET /api/v1/search/queries/9001 返回 404（M13-06 新增负断言:
+  其余 search 只读路径不在 Harmony 允许清单）
+- GET /api/v1/search/providers?foo=bar 与 GET /api/v1/search/providers?
+  （空查询串）返回 404（M13-06 新增负断言:
+  允许清单 GET 端点拒绝一切非预期查询串,空查询串同样拒绝;
+  唯一例外 audit,仍由共享契约精确校验 limit=100）
 - HEAD/OPTIONS/FOO 等未支持 method 同样 404,不落入 501
 - 未知 GET 路径返回 NOT_FOUND (404)
 - audit 错误 query 返回 404
+- GET /api/v1/audit?limit=100&foo=bar 与 GET /api/v1/audit?limit=100& 返回 404
+  （audit 整串须精确为 ?limit=100,任何多余参数或尾随 & 均拒绝）
 
 不依赖模拟器,纯 Python 标准库;可重复执行。
 退出码:0=全通过,1=有失败。
 
 用法:
-    python tools/harmony_mock/test_contract.py [--port PORT]
+    python tools/harmony_mock/test_contract.py [--port PORT] [--host HOST]
 """
 from __future__ import annotations
 
@@ -55,9 +69,22 @@ ENDPOINTS_200 = [
             "duration_minutes": 45,
         },
     ),
+    # M13-06 检索 providers 端点：{"items": [...]},校验启用项关键字段
+    # (禁用项 cloud-web 的 enabled=False + 非空 unavailable_reason
+    #  在 test_endpoint_200 的 providers 分支专项校验)
+    (
+        "GET",
+        "/api/v1/search/providers",
+        {
+            "name": "local-corpus",
+            "kind": "local-corpus",
+            "enabled": True,
+            "unavailable_reason": None,
+        },
+    ),
 ]
 
-# 应返回 404 的测试用例（含 M13-05 负断言）
+# 应返回 404 的测试用例（含 M13-05 / M13-06 负断言）
 ENDPOINTS_404 = [
     ("POST", "/health"),
     ("PUT", "/health"),
@@ -65,13 +92,22 @@ ENDPOINTS_404 = [
     ("DELETE", "/api/v1/audit?limit=100"),
     ("POST", "/api/v1/papers"),  # M13-05 仅允许 GET
     ("GET", "/api/v1/nonexistent"),
-    ("GET", "/api/v1/search/providers"),
     ("GET", "/api/v1/audit"),          # 缺 limit=100 → 404
     ("GET", "/api/v1/audit?limit=10"), # 非 100 → 404
     ("GET", "/api/v1/audit?foo=bar"),  # 多余参数 → 404
+    ("GET", "/api/v1/audit?limit=100&foo=bar"),  # limit=100 之外多余参数 → 404
+    ("GET", "/api/v1/audit?limit=100&"),         # 尾随 & → 404
     ("HEAD", "/health"),               # 未支持 method → 404 (无 body)
     ("OPTIONS", "/health"),            # 未支持 method → 404
     ("FOO", "/health"),                # 任意未支持 method → 404,而非 501
+    ("POST", "/api/v1/search/providers"),  # M13-06 仅允许 GET
+    ("POST", "/api/v1/search/plan"),       # M13-06: plan POST 对 Harmony 关闭
+    ("POST", "/api/v1/search/queries"),    # M13-06: queries POST 对 Harmony 关闭
+    ("GET", "/api/v1/search/queries/9001"),  # M13-06: 其余 search 路径不在允许清单
+    ("GET", "/api/v1/search/providers?foo=bar"),  # M13-06: 允许清单端点拒绝非预期查询串
+    ("GET", "/api/v1/search/plan"),       # M13-06: plan GET 同样对 Harmony 关闭
+    ("GET", "/api/v1/search/queries"),    # M13-06: queries GET 同样对 Harmony 关闭
+    ("GET", "/api/v1/search/providers?"),  # M13-06: 空查询串同样拒绝 (fail-closed)
 ]
 
 
@@ -116,6 +152,34 @@ def test_endpoint_200(
     # papers 端点：顶层数组，检查首条记录
     if path == "/api/v1/papers" and isinstance(data, list) and len(data) > 0:
         data = data[0]
+    # M13-06 providers 端点：{"items": [...]},先按稳定 name/kind 定位禁用项
+    # (cloud-web/web)校验其形状,再检查首条(启用项)
+    elif path == "/api/v1/search/providers":
+        items = data.get("items") if isinstance(data, dict) else None
+        if not (isinstance(items, list) and len(items) >= 2):
+            return False, f"Expected object with items array of >=2 providers, got: {body[:100]}"
+        disabled = next(
+            (
+                p
+                for p in items
+                if isinstance(p, dict)
+                and p.get("name") == "cloud-web"
+                and p.get("kind") == "web"
+            ),
+            None,
+        )
+        if disabled is None or not (
+            disabled.get("enabled") is False
+            and isinstance(disabled.get("unavailable_reason"), str)
+            and disabled["unavailable_reason"]
+        ):
+            return False, (
+                f"Disabled provider must carry enabled=false "
+                f"and non-empty unavailable_reason: {disabled}"
+            )
+        if not isinstance(items[0], dict):
+            return False, f"Provider items[0] must be an object: {items[0]!r}"
+        data = items[0]
     elif not isinstance(data, dict):
         return False, f"Expected object/array, got {type(data).__name__}: {body[:100]}"
 
@@ -138,7 +202,7 @@ def test_endpoint_404(method: str, path: str, host: str, port: int) -> tuple[boo
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="M13-02/M13-05 mock contract tests")
+    parser = argparse.ArgumentParser(description="M13-02/M13-05/M13-06 mock contract tests")
     parser.add_argument("--port", type=int, default=8765, help="listen port (default 8765)")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="bind address")
     args = parser.parse_args()

@@ -7,8 +7,8 @@
  *     aboutToAppear 读取已保存服务地址后整体刷新一次);
  *   - 学习 Tab 展示 components/StudyPane(GET /api/v1/papers 论文只读列表,
  *     带状态机和 URL 订阅刷新);
- *   - 搜索 Tab 展示 components/SearchPane(只读占位,不发起搜索/预览/回查请求,
- *     不发起任何 API 请求,内部自行铺满可用区域);
+ *   - 搜索 Tab 展示 components/SearchPane(GET /api/v1/search/providers 搜索 providers 只读列表,
+ *     带状态机和 URL 订阅刷新);
  *   - 语音 Tab 展示 components/VoicePane(只读占位,不访问麦克风,
  *     不启动语音识别或合成,不发起任何 API 请求,内部自行铺满可用区域);
  *   - 设置 Tab 展示 components/SettingsPane(地址编辑/保存/连接测试)。

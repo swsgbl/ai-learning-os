@@ -2140,3 +2140,26 @@ python tools/harmony_mock/server.py --host 0.0.0.0 --port 8765
 ### 边界
 
 本验收是本地模拟器 + mock only 口径，不代表真机、真实 provider、生产后端、生产 DB、治理写链路或生产可用；无任何写路径。空态（EMPTY）在代码中存在但未做 UI 覆盖（mock 恒返 3 篇论文）；滚动行为未测（三篇均落首屏）。mock 逐请求日志刻意关闭（日志仅含启动监听单行消息），验收依据为确定性 UI 状态迁移而非请求日志。错误文案 `网络请求失败: [object Object]` 为 UX 跟进项。未签名 HAP 直装只是本地验收形态，不构成发布形态；未使用 AGC key、签名配置或自动签名。CI 无 HarmonyOS job，后续 PR 的 API/Android/Docker/Web 结果不能扩大为 HarmonyOS 远端验证。仓库状态（文档时点）：分支未 commit、未 push、未开 PR，无远端 CI run、未合并、未打 tag、未部署；`production_ready=false` 语义不变。以上为提交前本地验收快照；远端 PR/CI/合并状态以后续 PROJECT_STATUS 回填为准。
+
+## HarmonyOS Search providers 只读列表（M13-06）
+
+### 范围与契约
+
+- 分支 `feature/m13-06-harmony-search-providers`，基于 `origin/main@34d30ec4d9afee15dda037713ab9867f3e33d1f8`（PR #60 merge commit（M13-05），其 merge 后 main CI 四项 job 全绿，本地 git 可验证）；实现时点分支零本地提交，代码/测试/文档改动全部位于工作区（未 commit、未 push、未开 PR）。
+- 目标：把 M13-01 搜索 Tab 静态只读占位升级为 providers 只读列表——HarmonyOS 各业务域只读接入（评估项「搜索」）的第一切片。仅新增 `GET /api/v1/search/providers` 一个只读端点；M12-04 其余 search 端点（`plan`/`queries`/`queries/{id}`）对 Harmony 一律 404；无搜索发起/预览/回查、无认证、无真实 provider、无生产后端/生产 DB、无任何写路径；服务端 / Android / Web / infra 零改动。
+- 生产改动三个文件（`apps/harmony/entry/src/main/ets/`）：`AiosApi.ets` 新增第 8 个只读端点 `AiosEndpoint.SEARCH_PROVIDERS = '/api/v1/search/providers'`（仍硬编码仅 GET）与 `SearchProviderOut`/`SearchProvidersData` DTO（`name`/`kind`/`enabled`/`unavailable_reason: string | null`，字段与共享 mock 契约精确对齐）、导出 `getSearchProviders`；`SearchPane.ets` 升级为单一列表状态机 LOADING/EMPTY/SUCCESS/ERROR（EMPTY=HTTP 成功零条；ERROR 展示原始错误并带「重试」；SUCCESS 渲染 provider 名称/kind/启用态并带「刷新」，`unavailable_reason` 仅非 null 时展示、`enabled=false` 且原因为空时「未启用」兜底），`aboutToAppear` 一次初始加载，订阅 SettingsStore 既有 `aios://settings/url_changed` 事件（稳定回调、先 off 再 on、带回调 `emitter.off` 精确退订、回调内以 `loadBaseUrl` 重读持久化为权威来源），`disposed` 守卫与请求代际守卫（过期响应丢弃），元数据 Flex(Wrap) 窄屏换行，显式 null/undefined 检查无非空断言；`Index.ets` 仅注释与接线说明更新。全程只读：无写请求、无凭据、不访问麦克风/存储。
+- mock 契约与工具：`tools/harmony_mock/server.py` 允许路径加入 `/api/v1/search/providers`，并收紧 fail-closed——允许清单 GET 端点拒绝一切查询串，唯一例外 audit 整串须精确为 `?limit=100` 方才委托共享契约；`tools/harmony_mock/test_contract.py` 契约测试 20 → 30 项（providers 正例（按稳定 name/kind 定位禁用项校验 `enabled=false` + 非空 `unavailable_reason`）、providers POST 与 `?foo=bar`/空查询串 `?` 负例、其余 search 端点 POST 与 GET 形式负例、audit 精确查询串负例组，usage 补 `--host`）；`.gitignore` 新增 `/.hvigor/`。改动面合计 6 files，+400/−33（3 个 Harmony 生产文件 + 2 个 mock 工具 + 1 个 `.gitignore`，不含文档）。
+- 入库证据为 `docs/evidence/m13-06-harmony-search-providers/README.md`（唯一入库文件）；原始验收证据在 gitignored `.verify/m13-06-harmony-search-providers/`，不入库。
+
+### 构建与验收（最小可复现，本地模拟器口径）
+
+- 本地测试：`python tools/harmony_mock/test_contract.py --host 127.0.0.1 --port 18765` **30/30 passed**（exit 0；8 正例 + 22 负例，全部 fail-closed）；Android 冒烟 Python 单测 **287 passed / 1 skipped**（skip 为既有 Windows symlink 特权测试；共享契约变更未破坏 Android 侧）。
+- clean 构建：在 `apps/harmony` 所在 PowerShell 进程设置 `DEVECO_SDK_HOME=C:\DevEco-Studio\sdk`，`hvigorw.bat clean --no-daemon` 与 `hvigorw.bat assembleHap --no-daemon` 均 exit 0 / BUILD SUCCESSFUL；产物 `entry-default-unsigned.hap` 298153 bytes，SHA256 `7D31E3F43F4A2547F2299184D64AA14ADC8735758963F362B1DA46643BF23297`；已知非阻塞警告与 M13-01/M13-02/M13-03/M13-05 基线一致（无显式 `targetSdkVersion`、无签名配置、`SettingsStore` may-throw 静态提示）。
+- Stage A（默认地址错误态）：模拟器 `127.0.0.1:5557` 全新安装首启，搜索 Tab 在默认 `http://127.0.0.1:8000` 下为真实网络错误态（`网络请求失败: [object Object]` + 「重试」，无任何 provider 渲染）。
+- Stage B（Settings→Search 正向流）：supervisor 仅为本次运行在 `0.0.0.0:8766` 启动 mock，模拟器侧使用 `http://192.168.8.3:8766/`；真实 Settings UI 输入并保存成功（`已保存` 实证）；**App 不重启**，返回搜索 Tab 即显示 `local-corpus`（enabled）与 `cloud-web`（disabled，如实展示 mock 固定 `unavailable_reason`「未配置云端检索通道（mock 固定禁用，验证不可用原因如实展示）」）。
+- Stage C（错误与恢复流）：停止 mock（8766 端口释放实证）后点「刷新」→ 错误态（原始错误 + 「重试」），两个 provider 消失；重启 mock（监听实证）后点「重试」→ 两个 provider 恢复；全流程 App PID 保持 28168 不变（无重启/崩溃）；收尾 8766 端口监听数 0（`port-proof-after-stop.txt` / `final-port-proof-after-stop.txt`）。
+- 完整证据清单、断言明细与截图/布局文件对应关系见 `docs/evidence/m13-06-harmony-search-providers/README.md`。
+
+### 边界
+
+本验收是本地模拟器 + mock only 口径，不代表真机、真实 provider、生产后端、生产 DB、治理写链路或生产可用；无任何写路径、无凭据。空态（EMPTY）在代码中存在但未做 UI 覆盖（mock 恒返 2 个 provider）。mock 逐请求日志刻意关闭（日志仅含启动监听单行消息），验收依据为确定性 UI 状态迁移而非请求日志。错误文案 `网络请求失败: [object Object]` 为 UX 跟进项。未签名 HAP 直装只是本地验收形态，不构成发布形态；未使用 AGC key、签名配置或自动签名。CI 无 HarmonyOS job，本地 HarmonyOS 验收不构成远端 CI 验证，后续 PR 的 API/Android/Docker/Web 结果不能扩大为 HarmonyOS 远端验证。仓库状态（文档时点）：分支未 commit、未 push、未开 PR，无远端 CI run、未合并、未打 tag、未部署；`production_ready=false` 语义不变。以上为提交前本地验收快照；远端 PR/CI/合并状态以后续 PROJECT_STATUS 回填为准。

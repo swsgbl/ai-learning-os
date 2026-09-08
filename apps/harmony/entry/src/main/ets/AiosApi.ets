@@ -2,15 +2,15 @@
  * AiosApi.ets — 只读 GET API 封装(M13-01 第 1/3a 小步 + M13-05 论文端点)
  *
  * 职责边界(刻意收窄):
- *   - 仅封装 7 个只读端点:/health、/api/v1/auth/status、/api/v1/system/privacy、
+ *   - 仅封装 8 个只读端点:/health、/api/v1/auth/status、/api/v1/system/privacy、
  *     /api/v1/version、/api/v1/system/ops-snapshot、/api/v1/audit?limit=100、
- *     /api/v1/papers(M13-05);
+ *     /api/v1/papers(M13-05)、/api/v1/search/providers(M13-06);
  *   - 每次请求前先经 UrlPolicy.validateBaseUrl 校验 base URL,不合法直接返回失败;
  *   - 失败/错误如实返回(ApiResult.ok=false + 原始错误信息),不吞错、不美化;
  *   - 不重试、不写入、不保存任何 token/key/password(零持久化、零凭据);
  *   - 纯 ArkTS + @kit.NetworkKit,无页面依赖,可被任何页面/组件复用。
  *
- * DTO 契约(M13-01 第 3a 小步 + M13-05):字段与 Android 冒烟共享只读 mock 契约
+ * DTO 契约(M13-01 第 3a 小步 + M13-05 + M13-06):字段与 Android 冒烟共享只读 mock 契约
  * (tools/android_smoke/mock_contract.py, M12-04/M12-05/M13-05)精确对齐;
  * 审计条目只保留 UI 投影字段,不含 before/after 载荷。
  */
@@ -38,6 +38,7 @@ export enum AiosEndpoint {
   OPS_SNAPSHOT = '/api/v1/system/ops-snapshot',
   AUDIT = '/api/v1/audit?limit=100',
   PAPERS = '/api/v1/papers',
+  SEARCH_PROVIDERS = '/api/v1/search/providers',
 }
 
 /**
@@ -132,6 +133,23 @@ export interface PaperOut {
   duration_minutes: number;
   tags: Array<string>;
   origin_url: string | null;
+}
+
+/**
+ * GET /api/v1/search/providers — 搜索 provider 列表(M13-06)
+ * mock: {"items": [{"name": "...", "kind": "...", "enabled": true,
+ *        "unavailable_reason": null}, ...]}
+ */
+export interface SearchProviderOut {
+  name: string;
+  kind: string;
+  enabled: boolean;
+  unavailable_reason: string | null;
+}
+
+/** GET /api/v1/search/providers 响应结构(M13-06) */
+export interface SearchProvidersData {
+  items: Array<SearchProviderOut>;
 }
 
 /** 只允许 GET,硬编码拒绝其它 method */
@@ -238,4 +256,9 @@ export async function getAudit(baseUrl: string): Promise<ApiResult<Array<AuditEn
 /** 论文列表(M13-05);返回 PaperOut 数组 */
 export async function getPapers(baseUrl: string): Promise<ApiResult<Array<PaperOut>>> {
   return getJson<Array<PaperOut>>(baseUrl, AiosEndpoint.PAPERS);
+}
+
+/** 搜索 providers 列表(M13-06);返回 {items: [...]} */
+export async function getSearchProviders(baseUrl: string): Promise<ApiResult<SearchProvidersData>> {
+  return getJson<SearchProvidersData>(baseUrl, AiosEndpoint.SEARCH_PROVIDERS);
 }
