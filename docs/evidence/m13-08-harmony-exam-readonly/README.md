@@ -2,7 +2,7 @@
 
 - 日期：2026-09-09（clean 构建于 02:03–02:04；模拟器证据分两轮采集：正向/错误/恢复 02:05–02:11，URL 变更失效/切回恢复 05:26–05:43）
 - 分支：`feature/m13-08-harmony-exam-readonly`（基于 PR #63 merge commit `6c72c75dc3f09e9aeb29f683554f00410102075d` 之上的本地 M13-07 状态回填提交 `be97a72`，本地 git 可验证）
-- 状态：本地实现、本地模拟器验收完成；分支含两个本地提交（`47ad110` mock 契约/测试先行切片 + 本次生产 UI 与文档提交），**未 push、未开 PR——PR/CI/合并状态待后续回填，不在此预写**
+- 状态：本地实现、本地模拟器验收完成；已随 **PR #65**（https://github.com/swsgbl/ai-learning-os/pull/65）合并 main——PR head `9e1e64fe0c3bd89dbd3fc03f85a221d0a48fa9b9`，PR CI run `34284891184` 四项 job（API/Android/Docker/Web）全部 success；merge commit `31b626926450618468dbe5c10064b6a6eb6f4506`，merge 后 main CI run `34285331863` 四项 job 全部 success；远端功能分支已删除；分支两个本地提交（`47ad110` mock 契约/测试先行切片 + `0d295fe` 生产 UI/API 与文档提交）的远端等价提交与 tree 等价关系见「已知边界」下仓库状态条目
 - 原始证据路径：`.verify/m13-08-harmony-exam-readonly/`（gitignored，不入库；本 README 不复制任何原始工件内容）
 - 入库证据：本 README（唯一入库文件）
 - 结论：**PASS（本地口径）**——mock 契约 54/54、全量 tests/android_smoke 295 passed / 1 skipped、clean + assembleHap exit 0、模拟器正向/错误恢复/URL 变更失效全流程通过
@@ -47,7 +47,7 @@ mock 契约与测试切片（已随本地提交 `47ad110` 先行入库，本切�
 ## 已知边界
 
 - 本验收是本地模拟器 + mock only 口径，不代表 HarmonyOS 真机、真实考试会话、生产后端、生产 DB、任何写链路或生产可用；无任何写路径、无凭据、不访问麦克风/存储，不渲染正确答案/解析、不提供作答/提交/倒计时。
-- 仓库状态（文档时点）：分支 `feature/m13-08-harmony-exam-readonly` 本地提交完成，**未 push、未开 PR**；PR/CI/合并状态待后续状态切片回填，不在此预写。CI 无 HarmonyOS job：本切片全部 HarmonyOS 验证为本地口径，不构成远端 CI 验证；后续 PR 的 API/Android/Docker/Web CI 结果不能扩大为 HarmonyOS 远端验证。
+- 仓库状态（已回填 2026-09-09）：**PR #65 已合并 main**——PR head `9e1e64fe0c3bd89dbd3fc03f85a221d0a48fa9b9`，PR CI run `34284891184` 四项 job（API/Android/Docker/Web）全部 success；merge commit `31b626926450618468dbe5c10064b6a6eb6f4506`，merge 后 main CI run `34285331863` 四项 job 全部 success；远端功能分支已删除。远端等价提交：`c0806267854fcddfc5a6084bae0342cb461b4a75`（mock 契约/测试先行，对应本地 `47ad110`）与 `9e1e64fe0c3bd89dbd3fc03f85a221d0a48fa9b9`（生产 UI/API/docs，对应本地 `0d295fe`），commit SHA 不同、tree 逐字节一致（`da7dc8af2743a3beebd9fd64d8ba12aa64fa0b8a` 与 `d777ff02e206b3b1e359cfed43c99d12a7227190`，本地 git 可验证）。CI 无 HarmonyOS job：本切片全部 HarmonyOS 验证为本地口径，不构成远端 CI 验证；PR #65 的 API/Android/Docker/Web CI 结果不能扩大为 HarmonyOS 远端验证。
 - 未使用 AGC key、签名配置或自动签名；未签名 HAP（`No signingConfig found` 为基线已知警告）直装只是本地验收形态，**不构成发布形态，不声称已签名/可发布**；未打 tag、未部署。
 - HAP 为 zip 打包产物，同源重建哈希可能不同；本文记录的 SHA256 以当前本地留存、模拟器验收所用产物为准（stat/sha256 双工具复核）。
 - `production_ready=false` 语义不变。
