@@ -16,6 +16,9 @@
 - GET  /api/v1/papers           （M13-05 新增：确定性论文列表）
 - GET  /api/v1/voice/providers  （M13-07 新增：语音 provider 确定性快照，
   字段与 Android VoiceProvidersResponse 一一对应;仅 GET,写方法 404）
+- GET  /api/v1/exams/exam-m13-08-001  （M13-08 新增：考试会话确定性只读
+  快照，字段与 Android ExamSessionResponse 一一对应;仅该 exam_id 的
+  GET,写方法与其余 exam 路径一律 404）
 
 范围与边界：
 - 只读固定 JSON：未知路径 / 未实现方法一律 404；
@@ -211,6 +214,54 @@ VOICE_PROVIDERS = {
     "privacy_send_context_to_cloud": True,
 }
 
+# ---------- M13-08 考试会话固定响应（ExamSessionResponse 契约） ----------
+
+# 确定性只读会话快照：GET /api/v1/exams/exam-m13-08-001。
+# - paper-001 / paper_title 与 M13-05 papers 列表首条一致；
+# - 时间窗固定且在未来：45 分钟 = paper-001 的 duration_minutes，
+#   server_remaining_seconds=900 是窗口内的剩余秒数快照（均不读时钟，
+#   无随机成分）；
+# - questions 为公共投影（id/type/stem/options，不含正确答案/解析）；
+# - answers 只含 learner 已保存作答（q-m13-08-001 → "A"，不是正确答案），
+#   故 next_sequence=2（服务端权威序号 = 最后已作答事件 sequence+1）。
+# 与 Android ExamSessionResponse（apps/android ExamDtos.kt）逐字段一一对应。
+EXAM_SESSION = {
+    "exam_id": "exam-m13-08-001",
+    "paper_id": "paper-001",
+    "paper_title": "Attention Is All You Need",
+    "mode": "exam",
+    "status": "active",
+    "server_started_at": "2027-01-01T00:00:00+00:00",
+    "server_end_at": "2027-01-01T00:45:00+00:00",
+    "server_remaining_seconds": 900,
+    "questions": [
+        {
+            "id": "q-m13-08-001",
+            "type": "mcq",
+            "stem": "In the Transformer architecture, the attention mechanism primarily replaces which component of prior sequence transduction models?",
+            "options": [
+                {"key": "A", "text": "Recurrent layers"},
+                {"key": "B", "text": "Convolutional layers"},
+                {"key": "C", "text": "Pooling layers"},
+                {"key": "D", "text": "Normalization layers"},
+            ],
+        },
+        {
+            "id": "q-m13-08-002",
+            "type": "mcq",
+            "stem": "Which position-encoding scheme does the original paper use so that the model can extrapolate to sequence lengths longer than any seen during training?",
+            "options": [
+                {"key": "A", "text": "Learned absolute embeddings"},
+                {"key": "B", "text": "Sinusoidal functions"},
+                {"key": "C", "text": "Relative offsets only"},
+                {"key": "D", "text": "Random projections"},
+            ],
+        },
+    ],
+    "answers": {"q-m13-08-001": "A"},
+    "next_sequence": 2,
+}
+
 NOT_FOUND = {"detail": "Not Found（mock 固定端点之外）"}
 METHOD_NOT_ALLOWED = {"detail": "mock 只读：仅固定 GET 端点"}
 
@@ -290,6 +341,13 @@ class ReadOnlyMockContract:
         # synthesize/trace 等）不在本契约内,一律 404。
         if method == "GET" and bare_path == "/api/v1/voice/providers":
             return 200, VOICE_PROVIDERS
+
+        # M13-08 exam session 端点：GET 返回确定性只读会话快照;仅该
+        # exam_id,其余 exam 路径（unknown id、/answers、/submit、
+        # /submission、/report、/learning-events、集合路径）与写方法
+        # 一律 404;POST /papers/{paper_id}/exams 亦不在契约内（fail-closed）。
+        if method == "GET" and bare_path == "/api/v1/exams/exam-m13-08-001":
+            return 200, EXAM_SESSION
 
         # 其余端点：忽略查询串取值（query 忽略值）
         if method == "GET" and bare_path == "/health":
