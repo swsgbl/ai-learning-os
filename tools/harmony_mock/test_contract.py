@@ -1,10 +1,13 @@
-"""M13-02 / M13-05 / M13-06 HarmonyOS mock 后端契约测试脚本。
+"""M13-02 / M13-05 / M13-06 / M13-07 HarmonyOS mock 后端契约测试脚本。
 
-在宿主机上启动 mock 服务器并验证（契约测试共 30 项）：
+在宿主机上启动 mock 服务器并验证（契约测试共 42 项）：
 - 6 个 Home GET 端点返回 200 与关键字段（M13-02）
 - 1 个论文 GET 端点返回 200 与关键字段（M13-05 新增）
 - 1 个检索 providers GET 端点返回 200 与固定形状（M13-06 新增：
   items 数组含启用项与禁用项,禁用项必须带非空 unavailable_reason）
+- 1 个语音 providers GET 端点返回 200 且与 Android VoiceProvidersResponse
+  逐字段精确相等（M13-07 新增:voice_mode=hybrid、ASR=fake 无回退、
+  TTS 请求 cloud-openai-tts 回退 tone、隐私开关如实投影）
 - POST/PUT/PATCH/DELETE 返回 METHOD_NOT_ALLOWED (404)
 - POST /api/v1/papers 返回 404（M13-05 新增负断言）
 - POST /api/v1/search/providers 返回 404（M13-06 新增负断言:仅 GET）
@@ -17,6 +20,13 @@
   （空查询串）返回 404（M13-06 新增负断言:
   允许清单 GET 端点拒绝一切非预期查询串,空查询串同样拒绝;
   唯一例外 audit,仍由共享契约精确校验 limit=100）
+- POST /api/v1/voice/providers 返回 404（M13-07 新增负断言:仅 GET）
+- 其余 voice 端点全部 404（M13-07 新增负断言:token/sessions/transcribe/
+  synthesize/trace 对 Harmony 保持关闭,含 sessions 列表、sessions/{id}
+  详情与 trace/summary 的 GET 形式）
+- GET /api/v1/voice/providers?foo=bar 与 GET /api/v1/voice/providers?
+  （空查询串）返回 404（M13-07 新增负断言:与其他允许清单端点一致,
+  拒绝一切非预期查询串）
 - HEAD/OPTIONS/FOO 等未支持 method 同样 404,不落入 501
 - 未知 GET 路径返回 NOT_FOUND (404)
 - audit 错误 query 返回 404
@@ -82,9 +92,27 @@ ENDPOINTS_200 = [
             "unavailable_reason": None,
         },
     ),
+    # M13-07 语音 providers 端点：确定性快照,须与 Android
+    # VoiceProvidersResponse 逐字段精确相等（不多不少）;exact 分支
+    # 在 test_endpoint_200 的 voice providers 路径专项校验
+    (
+        "GET",
+        "/api/v1/voice/providers",
+        {
+            "voice_mode": "hybrid",
+            "asr": {"requested": None, "provider": "fake", "fallback": False},
+            "tts": {
+                "requested": "cloud-openai-tts",
+                "provider": "tone",
+                "fallback": True,
+            },
+            "privacy_store_audio": False,
+            "privacy_send_context_to_cloud": True,
+        },
+    ),
 ]
 
-# 应返回 404 的测试用例（含 M13-05 / M13-06 负断言）
+# 应返回 404 的测试用例（含 M13-05 / M13-06 / M13-07 负断言）
 ENDPOINTS_404 = [
     ("POST", "/health"),
     ("PUT", "/health"),
@@ -108,6 +136,18 @@ ENDPOINTS_404 = [
     ("GET", "/api/v1/search/plan"),       # M13-06: plan GET 同样对 Harmony 关闭
     ("GET", "/api/v1/search/queries"),    # M13-06: queries GET 同样对 Harmony 关闭
     ("GET", "/api/v1/search/providers?"),  # M13-06: 空查询串同样拒绝 (fail-closed)
+    # M13-07 负断言:providers 仅 GET,其余 voice 端点对 Harmony 全部关闭
+    ("POST", "/api/v1/voice/providers"),        # M13-07: 仅允许 GET
+    ("GET", "/api/v1/voice/providers?foo=bar"),  # M13-07: 拒绝非预期查询串
+    ("GET", "/api/v1/voice/providers?"),         # M13-07: 空查询串同样拒绝 (fail-closed)
+    ("POST", "/api/v1/voice/token"),             # M13-07: token 写端点关闭
+    ("POST", "/api/v1/voice/sessions"),          # M13-07: session 写端点关闭
+    ("GET", "/api/v1/voice/sessions"),           # M13-07: sessions 列表 GET 同样关闭
+    ("GET", "/api/v1/voice/sessions/vs-mock-001"),  # M13-07: session 详情 GET 关闭
+    ("POST", "/api/v1/voice/transcribe"),        # M13-07: 转写端点关闭
+    ("POST", "/api/v1/voice/synthesize"),        # M13-07: 合成端点关闭
+    ("POST", "/api/v1/voice/trace"),             # M13-07: trace 写端点关闭
+    ("GET", "/api/v1/voice/trace/summary"),      # M13-07: trace GET 形式同样关闭
 ]
 
 
@@ -180,6 +220,12 @@ def test_endpoint_200(
         if not isinstance(items[0], dict):
             return False, f"Provider items[0] must be an object: {items[0]!r}"
         data = items[0]
+    # M13-07 voice providers 端点：整包精确相等（字段不多不少,
+    # 含嵌套 asr/tts 与 requested 的 null/字符串形态）
+    elif path == "/api/v1/voice/providers":
+        if not isinstance(data, dict) or data != expected_fields:
+            return False, f"Expected exact voice providers fixture, got: {body[:200]}"
+        return True, "200 OK (exact VoiceProvidersResponse fixture match)"
     elif not isinstance(data, dict):
         return False, f"Expected object/array, got {type(data).__name__}: {body[:100]}"
 
@@ -202,7 +248,7 @@ def test_endpoint_404(method: str, path: str, host: str, port: int) -> tuple[boo
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="M13-02/M13-05/M13-06 mock contract tests")
+    parser = argparse.ArgumentParser(description="M13-02/M13-05/M13-06/M13-07 mock contract tests")
     parser.add_argument("--port", type=int, default=8765, help="listen port (default 8765)")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="bind address")
     args = parser.parse_args()

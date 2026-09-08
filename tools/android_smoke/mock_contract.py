@@ -1,4 +1,4 @@
-"""Android 冒烟共享只读 mock 契约（M12-06 / M13-05）。
+"""Android 冒烟共享只读 mock 契约（M12-06 / M13-05 / M13-07）。
 
 汇总 M12-04（搜索）与 M12-05（治理）两期证据 mock 的稳定只读面，
 以纯函数形式（不开服务器）供 Android 冒烟与 HarmonyOS 验收复用：
@@ -14,6 +14,8 @@
 - GET  /api/v1/system/ops-snapshot
 - GET  /api/v1/audit?limit=100  （查询参数须精确为 limit=100）
 - GET  /api/v1/papers           （M13-05 新增：确定性论文列表）
+- GET  /api/v1/voice/providers  （M13-07 新增：语音 provider 确定性快照，
+  字段与 Android VoiceProvidersResponse 一一对应;仅 GET,写方法 404）
 
 范围与边界：
 - 只读固定 JSON：未知路径 / 未实现方法一律 404；
@@ -195,6 +197,20 @@ _PAPERS = [
     },
 ]
 
+# ---------- M13-07 语音 providers 固定响应（VoiceProvidersResponse 契约） ----------
+
+# 确定性快照：hybrid 模式下 ASR 用 fake 本地 provider（未请求即无回退）、
+# TTS 请求 cloud-openai-tts 但回退到本地 tone；隐私开关如实投影
+# （不存音频、允许上下文上云）。与 Android VoiceProvidersResponse
+# （apps/android VoiceDtos.kt）逐字段一一对应，确定性、无随机成分。
+VOICE_PROVIDERS = {
+    "voice_mode": "hybrid",
+    "asr": {"requested": None, "provider": "fake", "fallback": False},
+    "tts": {"requested": "cloud-openai-tts", "provider": "tone", "fallback": True},
+    "privacy_store_audio": False,
+    "privacy_send_context_to_cloud": True,
+}
+
 NOT_FOUND = {"detail": "Not Found（mock 固定端点之外）"}
 METHOD_NOT_ALLOWED = {"detail": "mock 只读：仅固定 GET 端点"}
 
@@ -268,6 +284,12 @@ class ReadOnlyMockContract:
         # M13-05 papers 端点：GET /api/v1/papers 返回确定性论文列表（顶层数组）
         if method == "GET" and bare_path == "/api/v1/papers":
             return 200, _PAPERS
+
+        # M13-07 voice providers 端点：GET 返回确定性快照;仅 GET,
+        # 写方法落入末尾 404。其余 voice 端点（token/sessions/transcribe/
+        # synthesize/trace 等）不在本契约内,一律 404。
+        if method == "GET" and bare_path == "/api/v1/voice/providers":
+            return 200, VOICE_PROVIDERS
 
         # 其余端点：忽略查询串取值（query 忽略值）
         if method == "GET" and bare_path == "/health":
