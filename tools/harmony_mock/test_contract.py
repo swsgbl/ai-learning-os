@@ -1,8 +1,10 @@
-"""M13-02 HarmonyOS mock 后端契约测试脚本。
+"""M13-02 / M13-05 HarmonyOS mock 后端契约测试脚本。
 
-在宿主机上启动 mock 服务器并验证（契约测试共 18 项）：
-- 6 个 Home GET 端点返回 200 与关键字段
+在宿主机上启动 mock 服务器并验证（契约测试共 20 项）：
+- 6 个 Home GET 端点返回 200 与关键字段（M13-02）
+- 1 个论文 GET 端点返回 200 与关键字段（M13-05 新增）
 - POST/PUT/PATCH/DELETE 返回 METHOD_NOT_ALLOWED (404)
+- POST /api/v1/papers 返回 404（M13-05 新增负断言）
 - HEAD/OPTIONS/FOO 等未支持 method 同样 404,不落入 501
 - 未知 GET 路径返回 NOT_FOUND (404)
 - audit 错误 query 返回 404
@@ -39,14 +41,29 @@ ENDPOINTS_200 = [
     ("GET", "/api/v1/version", {"version": "0.12.5-mock"}),
     ("GET", "/api/v1/system/ops-snapshot", {"papers_total": 34}),
     ("GET", "/api/v1/audit?limit=100", None),  # array 响应，仅校验 200
+    # M13-05 论文端点：顶层数组，校验首条关键字段
+    (
+        "GET",
+        "/api/v1/papers",
+        {
+            "id": "paper-001",
+            "title": "Attention Is All You Need",
+            "subtitle": "Vaswani et al., NeurIPS 2017",
+            "source": "NeurIPS",
+            "subject": "Machine Learning",
+            "difficulty": "medium",
+            "duration_minutes": 45,
+        },
+    ),
 ]
 
-# 应返回 404 的测试用例
+# 应返回 404 的测试用例（含 M13-05 负断言）
 ENDPOINTS_404 = [
     ("POST", "/health"),
     ("PUT", "/health"),
     ("PATCH", "/api/v1/version"),
     ("DELETE", "/api/v1/audit?limit=100"),
+    ("POST", "/api/v1/papers"),  # M13-05 仅允许 GET
     ("GET", "/api/v1/nonexistent"),
     ("GET", "/api/v1/search/providers"),
     ("GET", "/api/v1/audit"),          # 缺 limit=100 → 404
@@ -96,6 +113,12 @@ def test_endpoint_200(
     except json.JSONDecodeError as e:
         return False, f"JSON parse error: {e}"
 
+    # papers 端点：顶层数组，检查首条记录
+    if path == "/api/v1/papers" and isinstance(data, list) and len(data) > 0:
+        data = data[0]
+    elif not isinstance(data, dict):
+        return False, f"Expected object/array, got {type(data).__name__}: {body[:100]}"
+
     for key, val in expected_fields.items():
         if key not in data:
             return False, f"Missing field '{key}'"
@@ -115,7 +138,7 @@ def test_endpoint_404(method: str, path: str, host: str, port: int) -> tuple[boo
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="M13-02 mock contract tests")
+    parser = argparse.ArgumentParser(description="M13-02/M13-05 mock contract tests")
     parser.add_argument("--port", type=int, default=8765, help="listen port (default 8765)")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="bind address")
     args = parser.parse_args()

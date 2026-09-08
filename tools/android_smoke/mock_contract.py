@@ -1,7 +1,7 @@
-"""Android 冒烟共享只读 mock 契约（M12-06）。
+"""Android 冒烟共享只读 mock 契约（M12-06 / M13-05）。
 
 汇总 M12-04（搜索）与 M12-05（治理）两期证据 mock 的稳定只读面，
-以纯函数形式（不开服务器）供 Android 冒烟驱动复用：
+以纯函数形式（不开服务器）供 Android 冒烟与 HarmonyOS 验收复用：
 
 - GET  /health
 - GET  /api/v1/auth/status
@@ -13,6 +13,7 @@
 - GET  /api/v1/version
 - GET  /api/v1/system/ops-snapshot
 - GET  /api/v1/audit?limit=100  （查询参数须精确为 limit=100）
+- GET  /api/v1/papers           （M13-05 新增：确定性论文列表）
 
 范围与边界：
 - 只读固定 JSON：未知路径 / 未实现方法一律 404；
@@ -150,6 +151,50 @@ AUDIT = [
     },
 ]
 
+# ---------- M13-05 论文列表固定响应（PaperOut 契约） ----------
+
+_PAPERS = [
+    {
+        "id": "paper-001",
+        "title": "Attention Is All You Need",
+        "subtitle": "Vaswani et al., NeurIPS 2017",
+        "source": "NeurIPS",
+        "university": None,
+        "year": 2017,
+        "subject": "Machine Learning",
+        "difficulty": "medium",
+        "duration_minutes": 45,
+        "tags": ["transformer", "attention", "NLP"],
+        "origin_url": "https://arxiv.org/abs/1706.03762",
+    },
+    {
+        "id": "paper-002",
+        "title": "BERT: Pre-training of Deep Bidirectional Transformers",
+        "subtitle": "Devlin et al., NAACL 2019",
+        "source": "NAACL",
+        "university": "Google Research",
+        "year": 2019,
+        "subject": "Natural Language Processing",
+        "difficulty": "hard",
+        "duration_minutes": 60,
+        "tags": ["BERT", "pre-training", "language model"],
+        "origin_url": "https://arxiv.org/abs/1810.04805",
+    },
+    {
+        "id": "paper-003",
+        "title": "ImageNet Classification with Deep Convolutional Neural Networks",
+        "subtitle": "Krizhevsky et al., NeurIPS 2012",
+        "source": "NeurIPS",
+        "university": "University of Toronto",
+        "year": 2012,
+        "subject": "Computer Vision",
+        "difficulty": "medium",
+        "duration_minutes": 50,
+        "tags": ["CNN", "ImageNet", "deep learning"],
+        "origin_url": None,
+    },
+]
+
 NOT_FOUND = {"detail": "Not Found（mock 固定端点之外）"}
 METHOD_NOT_ALLOWED = {"detail": "mock 只读：仅固定 GET 端点"}
 
@@ -162,7 +207,7 @@ def _extract_query(body_bytes: bytes) -> str:
 
 
 class ReadOnlyMockContract:
-    """M12-04/M12-05 稳定 mock 面的进程内实现（不开服务器）。"""
+    """M12-04/M12-05/M13-05 稳定 mock 面的进程内实现（不开服务器）。"""
 
     def __init__(self) -> None:
         self._requests: list[dict] = []
@@ -219,6 +264,10 @@ class ReadOnlyMockContract:
             if method == "GET" and urllib.parse.parse_qs(raw_query).get("limit") == ["100"]:
                 return 200, AUDIT
             return 404, NOT_FOUND
+
+        # M13-05 papers 端点：GET /api/v1/papers 返回确定性论文列表（顶层数组）
+        if method == "GET" and bare_path == "/api/v1/papers":
+            return 200, _PAPERS
 
         # 其余端点：忽略查询串取值（query 忽略值）
         if method == "GET" and bare_path == "/health":

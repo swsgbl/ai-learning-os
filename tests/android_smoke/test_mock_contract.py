@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 
 from tools.android_smoke.mock_contract import (
+    _PAPERS,
     AUDIT,
     OPS_SNAPSHOT,
     PROVIDERS,
@@ -89,6 +90,35 @@ def test_get_audit_requires_limit_100():
     assert c.handle("GET", "/api/v1/audit")[0] == 404
 
 
+# ---------- M13-05 papers 端点 ----------
+
+def test_get_papers_returns_array():
+    c = ReadOnlyMockContract()
+    status, payload = c.handle("GET", "/api/v1/papers")
+    assert status == 200
+    assert isinstance(payload, list)
+    assert len(payload) == 3
+    first = payload[0]
+    assert first["id"] == "paper-001"
+    assert first["title"] == "Attention Is All You Need"
+    assert first["subtitle"] == "Vaswani et al., NeurIPS 2017"
+    assert first["source"] == "NeurIPS"
+    assert first["subject"] == "Machine Learning"
+    assert first["difficulty"] == "medium"
+    assert first["duration_minutes"] == 45
+    assert first["tags"] == ["transformer", "attention", "NLP"]
+    assert first["origin_url"] == "https://arxiv.org/abs/1706.03762"
+    # nullable fields present
+    assert first["university"] is None
+    assert first["year"] == 2017
+
+
+def test_post_papers_404():
+    """papers 端点只读：POST 应返回 404。"""
+    c = ReadOnlyMockContract()
+    assert c.handle("POST", "/api/v1/papers", b"{}")[0] == 404
+
+
 # ---------- query 忽略值（非 audit 端点查询串不影响路由） ----------
 
 def test_query_string_ignored_on_fixed_endpoints():
@@ -102,7 +132,6 @@ def test_query_string_ignored_on_fixed_endpoints():
 
 def test_unknown_path_404():
     c = ReadOnlyMockContract()
-    assert c.handle("GET", "/api/v1/papers")[0] == 404
     assert c.handle("GET", "/api/v1/unknown")[0] == 404
 
 

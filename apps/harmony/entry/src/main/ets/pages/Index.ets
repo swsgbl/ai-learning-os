@@ -1,12 +1,12 @@
 /**
- * Index.ets — 应用首页(M13-01 第 3c-5 小步)
+ * Index.ets — 应用首页(M13-01 第 3c-5 小步 + M13-05 论文列表)
  *
  * 结构(刻意收窄):
  *   - 底部 Tabs(barPosition End):首页、学习、搜索、语音、设置;
  *   - 首页 Tab 展示 components/HomePane(六区只读面板,内部自带 Scroll 可滚动,
  *     aboutToAppear 读取已保存服务地址后整体刷新一次);
- *   - 学习 Tab 展示 components/StudyPane(只读占位,不加载课程/试卷/学习记录,
- *     不发起任何 API 请求,内部自行铺满可用区域);
+ *   - 学习 Tab 展示 components/StudyPane(GET /api/v1/papers 论文只读列表,
+ *     带状态机和 URL 订阅刷新);
  *   - 搜索 Tab 展示 components/SearchPane(只读占位,不发起搜索/预览/回查请求,
  *     不发起任何 API 请求,内部自行铺满可用区域);
  *   - 语音 Tab 展示 components/VoicePane(只读占位,不访问麦克风,

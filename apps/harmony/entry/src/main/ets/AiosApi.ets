@@ -1,16 +1,17 @@
 /**
- * AiosApi.ets — 只读 GET API 封装(M13-01 第 1/3a 小步)
+ * AiosApi.ets — 只读 GET API 封装(M13-01 第 1/3a 小步 + M13-05 论文端点)
  *
  * 职责边界(刻意收窄):
- *   - 仅封装 6 个只读端点:/health、/api/v1/auth/status、/api/v1/system/privacy、
- *     /api/v1/version、/api/v1/system/ops-snapshot、/api/v1/audit?limit=100;
+ *   - 仅封装 7 个只读端点:/health、/api/v1/auth/status、/api/v1/system/privacy、
+ *     /api/v1/version、/api/v1/system/ops-snapshot、/api/v1/audit?limit=100、
+ *     /api/v1/papers(M13-05);
  *   - 每次请求前先经 UrlPolicy.validateBaseUrl 校验 base URL,不合法直接返回失败;
  *   - 失败/错误如实返回(ApiResult.ok=false + 原始错误信息),不吞错、不美化;
  *   - 不重试、不写入、不保存任何 token/key/password(零持久化、零凭据);
  *   - 纯 ArkTS + @kit.NetworkKit,无页面依赖,可被任何页面/组件复用。
  *
- * DTO 契约(M13-01 第 3a 小步):字段与 Android 冒烟共享只读 mock 契约
- * (tools/android_smoke/mock_contract.py, M12-04/M12-05)精确对齐;
+ * DTO 契约(M13-01 第 3a 小步 + M13-05):字段与 Android 冒烟共享只读 mock 契约
+ * (tools/android_smoke/mock_contract.py, M12-04/M12-05/M13-05)精确对齐;
  * 审计条目只保留 UI 投影字段,不含 before/after 载荷。
  */
 
@@ -35,7 +36,8 @@ export enum AiosEndpoint {
   PRIVACY = '/api/v1/system/privacy',
   VERSION = '/api/v1/version',
   OPS_SNAPSHOT = '/api/v1/system/ops-snapshot',
-  AUDIT = '/api/v1/audit?limit=100'
+  AUDIT = '/api/v1/audit?limit=100',
+  PAPERS = '/api/v1/papers',
 }
 
 /**
@@ -112,6 +114,24 @@ export interface AuditEntry {
   target_id: string;
   request_id: string;
   created_at: string;
+}
+
+/**
+ * GET /api/v1/papers — 论文列表(M13-05)
+ * mock: [{"id": "paper-001", "title": "...", ...}] (顶层数组)
+ */
+export interface PaperOut {
+  id: string;
+  title: string;
+  subtitle: string;
+  source: string;
+  university: string | null;
+  year: number | null;
+  subject: string;
+  difficulty: string;
+  duration_minutes: number;
+  tags: Array<string>;
+  origin_url: string | null;
 }
 
 /** 只允许 GET,硬编码拒绝其它 method */
@@ -213,4 +233,9 @@ export async function getOpsSnapshot(baseUrl: string): Promise<ApiResult<OpsSnap
 /** 审计日志(最近 100 条,固定参数);返回 UI 投影条目,不含 before/after 载荷 */
 export async function getAudit(baseUrl: string): Promise<ApiResult<Array<AuditEntry>>> {
   return getJson<Array<AuditEntry>>(baseUrl, AiosEndpoint.AUDIT);
+}
+
+/** 论文列表(M13-05);返回 PaperOut 数组 */
+export async function getPapers(baseUrl: string): Promise<ApiResult<Array<PaperOut>>> {
+  return getJson<Array<PaperOut>>(baseUrl, AiosEndpoint.PAPERS);
 }
