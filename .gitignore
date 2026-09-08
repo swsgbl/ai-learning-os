@@ -26,3 +26,6 @@ temp/
 
 # M13-01 HarmonyOS 构建产物(HAP/cache/intermediates/绝对路径)禁止入库
 apps/harmony/entry/build/
+
+# HarmonyOS hvigor 构建缓存(仓库根 .hvigor/)禁止入库
+/.hvigor/

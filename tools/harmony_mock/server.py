@@ -1,10 +1,13 @@
-"""HarmonyOS mock 后端服务器 — 仅用于 M13-02 / M13-05 验收测试。
+"""HarmonyOS mock 后端服务器 — 仅用于 M13-02 / M13-05 / M13-06 验收测试。
 
 通过 tools.android_smoke.mock_contract.ReadOnlyMockContract().handle 路由,
 禁止手写各端点 JSON 字符串。暴露 M13-01 Home 六个 GET 端点 + M13-05
-GET /api/v1/papers(确定性论文列表);
+GET /api/v1/papers(确定性论文列表)+ M13-06
+GET /api/v1/search/providers(检索 provider 固定列表;M12-04 其余
+search 端点 plan/queries/queries/{id} 不在允许清单,一律 404);
 未知路径、非 GET 与未支持 method (HEAD/OPTIONS/其它) 均 404,不落入
-BaseHTTPRequestHandler 的 501;audit 仅精确 limit=100。
+BaseHTTPRequestHandler 的 501;允许清单端点拒绝一切查询串
+(fail-closed;唯一例外 audit,整串须精确为 ?limit=100)。
 
 仅使用 Python 标准库;不触网、不读密钥、不保存任何凭据。
 
@@ -32,7 +35,7 @@ from tools.android_smoke.mock_contract import (
     ReadOnlyMockContract,
 )
 
-# 只允许这些 M13-01 Home GET 端点 + M13-05 papers 端点
+# 只允许这些 M13-01 Home GET 端点 + M13-05 papers + M13-06 providers 端点
 ALLOWED_GET_PATHS = frozenset({
     "/health",
     "/api/v1/auth/status",
@@ -41,6 +44,7 @@ ALLOWED_GET_PATHS = frozenset({
     "/api/v1/system/ops-snapshot",
     "/api/v1/audit",
     "/api/v1/papers",
+    "/api/v1/search/providers",
 })
 
 
@@ -88,6 +92,17 @@ class _HarmonyMockHandler(BaseHTTPRequestHandler):
 
         # 只暴露允许的路径
         if bare_path not in ALLOWED_GET_PATHS:
+            self._respond(404, NOT_FOUND)
+            return
+
+        # 允许清单端点一律拒绝任何查询串（fail-closed）。
+        # 唯一例外 audit：整串须精确为 ?limit=100——共享契约仅检查 limit
+        # 取值（limit=100&foo=bar 等仍会 200），故在委托前先行收紧。
+        if bare_path == "/api/v1/audit":
+            if self.path != "/api/v1/audit?limit=100":
+                self._respond(404, NOT_FOUND)
+                return
+        elif "?" in self.path:
             self._respond(404, NOT_FOUND)
             return
 
@@ -149,7 +164,7 @@ class HarmonyMockServer:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="HarmonyOS mock backend for M13-02/M13-05")
+    parser = argparse.ArgumentParser(description="HarmonyOS mock backend for M13-02/M13-05/M13-06")
     parser.add_argument("--port", type=int, default=8765, help="listen port (default 8765)")
     parser.add_argument(
         "--host",
