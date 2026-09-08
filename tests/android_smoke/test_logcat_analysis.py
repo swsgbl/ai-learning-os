@@ -44,7 +44,34 @@ def test_anr_variants():
         "09-07 12:00:02.000 W/anr: some trace",
     ]
     result = analyze_logcat(lines, "com.example.app")
-    assert result["anr_count"] == 2  # 第三行 "anr" 也按包含 ANR 计
+    assert result["anr_count"] == 2  # 第 1/3 行是独立 "anr" 词元；第 2 行本就不含
+
+
+def test_anr_word_boundary_no_substring_false_positive():
+    # r9 真机证据：EMUI 日志的普通词内嵌 "anr" 子串（fileCanRead 的
+    # "CanRead"、com.huawei.antivirus 附近的标识符），裸子串匹配把它们
+    # 判成 ANR 导致 dump-logcat 阶段假阳性失败——必须词边界匹配。
+    lines = [
+        "09-08 04:19:42.106  2427  5940 I ThermalTraceTool: "
+        "file:/proc/wifi/wifi_tem_stat,fileExists:false,fileCanRead:false",
+        "09-08 04:19:09.210 25667 25692 W ContextImpl: Calling a method in "
+        "the system process without a qualified user: "
+        "android.app.ContextImpl.bindService:1777 com.huawei.antivirus.helper",
+    ]
+    result = analyze_logcat(lines, "com.ailearningos.app")
+    assert result["anr_count"] == 0
+    assert result["has_blocking_issue"] is False
+
+
+def test_anr_standalone_token_still_detected():
+    # 词边界收紧后真实 ANR 标记必须仍然命中：tag / "ANR in" / data/anr/ 路径
+    lines = [
+        "E/anr: writing ANR trace to /data/anr/traces.txt",
+        "E/ActivityManager: ANR in com.ailearningos.app",
+    ]
+    result = analyze_logcat(lines, "com.ailearningos.app")
+    assert result["anr_count"] == 2
+    assert result["has_blocking_issue"] is True
 
 
 def test_anr_in_keyword():

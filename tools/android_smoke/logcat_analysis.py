@@ -12,8 +12,11 @@ from typing import Iterable, Optional
 # FATAL EXCEPTION 行由 ART 打印，大小写固定，但为稳妥按大小写不敏感匹配。
 _FATAL_EXCEPTION_RE = re.compile(r"fatal\s+exception", re.IGNORECASE)
 
-# ANR 相关行："ANR in <pkg>"、"-anr-"、或 input dispatch 超时等 bionic/ActivityManager 输出。
-_ANR_RE = re.compile(r"anr", re.IGNORECASE)
+# ANR 相关行：独立 "ANR" 词元（如 "ANR in <pkg>"、tag "anr"、"data/anr/"
+# 路径）或 "-anr-"。必须词边界匹配——真机日志的普通词内含 "anr" 子串
+# （r9 物理证据：EMUI 的 "fileCanRead:false"、"com.huawei.antivirus..."
+# 被 Python 裸子串误判成 ANR，导致 dump-logcat 阶段假阳性失败）。
+_ANR_RE = re.compile(r"\banr\b|-anr-", re.IGNORECASE)
 
 _ANDROID_RUNTIME_RE = re.compile(r"androidruntime", re.IGNORECASE)
 
@@ -29,7 +32,7 @@ def analyze_logcat(
     返回字段：
       - total_lines: 输入行数（含空行）
       - fatal_exception_count: 匹配 "FATAL EXCEPTION" 的行数
-      - anr_count: 包含 "ANR" 的行数（大小写不敏感）
+      - anr_count: 匹配独立 "ANR" 词元（或 "-anr-"）的行数（大小写不敏感）
       - androidruntime_crash_count: 包含 "AndroidRuntime" 的行数（仅诊断计数）
       - package_crash_count: 同时包含 "AndroidRuntime" 与 package_name 的行数（仅诊断计数）
       - has_blocking_issue: 仅由 FATAL EXCEPTION / ANR 触发

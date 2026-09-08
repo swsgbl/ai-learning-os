@@ -19,6 +19,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import tempfile
 import time
@@ -28,7 +29,11 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from tools.android_smoke.adb import AdbClient
-from tools.android_smoke.interaction import AndroidUiController
+from tools.android_smoke.interaction import (
+    AndroidUiController,
+    ime_shown_from_dumpsys,
+    swipe_up_args,
+)
 from tools.android_smoke.logcat_analysis import analyze_logcat
 from tools.android_smoke.summary import build_summary
 
@@ -39,6 +44,12 @@ OUTPUT_PARENT = ".verify"
 
 # host 只允许回环；mock server 永远只绑定 127.0.0.1
 ALLOWED_HOSTS = frozenset({"127.0.0.1"})
+
+# 设备类型：emulator 走 10.0.2.2 默认 base URL；physical 走 adb reverse
+# + Settings UI 配置 http://127.0.0.1:<port>/
+DEVICE_TYPES = frozenset({"emulator", "physical"})
+DEVICE_TYPE_EMULATOR = "emulator"
+DEVICE_TYPE_PHYSICAL = "physical"
 
 PACKAGE_NAME = "com.ailearningos.app"
 ACTIVITY_NAME = ".MainActivity"
@@ -78,19 +89,31 @@ SEARCH_QUERY_ID_TEXT = "#9001"
 
 # 回查区域是独立输入框（搜索后原输入框已有值，旧 placeholder 消失）；
 # 搜索后输入框仍持有焦点、软键盘打开，直接 swipe 会落在输入法区域被当成
-# 手势输入——先 back() 收起键盘，再连续两次向上滚动到回查区域。
+# 手势输入——先按需收起键盘（dumpsys 判断，见 _dismiss_ime_if_needed），
+# 再向上滚动到回查区域。
 LOOKUP_INPUT_HINT = "输入查询编号，如 42"
-LOOKUP_SCROLL_ARGS = (540, 1800, 540, 600, 400)
 # back() 收起 IME 后键盘收起动画未完成，立即 swipe 会被部分消费；
 # 等待 0.8s 确保 IME 完全收起再开始滚动（r5 证据：首次 swipe 被吞，
 # 页面只滚到 PlanCard 底部）。
 LOOKUP_KEYBOARD_DISMISS_SECONDS = 0.8
-# 第一次 swipe 后 LazyColumn 仍在滚动/settle，立即第二次 swipe 会被动画
-# 吞掉；间隔 0.8s 再滚第二次（手工验证有效）。
+# swipe 后 LazyColumn 仍在滚动/settle，立即下一次 swipe 会被动画吞掉；
+# 间隔 0.8s 再滚（手工验证有效）。
 LOOKUP_SCROLL_SETTLE_SECONDS = 0.8
 LOOKUP_QUERY = "9001"
 LOOKUP_RUN_TEXT = "回查记录"
 LOOKUP_RESULT_TEXT = "原查询词"
+
+# ---------- 屏幕相对滚动（r8：替换硬编码 swipe 坐标） ----------
+
+# 所有滚动都按实测屏幕尺寸（adb shell wm size，Override 优先）换算：
+# x=50%、从 75% 滚到 25%（向上滚半屏）、400ms。在 1080x2400 模拟器上
+# 等价于 M12-06 验证过的硬编码 (540,1800,540,600,400)；在 720x1600
+# 物理机上换算为 (360,1200,360,400,400)——旧 y=1800 超出 1600 高度，
+# r8 物理首跑证据：越界 swipe 后「搜索结果概要」始终在视口外直至超时。
+SCROLL_X_PERCENT = 0.5
+SCROLL_FROM_Y_PERCENT = 0.75
+SCROLL_TO_Y_PERCENT = 0.25
+SCROLL_DURATION_MS = 400
 
 # ---------- 治理只读流程文案 ----------
 
@@ -98,11 +121,34 @@ GOVERNANCE_HOME_TEXT = "首页"
 GOVERNANCE_ENTRY_TEXT = "治理 / 发布"
 GOVERNANCE_SECTIONS = ("发布版本", "运行快照", "审计留痕")
 # 治理页可滚动：发布版本 / 运行快照首屏可见，审计留痕在下方；等前两个
-# 区块出现后向上滚动一次让审计留痕进入视口（r7 证据：手工
-# `input swipe 540 1800 540 600 400` 后审计留痕 bounds 可见）。
-# 与 LOOKUP_SCROLL_ARGS 语义不同（回查滚动 vs 治理滚动），不复用。
+# 区块出现后向上滚动一次让审计留痕进入视口（r7 证据）。滚动走与搜索/
+# 回查相同的屏幕相对 _scroll_up()，不再有单独的硬编码坐标。
 GOVERNANCE_AUDIT_SECTION = "审计留痕"
-GOVERNANCE_AUDIT_SCROLL_ARGS = (540, 1800, 540, 600, 400)
+
+# ---------- 物理设备 Settings URL 配置流程（M13-04） ----------
+
+# 物理模式 App 端 base URL：经 adb reverse 后设备的 127.0.0.1:<port>
+# 即宿主机 mock（mock 本体仍只绑定宿主机 127.0.0.1）。
+PHYSICAL_BASE_URL_TEMPLATE = "http://127.0.0.1:%d/"
+
+SETTINGS_TAB_TEXT = "设置"
+SETTINGS_API_SECTION_TEXT = "API 地址"
+# OutlinedTextField 的 label 文案；空值时 label 位于输入框内，有值时浮于
+# 边框上——两者都在输入框可点击区域内，tapping label 即聚焦输入框。
+SETTINGS_FIELD_LABEL = "API base URL"
+SETTINGS_SAVE_TEXT = "保存"
+# SettingsViewModel.SAVED_NOTICE：保存成功后出现，属保存成功证据
+SETTINGS_SAVED_NOTICE_TEXT = "已保存，正在用新地址重新探测"
+# 首页「API 状态」卡片：/health 探测成功时值为「正常」，证明 App 已在用
+# 新地址（该词在首页仅此处出现，privacyLabel 输出 本地/云端/混合/未知）。
+HOME_API_HEALTH_TEXT = "服务（/health）"
+HOME_API_OK_TEXT = "正常"
+
+# 文本框清空序列：光标移到末尾（KEYCODE_MOVE_END）后连发 DEL（KEYCODE_DEL）
+# 覆盖既有/默认值；多发的 DEL 在空输入框上是 no-op，安全。
+KEYCODE_MOVE_END = "123"
+KEYCODE_DEL = "67"
+CLEAR_TEXT_BACKSPACE_COUNT = 64
 
 # ---------- mock 请求契约（镜像 mock_contract.ReadOnlyMockContract 路由表） ----------
 
@@ -144,7 +190,9 @@ class RunnerConfig:
     """一次冒烟运行的配置；构造时即完成全部静态校验。
 
     ``apk`` 在 ``skip_install=True`` 时可为 ``None``；否则必须指向已存在
-    的普通文件。
+    的普通文件。``device_type`` 为 ``emulator``（默认，App 用
+    10.0.2.2 默认 base URL 直达宿主机回环 mock）或 ``physical``
+    （adb reverse + Settings UI 把 base URL 配成 127.0.0.1）。
     """
 
     serial: str
@@ -154,6 +202,7 @@ class RunnerConfig:
     port: int = DEFAULT_PORT
     skip_install: bool = False
     keep_output: bool = False
+    device_type: str = DEVICE_TYPE_EMULATOR
 
     def __post_init__(self) -> None:
         if not isinstance(self.serial, str) or not self.serial.strip():
@@ -166,6 +215,19 @@ class RunnerConfig:
             raise RunnerError("port must be an integer, got %r" % (self.port,))
         if not 1 <= self.port <= 65535:
             raise RunnerError("port must be in 1..65535, got %d" % self.port)
+        if self.device_type not in DEVICE_TYPES:
+            raise RunnerError(
+                "device_type must be one of %s, got %r"
+                % (sorted(DEVICE_TYPES), self.device_type)
+            )
+        if (
+            self.device_type == DEVICE_TYPE_PHYSICAL
+            and self.serial.startswith("emulator-")
+        ):
+            raise RunnerError(
+                "device_type=physical expects a USB physical serial, got %r; "
+                "use --device-type emulator for emulator- serials" % self.serial
+            )
         if self.apk is None:
             if not self.skip_install:
                 raise RunnerError("apk is required unless --skip-install is set")
@@ -191,6 +253,12 @@ def build_config(argv: Optional[Sequence[str]] = None) -> RunnerConfig:
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="mock 服务器端口")
     parser.add_argument("--skip-install", action="store_true", help="跳过 APK 安装")
     parser.add_argument("--keep-output", action="store_true", help="绝不清理输出目录")
+    parser.add_argument(
+        "--device-type",
+        default=DEVICE_TYPE_EMULATOR,
+        help="设备类型：emulator（默认，走 10.0.2.2 默认 base URL）或 "
+        "physical（adb reverse + Settings UI 配置 127.0.0.1 base URL）",
+    )
     args = parser.parse_args(argv)
 
     if args.serial is None or not args.serial.strip():
@@ -203,6 +271,7 @@ def build_config(argv: Optional[Sequence[str]] = None) -> RunnerConfig:
         port=args.port,
         skip_install=args.skip_install,
         keep_output=args.keep_output,
+        device_type=args.device_type,
     )
 
 
@@ -311,6 +380,20 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+_DETAIL_CONTROL_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _sanitize_detail(text: str, limit: int = 200) -> str:
+    """阶段 detail 的安全形态：拍平为单行、去控制字符、限长。
+
+    设备异常信息可能携带换行/控制字符或超长 traceback；summary.json 的
+    stage.detail 只保留清洗后的短消息（adb 参数元组不含密钥，序列号
+    本就在 summary 顶层）。
+    """
+    flat = _DETAIL_CONTROL_RE.sub(" ", str(text)).strip()
+    return flat[:limit]
 
 
 def _validate_log_entry(entry: Any, line_no: int, raw_line: str) -> Dict[str, Any]:
@@ -475,29 +558,41 @@ class StageRecorder:
 class SmokeRunner:
     """核心编排器：adb/ui/server 全部依赖注入，本类不做真实 IO。
 
-    设备阶段顺序固定：wait_device -> install_apk(可选) -> clear_app ->
-    clear_logcat -> start_activity -> 等待首页 -> 依次点击 tab。
+    设备阶段顺序固定：wait_device -> [physical: setup-adb-reverse] ->
+    install_apk(可选) -> clear_app -> clear_logcat -> start_activity ->
+    等待首页 -> [physical: configure-base-url] -> 依次点击 tab。
     每个阶段调用 :meth:`capture_evidence` 保存 ``NN-stage.xml`` 与
     ``NN-stage.png``；收尾 ``dump_logcat`` 保存 ``logcat-full.txt`` 并生成
-    ``summary.json``。
+    ``summary.json``（物理模式在 finally 中先移除 reverse 映射并记录
+    remove-adb-reverse 阶段，再进入 finalize）。
+
+    emulator 模式行为与 M12-06 完全一致：App 用 debug 默认 base URL
+    ``http://10.0.2.2:8000/`` 直达宿主机回环 mock，不做任何 reverse /
+    Settings 配置。
     """
 
     STAGE_NAMES = {
         "wait_device": "wait-device",
+        "setup_reverse": "setup-adb-reverse",
         "install": "install-apk",
         "clear_app": "clear-app",
         "clear_logcat": "clear-logcat",
         "start_activity": "start-activity",
         "home": "wait-home",
+        "configure_base_url": "configure-base-url",
         **{key: key for key, _text in TAB_STAGES},
         "search": "search",
         "governance": "governance",
+        "remove_reverse": "remove-adb-reverse",
         "contract": "mock-contract",
         "logcat": "dump-logcat",
     }
 
     SEARCH_EVIDENCE_INDEX = 6
     GOVERNANCE_EVIDENCE_INDEX = 7
+    PHYSICAL_CONFIGURE_EVIDENCE_INDEX = 6
+    PHYSICAL_SEARCH_EVIDENCE_INDEX = 7
+    PHYSICAL_GOVERNANCE_EVIDENCE_INDEX = 8
 
     def __init__(
         self,
@@ -522,8 +617,78 @@ class SmokeRunner:
         self.server_stop_error: Optional[str] = None
         self.started_at: Optional[datetime] = None
         self.finished_at: Optional[datetime] = None
+        # 实测屏幕尺寸（懒获取 + 缓存）；None 表示尚未查询过
+        self._screen_size: Optional[Tuple[int, int]] = None
 
     # -- 证据采集 -------------------------------------------------------
+
+    def _is_physical(self) -> bool:
+        return self.config.device_type == DEVICE_TYPE_PHYSICAL
+
+    def physical_base_url(self) -> str:
+        """物理模式 App 端 base URL（adb reverse 后设备 127.0.0.1 即宿主 mock）。"""
+        return PHYSICAL_BASE_URL_TEMPLATE % self.config.port
+
+    def _require_screen_size(self) -> Tuple[int, int]:
+        """实测屏幕尺寸（懒获取 + 缓存）；wm size 失败时如实抛错。
+
+        失败落在需要滚动的阶段（search/governance）内，该阶段按真实异常
+        记 failed——比在 wait-device 阶段里顺带查询更符合事实归属。
+        """
+        if self._screen_size is None:
+            self._screen_size = self.adb.screen_size()
+        return self._screen_size
+
+    def _scroll_up(self) -> None:
+        """按实测屏幕尺寸向上滚动半屏（搜索结果 / 回查 / 治理共用）。
+
+        坐标由 :func:`swipe_up_args` 按百分比换算，不再使用硬编码像素；
+        ui.swipe 内部仍走参数列表形式的 ``adb shell input swipe``。
+        """
+        width, height = self._require_screen_size()
+        self.ui.swipe(
+            *swipe_up_args(
+                width,
+                height,
+                SCROLL_X_PERCENT,
+                SCROLL_FROM_Y_PERCENT,
+                SCROLL_TO_Y_PERCENT,
+                SCROLL_DURATION_MS,
+            )
+        )
+
+    def _dismiss_ime_if_needed(self) -> None:
+        """软键盘仍打开时 back() 收起，并等收起动画完成。
+
+        经 ``dumpsys input_method`` 判断（任一 mInputShown/mInputViewShown
+        为 true 即视为打开）；dumpsys 失败或无标记时保守视为打开——查询
+        框持有焦点时 back 只收键盘不导航（r5/r6 证据路径），多按一次的
+        风险远小于键盘遮住按钮/把 swipe 当手势输入。
+        """
+        shown = True
+        try:
+            dump = self.adb.dumpsys_input_method()
+            shown = ime_shown_from_dumpsys(
+                dump.decode("utf-8", errors="replace") if isinstance(dump, bytes) else dump
+            )
+        except Exception:  # noqa: BLE001 - 判断失败按打开处理
+            shown = True
+        if shown:
+            self.ui.back()
+            self.sleep(LOOKUP_KEYBOARD_DISMISS_SECONDS)
+
+    def _evidence_index(self, stage_key: str) -> int:
+        """证据编号：emulator 保持 M12-06 的 1..7；physical 插入 configure 后顺延。"""
+        if self._is_physical():
+            return {
+                "configure_base_url": self.PHYSICAL_CONFIGURE_EVIDENCE_INDEX,
+                "search": self.PHYSICAL_SEARCH_EVIDENCE_INDEX,
+                "governance": self.PHYSICAL_GOVERNANCE_EVIDENCE_INDEX,
+            }[stage_key]
+        return {
+            "search": self.SEARCH_EVIDENCE_INDEX,
+            "governance": self.GOVERNANCE_EVIDENCE_INDEX,
+        }[stage_key]
 
     def capture_evidence(self, stage_name: str, index: int) -> List[Path]:
         """保存当前 UI 层次 XML 与截图，产物名固定为 NN-stage.xml/png。"""
@@ -573,6 +738,9 @@ class SmokeRunner:
             self._record_failure(exc)
         finally:
             self._stop_server(server)
+            # 物理模式无论成败都必须移除 reverse 映射；放在 _finalize 之前
+            # 使 remove-adb-reverse 阶段进入 summary.json。
+            self._remove_reverse_mapping()
 
         try:
             summary = self._finalize()
@@ -597,6 +765,9 @@ class SmokeRunner:
         self.adb.wait_device()
         self.recorder.succeed(stage)
 
+        if self._is_physical():
+            self._run_setup_reverse_stage()
+
         if not self.config.skip_install:
             stage = self._stage("install")
             self.adb.install_apk(self.config.apk)
@@ -618,6 +789,9 @@ class SmokeRunner:
         self._wait_for_home()
         self.recorder.succeed(stage)
 
+        if self._is_physical():
+            self._run_configure_base_url_stage()
+
         for index, (stage_key, tab_text) in enumerate(TAB_STAGES, start=1):
             stage = self._stage(stage_key)
             self.ui.tap_text(tab_text)
@@ -628,12 +802,82 @@ class SmokeRunner:
         self._run_search_stage()
         self._run_governance_stage()
 
+    def _run_setup_reverse_stage(self) -> None:
+        """物理模式：App 启动前建立设备回环 -> 宿主机回环的 reverse 通道。"""
+        stage = self._stage("setup_reverse")
+        self.adb.reverse_tcp(self.config.port)
+        self.recorder.succeed(stage)
+
+    def _run_configure_base_url_stage(self) -> None:
+        """物理模式：首次启动后经真实 Settings UI 把 base URL 配成回环地址。
+
+        流程：进设置 -> 等 API 地址卡片 -> 点输入框（label 即输入区）->
+        光标移末尾连发 DEL 清掉既有/默认值 -> 输入回环 URL -> 保存 ->
+        等「已保存」提示与「当前生效」行出现 -> 回首页等 /health 探测
+        显示「正常」（App 确实在用新地址）。
+        """
+        base_url = self.physical_base_url()
+        stage = self._stage("configure_base_url")
+        self.ui.tap_text(SETTINGS_TAB_TEXT)
+        self.ui.wait_for(SETTINGS_API_SECTION_TEXT, STAGE_WAIT_TIMEOUT)
+        self.ui.tap_text(SETTINGS_FIELD_LABEL)
+        self.ui.key_events(
+            [KEYCODE_MOVE_END] + [KEYCODE_DEL] * CLEAR_TEXT_BACKSPACE_COUNT
+        )
+        self.ui.type_text(base_url)
+        self.ui.tap_text(SETTINGS_SAVE_TEXT)
+        self.ui.wait_for(SETTINGS_SAVED_NOTICE_TEXT, STAGE_WAIT_TIMEOUT)
+        self.ui.wait_for(base_url, STAGE_WAIT_TIMEOUT)
+        self.ui.tap_text(HOME_TEXT)
+        self.ui.wait_for(HOME_API_HEALTH_TEXT, STAGE_WAIT_TIMEOUT)
+        self.ui.wait_for(HOME_API_OK_TEXT, STAGE_WAIT_TIMEOUT)
+        self.recorder.succeed(stage)
+        self._record_stage_artifacts(
+            stage,
+            self.capture_evidence(
+                "configure-base-url", self._evidence_index("configure_base_url")
+            ),
+        )
+
+    def _remove_reverse_mapping(self) -> None:
+        """物理模式收尾：移除 reverse 映射并记录 remove-adb-reverse 阶段。
+
+        在 :meth:`run` 的 ``finally`` 中调用（设备阶段无论成败都执行）；
+        移除失败不抛出——阶段记 failed，由 summary 的 overall_status/exit_code
+        如实反映，mock server 仍按原路径先停。
+        """
+        if not self._is_physical():
+            return
+        stage = self._stage("remove_reverse")
+        try:
+            result = self.adb.reverse_remove_tcp(self.config.port, check=False)
+        except Exception as exc:  # noqa: BLE001 - 清理失败如实记录，不吞流程
+            self.recorder.fail(stage, "%s: %s" % (type(exc).__name__, exc))
+            return
+        if getattr(result, "returncode", None) == 0 and not getattr(
+            result, "timeout", False
+        ):
+            self.recorder.succeed(stage)
+        else:
+            self.recorder.fail(
+                stage,
+                "adb reverse --remove failed (returncode=%s, timeout=%s)"
+                % (
+                    getattr(result, "returncode", None),
+                    getattr(result, "timeout", None),
+                ),
+            )
+
     def _run_search_stage(self) -> None:
-        """搜索 UI 流程：搜索源 -> 预览计划 -> 搜索 -> 回查 #9001。
+        """搜索 UI 流程：搜索源 -> 预览计划 -> 搜索 -> 滚动看结果 -> 回查 #9001。
 
         只通过注入 ``ui`` 的 tap_text / tap_text_occurrence / wait_for /
         type_text / swipe 驱动；输入严格 ASCII（type_text 自身也只接受
         ASCII 可打印字符）。
+
+        r8 物理首跑证据（720x1600）：执行搜索后结果概要卡在计划卡下方、
+        视口之外——必须先按需收起 IME、把结果卡滚进视口，再等待
+        「搜索结果概要」/「#9001」；随后再滚一次到回查区域。
         """
         stage = self._stage("search")
         self.ui.tap_text(SEARCH_TAB_TEXT)
@@ -645,29 +889,29 @@ class SmokeRunner:
         # 搜索页 exact "搜索" 至少出现 3 次（页面标题 / 执行按钮 / 底部导航）；
         # 执行按钮是第 2 个（occurrence=1），点击标题或导航会卡住流程。
         self.ui.tap_text_occurrence(SEARCH_RUN_TEXT, occurrence=1)
+        # 查询框仍持有焦点、软键盘打开（r5 证据）：先按需收起 IME，再把
+        # 结果卡滚进视口，然后才等待结果概要与 #9001（等待前不滚动在
+        # 矮屏上必然超时）。
+        self._dismiss_ime_if_needed()
+        self._scroll_up()
         self.ui.wait_for(SEARCH_SUMMARY_TEXT, STAGE_WAIT_TIMEOUT)
         self.ui.wait_for(SEARCH_QUERY_ID_TEXT, STAGE_WAIT_TIMEOUT)
-        # 回查：先收起软键盘（查询框仍持有焦点），等 IME 收起动画完成再
-        # 两次向上滚动到回查区域；两次 swipe 之间等 LazyColumn settle，
-        # 否则第二次被滚动动画吞掉。第二次 swipe 之后不额外 sleep：
-        # tap_text 的 dump/查找自然等待。
-        self.ui.back()
-        self.sleep(LOOKUP_KEYBOARD_DISMISS_SECONDS)
-        self.ui.swipe(*LOOKUP_SCROLL_ARGS)
+        # 回查区域在结果卡下方：等 LazyColumn settle 后再滚一次到回查
+        # 输入框（滚动动画未结束时 swipe 会被吞，r5 证据）。滚动后不额外
+        # sleep：tap_text 的 dump/查找自然等待。
         self.sleep(LOOKUP_SCROLL_SETTLE_SECONDS)
-        self.ui.swipe(*LOOKUP_SCROLL_ARGS)
+        self._scroll_up()
         self.ui.tap_text(LOOKUP_INPUT_HINT)
         self.ui.type_text(LOOKUP_QUERY)
         # 输入后软键盘仍打开，「回查记录」按钮坐标被 IME 覆盖，点击会被
         # 输入法转换成字符（r6 证据：输入框出现 "9001g" 且无 lookup GET）；
-        # 先 back() 收起键盘，等 IME 收起动画完成再点按钮。
-        self.ui.back()
-        self.sleep(LOOKUP_KEYBOARD_DISMISS_SECONDS)
+        # 先按需收起键盘、等收起动画完成再点按钮。
+        self._dismiss_ime_if_needed()
         self.ui.tap_text(LOOKUP_RUN_TEXT)
         self.ui.wait_for(LOOKUP_RESULT_TEXT, STAGE_WAIT_TIMEOUT)
         self.recorder.succeed(stage)
         self._record_stage_artifacts(
-            stage, self.capture_evidence("search", self.SEARCH_EVIDENCE_INDEX)
+            stage, self.capture_evidence("search", self._evidence_index("search"))
         )
 
     def _run_governance_stage(self) -> None:
@@ -684,13 +928,15 @@ class SmokeRunner:
             if section == GOVERNANCE_AUDIT_SECTION:
                 break
             self.ui.wait_for(section, STAGE_WAIT_TIMEOUT)
-        self.ui.swipe(*GOVERNANCE_AUDIT_SCROLL_ARGS)
+        self._scroll_up()
         self.ui.wait_for(GOVERNANCE_AUDIT_SECTION, STAGE_WAIT_TIMEOUT)
         self.ui.back()
         self.recorder.succeed(stage)
         self._record_stage_artifacts(
             stage,
-            self.capture_evidence("governance", self.GOVERNANCE_EVIDENCE_INDEX),
+            self.capture_evidence(
+                "governance", self._evidence_index("governance")
+            ),
         )
 
     def _record_failure(self, exc: BaseException) -> None:
@@ -749,22 +995,44 @@ class SmokeRunner:
         self.finished_at = self.now()
         request_stats = self._check_request_contract()
 
-        logcat_bytes = self.adb.dump_logcat()
-        (self.output_dir / LOGCAT_FULL).write_bytes(logcat_bytes)
-
         logcat_stage = self._stage("logcat")
-        logcat_stats = analyze_logcat(
-            logcat_bytes.decode("utf-8", errors="replace").splitlines(),
-            package_name=PACKAGE_NAME,
-        )
-        if logcat_stats["has_blocking_issue"]:
-            self.recorder.fail(logcat_stage, "logcat blocking issue detected")
-        else:
-            self.recorder.succeed(logcat_stage)
+        try:
+            logcat_bytes = self.adb.dump_logcat()
+            (self.output_dir / LOGCAT_FULL).write_bytes(logcat_bytes)
+
+            logcat_stats = analyze_logcat(
+                logcat_bytes.decode("utf-8", errors="replace").splitlines(),
+                package_name=PACKAGE_NAME,
+            )
+            if logcat_stats["has_blocking_issue"]:
+                self.recorder.fail(logcat_stage, "logcat blocking issue detected")
+            else:
+                self.recorder.succeed(logcat_stage)
+        except Exception as exc:  # noqa: BLE001 - 设备离线时 summary 仍必须写出
+            # r8 物理首跑教训：搜索失败后 USB 掉线，dump_logcat 抛错导致
+            # 整个 _finalize 失败、summary.json 缺席——已记录的 failed search
+            # 阶段与 reverse 清理状态全部被掩盖。这里改为：dump-logcat 阶段
+            # 记 failed（缺失的 logcat 不得变成隐性通过），stats 置零并标记
+            # unavailable，summary 照常写出、exit_code 保持 failed。
+            detail = _sanitize_detail(
+                "logcat dump unavailable: %s: %s" % (type(exc).__name__, exc)
+            )
+            self.recorder.fail(logcat_stage, detail)
+            logcat_stats = {
+                "total_lines": 0,
+                "fatal_exception_count": 0,
+                "anr_count": 0,
+                "androidruntime_crash_count": 0,
+                "package_crash_count": 0,
+                "has_blocking_issue": False,
+                "unavailable": True,
+                "error": detail,
+            }
 
         summary = build_summary(
             config={
                 "serial": self.config.serial,
+                "device_type": self.config.device_type,
                 "apk_sha256": self.apk_sha256,
                 "package_name": PACKAGE_NAME,
                 "started_at_utc": self.started_at.isoformat()

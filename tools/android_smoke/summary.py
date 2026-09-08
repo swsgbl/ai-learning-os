@@ -22,6 +22,7 @@ _STATUS_PRIORITY = ("failed", "incomplete", "passed", "skipped")
 # config 中允许的非敏感元数据字段
 _ALLOWED_CONFIG_KEYS = (
     "serial",
+    "device_type",
     "apk_sha256",
     "package_name",
     "started_at_utc",
@@ -155,6 +156,7 @@ def build_summary(
     summary = {
         "schema_version": SCHEMA_VERSION,
         "serial": config.get("serial"),
+        "device_type": config.get("device_type"),
         "apk_sha256": config.get("apk_sha256"),
         "package_name": config.get("package_name"),
         "started_at_utc": config.get("started_at_utc"),

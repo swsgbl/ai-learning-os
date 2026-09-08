@@ -4,7 +4,12 @@ import inspect
 import subprocess
 import unittest
 
-from tools.android_smoke.adb import AdbClient, AdbCommandResult, AdbError
+from tools.android_smoke.adb import (
+    AdbClient,
+    AdbCommandResult,
+    AdbError,
+    parse_screen_size,
+)
 
 
 class FakeProc:
@@ -172,6 +177,86 @@ class TestDeviceOperations(unittest.TestCase):
         runner = FakeRunner()
         make_client(runner).clear_logcat()
         self.assertEqual(runner.calls[0][0], ["adb", "-s", "XYZ123", "logcat", "-c"])
+
+    def test_reverse_tcp_argument_list(self):
+        runner = FakeRunner()
+        make_client(runner).reverse_tcp(8000)
+        # --no-rebind：已有映射时报错而非静默重绑（暴露残留监听）
+        self.assertEqual(
+            runner.calls[0][0],
+            ["adb", "-s", "XYZ123", "reverse", "--no-rebind",
+             "tcp:8000", "tcp:8000"],
+        )
+
+    def test_reverse_tcp_nonzero_raises(self):
+        runner = FakeRunner(FakeProc(1, b"", b"error: cannot bind"))
+        with self.assertRaises(AdbError):
+            make_client(runner).reverse_tcp(8000)
+
+    def test_reverse_remove_tcp_argument_list(self):
+        runner = FakeRunner()
+        make_client(runner).reverse_remove_tcp(8000)
+        self.assertEqual(
+            runner.calls[0][0],
+            ["adb", "-s", "XYZ123", "reverse", "--remove", "tcp:8000"],
+        )
+
+    def test_reverse_remove_tcp_check_false_returns_result(self):
+        # 清理路径默认容错：设备已拔出时不抛出，交由 runner 记 failed 阶段
+        runner = FakeRunner(FakeProc(1, b"", b"error: device offline"))
+        result = make_client(runner).reverse_remove_tcp(8000, check=False)
+        self.assertEqual(result.returncode, 1)
+
+    def test_reverse_remove_tcp_check_true_raises(self):
+        runner = FakeRunner(FakeProc(1))
+        with self.assertRaises(AdbError):
+            make_client(runner).reverse_remove_tcp(8000, check=True)
+
+
+class TestScreenSize(unittest.TestCase):
+    def test_parse_physical_only(self):
+        self.assertEqual(parse_screen_size("Physical size: 720x1600\n"), (720, 1600))
+
+    def test_parse_override_preferred(self):
+        # 设有 wm size 覆盖时，渲染尺寸按 Override，Physical 仅供参考
+        text = "Physical size: 720x1600\nOverride size: 1080x2400\n"
+        self.assertEqual(parse_screen_size(text), (1080, 2400))
+
+    def test_parse_tolerates_surrounding_lines(self):
+        text = "WARN: something unrelated\nPhysical size: 1080x2400\n"
+        self.assertEqual(parse_screen_size(text), (1080, 2400))
+
+    def test_parse_garbage_raises(self):
+        for bad in ("", "error: device offline", "Physical size: 720x", "Physical density: 420"):
+            with self.assertRaises(AdbError):
+                parse_screen_size(bad)
+
+    def test_parse_non_string_raises(self):
+        with self.assertRaises(AdbError):
+            parse_screen_size(b"Physical size: 720x1600\n")
+
+    def test_screen_size_argument_list_and_parse(self):
+        runner = FakeRunner(FakeProc(0, b"Physical size: 1080x2400\n"))
+        size = make_client(runner).screen_size()
+        self.assertEqual(
+            runner.calls[0][0],
+            ["adb", "-s", "XYZ123", "shell", "wm", "size"],
+        )
+        self.assertEqual(size, (1080, 2400))
+
+    def test_screen_size_unparseable_output_raises(self):
+        runner = FakeRunner(FakeProc(0, b""))
+        with self.assertRaises(AdbError):
+            make_client(runner).screen_size()
+
+    def test_dumpsys_input_method_argument_list(self):
+        runner = FakeRunner(FakeProc(0, b"  mInputShown=true\n"))
+        out = make_client(runner).dumpsys_input_method()
+        self.assertEqual(
+            runner.calls[0][0],
+            ["adb", "-s", "XYZ123", "shell", "dumpsys", "input_method"],
+        )
+        self.assertEqual(out, b"  mInputShown=true\n")
 
     def test_dump_logcat(self):
         runner = FakeRunner(FakeProc(0, b"log line\n"))

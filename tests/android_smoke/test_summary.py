@@ -161,6 +161,20 @@ def test_config_unknown_key_raises() -> None:
         build_summary(config, [make_stage()], dict(BASE_REQUEST_STATS), dict(BASE_LOGCAT_STATS))
 
 
+def test_device_type_allowed_and_passed_through() -> None:
+    config = dict(BASE_CONFIG)
+    config["device_type"] = "physical"
+    summary = build_summary(config, [make_stage()], dict(BASE_REQUEST_STATS), dict(BASE_LOGCAT_STATS))
+    assert summary["device_type"] == "physical"
+
+
+def test_device_type_defaults_to_none_when_absent() -> None:
+    summary = build_summary(
+        dict(BASE_CONFIG), [make_stage()], dict(BASE_REQUEST_STATS), dict(BASE_LOGCAT_STATS)
+    )
+    assert summary["device_type"] is None
+
+
 def test_json_serializable_without_sensitive_fields() -> None:
     stages = [
         make_stage("install", "passed", artifacts=["out/install.log"]),
