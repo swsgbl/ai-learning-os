@@ -1,7 +1,8 @@
-"""HarmonyOS mock 后端服务器 — 仅用于 M13-02 验收测试。
+"""HarmonyOS mock 后端服务器 — 仅用于 M13-02 / M13-05 验收测试。
 
 通过 tools.android_smoke.mock_contract.ReadOnlyMockContract().handle 路由,
-禁止手写各端点 JSON 字符串。只暴露 M13-01 Home 六个 GET 端点;
+禁止手写各端点 JSON 字符串。暴露 M13-01 Home 六个 GET 端点 + M13-05
+GET /api/v1/papers(确定性论文列表);
 未知路径、非 GET 与未支持 method (HEAD/OPTIONS/其它) 均 404,不落入
 BaseHTTPRequestHandler 的 501;audit 仅精确 limit=100。
 
@@ -31,7 +32,7 @@ from tools.android_smoke.mock_contract import (
     ReadOnlyMockContract,
 )
 
-# 只允许这六个 M13-01 Home GET 端点
+# 只允许这些 M13-01 Home GET 端点 + M13-05 papers 端点
 ALLOWED_GET_PATHS = frozenset({
     "/health",
     "/api/v1/auth/status",
@@ -39,6 +40,7 @@ ALLOWED_GET_PATHS = frozenset({
     "/api/v1/version",
     "/api/v1/system/ops-snapshot",
     "/api/v1/audit",
+    "/api/v1/papers",
 })
 
 
@@ -84,12 +86,12 @@ class _HarmonyMockHandler(BaseHTTPRequestHandler):
             self._respond(404, METHOD_NOT_ALLOWED)
             return
 
-        # 只暴露 M13-01 Home 六个端点
+        # 只暴露允许的路径
         if bare_path not in ALLOWED_GET_PATHS:
             self._respond(404, NOT_FOUND)
             return
 
-        # 委托给共享契约处理（含 audit limit=100 校验）
+        # 委托给共享契约处理（含 audit limit=100 校验 + papers 端点）
         status, payload = self._contract.handle("GET", self.path)
         self._respond(status, payload)
 
@@ -147,7 +149,7 @@ class HarmonyMockServer:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="HarmonyOS mock backend for M13-02")
+    parser = argparse.ArgumentParser(description="HarmonyOS mock backend for M13-02/M13-05")
     parser.add_argument("--port", type=int, default=8765, help="listen port (default 8765)")
     parser.add_argument(
         "--host",

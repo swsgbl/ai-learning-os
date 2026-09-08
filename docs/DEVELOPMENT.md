@@ -2115,3 +2115,28 @@ python tools/harmony_mock/server.py --host 0.0.0.0 --port 8765
 ### 边界
 
 本验收是本地模拟器 + mock only 口径，不代表真机、真实 provider、生产后端、生产 DB、治理写链路或生产可用。未签名 HAP 直装只是本地验收形态，不构成发布形态；未使用 AGC key、签名配置或自动签名。CI 无 HarmonyOS job，后续 PR 的 API/Android/Docker/Web 结果不能扩大为 HarmonyOS 远端验证；不打 tag、不发 Release、不部署；`production_ready=false` 语义不变。以上为提交前本地验收快照；远端 PR/CI/合并状态以后续 PROJECT_STATUS 回填为准。
+
+## HarmonyOS Study 论文只读列表（M13-05）
+
+### 范围与契约
+
+- 分支 `feature/m13-05-harmony-study-papers`，基于 `origin/main@7f344bf8251deb88c7ff917ddf8d9d2f2575c3ce`（PR #59 merge commit，本地 git 可验证）；实现时点分支零本地提交，代码/测试/文档改动全部位于工作区（未 commit、未 push、未开 PR）。
+- 目标：把 M13-01 学习 Tab 的静态只读占位升级为论文只读列表——HarmonyOS 各业务域只读接入（评估项「学习」）的第一切片；服务端 / Android / Web / infra 零改动。
+- 生产改动三个文件（`apps/harmony/entry/src/main/ets/`）：`AiosApi.ets` 新增第 7 个只读端点 `GET /api/v1/papers` 与 `PaperOut` DTO（可空字段对齐共享契约）、导出 `getPapers`，仍硬编码仅 GET；`StudyPane.ets` 升级为单一列表状态机 LOADING/EMPTY/SUCCESS/ERROR（EMPTY=HTTP 成功零条；ERROR 展示原始错误并带「重试」；SUCCESS 渲染存在字段带「刷新」，空可选字段省略渲染、存在时完整渲染），`aboutToAppear` 一次初始加载，订阅 SettingsStore 既有 `aios://settings/url_changed` 事件（稳定回调、先 off 再 on、带回调 `emitter.off` 精确退订、回调内以 `loadBaseUrl` 重读持久化为权威来源，显式 null/undefined 检查无非空断言；hmharness 稳定性修复：元数据行 Flex(Wrap) 窄屏自动换行、标题/副题/元数据 maxLines + TextOverflow.Ellipsis、`disposed` 守卫（组件销毁后异步回调立即返回）、请求代际守卫（`requestGeneration` 递增，过期响应丢弃））；`Index.ets` 仅注释与接线说明更新。全程只读：无考试/答题/评分/答案缓存/解释/路由/麦克风/存储/凭据逻辑。
+- 共享 mock 契约：`tools/android_smoke/mock_contract.py` 新增确定性 3 篇论文 fixture（Attention Is All You Need / BERT / ImageNet Classification，paper-003 `origin_url: null`），`GET /api/v1/papers` 200 顶层数组、`POST /api/v1/papers` 404（原「GET /api/v1/papers 返回 404」断言移除）；`tools/harmony_mock/server.py` 允许路径加入该端点；两份测试文件相应扩为契约 20 项与 papers 正/负例。改动面合计 7 files，+449/−41（不含文档）。
+- 入库证据为 `docs/evidence/m13-05-harmony-study-papers/README.md`（唯一入库文件）；原始验收证据在 gitignored `.verify/m13-05-harmony-study-papers/`，不入库。
+
+### 构建与验收（最小可复现，本地模拟器口径）
+
+- 本地测试：`python tools/harmony_mock/test_contract.py` **20/20 passed**（含 M13-05 papers 正例与 POST 404 负例）；`pytest tests/android_smoke/test_mock_contract.py tests/android_smoke/test_server.py` **28 passed**。
+- clean 构建（初始 Stage 3 时点，3A/3B/3C 证据对应）：`hvigorw.bat clean --no-daemon` → `hvigorw.bat assembleHap --no-daemon`，均 exit 0 / BUILD SUCCESSFUL；产物 `entry-default-unsigned.hap` 240231 bytes，SHA256 `E4255F488C06FAB755F0CA844F407E077533332485737E7EDE1D9DD50FD36B3A`；已知非阻塞警告与 M13-01/M13-02/M13-03 基线一致（无显式 `targetSdkVersion`、无签名配置、`SettingsStore` may-throw 静态提示）。
+- 最终 supervisor 复验（hmharness 稳定性修复后，`final-*` 证据对应）：以全局 `hvigorw.bat`（在 `apps/harmony`，PowerShell 进程内 `DEVECO_SDK_HOME=C:\DevEco-Studio\sdk`）重新 `clean` + `assembleHap`，均 BUILD SUCCESSFUL；最终 HAP 255674 bytes，SHA256 `3E3CF7CBB3160F15FE8A78240F24F4D1036AC6771E90C42E962DC532CB958E0D`；已知警告仍仅为同一基线三项。fresh install（App PID 15016）全流程重验通过：默认 URL 真实错误态 + 「重试」→ 真实 Settings UI 保存 `http://192.168.8.3:8766/` → **App 不重启**，学习 Tab 渲染全部 3 篇论文 → 停 mock 后「刷新」转错误态 + 「重试」且论文消失 → 重启 mock 后「重试」3 篇全部恢复。证据为 `final-*` 系列（`final-positive.json/.jpeg` 为弃用中间态——该 dump 仍为 Settings 页布局，不作正向证据；`final-positive2.json` 为采信正向证明），清单见 evidence README。
+- Stage 3A（默认地址错误态）：模拟器 `127.0.0.1:5557` 全新安装首启，学习 Tab 在默认 `http://127.0.0.1:8000` 下为真实网络错误态（`网络请求失败: [object Object]` + 「重试」，无论文标题渲染）。
+- Stage 3B（Settings→Study 正向流）：supervisor 仅为本次运行在 `0.0.0.0:8766` 启动 mock，模拟器侧使用 `http://192.168.8.3:8766/`；真实 Settings UI 保存成功（`已保存: http://192.168.8.3:8766/`）；**App 不重启**，返回进入学习 Tab 即显示新服务地址并刷新为三篇确定性论文（学科/难度/时长/标签全渲染；paper-001/002 显示 arxiv 原文链接，paper-003 `origin_url: null` 不渲染链接；无「重试」按钮）。
+- Stage 3C（错误与恢复流）：精确停止 mock（进程与 8766 端口释放实证）后点「刷新」→ 错误态（`网络请求失败: [object Object]` + 「重试」，三篇论文消失）；重启 mock（监听 PID 与端口实证）后点「重试」→ 三篇论文恢复；收尾全部 mock 进程停止、端口释放实证。
+- UI 自动化输入备注：坐标式 `uitest uiInput inputText x y <text>` 在 TextInput 上表现为追加/重复畸形文本，不可用；最终成功方法为系统文本菜单「全选/剪切」清空后聚焦输入框，用 `uitest uiInput text <url>` 整段输入并 dump 核对与目标完全一致。
+- 完整证据清单、断言明细与截图/布局文件对应关系见 `docs/evidence/m13-05-harmony-study-papers/README.md`。
+
+### 边界
+
+本验收是本地模拟器 + mock only 口径，不代表真机、真实 provider、生产后端、生产 DB、治理写链路或生产可用；无任何写路径。空态（EMPTY）在代码中存在但未做 UI 覆盖（mock 恒返 3 篇论文）；滚动行为未测（三篇均落首屏）。mock 逐请求日志刻意关闭（日志仅含启动监听单行消息），验收依据为确定性 UI 状态迁移而非请求日志。错误文案 `网络请求失败: [object Object]` 为 UX 跟进项。未签名 HAP 直装只是本地验收形态，不构成发布形态；未使用 AGC key、签名配置或自动签名。CI 无 HarmonyOS job，后续 PR 的 API/Android/Docker/Web 结果不能扩大为 HarmonyOS 远端验证。仓库状态（文档时点）：分支未 commit、未 push、未开 PR，无远端 CI run、未合并、未打 tag、未部署；`production_ready=false` 语义不变。以上为提交前本地验收快照；远端 PR/CI/合并状态以后续 PROJECT_STATUS 回填为准。
