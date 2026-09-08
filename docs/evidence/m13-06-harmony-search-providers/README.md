@@ -2,7 +2,7 @@
 
 - 日期：2026-09-08
 - 分支：`feature/m13-06-harmony-search-providers`（基于 `origin/main@34d30ec4d9afee15dda037713ab9867f3e33d1f8`，即 PR #60 merge commit（M13-05 已合并、其 merge 后 main CI 四项 job 全绿），本地 git 可验证）
-- 状态：本地实现、本地模拟器验收与 mock 契约/Android 回归测试完成；本 README 记录提交前本地验收快照——实现时点分支零本地提交，未 commit、未 push、未开 PR，远端 PR/CI/合并状态以后续 PROJECT_STATUS 回填为准，不在此预写
+- 状态：本地实现、本地模拟器验收与 mock 契约/Android 回归测试完成；本地验收后已随 PR #61 合并——PR CI run 34218137511 四项 success，merge commit 8d4445a，merge 后 main CI run 34238561233 四项 success；本 README 保留本地验收证据与边界
 - 原始证据路径：`.verify/m13-06-harmony-search-providers/`（gitignored，不入库；本 README 不复制任何原始工件内容）
 - 入库证据：本 README（唯一入库文件）
 - 结论：**PASS（本地口径）**——mock 契约 30/30、Android 冒烟单测回归 287 passed / 1 skipped、clean HAP 构建成功、模拟器 Stage A/B/C（默认地址错误态 / Settings 保存后不重启正向 / 停服错误与重启恢复）全流程通过
@@ -49,7 +49,7 @@
 
 - 本验收是本地模拟器 + mock only 口径，不代表 HarmonyOS 真机、真实 provider、生产后端、生产 DB、治理写链路或生产可用；无任何写路径、无凭据。
 - CI 无 HarmonyOS job：本切片全部 HarmonyOS 验证为本地口径，不构成远端 CI 验证；后续 PR 的 API/Android/Docker/Web CI 结果不能扩大为 HarmonyOS 远端验证。
-- 仓库状态（文档时点）：分支未 commit、未 push、未开 PR，无远端 CI run、未合并、未打 tag、未部署（PR #60/M13-05 已先期合并于 `34d30ec`，其 merge 后 main CI 四项 job 全绿）。
+- 仓库状态（回填时点）：PR #61 已合并（merge commit 8d4445a），PR CI run 34218137511 与 merge 后 main CI run 34238561233 四项 success；未打 tag、未部署。
 - 错误文案 `网络请求失败: [object Object]` 直接展示原始错误值，用户友好文案为 UX 跟进项；空态（EMPTY）仅代码存在未做 UI 覆盖（mock fixture 恒返 2 个 provider）。
 - 未签名 HAP 直装只是本地验收形态，不构成发布形态。
 - `production_ready=false` 语义不变。
