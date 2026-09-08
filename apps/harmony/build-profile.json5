@@ -5,6 +5,7 @@
       {
         "name": "default",
         "compatibleSdkVersion": "6.1.1(24)",
+        "targetSdkVersion": "6.1.1(24)",
         "runtimeOS": "HarmonyOS"
       }
     ],

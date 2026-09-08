@@ -1,6 +1,6 @@
 /**
  * AiosApi.ets — 只读 GET API 封装(M13-01 第 1/3a 小步 + M13-05 论文端点
- * + M13-07 语音端点 + M13-08 考试会话只读端点)
+ * + M13-07 语音端点 + M13-08 考试会话只读端点 + M13-09 错误文案加固)
  *
  * 职责边界(刻意收窄):
  *   - 仅封装 10 个只读端点:/health、/api/v1/auth/status、/api/v1/system/privacy、
@@ -9,7 +9,9 @@
  *     /api/v1/voice/providers(M13-07)、
  *     /api/v1/exams/{exam_id}(M13-08,动态路径,examId 白名单校验 + encodeURIComponent);
  *   - 每次请求前先经 UrlPolicy.validateBaseUrl 校验 base URL,不合法直接返回失败;
- *   - 失败/错误如实返回(ApiResult.ok=false + 原始错误信息),不吞错、不美化;
+ *   - 失败/错误如实返回(ApiResult.ok=false + 用户可读中文错误),不吞错;
+ *   - M13-09:全部错误文案经 ErrorText.safeErrorText 收敛 —— 绝不渲染
+ *     [object Object],绝不序列化整个异常对象(不泄露 URL/令牌/响应体);
  *   - 不重试、不写入、不保存任何 token/key/password(零持久化、零凭据);
  *   - 纯 ArkTS + @kit.NetworkKit,无页面依赖,可被任何页面/组件复用。
  *
@@ -20,6 +22,7 @@
  */
 
 import { http } from '@kit.NetworkKit';
+import { safeErrorText } from './ErrorText';
 import { UrlPolicyCode, validateBaseUrl, urlPolicyMessage } from './UrlPolicy';
 
 /** 统一 API 结果:如实承载成功与失败 */
@@ -240,18 +243,6 @@ function is2xx(code: number): boolean {
   return code >= 200 && code < 300;
 }
 
-/** 把网络层错误安全转字符串(不抛出) */
-function errToString(e: Object | undefined): string {
-  if (e === null || e === undefined) {
-    return 'unknown error';
-  }
-  try {
-    return `${e}`;
-  } catch (err) {
-    return 'error toString failed';
-  }
-}
-
 /**
  * M13-08 动态端点:/api/v1/exams/{exam_id} 的固定前缀。
  * 刻意不放进 AiosEndpoint 枚举:枚举只承载完整固定路径,避免把"半个路径"
@@ -263,6 +254,12 @@ const EXAM_PATH_PREFIX: string = '/api/v1/exams/';
 const EXAM_ID_ALLOWED_RE: RegExp = /^[A-Za-z0-9._:-]+$/;
 /** examId 长度上限 */
 const EXAM_ID_MAX_LENGTH: number = 128;
+
+/** 非法请求类型(注入探针/路径结构篡改)映射到固定中文文案,不回显原始输入 */
+const BAD_REQUEST_TEXT: string = '请求被服务拒绝 (HTTP 400):请检查请求参数';
+
+/** 服务端异常兜底文案(5xx 响应体可能包含栈信息/内部路径,不透出) */
+const SERVER_ERROR_TEXT: string = '服务内部错误 (HTTP 5xx):请稍后重试或联系管理员';
 
 /**
  * 校验 examId(在发起任何网络请求之前执行)。
@@ -335,8 +332,20 @@ async function getJson<T>(baseUrl: string, endpoint: AiosEndpoint | string): Pro
     const body: string = typeof resp.result === 'string' ? resp.result : `${resp.result}`;
 
     if (!is2xx(status)) {
-      return { ok: false, status: status, data: null,
-        error: `HTTP ${status}: ${body.substring(0, 200)}` };
+      // M13-09:非 2xx 响应体不再透出到 UI ——
+      //   - 5xx:服务端错误页/栈信息可能含内部路径,固定中文文案兜底;
+      //   - 400:注入探针会被 FastAPI 回显在 detail 里,固定文案兜底,不回显输入;
+      //   - 其余(401/403/404/409 等):仅保留状态码 + 静态短语,不带响应体。
+      let reason: string;
+      if (status >= 500) {
+        reason = SERVER_ERROR_TEXT;
+      } else if (status === 400) {
+        reason = BAD_REQUEST_TEXT;
+      } else {
+        reason = '';
+      }
+      const text: string = reason.length > 0 ? reason : `请求失败 (HTTP ${status})`;
+      return { ok: false, status: status, data: null, error: text };
     }
 
     if (body.trim().length === 0) {
@@ -348,11 +357,13 @@ async function getJson<T>(baseUrl: string, endpoint: AiosEndpoint | string): Pro
       return { ok: true, status: status, data: parsed, error: 'ok' };
     } catch (e) {
       return { ok: false, status: status, data: null,
-        error: `JSON 解析失败: ${errToString(e)}` };
+        error: `JSON 解析失败: ${safeErrorText(e)}` };
     }
   } catch (e) {
-    // 网络层异常(DNS/超时/拒绝等):如实返回,不重试
-    return { ok: false, status: -1, data: null, error: `网络请求失败: ${errToString(e)}` };
+    // 网络层异常(DNS/超时/拒绝等):如实返回,不重试;
+    // M13-09:文案经 safeErrorText 收敛,绝不 [object Object],
+    // 也绝不 JSON.stringify 整个异常对象(不泄露 URL/令牌/响应体)
+    return { ok: false, status: -1, data: null, error: `网络请求失败: ${safeErrorText(e)}` };
   } finally {
     httpClient.destroy();
   }
