@@ -2,7 +2,7 @@
 
 - 日期：2026-09-09（Stage A/B/C 于 2026-09-08 23:50 – 2026-09-09 00:02 采集；当前产物复验于 2026-09-09 00:15–00:16）
 - 分支：`feature/m13-07-harmony-voice-providers`（基于 `origin/main@5ef95b29872bf5e50d839ef480f98093f8c195ec`（PR #62 merge commit，本地 git 可验证））
-- 状态：本地实现、本地模拟器验收、mock 契约/Android 回归测试与当前产物重装复验完成；**未 commit、未 push、未开 PR**（文档时点，远端状态以回填为准）
+- 状态：本地实现、本地模拟器验收、mock 契约/Android 回归测试与当前产物重装复验完成；已随 **PR #63** 合并 main（merged_at `2026-09-08T16:45:25Z`，PR head `d201b062f86a2179fa5d8421053e4ece478971a7`、merge commit `6c72c75dc3f09e9aeb29f683554f00410102075d`，本地 git 可验证；PR CI run `34252437713` 与 merge 后 main CI run `34253004195` 四项 job 全部 success；本地 worktree 提交 `4bdab4c` 与 PR head 的 tree 一致、commit SHA 不同）
 - 原始证据路径：`.verify/m13-07-harmony-voice-providers/`（gitignored，不入库；本 README 不复制任何原始工件内容）
 - 入库证据：本 README（唯一入库文件）
 - 结论：**PASS（本地口径）**——mock 契约 42/42、Android 冒烟单测回归 32 passed、clean 构建 + 双重独立 `assembleHap` 复验成功、模拟器 Stage A/B/C（默认地址错误态 / Settings 保存后不重启正向 / 停服约 33 秒错误与重启恢复）全流程通过、当前产物 HAP 重装正向复验通过
@@ -55,7 +55,7 @@
 - 本验收是本地模拟器 + mock only 口径，不代表 HarmonyOS 真机、真实 provider、生产后端、生产 DB、任何写链路或生产可用；无任何写路径、无凭据、不访问麦克风/音频/存储，**不构成任何真实语音能力（ASR/TTS 执行）**。
 - CI 无 HarmonyOS job：本切片全部 HarmonyOS 验证为本地口径，不构成远端 CI 验证；后续 PR 的 API/Android/Docker/Web CI 结果不能扩大为 HarmonyOS 远端验证。
 - 未使用 AGC key、签名配置或自动签名；未签名 HAP 直装只是本地验收形态，不构成发布形态；未打 tag、未部署。
-- 仓库状态（文档时点）：分支未 commit、未 push、未开 PR，无远端 CI run、未合并；远端状态以 PROJECT_STATUS 后续回填为准。
+- 仓库状态（已回填 2026-09-09）：**PR #63 已合并**——PR head `d201b062f86a2179fa5d8421053e4ece478971a7`、merge commit `6c72c75dc3f09e9aeb29f683554f00410102075d`（merged_at `2026-09-08T16:45:25Z`，本地 git 可验证），PR CI run `34252437713` 与 merge 后 main CI run `34253004195` 四项 job（API/Android/Docker/Web）全部 success；未打 tag、未部署。
 - `production_ready=false` 语义不变。
 
 ## 非阻塞代码加固跟进项（另行跟踪，不影响本次验收结论）
