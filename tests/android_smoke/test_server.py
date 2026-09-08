@@ -104,6 +104,35 @@ class LoopbackMockServerTest(unittest.TestCase):
         )
         self.assertEqual(status, 404)
 
+    def test_exam_session_readonly(self) -> None:
+        # M13-08：GET /api/v1/exams/exam-m13-08-001 确定性只读会话快照;
+        # 考试域写方法与其余路径一律 404
+        status, body, _ = self.request("/api/v1/exams/exam-m13-08-001")
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["exam_id"], "exam-m13-08-001")
+        self.assertEqual(payload["paper_id"], "paper-001")
+        self.assertEqual(payload["mode"], "exam")
+        self.assertEqual(payload["status"], "active")
+        self.assertEqual(payload["server_remaining_seconds"], 900)
+        self.assertEqual(
+            [q["id"] for q in payload["questions"]],
+            ["q-m13-08-001", "q-m13-08-002"],
+        )
+        self.assertEqual(payload["answers"], {"q-m13-08-001": "A"})
+        self.assertEqual(payload["next_sequence"], 2)
+
+        for method, path in (
+            ("POST", "/api/v1/exams/exam-m13-08-001"),
+            ("PUT", "/api/v1/exams/exam-m13-08-001/answers"),
+            ("POST", "/api/v1/exams/exam-m13-08-001/submit"),
+            ("GET", "/api/v1/exams/exam-m13-08-001/submission"),
+            ("GET", "/api/v1/exams/exam-unknown-999"),
+            ("POST", "/api/v1/papers/paper-001/exams"),
+        ):
+            status, _, _ = self.request(path, method=method, body=b"{}")
+            self.assertEqual(status, 404, (method, path))
+
     def test_governance_version_ops_audit(self) -> None:
         status, body, _ = self.request("/api/v1/version")
         self.assertEqual(status, 200)

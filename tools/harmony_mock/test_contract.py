@@ -1,6 +1,6 @@
-"""M13-02 / M13-05 / M13-06 / M13-07 HarmonyOS mock 后端契约测试脚本。
+"""M13-02 / M13-05 / M13-06 / M13-07 / M13-08 HarmonyOS mock 后端契约测试脚本。
 
-在宿主机上启动 mock 服务器并验证（契约测试共 42 项）：
+在宿主机上启动 mock 服务器并验证（契约测试共 54 项）：
 - 6 个 Home GET 端点返回 200 与关键字段（M13-02）
 - 1 个论文 GET 端点返回 200 与关键字段（M13-05 新增）
 - 1 个检索 providers GET 端点返回 200 与固定形状（M13-06 新增：
@@ -8,6 +8,10 @@
 - 1 个语音 providers GET 端点返回 200 且与 Android VoiceProvidersResponse
   逐字段精确相等（M13-07 新增:voice_mode=hybrid、ASR=fake 无回退、
   TTS 请求 cloud-openai-tts 回退 tone、隐私开关如实投影）
+- 1 个考试会话 GET 端点返回 200 且与 Android ExamSessionResponse
+  逐字段精确相等（M13-08 新增:exam-m13-08-001/paper-001/mode=exam/
+  status=active/固定未来起止时间/server_remaining_seconds=900/
+  两道公共选择题/answers 仅含已保存作答/next_sequence=2）
 - POST/PUT/PATCH/DELETE 返回 METHOD_NOT_ALLOWED (404)
 - POST /api/v1/papers 返回 404（M13-05 新增负断言）
 - POST /api/v1/search/providers 返回 404（M13-06 新增负断言:仅 GET）
@@ -27,6 +31,20 @@
 - GET /api/v1/voice/providers?foo=bar 与 GET /api/v1/voice/providers?
   （空查询串）返回 404（M13-07 新增负断言:与其他允许清单端点一致,
   拒绝一切非预期查询串）
+- POST /api/v1/exams/exam-m13-08-001 返回 404（M13-08 新增负断言:仅 GET）
+- PUT /api/v1/exams/exam-m13-08-001/answers 与 POST
+  /api/v1/exams/exam-m13-08-001/submit 返回 404（M13-08 新增负断言:
+  考试写端点对 Harmony 保持关闭）
+- GET /api/v1/exams/exam-m13-08-001/submission、/report 与
+  /learning-events 返回 404（M13-08 新增负断言:提交/报告只读路径
+  不在 Harmony 允许清单）
+- GET /api/v1/exams/exam-unknown-999 与 GET /api/v1/exams 返回 404
+  （M13-08 新增负断言:未知 exam_id 与集合路径不在允许清单）
+- POST /api/v1/papers/paper-001/exams 返回 404（M13-08 新增负断言:
+  开考写端点对 Harmony 保持关闭）
+- GET /api/v1/exams/exam-m13-08-001?foo=bar 与
+  GET /api/v1/exams/exam-m13-08-001?（空查询串）返回 404
+  （M13-08 新增负断言:与其他允许清单端点一致,拒绝一切查询串）
 - HEAD/OPTIONS/FOO 等未支持 method 同样 404,不落入 501
 - 未知 GET 路径返回 NOT_FOUND (404)
 - audit 错误 query 返回 404
@@ -110,6 +128,49 @@ ENDPOINTS_200 = [
             "privacy_send_context_to_cloud": True,
         },
     ),
+    # M13-08 考试会话端点：确定性只读快照,须与 Android
+    # ExamSessionResponse 逐字段精确相等（不多不少）;exact 分支
+    # 在 test_endpoint_200 的 exam session 路径专项校验
+    (
+        "GET",
+        "/api/v1/exams/exam-m13-08-001",
+        {
+            "exam_id": "exam-m13-08-001",
+            "paper_id": "paper-001",
+            "paper_title": "Attention Is All You Need",
+            "mode": "exam",
+            "status": "active",
+            "server_started_at": "2027-01-01T00:00:00+00:00",
+            "server_end_at": "2027-01-01T00:45:00+00:00",
+            "server_remaining_seconds": 900,
+            "questions": [
+                {
+                    "id": "q-m13-08-001",
+                    "type": "mcq",
+                    "stem": "In the Transformer architecture, the attention mechanism primarily replaces which component of prior sequence transduction models?",
+                    "options": [
+                        {"key": "A", "text": "Recurrent layers"},
+                        {"key": "B", "text": "Convolutional layers"},
+                        {"key": "C", "text": "Pooling layers"},
+                        {"key": "D", "text": "Normalization layers"},
+                    ],
+                },
+                {
+                    "id": "q-m13-08-002",
+                    "type": "mcq",
+                    "stem": "Which position-encoding scheme does the original paper use so that the model can extrapolate to sequence lengths longer than any seen during training?",
+                    "options": [
+                        {"key": "A", "text": "Learned absolute embeddings"},
+                        {"key": "B", "text": "Sinusoidal functions"},
+                        {"key": "C", "text": "Relative offsets only"},
+                        {"key": "D", "text": "Random projections"},
+                    ],
+                },
+            ],
+            "answers": {"q-m13-08-001": "A"},
+            "next_sequence": 2,
+        },
+    ),
 ]
 
 # 应返回 404 的测试用例（含 M13-05 / M13-06 / M13-07 负断言）
@@ -148,6 +209,18 @@ ENDPOINTS_404 = [
     ("POST", "/api/v1/voice/synthesize"),        # M13-07: 合成端点关闭
     ("POST", "/api/v1/voice/trace"),             # M13-07: trace 写端点关闭
     ("GET", "/api/v1/voice/trace/summary"),      # M13-07: trace GET 形式同样关闭
+    # M13-08 负断言:session 仅该 exam_id 的 GET,考试域其余路径/方法全部关闭
+    ("POST", "/api/v1/exams/exam-m13-08-001"),        # M13-08: 仅允许 GET
+    ("PUT", "/api/v1/exams/exam-m13-08-001/answers"),  # M13-08: 写答案端点关闭
+    ("POST", "/api/v1/exams/exam-m13-08-001/submit"),  # M13-08: 提交端点关闭
+    ("GET", "/api/v1/exams/exam-m13-08-001/submission"),  # M13-08: 提交结果只读路径关闭
+    ("GET", "/api/v1/exams/exam-m13-08-001/report"),      # M13-08: 报告只读路径关闭
+    ("GET", "/api/v1/exams/exam-m13-08-001/learning-events"),  # M13-08: 学习事件路径关闭
+    ("GET", "/api/v1/exams/exam-unknown-999"),     # M13-08: 未知 exam_id 不在允许清单
+    ("GET", "/api/v1/exams"),                      # M13-08: 集合路径不在允许清单
+    ("POST", "/api/v1/papers/paper-001/exams"),    # M13-08: 开考写端点对 Harmony 关闭
+    ("GET", "/api/v1/exams/exam-m13-08-001?foo=bar"),  # M13-08: 拒绝一切查询串
+    ("GET", "/api/v1/exams/exam-m13-08-001?"),         # M13-08: 空查询串同样拒绝 (fail-closed)
 ]
 
 
@@ -226,6 +299,12 @@ def test_endpoint_200(
         if not isinstance(data, dict) or data != expected_fields:
             return False, f"Expected exact voice providers fixture, got: {body[:200]}"
         return True, "200 OK (exact VoiceProvidersResponse fixture match)"
+    # M13-08 exam session 端点：整包精确相等（字段不多不少,含嵌套
+    # questions/options、answers 已作答投影与 next_sequence 权威序号）
+    elif path == "/api/v1/exams/exam-m13-08-001":
+        if not isinstance(data, dict) or data != expected_fields:
+            return False, f"Expected exact exam session fixture, got: {body[:200]}"
+        return True, "200 OK (exact ExamSessionResponse fixture match)"
     elif not isinstance(data, dict):
         return False, f"Expected object/array, got {type(data).__name__}: {body[:100]}"
 
@@ -248,7 +327,7 @@ def test_endpoint_404(method: str, path: str, host: str, port: int) -> tuple[boo
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="M13-02/M13-05/M13-06/M13-07 mock contract tests")
+    parser = argparse.ArgumentParser(description="M13-02/M13-05/M13-06/M13-07/M13-08 mock contract tests")
     parser.add_argument("--port", type=int, default=8765, help="listen port (default 8765)")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="bind address")
     args = parser.parse_args()

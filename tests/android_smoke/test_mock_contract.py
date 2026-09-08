@@ -6,6 +6,7 @@ import json
 from tools.android_smoke.mock_contract import (
     _PAPERS,
     AUDIT,
+    EXAM_SESSION,
     OPS_SNAPSHOT,
     PROVIDERS,
     VERSION,
@@ -164,6 +165,96 @@ def test_other_voice_paths_404():
         ("POST", "/api/v1/voice/synthesize"),
         ("POST", "/api/v1/voice/trace"),
         ("GET", "/api/v1/voice/trace/summary"),
+    ]:
+        assert c.handle(method, path, b"{}")[0] == 404, (method, path)
+
+
+# ---------- M13-08 exam session 端点 ----------
+
+def test_get_exam_session_exact_fixture():
+    """GET /api/v1/exams/exam-m13-08-001 返回与 Android ExamSessionResponse
+    逐字段精确相等的确定性只读会话快照（不多不少）。"""
+    c = ReadOnlyMockContract()
+    status, payload = c.handle("GET", "/api/v1/exams/exam-m13-08-001")
+    assert status == 200
+    assert payload == EXAM_SESSION
+    assert payload == {
+        "exam_id": "exam-m13-08-001",
+        "paper_id": "paper-001",
+        "paper_title": "Attention Is All You Need",
+        "mode": "exam",
+        "status": "active",
+        "server_started_at": "2027-01-01T00:00:00+00:00",
+        "server_end_at": "2027-01-01T00:45:00+00:00",
+        "server_remaining_seconds": 900,
+        "questions": [
+            {
+                "id": "q-m13-08-001",
+                "type": "mcq",
+                "stem": "In the Transformer architecture, the attention mechanism primarily replaces which component of prior sequence transduction models?",
+                "options": [
+                    {"key": "A", "text": "Recurrent layers"},
+                    {"key": "B", "text": "Convolutional layers"},
+                    {"key": "C", "text": "Pooling layers"},
+                    {"key": "D", "text": "Normalization layers"},
+                ],
+            },
+            {
+                "id": "q-m13-08-002",
+                "type": "mcq",
+                "stem": "Which position-encoding scheme does the original paper use so that the model can extrapolate to sequence lengths longer than any seen during training?",
+                "options": [
+                    {"key": "A", "text": "Learned absolute embeddings"},
+                    {"key": "B", "text": "Sinusoidal functions"},
+                    {"key": "C", "text": "Relative offsets only"},
+                    {"key": "D", "text": "Random projections"},
+                ],
+            },
+        ],
+        "answers": {"q-m13-08-001": "A"},
+        "next_sequence": 2,
+    }
+
+
+def test_exam_session_public_projection_invariants():
+    """公共会话投影不变量：questions 只含 id/type/stem/options
+    （不泄露正确答案/解析）；answers 键必须是已出题的 question_id
+    且只是 learner 已保存作答；next_sequence 与已作答题数一致。"""
+    c = ReadOnlyMockContract()
+    _, payload = c.handle("GET", "/api/v1/exams/exam-m13-08-001")
+    question_ids = [q["id"] for q in payload["questions"]]
+    assert len(payload["questions"]) == 2
+    assert len(set(question_ids)) == 2
+    for question in payload["questions"]:
+        assert set(question) == {"id", "type", "stem", "options"}
+        assert question["options"]
+        for option in question["options"]:
+            assert set(option) == {"key", "text"}
+            assert isinstance(option["key"], str) and option["key"]
+    answered = set(payload["answers"])
+    assert answered <= set(question_ids)  # 只含已出题目的已保存作答
+    assert len(answered) == 1  # 第 1 题已作答,第 2 题未作答
+    assert payload["next_sequence"] == len(answered) + 1
+    assert payload["mode"] == "exam"
+    assert payload["status"] == "active"
+    assert payload["server_remaining_seconds"] == 900
+
+
+def test_exam_write_and_other_exam_paths_404():
+    """考试域 fail-closed：仅该 exam_id 的 GET；写方法（POST session、
+    PUT answers、POST submit）、只读衍生路径（submission/report/
+    learning-events）、未知 exam_id、集合路径与开考端点一律 404。"""
+    c = ReadOnlyMockContract()
+    for method, path in [
+        ("POST", "/api/v1/exams/exam-m13-08-001"),
+        ("PUT", "/api/v1/exams/exam-m13-08-001/answers"),
+        ("POST", "/api/v1/exams/exam-m13-08-001/submit"),
+        ("GET", "/api/v1/exams/exam-m13-08-001/submission"),
+        ("GET", "/api/v1/exams/exam-m13-08-001/report"),
+        ("GET", "/api/v1/exams/exam-m13-08-001/learning-events"),
+        ("GET", "/api/v1/exams/exam-unknown-999"),
+        ("GET", "/api/v1/exams"),
+        ("POST", "/api/v1/papers/paper-001/exams"),
     ]:
         assert c.handle(method, path, b"{}")[0] == 404, (method, path)
 
