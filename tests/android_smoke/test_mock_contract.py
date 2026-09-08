@@ -9,6 +9,7 @@ from tools.android_smoke.mock_contract import (
     OPS_SNAPSHOT,
     PROVIDERS,
     VERSION,
+    VOICE_PROVIDERS,
     ReadOnlyMockContract,
 )
 
@@ -117,6 +118,54 @@ def test_post_papers_404():
     """papers 端点只读：POST 应返回 404。"""
     c = ReadOnlyMockContract()
     assert c.handle("POST", "/api/v1/papers", b"{}")[0] == 404
+
+
+# ---------- M13-07 voice providers 端点 ----------
+
+def test_get_voice_providers_exact_fixture():
+    """GET /api/v1/voice/providers 返回与 Android VoiceProvidersResponse
+    逐字段精确相等的确定性快照（不多不少）。"""
+    c = ReadOnlyMockContract()
+    status, payload = c.handle("GET", "/api/v1/voice/providers")
+    assert status == 200
+    assert payload == VOICE_PROVIDERS
+    assert payload == {
+        "voice_mode": "hybrid",
+        "asr": {"requested": None, "provider": "fake", "fallback": False},
+        "tts": {
+            "requested": "cloud-openai-tts",
+            "provider": "tone",
+            "fallback": True,
+        },
+        "privacy_store_audio": False,
+        "privacy_send_context_to_cloud": True,
+    }
+
+
+def test_voice_providers_write_methods_404():
+    """voice providers 端点只读：写方法一律 404。"""
+    c = ReadOnlyMockContract()
+    assert c.handle("POST", "/api/v1/voice/providers", b"{}")[0] == 404
+    assert c.handle("PUT", "/api/v1/voice/providers", b"{}")[0] == 404
+    assert c.handle("PATCH", "/api/v1/voice/providers", b"{}")[0] == 404
+    assert c.handle("DELETE", "/api/v1/voice/providers")[0] == 404
+
+
+def test_other_voice_paths_404():
+    """其余 voice 端点（token/sessions/transcribe/synthesize/trace）
+    不在共享契约内，写方法与 GET 形式一律 404。"""
+    c = ReadOnlyMockContract()
+    for method, path in [
+        ("POST", "/api/v1/voice/token"),
+        ("POST", "/api/v1/voice/sessions"),
+        ("GET", "/api/v1/voice/sessions"),
+        ("GET", "/api/v1/voice/sessions/vs-mock-001"),
+        ("POST", "/api/v1/voice/transcribe"),
+        ("POST", "/api/v1/voice/synthesize"),
+        ("POST", "/api/v1/voice/trace"),
+        ("GET", "/api/v1/voice/trace/summary"),
+    ]:
+        assert c.handle(method, path, b"{}")[0] == 404, (method, path)
 
 
 # ---------- query 忽略值（非 audit 端点查询串不影响路由） ----------

@@ -83,6 +83,27 @@ class LoopbackMockServerTest(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(json.loads(body)["id"], 9001)
 
+    def test_voice_providers_readonly(self) -> None:
+        # M13-07：GET /api/v1/voice/providers 确定性快照;写方法 404
+        status, body, _ = self.request("/api/v1/voice/providers")
+        self.assertEqual(status, 200)
+        payload = json.loads(body)
+        self.assertEqual(payload["voice_mode"], "hybrid")
+        self.assertEqual(
+            payload["asr"], {"requested": None, "provider": "fake", "fallback": False}
+        )
+        self.assertEqual(
+            payload["tts"],
+            {"requested": "cloud-openai-tts", "provider": "tone", "fallback": True},
+        )
+        self.assertEqual(payload["privacy_store_audio"], False)
+        self.assertEqual(payload["privacy_send_context_to_cloud"], True)
+
+        status, _, _ = self.request(
+            "/api/v1/voice/providers", method="POST", body=b"{}"
+        )
+        self.assertEqual(status, 404)
+
     def test_governance_version_ops_audit(self) -> None:
         status, body, _ = self.request("/api/v1/version")
         self.assertEqual(status, 200)
