@@ -2215,7 +2215,7 @@ python tools/harmony_mock/server.py --host 0.0.0.0 --port 8765
 
 ### 范围与实现
 
-- 分支 `feature/m13-09-harmony-production-hardening`，基于 `main@de5f41a`（M13-08 状态回填提交，本地 git 可验证）；仓库状态（文档时点）：本地提交完成，**未 push、未开 PR——PR/CI/合并状态待后续状态切片回填，不在此预写**。
+- 分支 `feature/m13-09-harmony-production-hardening`，基于 `main@de5f41a`（M13-08 状态回填提交，本地 git 可验证）；仓库状态（已回填 2026-09-09）：**PR #67 已合并 main**——PR head `998f701a6ccf8e4d2293807c892644266b8965b5`（tree `18bebe450952b9cf8598a260b7a31b4dcfb36abf`，本地 git 可验证），PR CI run `34293394598` 四项 job（API/Android/Docker/Web）全部 success；merge commit `4572551f8ce88b150c5cb9bf6a2d910af2ab18d6`（本地 git 可验证：parents 为 PR #66 merge commit `7f250e1` 与 PR head `998f701`，merge tree 与 PR head tree 同为 `18bebe4`），merge 后 main CI run `34293722342` 四项 job 全部 success（Web 1m15s、Docker 2m27s、API 3m49s、Android 3m26s）；远端功能分支 `feature/m13-09-harmony-production-hardening` 已删除。
 - 目标：交付前生产加固——消除两类已知基线告警 + 消灭 `[object Object]` 错误文案 + 收敛信息泄露面，不新增任何业务能力。
 - 生产改动共 4 个文件（均在 `apps/harmony/`，+62/−45，不含文档）：
   - `build-profile.json5`：default product 显式声明 `"targetSdkVersion": "6.1.1(24)"`（与 `compatibleSdkVersion` 一致），消除基线告警 `WARN: ArkTS:CHECK Missing targetSdkVersion`；**未添加任何 signingConfig/签名材料/密钥**。
@@ -2233,4 +2233,4 @@ python tools/harmony_mock/server.py --host 0.0.0.0 --port 8765
 
 ### 边界
 
-本加固未改变任何业务能力边界：仍为本地模拟器 + mock only，未验真机、真实 provider、生产后端/生产 DB、任何写链路；未使用 AGC key/签名配置，未签名 HAP（`No signingConfig found` 为唯一保留告警，诚实未签名边界）直装仅为本地验收形态，**不构成发布形态，不声称已签名/可发布**；CI 无 HarmonyOS job，本地验收不构成远端 CI 验证；仓库状态（文档时点）：本地提交完成、未 push、未开 PR；未打 tag、未部署；`production_ready=false` 语义不变。剩余生产阻塞：AGC 签名与发布流程、真机验证、真实 provider 冒烟、生产后端/生产 DB 接入、HarmonyOS CI 缺位——均待运维显式授权评估。
+本加固未改变任何业务能力边界：仍为本地模拟器 + mock only，未验真机、真实 provider、生产后端/生产 DB、任何写链路；未使用 AGC key/签名配置，未签名 HAP（`No signingConfig found` 为唯一保留告警，诚实未签名边界）直装仅为本地验收形态，**不构成发布形态，不声称已签名/可发布**；CI 无 HarmonyOS job，本地验收不构成远端 CI 验证；仓库状态（已回填 2026-09-09）：已随 PR #67 合并 main（merge commit `4572551f8ce88b150c5cb9bf6a2d910af2ab18d6`，PR CI run `34293394598` 与 merge 后 main CI run `34293722342` 四项 job 全部 success，CI 结果不扩大为 HarmonyOS 远端验证；远端功能分支已删除）；未打 tag、未部署；`production_ready=false` 语义不变。剩余生产阻塞：AGC 签名与发布流程、真机验证、真实 provider 冒烟、生产后端/生产 DB 接入、HarmonyOS CI 缺位——均待运维显式授权评估。

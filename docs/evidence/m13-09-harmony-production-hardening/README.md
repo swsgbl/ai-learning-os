@@ -2,7 +2,7 @@
 
 - 日期：2026-09-09（hmharness 实现与构建验证 06:58–07:30；集成方独立审计/Android 回归/运行时冒烟/复检 07:30–07:52）
 - 分支：`feature/m13-09-harmony-production-hardening`（基于 `main@de5f41a`（M13-08 状态回填提交），本地 git 可验证）
-- 状态：本地实现（hmharness）、本地模拟器验收（集成方 Claude）完成；本地提交完成，**未 push、未开 PR——PR/CI/合并状态待后续状态切片回填，不在此预写**
+- 状态：本地实现（hmharness）、本地模拟器验收（集成方 Claude）完成；已随 **PR #67**「feat(harmony): harden production readiness」（https://github.com/swsgbl/ai-learning-os/pull/67）合并 main——PR head `998f701a6ccf8e4d2293807c892644266b8965b5`（tree `18bebe450952b9cf8598a260b7a31b4dcfb36abf`，本地 git 可验证），PR CI run `34293394598` 四项 job（API/Android/Docker/Web）全部 success；merge commit `4572551f8ce88b150c5cb9bf6a2d910af2ab18d6`，merge 后 main CI run `34293722342` 四项 job 全部 success（Web 1m15s、Docker 2m27s、API 3m49s、Android 3m26s）；远端功能分支 `feature/m13-09-harmony-production-hardening` 已删除
 - 原始证据路径：`.verify/m13-09-harmony-production-hardening/`（gitignored，不入库；本 README 不复制任何原始工件内容）
 - 入库证据：本 README（唯一入库文件）
 - 结论：**PASS（本地口径）**——mock 契约 54/54、全量 tests/android_smoke 295 passed / 1 skipped（与基线一致）、clean + assembleHap exit 0、最终警告 3→1、模拟器默认错误态/Settings 保存订阅刷新/停服错误恢复全流程通过、HAP 哈希运行时验收前后一致
@@ -69,6 +69,6 @@
 - 本验收是本地模拟器 + mock only 口径，不代表 HarmonyOS 真机、真实 provider、生产后端、生产 DB、任何写链路或生产可用；加固不改变任何业务能力边界。
 - 未使用 AGC key、签名配置或自动签名；未签名 HAP（`No signingConfig found` 为唯一保留告警）直装只是本地验收形态，**不构成发布形态，不声称已签名/可发布**；未打 tag、未部署。
 - HAP 为 zip 打包产物，同源重建哈希可能不同；本文记录的 SHA256 以当前本地留存、模拟器验收所用产物为准（运行时验收后独立复检一致）。
-- CI 无 HarmonyOS job：本切片全部 HarmonyOS 验证为本地口径，不构成远端 CI 验证；后续 PR 的 API/Android/Docker/Web 结果不能扩大为 HarmonyOS 远端验证。
-- 仓库状态（文档时点）：本地提交完成、未 push、未开 PR，PR/CI/合并状态待后续状态切片回填；`production_ready=false` 语义不变。
+- CI 无 HarmonyOS job：本切片全部 HarmonyOS 验证为本地口径，不构成远端 CI 验证；PR #67 的 PR CI run `34293394598` 与 merge 后 main CI run `34293722342`（各四项 job API/Android/Docker/Web 全部 success）不能扩大为 HarmonyOS 远端验证。
+- 仓库状态（已回填 2026-09-09）：**PR #67 已合并 main**——PR head `998f701a6ccf8e4d2293807c892644266b8965b5`（tree `18bebe450952b9cf8598a260b7a31b4dcfb36abf`），PR CI run `34293394598` 四项 job（API/Android/Docker/Web）全部 success；merge commit `4572551f8ce88b150c5cb9bf6a2d910af2ab18d6`（本地 git 可验证：parents 为 PR #66 merge commit `7f250e1` 与 PR head `998f701`，merge tree 与 PR head tree 同为 `18bebe4`），merge 后 main CI run `34293722342` 四项 job 全部 success（Web 1m15s、Docker 2m27s、API 3m49s、Android 3m26s）；远端功能分支 `feature/m13-09-harmony-production-hardening` 已删除；`production_ready=false` 语义不变。
 - 剩余生产阻塞（均待运维显式授权评估）：AGC 签名与发布流程、真机验证、真实 provider 冒烟、生产后端/生产 DB 接入、HarmonyOS CI 缺位。
