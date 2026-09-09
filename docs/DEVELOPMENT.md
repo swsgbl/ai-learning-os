@@ -1161,16 +1161,40 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   `smoke_local_voice.py`（真实 HTTP 探测 ASR/TTS，输出 latency/bytes/RIFF/
   文本与 PASS/FAIL）。模型与 venv 全部落 gitignored `artifacts/voice/`；
   Windows 从 PowerShell 调 WSL 的命令与引号规则见 `tools/voice/README.md`。
+- **修正轮（supervisor corrections）**：① Python 隔离改经 **uv**（`uv venv
+  --python 3.11/3.10 --seed`，uv 探测含 `~/.local/bin`——非登录 bash 的 PATH
+  不含它；本机实测 WSL 无 apt python3.10，uv 缺失时给安装指引 fail-closed）；
+  ② CosyVoice 依赖**最小化**——只装推理路径真实需要的 16 包
+  （`tools/voice/cosyvoice-runtime-requirements.txt`，固定 commit 导入闭包静态
+  推导；deepspeed/tensorrt/vllm 仅函数内可选导入、gradio 等 webui 专用一律
+  排除），安装后真实执行 `import cosyvoice.cli.cosyvoice` 验证，不足时
+  `COSYVOICE_FULL_REQUIREMENTS=1` 回退官方完整清单；③ **sox 不需要**——官方
+  `load_wav` 显式 `torchaudio.load(..., backend='soundfile')`，bootstrap 用
+  asset wav 真实加载探针实证（soundfile wheel 自带 libsndfile）；④ **compose
+  接线**——api 服务透传 `AIOS_ASR/TTS_LOCAL_*`（容器内地址
+  `host.docker.internal`，配 `extra_hosts: host-gateway`；引擎仍只绑 WSL
+  127.0.0.1，绝不 0.0.0.0），网络路径可达性已实证（2026-09-10 本机 WSL
+  2.7.13 NAT + Docker Desktop：容器 → host.docker.internal → WSL loopback
+  探针 HTTP 200；两个实测要点——loopback 绑定同样被 localhostForwarding
+  转发、`wsl -e` 后台进程须 `setsid nohup` 存活——已固化进
+  `tools/voice/compose_voice_reachability.sh`）；⑤ **配置但不可达 = fail
+  visibly**（providers 视图仍如实报 `local-*` 不静默换替身，请求 502 脱敏
+  文案，有真实 connection-refused 单测锁定）；⑥ API 测试证据脚本
+  `tools/voice/run_api_tests.ps1` 固化准确命令/解释器/commit（canonical
+  venv 路径留档，UTF-8 BOM 兼容 Windows PowerShell 5.1）。
 - **测试**：`services/api/tests/test_voice_local_providers.py`（路由选择/成功/
   未配置降级/HTTP 失败脱敏/非法 JSON/空与非 WAV/provider header/未知 provider
-  422，全部 MockTransport 或注入替身，不触网）与
+  422/配置不可达显式 502——最后一项为真实 loopback 连接拒绝，其余 MockTransport
+  或注入替身，不触网）与
   `services/api/tests/test_voice_local_scripts.py`（脚本语法与文本契约 +
-  bridge `/health`、404/400/503/401 与 WAV 序列化行为）。
+  bridge `/health`、404/400/503/401 与 WAV 序列化行为 + 最小依赖清单/可达性
+  脚本/证据脚本契约）；compose 透传与 host-gateway 渲染断言在
+  `services/api/tests/test_compose_profiles.py`。
 - **边界**：真实模型**未在本切片部署**（脚本未执行、模型未下载）——实际部署
-  验证是另立的验收任务，完成前 `production_ready=false`；流式 ASR/TTS 未实现
-  未宣称；compose 容器内 API 访问不到宿主 WSL loopback，本地引擎部署形态是
-  宿主直跑 API（compose 接入属后续工作）；bridge 单 worker 串行推理，并发
-  容量未测。
+  验证是另立的验收任务，完成前 `production_ready=false`；最小依赖清单为
+  静态推导 + 安装时 import 验证口径（AutoModel 完整加载随部署轮验证）；
+  compose 可达性实证是网络路径口径（端到端随部署轮）；流式 ASR/TTS 未实现
+  未宣称；bridge 单 worker 串行推理，并发容量未测。
 
 ## 运行观测快照（M10-14）
 

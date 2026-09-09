@@ -90,6 +90,21 @@ services:
       AUTH_COOKIE_SAMESITE: ${AIOS_AUTH_COOKIE_SAMESITE:-lax}
       # M7-01: profile 分离 local/hybrid/cloud —— AIOS_VOICE_MODE 插值注入语音隐私路由
       VOICE_MODE: ${AIOS_VOICE_MODE:-local}
+      # M14-01: 本地真实语音引擎槽位（引擎部署在宿主 WSL，恒绑 WSL 127.0.0.1；
+      # 容器经 host.docker.internal 访问——形如 AIOS_ASR_LOCAL_ENDPOINT=
+      # http://host.docker.internal:8010/v1。endpoint 留空 = 降级 fake/tone 并透出
+      # fallback；配好但不可达 = fail visibly（providers 视图仍报 local-*，请求 502
+      # 固定脱敏文案，绝不静默换替身）。key 只经部署 secret 注入，不入库）
+      ASR_LOCAL_ENDPOINT: ${AIOS_ASR_LOCAL_ENDPOINT:-}
+      ASR_LOCAL_MODEL: ${AIOS_ASR_LOCAL_MODEL:-sensevoice}
+      ASR_LOCAL_API_KEY: ${AIOS_ASR_LOCAL_API_KEY:-}
+      TTS_LOCAL_ENDPOINT: ${AIOS_TTS_LOCAL_ENDPOINT:-}
+      TTS_LOCAL_MODEL: ${AIOS_TTS_LOCAL_MODEL:-Fun-CosyVoice3-0.5B-2512}
+      TTS_LOCAL_API_KEY: ${AIOS_TTS_LOCAL_API_KEY:-}
+    # M14-01: Linux 引擎上 host.docker.internal 需显式 host-gateway 映射
+    # （Docker Desktop 自带；此行使 compose 在两类引擎上行为一致，不暴露引擎端口）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${AIOS_BIND_IP:-127.0.0.1}:8000:8000"
     healthcheck:

@@ -1,0 +1,54 @@
+# M14-01 CosyVoice bridge 最小运行时依赖（修正轮：只装推理路径真实需要的包）
+#
+# 推导方法（可复现）：对官方仓库固定 commit 074ca6dc9e80a2f424f1f74b48bdd7d3fea531cc
+# 的运行时导入闭包做静态分析——起点 `cosyvoice.cli.cosyvoice.AutoModel`（bridge 的
+# 唯一入口），覆盖 cosyvoice/cli/{cosyvoice,model,frontend}.py、utils/*、llm/llm.py、
+# flow/*（含 DiT）、hifigan/generator.py、tokenizer/tokenizer.py、transformer/*；
+# 模型 YAML（hyperpyyaml instantiate）引用的类全部位于上述模块 + third_party/
+# Matcha-TTS 子模块（经 sys.path，非 pip）。
+#
+# torch/torchaudio 不在本文件：bootstrap 先装 cu128 轮子（RTX 5070 Ti/Blackwell），
+# 再装本清单；官方 requirements.txt 的 torch==2.3.1/cu121 pin 被有意覆盖。
+# 版本策略：官方 requirements.txt 已 pin 的沿用其 pin（保持官方验证组合），
+# 未 pin 的（官方依赖链间接引入或官方缺口）不 pin。
+#
+# 明确排除（均验证为非必需，证据为 commit 内源码）：
+# - deepspeed：运行时闭包零引用（仅训练脚本使用）
+# - tensorrt / tensorrt-cu12*：仅函数内 import（TensorRT 部署路径，默认不走）
+# - vllm：仅函数内 import（load_vllm/inference_wrapper 的 vLLM 加速路径）
+# - gradio / fastapi-cli：仅 webui.py 使用；bridge 自带 FastAPI 服务由 venv 内
+#   fastapi/uvicorn 提供（bootstrap 显式安装，不在此重复）
+# - librosa / lightning / pyworld / jieba / pyarrow / matplotlib / networkx /
+#   tensorboard / gdown / wget / grpcio / grpcio-tools / diffusers / conformer：
+#   运行时闭包零引用（file_utils 只调用 logging.getLogger('matplotlib')，不 import）
+# - onnxruntime-gpu：frontend.py 显式 providers=["CPUExecutionProvider"]，
+#   CPU onnxruntime 即可（避免 CUDA 耦合）
+# - sox/libsox：不适用——file_utils.load_wav 显式 torchaudio.load(..., backend=
+#   'soundfile')，走 soundfile（wheel 自带 libsndfile），bootstrap 有加载探针实证
+#
+# 若最小清单在实际部署中证明不足：bootstrap_cosyvoice_wsl.sh 设
+# COSYVOICE_FULL_REQUIREMENTS=1 回退官方完整 requirements（剔除 torch pin）。
+
+numpy==1.26.4
+scipy
+tqdm
+HyperPyYAML==1.2.3
+omegaconf==2.3.0
+transformers==4.51.3
+# tokenizer.py 顶层 `import tiktoken`——官方 requirements 未列（缺口），此处补上
+tiktoken
+# tokenizer.py 顶层 `from whisper.tokenizer import Tokenizer`
+openai-whisper==20231117
+# frontend.py 顶层 import（cam++/speech-tokenizer ONNX，CPUExecutionProvider）
+onnxruntime
+einops
+# flow/DiT/*.py 顶层 `from x_transformers.x_transformers import ...`
+x-transformers==2.11.24
+inflect==7.3.1
+regex
+# cosyvoice.py 顶层 `from modelscope import snapshot_download`（亦用于模型下载）
+modelscope==1.20.0
+# file_utils.load_wav 的 torchaudio backend='soundfile'
+soundfile==0.12.1
+# frontend.py 文本正则化回退链 ttsfrd→wetext→无（ttsfrd 需手动装；wetext 推荐保留）
+wetext==0.0.4

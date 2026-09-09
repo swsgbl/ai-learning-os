@@ -66,15 +66,15 @@ _SENSITIVE_MARKERS = (
 )
 
 
-def _configure(monkeypatch, *, mode: str, asr_local: bool = False, tts_local: bool = False,
+def _configure(monkeypatch, *, mode: str, asr_local: bool | str = False, tts_local: bool | str = False,
                asr_provider: str | None = None, tts_provider: str | None = None) -> None:
     for key in _VOICE_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("VOICE_MODE", mode)
     if asr_local:
-        monkeypatch.setenv("ASR_LOCAL_ENDPOINT", LOCAL_ASR_ENDPOINT)
+        monkeypatch.setenv("ASR_LOCAL_ENDPOINT", asr_local if isinstance(asr_local, str) else LOCAL_ASR_ENDPOINT)
     if tts_local:
-        monkeypatch.setenv("TTS_LOCAL_ENDPOINT", LOCAL_TTS_ENDPOINT)
+        monkeypatch.setenv("TTS_LOCAL_ENDPOINT", tts_local if isinstance(tts_local, str) else LOCAL_TTS_ENDPOINT)
     if asr_provider:
         monkeypatch.setenv("ASR_PROVIDER", asr_provider)
     if tts_provider:
@@ -482,6 +482,38 @@ def test_synthesize_local_failure_maps_to_sanitized_502(monkeypatch, _stub_local
         assert response.json()["detail"] == "本地 TTS 端点返回 HTTP 503"
         for marker in ("8011", "127.0.0.1", "local-test-key"):
             assert marker not in response.text
+
+
+# ---------- 配置了 endpoint 但引擎不可达：fail visibly（真实 connection refused） ----------
+
+
+def test_transcribe_configured_unreachable_endpoint_fails_visibly(monkeypatch) -> None:
+    """endpoint 配好但引擎不可达：providers 视图仍如实报 local-funasr（configured≠
+    healthy，不静默降级替身），请求时以 502 固定脱敏文案显式失败——真实 loopback
+    连接拒绝（127.0.0.1:1 无人监听），非注入替身。"""
+    _configure(monkeypatch, mode="local", asr_local="http://127.0.0.1:1/v1")
+    with TestClient(create_app(SQLITE_URL)) as client:
+        view = client.get("/api/v1/voice/providers").json()
+        assert (view["asr"]["provider"], view["asr"]["fallback"]) == ("local-funasr", False)
+        response = client.post(
+            "/api/v1/voice/transcribe",
+            files={"audio": ("clip.wav", _sine_wav(0.4), "audio/wav")},
+        )
+        assert response.status_code == 502
+        assert response.json()["detail"] == "本地 ASR 请求失败（网络错误或超时）"
+        assert "127.0.0.1" not in response.text  # 脱敏：不回显 endpoint
+
+
+def test_synthesize_configured_unreachable_endpoint_fails_visibly(monkeypatch) -> None:
+    """TTS 同口径：配置但不可达 → 502 脱敏文案，不静默换 tone。"""
+    _configure(monkeypatch, mode="local", tts_local="http://127.0.0.1:1/v1")
+    with TestClient(create_app(None)) as client:
+        view = client.get("/api/v1/voice/providers").json()
+        assert (view["tts"]["provider"], view["tts"]["fallback"]) == ("local-cosyvoice", False)
+        response = client.post("/api/v1/voice/synthesize", json={"text": "文本"})
+        assert response.status_code == 502
+        assert response.json()["detail"] == "本地 TTS 请求失败（网络错误或超时）"
+        assert "127.0.0.1" not in response.text
 
 
 def test_unknown_provider_rejected_with_422(monkeypatch) -> None:

@@ -30,6 +30,9 @@ BOOTSTRAP_FUNASR = TOOLS_VOICE / "bootstrap_funasr_wsl.sh"
 BOOTSTRAP_COSYVOICE = TOOLS_VOICE / "bootstrap_cosyvoice_wsl.sh"
 BRIDGE = TOOLS_VOICE / "cosyvoice_openai_bridge.py"
 SMOKE = TOOLS_VOICE / "smoke_local_voice.py"
+REACHABILITY = TOOLS_VOICE / "compose_voice_reachability.sh"
+RUNTIME_REQUIREMENTS = TOOLS_VOICE / "cosyvoice-runtime-requirements.txt"
+EVIDENCE_PS1 = TOOLS_VOICE / "run_api_tests.ps1"
 
 BASH = shutil.which("bash")
 
@@ -53,8 +56,12 @@ def bridge():
 
 
 @pytest.mark.skipif(BASH is None, reason="bash 不可用（bootstrap 脚本语法检查需要 bash）")
-@pytest.mark.parametrize("script", [BOOTSTRAP_FUNASR, BOOTSTRAP_COSYVOICE], ids=["funasr", "cosyvoice"])
-def test_bootstrap_scripts_pass_bash_n(script: Path) -> None:
+@pytest.mark.parametrize(
+    "script",
+    [BOOTSTRAP_FUNASR, BOOTSTRAP_COSYVOICE, REACHABILITY],
+    ids=["funasr", "cosyvoice", "reachability"],
+)
+def test_bash_scripts_pass_bash_n(script: Path) -> None:
     result = subprocess.run([BASH, "-n", str(script)], capture_output=True, text=True, timeout=60, check=False)
     assert result.returncode == 0, result.stderr
 
@@ -179,7 +186,10 @@ def test_bootstrap_funasr_text_contract() -> None:
         "funasr==",
         "python-multipart",
         "1.4.15",
-        "python3.11",
+        # 修正轮：uv 隔离管理 Python（不假设 apt），含 ~/.local/bin 探测
+        "uv venv --python 3.11",
+        "--seed",
+        ".local/bin/uv",
     ):
         assert anchor in text, anchor
     for pattern in SECRET_PATTERNS:
@@ -197,12 +207,23 @@ def test_bootstrap_cosyvoice_text_contract() -> None:
         "cosyvoice_openai_bridge.py",
         "127.0.0.1",
         "8011",
-        "requirements.aios.txt",
-        "python3.10",
+        # 修正轮：uv 隔离管理 Python 3.10（不假设 apt）；最小运行时依赖 + 完整回退；
+        # sox 疑问经 soundfile 后端真实加载探针解决
+        "uv venv --python 3.10",
+        "--seed",
+        ".local/bin/uv",
+        "cosyvoice-runtime-requirements.txt",
+        "COSYVOICE_FULL_REQUIREMENTS",
+        "requirements.full.txt",
         "submodule update --init --recursive",
         "snapshot_download",
+        "import cosyvoice.cli.cosyvoice",
+        'backend="soundfile"',
     ):
         assert anchor in text, anchor
+    # 修正轮要点：不再假设 apt python3.10/sox
+    assert "apt-get install python3.10" not in text
+    assert "apt-get install sox" not in text
     for pattern in SECRET_PATTERNS:
         assert pattern not in text
 
@@ -256,9 +277,67 @@ def test_scripts_do_not_import_repo_app_modules() -> None:
 
 
 def test_bootstrap_python_missing_hints_are_actionable() -> None:
-    """契约：python 缺失时的失败提示给出可执行的安装命令（fail-closed 且可操作）。"""
-    funasr_text = BOOTSTRAP_FUNASR.read_text(encoding="utf-8")
-    assert "apt-get install python3.11" in funasr_text or "apt-get install python3" in funasr_text
-    cosyvoice_text = BOOTSTRAP_COSYVOICE.read_text(encoding="utf-8")
-    assert "apt-get install python3.10" in cosyvoice_text
-    assert "apt-get install sox" in cosyvoice_text
+    """契约：解释器缺失时的失败提示指向 uv 安装（不假设 apt/python3.10 已装）。"""
+    for script in (BOOTSTRAP_FUNASR, BOOTSTRAP_COSYVOICE):
+        text = script.read_text(encoding="utf-8")
+        assert "astral.sh/uv/install.sh" in text, script.name
+        assert "uv venv --python" in text, script.name
+
+
+def test_runtime_requirements_contract() -> None:
+    """最小运行时依赖清单：导入闭包必需包齐全；训练/WebUI/TensorRT 系一律排除。"""
+    text = RUNTIME_REQUIREMENTS.read_text(encoding="utf-8")
+    for required in (
+        "HyperPyYAML", "omegaconf", "transformers", "tiktoken", "openai-whisper",
+        "onnxruntime", "einops", "x-transformers", "inflect", "regex", "modelscope",
+        "soundfile", "wetext", "numpy", "scipy", "tqdm",
+    ):
+        assert required in text, required
+    for excluded in (
+        "deepspeed", "tensorrt", "vllm", "gradio", "librosa", "lightning",
+        "pyworld", "matplotlib", "tensorboard", "grpcio", "gdown", "diffusers",
+    ):
+        # 排除项允许出现在注释（排除依据），不允许出现在生效行首
+        active = [line for line in text.splitlines()
+                  if line.strip() and not line.strip().startswith("#")]
+        assert not any(line.startswith(excluded) for line in active), excluded
+
+
+def test_reachability_script_contract() -> None:
+    """可达性检查脚本：host.docker.internal 探测 + 恒绑 127.0.0.1 + setsid 存活修复。"""
+    text = REACHABILITY.read_text(encoding="utf-8")
+    for anchor in (
+        "set -euo pipefail",
+        "host.docker.internal",
+        "host-gateway",
+        "--bind $WSL_LOOPBACK",
+        'WSL_LOOPBACK="127.0.0.1"',
+        "setsid nohup",  # 实测修复：wsl.exe 会话退出会杀同会话后台进程
+        "aios/api:local",
+    ):
+        assert anchor in text, anchor
+    # 生效的 --bind 行绝不绑 0.0.0.0（探针只走 loopback；注释里提及不算）
+    bind_lines = [line for line in text.splitlines() if "--bind" in line and not line.strip().startswith("#")]
+    assert bind_lines, "探针脚本应有 --bind 行"
+    assert all("0.0.0.0" not in line for line in bind_lines)
+    for pattern in SECRET_PATTERNS:
+        assert pattern not in text
+
+
+def test_evidence_script_contract() -> None:
+    """测试证据脚本：可复现命令 + 解释器解析顺序留档（含 canonical venv 路径）。"""
+    data = EVIDENCE_PS1.read_bytes()
+    assert data.startswith(b"\xef\xbb\xbf"), "Windows PowerShell 5.1 需要 UTF-8 BOM（中文注释）"
+    text = data.decode("utf-8-sig")
+    for anchor in (
+        "pytest services/api/tests -q",
+        "AIOS_TEST_PYTHON",
+        "rev-parse HEAD",
+        "requirements.txt",
+        "requirements-dev.txt",
+        # canonical venv 是记录数字所用的解释器（留档其路径 = 可复现声明）
+        r"D:\AI Learning OS\ai-learning-os\.venv\Scripts\python.exe",
+    ):
+        assert anchor in text, anchor
+    for pattern in SECRET_PATTERNS:
+        assert pattern not in text
