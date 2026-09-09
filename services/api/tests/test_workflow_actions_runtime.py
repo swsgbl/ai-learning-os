@@ -40,15 +40,16 @@ NODE24_MAJOR = 7
 # 本切片明确不升级 upload-artifact（保持 v4）。
 UPLOAD_ARTIFACT_MAJOR = 4
 
-# 每个 workflow 中各目标 action 的预期出现次数（ci 四个 job 各一次
-# checkout（web/api/docker/android），setup-node 仅 web job，setup-python 仅
-# api job；RC 单 job）。setup-java 不在此映射——它钉 v6（上游真实最高主版本），
+# 每个 workflow 中各目标 action 的预期出现次数（ci 五个 job 各一次
+# checkout（web/api/docker/android/release-tools），setup-node 仅 web job，
+# setup-python 分别在 api 与 release-tools 两个 job；RC 单 job）。
+# setup-java 不在此映射——它钉 v6（上游真实最高主版本），
 # 由下方独立契约锁定，不随 node24 v7 批量断言。
 EXPECTED_USES = {
     CI_WORKFLOW: {
-        "actions/checkout": 4,
+        "actions/checkout": 5,
         "actions/setup-node": 1,
-        "actions/setup-python": 1,
+        "actions/setup-python": 2,
     },
     RC_WORKFLOW: {
         "actions/checkout": 1,
