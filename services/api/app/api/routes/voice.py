@@ -5,6 +5,10 @@
 - POST /transcribe：语音→文本；transcript 恒落盘，原始音频按
   PRIVACY_STORE_AUDIO 策略落对象存储或显式丢弃（runbook §3）。
 - POST /synthesize：文本→WAV 音频（tone 本地合成或云端 provider）。
+
+M14-01：local/hybrid 的 ASR 与 local 的 TTS 支持「本地真实引擎」HTTP adapter
+（local-funasr / local-cosyvoice，OpenAI 兼容本机服务，部署见 tools/voice/）；
+endpoint 未配置时降级零依赖替身并在 providers 视图与响应头透出 fallback。
 """
 from __future__ import annotations
 
@@ -35,11 +39,15 @@ from app.domain.voice_tokens import (
 )
 from app.domain.voice_trace import MAX_DURATION_MS, TRACE_STAGES, summarize_spans
 from app.voice.providers import (
+    ASR_LOCAL_FUNASR,
     LOCAL_ASR,
     LOCAL_TTS,
+    TTS_LOCAL_COSYVOICE,
     CloudOpenAiAsrProvider,
     CloudOpenAiTtsProvider,
     FakeAsrProvider,
+    LocalCosyVoiceTtsProvider,
+    LocalFunAsrAsrProvider,
     ProviderUnavailable,
     ToneTtsProvider,
 )
@@ -163,13 +171,16 @@ def _voice_mode(settings) -> str:
 
 @router.get("/providers", response_model=ProvidersOut)
 async def list_providers() -> ProvidersOut:
-    """provider 配置视图：当前 VOICE_MODE 下 ASR/TTS 的实际选择。"""
+    """provider 配置视图：当前 VOICE_MODE 下 ASR/TTS 的实际选择（含 M14-01 本地真实引擎）。"""
     settings = get_settings()
     mode = _voice_mode(settings)
     asr_ready = bool(settings.asr_cloud_endpoint and settings.asr_cloud_api_key)
     tts_ready = bool(settings.tts_cloud_endpoint and settings.tts_cloud_api_key)
-    asr = resolve_asr(mode, settings.asr_provider, asr_ready)
-    tts = resolve_tts(mode, settings.tts_provider, tts_ready)
+    # M14-01：本地真实引擎 readiness 只看 endpoint（key 可选——本地服务默认无鉴权）
+    asr_local_ready = bool(settings.asr_local_endpoint)
+    tts_local_ready = bool(settings.tts_local_endpoint)
+    asr = resolve_asr(mode, settings.asr_provider, cloud_ready=asr_ready, local_ready=asr_local_ready)
+    tts = resolve_tts(mode, settings.tts_provider, cloud_ready=tts_ready, local_ready=tts_local_ready)
     return ProvidersOut(
         voice_mode=mode,
         asr=ProviderView(requested=settings.asr_provider, provider=asr.provider, fallback=asr.fallback),
@@ -182,6 +193,13 @@ async def list_providers() -> ProvidersOut:
 def _build_asr(settings, choice_provider: str):
     if choice_provider == LOCAL_ASR:
         return FakeAsrProvider()
+    if choice_provider == ASR_LOCAL_FUNASR:
+        return LocalFunAsrAsrProvider(
+            settings.asr_local_endpoint or "",
+            settings.asr_local_api_key or "",
+            settings.asr_local_model,
+            timeout=settings.asr_local_timeout_seconds,
+        )
     if choice_provider == "cloud-openai":
         return CloudOpenAiAsrProvider(
             settings.asr_cloud_endpoint or "",
@@ -194,6 +212,13 @@ def _build_asr(settings, choice_provider: str):
 def _build_tts(settings, choice_provider: str):
     if choice_provider == LOCAL_TTS:
         return ToneTtsProvider()
+    if choice_provider == TTS_LOCAL_COSYVOICE:
+        return LocalCosyVoiceTtsProvider(
+            settings.tts_local_endpoint or "",
+            settings.tts_local_api_key or "",
+            settings.tts_local_model,
+            timeout=settings.tts_local_timeout_seconds,
+        )
     if choice_provider == "cloud-openai-tts":
         return CloudOpenAiTtsProvider(
             settings.tts_cloud_endpoint or "",
@@ -204,8 +229,12 @@ def _build_tts(settings, choice_provider: str):
 
 
 @router.post("/transcribe", response_model=TranscriptionOut)
-async def transcribe(request: Request, audio: UploadFile) -> TranscriptionOut:
-    """语音→文本：transcript 恒落盘；原始音频按 PRIVACY_STORE_AUDIO 策略处理。"""
+async def transcribe(request: Request, response: Response, audio: UploadFile) -> TranscriptionOut:
+    """语音→文本：transcript 恒落盘；原始音频按 PRIVACY_STORE_AUDIO 策略处理。
+
+    provider 与 fallback 经响应头透出（X-Voice-Provider/X-Voice-Fallback，与
+    /synthesize 同口径）——本地真实引擎未配置降级替身时不虚报。
+    """
     settings = get_settings()
     mode = _voice_mode(settings)
     repo = request.app.state.voice_transcripts
@@ -217,7 +246,12 @@ async def transcribe(request: Request, audio: UploadFile) -> TranscriptionOut:
     if len(data) > MAX_AUDIO_BYTES:
         raise HTTPException(status_code=413, detail="音频超过 20MB 上限")
 
-    choice = resolve_asr(mode, settings.asr_provider, bool(settings.asr_cloud_endpoint and settings.asr_cloud_api_key))
+    choice = resolve_asr(
+        mode,
+        settings.asr_provider,
+        cloud_ready=bool(settings.asr_cloud_endpoint and settings.asr_cloud_api_key),
+        local_ready=bool(settings.asr_local_endpoint),
+    )
     provider = _build_asr(settings, choice.provider)
     t0 = time.monotonic()
     try:
@@ -225,6 +259,8 @@ async def transcribe(request: Request, audio: UploadFile) -> TranscriptionOut:
     except ProviderUnavailable as cause:
         raise HTTPException(status_code=502, detail=str(cause)) from cause
     await _record_trace(request, stage="asr", duration_ms=int((time.monotonic() - t0) * 1000))
+    response.headers["X-Voice-Provider"] = result.provider
+    response.headers["X-Voice-Fallback"] = "1" if choice.fallback else "0"
 
     audio_object_key: str | None = None
     audio_stored = False
@@ -279,7 +315,12 @@ async def synthesize(payload: SynthesizeRequest, request: Request) -> Response:
     """文本→WAV。合成不落库（派生音频无留存需求），provider 透出响应头。"""
     settings = get_settings()
     mode = _voice_mode(settings)
-    choice = resolve_tts(mode, settings.tts_provider, bool(settings.tts_cloud_endpoint and settings.tts_cloud_api_key))
+    choice = resolve_tts(
+        mode,
+        settings.tts_provider,
+        cloud_ready=bool(settings.tts_cloud_endpoint and settings.tts_cloud_api_key),
+        local_ready=bool(settings.tts_local_endpoint),
+    )
     provider = _build_tts(settings, choice.provider)
     t0 = time.monotonic()
     try:

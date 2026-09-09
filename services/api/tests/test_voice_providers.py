@@ -40,12 +40,22 @@ _CLOUD_ENV_KEYS = (
     "TTS_CLOUD_API_KEY",
 )
 
+_LOCAL_ENV_KEYS = (
+    "ASR_LOCAL_ENDPOINT",
+    "ASR_LOCAL_MODEL",
+    "ASR_LOCAL_API_KEY",
+    "TTS_LOCAL_ENDPOINT",
+    "TTS_LOCAL_MODEL",
+    "TTS_LOCAL_API_KEY",
+)
+
 
 def _configure_voice(monkeypatch, *, mode: str, asr_cloud: bool = False, tts_cloud: bool = False,
+                     asr_local: bool = False, tts_local: bool = False,
                      store_audio: bool = False) -> None:
     monkeypatch.setenv("VOICE_MODE", mode)
     monkeypatch.setenv("PRIVACY_STORE_AUDIO", "true" if store_audio else "false")
-    for key in _CLOUD_ENV_KEYS:
+    for key in (*_CLOUD_ENV_KEYS, *_LOCAL_ENV_KEYS):
         monkeypatch.delenv(key, raising=False)
     if asr_cloud:
         monkeypatch.setenv("ASR_CLOUD_ENDPOINT", "https://cloud.example.invalid/v1")
@@ -53,6 +63,10 @@ def _configure_voice(monkeypatch, *, mode: str, asr_cloud: bool = False, tts_clo
     if tts_cloud:
         monkeypatch.setenv("TTS_CLOUD_ENDPOINT", "https://cloud.example.invalid/v1")
         monkeypatch.setenv("TTS_CLOUD_API_KEY", "test-key")
+    if asr_local:
+        monkeypatch.setenv("ASR_LOCAL_ENDPOINT", "http://127.0.0.1:8010/v1")
+    if tts_local:
+        monkeypatch.setenv("TTS_LOCAL_ENDPOINT", "http://127.0.0.1:8011/v1")
     get_settings.cache_clear()
 
 
@@ -67,10 +81,16 @@ def _reset_settings_cache():
 
 
 def test_local_mode_selects_local_providers() -> None:
-    asr = resolve_asr("local", None, cloud_ready=True)  # 云端已配置也不该用（local 模式）
-    tts = resolve_tts("local", None, cloud_ready=True)
-    assert (asr.provider, asr.fallback) == (LOCAL_ASR, False)
-    assert (tts.provider, tts.fallback) == (LOCAL_TTS, False)
+    """M14-01 后语义：local 默认想要真实本地引擎——已配置则选中，未配置降级替身并透出。"""
+    asr = resolve_asr("local", None, cloud_ready=True, local_ready=True)  # 云端已配置也不该用（local 模式）
+    tts = resolve_tts("local", None, cloud_ready=True, local_ready=True)
+    assert (asr.provider, asr.fallback) == ("local-funasr", False)
+    assert (tts.provider, tts.fallback) == ("local-cosyvoice", False)
+    # 本地真实引擎未配置 → 降级零依赖替身且透出 fallback（不虚报已接真实引擎）
+    unconfigured = resolve_asr("local", None, cloud_ready=True, local_ready=False)
+    assert (unconfigured.provider, unconfigured.fallback) == (LOCAL_ASR, True)
+    tts_down = resolve_tts("local", None, cloud_ready=True, local_ready=False)
+    assert (tts_down.provider, tts_down.fallback) == (LOCAL_TTS, True)
 
 
 def test_cloud_mode_selects_cloud_and_falls_back_when_unconfigured() -> None:
@@ -81,10 +101,16 @@ def test_cloud_mode_selects_cloud_and_falls_back_when_unconfigured() -> None:
 
 
 def test_hybrid_mode_keeps_asr_local_but_tts_cloud() -> None:
-    """混合语义（runbook）：ASR 本地（语音不出本机），TTS 可云端（仅文本出站）。"""
-    asr = resolve_asr("hybrid", None, cloud_ready=True)
-    tts = resolve_tts("hybrid", None, cloud_ready=True)
-    assert asr.provider == LOCAL_ASR
+    """混合语义（runbook）：ASR 本地（语音不出本机），TTS 可云端（仅文本出站）。
+
+    M14-01 后 ASR 本地默认真实引擎（endpoint 未配置降级替身并透出 fallback）；
+    TTS 仍按云端语义（cloud_ready 决定云端或降级替身）。
+    """
+    asr = resolve_asr("hybrid", None, cloud_ready=True, local_ready=True)
+    asr_down = resolve_asr("hybrid", None, cloud_ready=True, local_ready=False)
+    tts = resolve_tts("hybrid", None, cloud_ready=True, local_ready=True)
+    assert (asr.provider, asr.fallback) == ("local-funasr", False)
+    assert (asr_down.provider, asr_down.fallback) == (LOCAL_ASR, True)
     assert tts.provider == "cloud-openai-tts"
     tts_unconfigured = resolve_tts("hybrid", None, cloud_ready=False)
     assert (tts_unconfigured.provider, tts_unconfigured.fallback) == (LOCAL_TTS, True)
@@ -395,13 +421,15 @@ def test_cloud_asr_success_preserves_latency_and_provider_fields() -> None:
 
 
 def test_providers_endpoint_reflects_modes(monkeypatch) -> None:
-    """三模式切换：local→双本地；cloud→双云端；hybrid→ASR 本地+TTS 云端降级透出。"""
+    """三模式切换：local→双本地（M14-01 后未配置降级透出）；cloud→双云端；
+    hybrid→ASR 本地+TTS 云端降级透出。"""
     _configure_voice(monkeypatch, mode="local")
     with TestClient(create_app(None)) as client:
         body = client.get("/api/v1/voice/providers").json()
         assert body["voice_mode"] == "local"
-        assert (body["asr"]["provider"], body["asr"]["fallback"]) == ("fake", False)
-        assert (body["tts"]["provider"], body["tts"]["fallback"]) == ("tone", False)
+        # M14-01：本地真实引擎未配置 → 降级替身并透出 fallback（不虚报）
+        assert (body["asr"]["provider"], body["asr"]["fallback"]) == ("fake", True)
+        assert (body["tts"]["provider"], body["tts"]["fallback"]) == ("tone", True)
         assert body["privacy_store_audio"] is False
 
         _configure_voice(monkeypatch, mode="cloud", asr_cloud=True, tts_cloud=True)
@@ -410,9 +438,9 @@ def test_providers_endpoint_reflects_modes(monkeypatch) -> None:
         assert body["asr"]["provider"] == "cloud-openai"
         assert body["tts"]["provider"] == "cloud-openai-tts"
 
-        _configure_voice(monkeypatch, mode="hybrid", asr_cloud=True)  # TTS 云端未配置
+        _configure_voice(monkeypatch, mode="hybrid", asr_cloud=True)  # TTS 云端、ASR 本地引擎均未配置
         body = client.get("/api/v1/voice/providers").json()
-        assert body["asr"]["provider"] == "fake"
+        assert (body["asr"]["provider"], body["asr"]["fallback"]) == ("fake", True)
         assert (body["tts"]["provider"], body["tts"]["fallback"]) == ("tone", True)
 
 
@@ -473,13 +501,14 @@ def test_transcribe_rejects_empty_audio(monkeypatch) -> None:
 
 
 def test_synthesize_returns_wav_with_provider_header(monkeypatch) -> None:
+    """local 且本地真实引擎未配置 → tone 替身 + fallback 头透出（M14-01 语义）。"""
     _configure_voice(monkeypatch, mode="local")
     with TestClient(create_app(None)) as client:
         response = client.post("/api/v1/voice/synthesize", json={"text": "你好世界"})
         assert response.status_code == 200
         assert response.headers["content-type"] == "audio/wav"
         assert response.headers["x-voice-provider"] == "tone"
-        assert response.headers["x-voice-fallback"] == "0"
+        assert response.headers["x-voice-fallback"] == "1"
         with wave.open(io.BytesIO(response.content), "rb") as reader:
             assert reader.getnframes() > 0
 

@@ -1138,6 +1138,40 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   （不触网、不读真实 secret：必填 env 缺失 FAIL、音频文件缺失 FAIL、探针失败
   传播、文本契约与零敏感回显）。
 
+## 本地真实语音引擎（M14-01 第一切片）
+
+- **架构**：主 API 不嵌模型 SDK，只经 OpenAI 兼容 HTTP 调本机服务（全部只绑
+  `127.0.0.1`）——ASR 用 `local-funasr`（funasr-server，SenseVoiceSmall，
+  CPU，`/v1/audio/transcriptions`，无鉴权）；TTS 用 `local-cosyvoice`
+  （CosyVoice 官方仓库 + `tools/voice/cosyvoice_openai_bridge.py`，
+  `/v1/audio/speech` 恒返回 WAV）。首发不做三引擎同卡常驻：ASR 走 CPU、
+  TTS 用 GPU（cu128），LLM 另行安排。
+- **配置**：`ASR_LOCAL_ENDPOINT` / `ASR_LOCAL_MODEL` / `ASR_LOCAL_API_KEY` /
+  `TTS_LOCAL_ENDPOINT` / `TTS_LOCAL_MODEL` / `TTS_LOCAL_API_KEY`（key 可选，
+  本地服务默认无鉴权；真实 key 只放本机 .env）。endpoint 配好 → local 模式
+  选中真实引擎；未配置 → 降级 `fake`/`tone` 并在 `GET /api/v1/voice/providers`
+  与 `X-Voice-Provider` / `X-Voice-Fallback` 响应头透出 fallback（transcribe
+  与 synthesize 同口径），不虚报已接真实引擎。hybrid 语义：ASR 本地（同上），
+  TTS 仍按云端语义。未知 provider 名 422；引擎失败 ProviderUnavailable → 502
+  固定脱敏文案（与云端 M10-13 同口径，本地/云端文案明确区分，不互相冒充）。
+- **部署与冒烟**：可复现脚本在 `tools/voice/`——`bootstrap_funasr_wsl.sh`
+  （Python 3.11 venv + CPU torch + funasr 1.4.15，127.0.0.1:8010）、
+  `bootstrap_cosyvoice_wsl.sh`（Python 3.10 venv + 官方仓库固定 commit
+  `074ca6d` + cu128 torch + Fun-CosyVoice3-0.5B-2512，bridge 127.0.0.1:8011）、
+  `smoke_local_voice.py`（真实 HTTP 探测 ASR/TTS，输出 latency/bytes/RIFF/
+  文本与 PASS/FAIL）。模型与 venv 全部落 gitignored `artifacts/voice/`；
+  Windows 从 PowerShell 调 WSL 的命令与引号规则见 `tools/voice/README.md`。
+- **测试**：`services/api/tests/test_voice_local_providers.py`（路由选择/成功/
+  未配置降级/HTTP 失败脱敏/非法 JSON/空与非 WAV/provider header/未知 provider
+  422，全部 MockTransport 或注入替身，不触网）与
+  `services/api/tests/test_voice_local_scripts.py`（脚本语法与文本契约 +
+  bridge `/health`、404/400/503/401 与 WAV 序列化行为）。
+- **边界**：真实模型**未在本切片部署**（脚本未执行、模型未下载）——实际部署
+  验证是另立的验收任务，完成前 `production_ready=false`；流式 ASR/TTS 未实现
+  未宣称；compose 容器内 API 访问不到宿主 WSL loopback，本地引擎部署形态是
+  宿主直跑 API（compose 接入属后续工作）；bridge 单 worker 串行推理，并发
+  容量未测。
+
 ## 运行观测快照（M10-14）
 
 - **用途**：runbook（`docs/delivery/12_DEPLOYMENT_OPERATIONS_RUNBOOK.md` 第 7 节

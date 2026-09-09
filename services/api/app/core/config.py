@@ -41,6 +41,18 @@ class Settings(BaseSettings):
     tts_cloud_endpoint: str | None = None
     tts_cloud_api_key: str | None = None
     tts_cloud_model: str = "tts-1"
+    # M14-01 本地真实语音引擎槽位：OpenAI 兼容本机服务（tools/voice/ 部署，仅绑
+    # 127.0.0.1）。endpoint 未配置 = local/hybrid ASR 降级零依赖替身并在 provider
+    # 视图/响应头透出 fallback；key 可选（本地服务默认无鉴权），真实 key 只放部署
+    # secret/.env，不入库不入码
+    asr_local_endpoint: str | None = None  # 如 http://127.0.0.1:8010/v1（funasr-server）
+    asr_local_model: str = "sensevoice"
+    asr_local_api_key: str | None = None
+    asr_local_timeout_seconds: float = 60.0  # CPU 转写首轮可慢于云端
+    tts_local_endpoint: str | None = None  # 如 http://127.0.0.1:8011/v1（cosyvoice bridge）
+    tts_local_model: str = "Fun-CosyVoice3-0.5B-2512"
+    tts_local_api_key: str | None = None
+    tts_local_timeout_seconds: float = 120.0  # 首次合成含加载后推理
     llm_provider: str | None = None
     # M10-01 LLM 槽位：OpenAI 兼容端点；key 只放部署 secret/.env，不入库不入码
     llm_endpoint: str | None = None
