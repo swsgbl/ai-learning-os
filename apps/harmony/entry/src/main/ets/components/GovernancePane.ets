@@ -23,7 +23,14 @@
  *     —— 服务端虽会下发 before/after 载荷与 request body,UI 契约不投影、
  *     不渲染、不校验(AuditEntry 接口本就不含这些字段);
  *   - Record<string,number> 计数表经 Object.keys 展开为 key/value 行;
- *   - 多行文本设 maxLines 上限 + Ellipsis,窄屏不溢出。
+ *   - 多行文本设 maxLines 上限 + Ellipsis,窄屏不溢出;
+ *   - 布局(M13-14 结构可达性修正):固定外层头部区域(标题「治理(只读)」/
+ *     「整体刷新」按钮/服务地址/只读边界说明/上下文错误)始终位于 Scroll 之外,
+ *     与滚动偏移无关地参与布局并暴露于无障碍树;Scroll 内只保留三个治理区块
+ *     (服务版本 / 运维快照 / 审计日志)。运行期证据显示合成滑动、长按拖动、
+ *     已选 tab 点击均无法复位 Scroll 偏移(见 evidence README),因此顶层控件
+ *     必须结构性可达,而非依赖手势回滚。状态机、请求代次、disposed 守卫、
+ *     API、文案、错误处理与 loading-disabled 语义全部保持不变。
  */
 
 import { common } from '@kit.AbilityKit';
@@ -386,10 +393,11 @@ export struct GovernancePane {
   }
 
   build() {
-    // 整页单 Scroll:三个治理区块自上而下平铺,均可滚动访问
-    Scroll() {
+    // 外层固定布局:头部区域(标题/整体刷新/服务地址/只读说明/上下文错误)
+    // 位于 Scroll 之外,不参与滚动 —— 与滚动偏移无关地布局并暴露于无障碍树
+    Column() {
+      // ── 固定头部 ─────────────────────────────────────
       Column({ space: 12 }) {
-        // ── 标题栏 ───────────────────────────────────────
         Row({ space: 12 }) {
           Text('治理(只读)')
             .fontSize(20)
@@ -430,206 +438,217 @@ export struct GovernancePane {
             .maxLines(3)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
-
-        // ── 区块 1:服务版本 ─────────────────────────────
-        Column({ space: 8 }) {
-          Row({ space: 8 }) {
-            Text('服务版本')
-              .fontSize(15)
-              .fontWeight(FontWeight.Bold)
-              .layoutWeight(1)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-            Button('刷新')
-              .fontSize(11)
-              .height(26)
-              .enabled(this.versionStatus !== SectionStatus.LOADING)
-              .onClick(() => {
-                this.loadVersion();
-              })
-          }
-          .width('100%')
-
-          if (this.versionStatus === SectionStatus.LOADING) {
-            Text('加载中…')
-              .fontSize(13)
-              .fontColor('#888888')
-          } else if (this.versionStatus === SectionStatus.SUCCESS && this.versionData !== null) {
-            this.KvList([
-              { key: '版本', value: safeStr(this.versionData.version) },
-              { key: 'Git 提交', value: safeStr(this.versionData.git_commit) },
-              { key: 'Alembic current', value: safeStr(this.versionData.alembic_current) },
-              { key: 'Alembic head', value: safeStr(this.versionData.alembic_head) }
-            ])
-          } else if (this.versionStatus === SectionStatus.ERROR) {
-            Text(this.versionError)
-              .fontSize(13)
-              .fontColor('#c62828')
-              .width('100%')
-              .maxLines(3)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-            Button('重试')
-              .fontSize(12)
-              .height(30)
-              .onClick(() => {
-                this.loadVersion();
-              })
-          }
-        }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
-        .padding(12)
-        .backgroundColor('#fafafa')
-        .borderRadius(8)
-        .border({ width: { bottom: 1 }, color: '#eeeeee' })
-
-        // ── 区块 2:运维快照 ─────────────────────────────
-        Column({ space: 8 }) {
-          Row({ space: 8 }) {
-            Text('运维快照')
-              .fontSize(15)
-              .fontWeight(FontWeight.Bold)
-              .layoutWeight(1)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-            Button('刷新')
-              .fontSize(11)
-              .height(26)
-              .enabled(this.opsStatus !== SectionStatus.LOADING)
-              .onClick(() => {
-                this.loadOpsSnapshot();
-              })
-          }
-          .width('100%')
-
-          if (this.opsStatus === SectionStatus.LOADING) {
-            Text('加载中…')
-              .fontSize(13)
-              .fontColor('#888888')
-          } else if (this.opsStatus === SectionStatus.SUCCESS && this.opsData !== null) {
-            this.KvList([
-              { key: '生成时间', value: safeStr(this.opsData.generated_at) },
-              { key: '数据库后端', value: safeStr(this.opsData.database_backend) },
-              { key: '论文总数', value: `${this.opsData.papers_total}` },
-              { key: '搜索查询总数', value: `${this.opsData.search_queries_total}` },
-              { key: '审计条目总数', value: `${this.opsData.audit_entries_total}` },
-              { key: 'Worker 运行', value: this.opsData.worker_running ? '是' : '否' }
-            ])
-            this.CountMapBlock('用户(按角色)', toKvRows(this.opsData.users_by_role))
-            this.CountMapBlock('资源(按解析状态)', toKvRows(this.opsData.resources_by_parse_status))
-            this.CountMapBlock('解析任务(按状态)', toKvRows(this.opsData.parse_jobs_by_status))
-            this.CountMapBlock('待审草稿', toKvRows(this.opsData.pending_review_drafts))
-            this.CountMapBlock('语音会话(按状态)', toKvRows(this.opsData.voice_sessions_by_status))
-          } else if (this.opsStatus === SectionStatus.ERROR) {
-            Text(this.opsError)
-              .fontSize(13)
-              .fontColor('#c62828')
-              .width('100%')
-              .maxLines(3)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-            Button('重试')
-              .fontSize(12)
-              .height(30)
-              .onClick(() => {
-                this.loadOpsSnapshot();
-              })
-          }
-        }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
-        .padding(12)
-        .backgroundColor('#fafafa')
-        .borderRadius(8)
-        .border({ width: { bottom: 1 }, color: '#eeeeee' })
-
-        // ── 区块 3:审计日志 ─────────────────────────────
-        Column({ space: 8 }) {
-          Row({ space: 8 }) {
-            Text('审计日志(最近 100 条)')
-              .fontSize(15)
-              .fontWeight(FontWeight.Bold)
-              .layoutWeight(1)
-              .maxLines(1)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-            Button('刷新')
-              .fontSize(11)
-              .height(26)
-              .enabled(this.auditStatus !== SectionStatus.LOADING)
-              .onClick(() => {
-                this.loadAudit();
-              })
-          }
-          .width('100%')
-
-          if (this.auditStatus === SectionStatus.LOADING) {
-            Text('加载中…')
-              .fontSize(13)
-              .fontColor('#888888')
-          } else if (this.auditStatus === SectionStatus.EMPTY) {
-            // 诚实空态:服务明确返回空列表,不虚构任何条目
-            Text('暂无审计条目')
-              .fontSize(13)
-              .fontColor('#888888')
-          } else if (this.auditStatus === SectionStatus.SUCCESS) {
-            // 只渲染 id/action/actor_username/target_type/target_id/created_at,
-            // 绝不渲染 before/after 载荷或请求体
-            ForEach(this.auditData, (entry: AuditEntry) => {
-              Column({ space: 2 }) {
-                Text(`#${entry.id} ${safeStr(entry.action)}`)
-                  .fontSize(13)
-                  .fontWeight(FontWeight.Bold)
-                  .maxLines(2)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .width('100%')
-                Text(`${safeStr(entry.actor_username)} → ${safeStr(entry.target_type)} #${safeStr(entry.target_id)}`)
-                  .fontSize(12)
-                  .fontColor('#666666')
-                  .maxLines(2)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .width('100%')
-                Text(safeStr(entry.created_at))
-                  .fontSize(11)
-                  .fontColor('#999999')
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .width('100%')
-              }
-              .alignItems(HorizontalAlign.Start)
-              .padding(6)
-              .borderRadius(6)
-              .backgroundColor('#ffffff')
-              .width('100%')
-            }, (entry: AuditEntry) => `${entry.id}`)
-          } else if (this.auditStatus === SectionStatus.ERROR) {
-            Text(this.auditError)
-              .fontSize(13)
-              .fontColor('#c62828')
-              .width('100%')
-              .maxLines(3)
-              .textOverflow({ overflow: TextOverflow.Ellipsis })
-            Button('重试')
-              .fontSize(12)
-              .height(30)
-              .onClick(() => {
-                this.loadAudit();
-              })
-          }
-        }
-        .width('100%')
-        .alignItems(HorizontalAlign.Start)
-        .padding(12)
-        .backgroundColor('#fafafa')
-        .borderRadius(8)
-        .border({ width: { bottom: 1 }, color: '#eeeeee' })
       }
       .width('100%')
       .alignItems(HorizontalAlign.Start)
       .padding(16)
+      .border({ width: { bottom: 1 }, color: '#eeeeee' })
+
+      // ── 可滚动内容:仅三个治理区块 ──────────────────
+      // Scroll 独占剩余空间并裁剪自身内容,固定头部不被其包含、不随偏移滚动
+      Scroll() {
+        Column({ space: 12 }) {
+          // ── 区块 1:服务版本 ─────────────────────────
+          Column({ space: 8 }) {
+            Row({ space: 8 }) {
+              Text('服务版本')
+                .fontSize(15)
+                .fontWeight(FontWeight.Bold)
+                .layoutWeight(1)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Button('刷新')
+                .fontSize(11)
+                .height(26)
+                .enabled(this.versionStatus !== SectionStatus.LOADING)
+                .onClick(() => {
+                  this.loadVersion();
+                })
+            }
+            .width('100%')
+
+            if (this.versionStatus === SectionStatus.LOADING) {
+              Text('加载中…')
+                .fontSize(13)
+                .fontColor('#888888')
+            } else if (this.versionStatus === SectionStatus.SUCCESS && this.versionData !== null) {
+              this.KvList([
+                { key: '版本', value: safeStr(this.versionData.version) },
+                { key: 'Git 提交', value: safeStr(this.versionData.git_commit) },
+                { key: 'Alembic current', value: safeStr(this.versionData.alembic_current) },
+                { key: 'Alembic head', value: safeStr(this.versionData.alembic_head) }
+              ])
+            } else if (this.versionStatus === SectionStatus.ERROR) {
+              Text(this.versionError)
+                .fontSize(13)
+                .fontColor('#c62828')
+                .width('100%')
+                .maxLines(3)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Button('重试')
+                .fontSize(12)
+                .height(30)
+                .onClick(() => {
+                  this.loadVersion();
+                })
+            }
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+          .padding(12)
+          .backgroundColor('#fafafa')
+          .borderRadius(8)
+          .border({ width: { bottom: 1 }, color: '#eeeeee' })
+
+          // ── 区块 2:运维快照 ─────────────────────────
+          Column({ space: 8 }) {
+            Row({ space: 8 }) {
+              Text('运维快照')
+                .fontSize(15)
+                .fontWeight(FontWeight.Bold)
+                .layoutWeight(1)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Button('刷新')
+                .fontSize(11)
+                .height(26)
+                .enabled(this.opsStatus !== SectionStatus.LOADING)
+                .onClick(() => {
+                  this.loadOpsSnapshot();
+                })
+            }
+            .width('100%')
+
+            if (this.opsStatus === SectionStatus.LOADING) {
+              Text('加载中…')
+                .fontSize(13)
+                .fontColor('#888888')
+            } else if (this.opsStatus === SectionStatus.SUCCESS && this.opsData !== null) {
+              this.KvList([
+                { key: '生成时间', value: safeStr(this.opsData.generated_at) },
+                { key: '数据库后端', value: safeStr(this.opsData.database_backend) },
+                { key: '论文总数', value: `${this.opsData.papers_total}` },
+                { key: '搜索查询总数', value: `${this.opsData.search_queries_total}` },
+                { key: '审计条目总数', value: `${this.opsData.audit_entries_total}` },
+                { key: 'Worker 运行', value: this.opsData.worker_running ? '是' : '否' }
+              ])
+              this.CountMapBlock('用户(按角色)', toKvRows(this.opsData.users_by_role))
+              this.CountMapBlock('资源(按解析状态)', toKvRows(this.opsData.resources_by_parse_status))
+              this.CountMapBlock('解析任务(按状态)', toKvRows(this.opsData.parse_jobs_by_status))
+              this.CountMapBlock('待审草稿', toKvRows(this.opsData.pending_review_drafts))
+              this.CountMapBlock('语音会话(按状态)', toKvRows(this.opsData.voice_sessions_by_status))
+            } else if (this.opsStatus === SectionStatus.ERROR) {
+              Text(this.opsError)
+                .fontSize(13)
+                .fontColor('#c62828')
+                .width('100%')
+                .maxLines(3)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Button('重试')
+                .fontSize(12)
+                .height(30)
+                .onClick(() => {
+                  this.loadOpsSnapshot();
+                })
+            }
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+          .padding(12)
+          .backgroundColor('#fafafa')
+          .borderRadius(8)
+          .border({ width: { bottom: 1 }, color: '#eeeeee' })
+
+          // ── 区块 3:审计日志 ─────────────────────────
+          Column({ space: 8 }) {
+            Row({ space: 8 }) {
+              Text('审计日志(最近 100 条)')
+                .fontSize(15)
+                .fontWeight(FontWeight.Bold)
+                .layoutWeight(1)
+                .maxLines(1)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Button('刷新')
+                .fontSize(11)
+                .height(26)
+                .enabled(this.auditStatus !== SectionStatus.LOADING)
+                .onClick(() => {
+                  this.loadAudit();
+                })
+            }
+            .width('100%')
+
+            if (this.auditStatus === SectionStatus.LOADING) {
+              Text('加载中…')
+                .fontSize(13)
+                .fontColor('#888888')
+            } else if (this.auditStatus === SectionStatus.EMPTY) {
+              // 诚实空态:服务明确返回空列表,不虚构任何条目
+              Text('暂无审计条目')
+                .fontSize(13)
+                .fontColor('#888888')
+            } else if (this.auditStatus === SectionStatus.SUCCESS) {
+              // 只渲染 id/action/actor_username/target_type/target_id/created_at,
+              // 绝不渲染 before/after 载荷或请求体
+              ForEach(this.auditData, (entry: AuditEntry) => {
+                Column({ space: 2 }) {
+                  Text(`#${entry.id} ${safeStr(entry.action)}`)
+                    .fontSize(13)
+                    .fontWeight(FontWeight.Bold)
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .width('100%')
+                  Text(`${safeStr(entry.actor_username)} → ${safeStr(entry.target_type)} #${safeStr(entry.target_id)}`)
+                    .fontSize(12)
+                    .fontColor('#666666')
+                    .maxLines(2)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .width('100%')
+                  Text(safeStr(entry.created_at))
+                    .fontSize(11)
+                    .fontColor('#999999')
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                    .width('100%')
+                }
+                .alignItems(HorizontalAlign.Start)
+                .padding(6)
+                .borderRadius(6)
+                .backgroundColor('#ffffff')
+                .width('100%')
+              }, (entry: AuditEntry) => `${entry.id}`)
+            } else if (this.auditStatus === SectionStatus.ERROR) {
+              Text(this.auditError)
+                .fontSize(13)
+                .fontColor('#c62828')
+                .width('100%')
+                .maxLines(3)
+                .textOverflow({ overflow: TextOverflow.Ellipsis })
+              Button('重试')
+                .fontSize(12)
+                .height(30)
+                .onClick(() => {
+                  this.loadAudit();
+                })
+            }
+          }
+          .width('100%')
+          .alignItems(HorizontalAlign.Start)
+          .padding(12)
+          .backgroundColor('#fafafa')
+          .borderRadius(8)
+          .border({ width: { bottom: 1 }, color: '#eeeeee' })
+        }
+        .width('100%')
+        .alignItems(HorizontalAlign.Start)
+        .padding(16)
+      }
+      .layoutWeight(1)
+      .align(Alignment.TopStart)
+      .scrollBar(BarState.Off)
     }
     .width('100%')
     .height('100%')
-    .align(Alignment.TopStart)
-    .scrollBar(BarState.Off)
   }
 
   /** key/value 行列表(固定行模型) */
