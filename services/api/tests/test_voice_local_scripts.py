@@ -338,6 +338,9 @@ def test_bootstrap_cosyvoice_text_contract() -> None:
         "074ca6dc9e80a2f424f1f74b48bdd7d3fea531cc",  # 固定 commit（可验证来源）
         "FunAudioLLM/CosyVoice.git",
         "download.pytorch.org/whl/cu128",
+        # torchcodec：torchaudio 2.11 后端探测需要；+cu128 本地版本轮只在
+        # pytorch cu128 index（必须与 torch 同命令从该 index 安装）
+        "torchcodec==0.11.1+cu128",
         "Fun-CosyVoice3-0.5B-2512",
         "cosyvoice_openai_bridge.py",
         "127.0.0.1",
@@ -419,6 +422,20 @@ def test_bootstrap_python_missing_hints_are_actionable() -> None:
         assert "uv venv --python" in text, script.name
 
 
+def test_bootstrap_torchcodec_pinned_on_cu128_install_line() -> None:
+    """torchcodec 确定性回归：pin 必须落在与 torch/torchaudio 同一条 cu128 index
+    安装命令上——torchaudio 2.11 后端探测需要 torchcodec，而 0.11.1+cu128 本地
+    版本轮只存在于 download.pytorch.org/whl/cu128（PyPI 解析拿不到），也不能挪进
+    cosyvoice-runtime-requirements.txt（该文件按 PyPI 安装）。"""
+    text = BOOTSTRAP_COSYVOICE.read_text(encoding="utf-8")
+    install_lines = [line for line in text.splitlines() if 'pip" install torch ' in line]
+    assert install_lines, "bootstrap 应有 torch 安装命令行"
+    assert len(install_lines) == 1, "torch 安装命令应唯一（便于 cu128 同源解析）"
+    line = install_lines[0]
+    assert "torchcodec==0.11.1+cu128" in line
+    assert "--index-url https://download.pytorch.org/whl/cu128" in line
+
+
 def test_runtime_requirements_contract() -> None:
     """最小运行时依赖清单：导入闭包必需包 + bridge 服务面（fastapi/uvicorn，复审
     修正——bridge 顶层 import fastapi 且 main() 调 uvicorn.run，必须随清单安装）
@@ -436,6 +453,11 @@ def test_runtime_requirements_contract() -> None:
               if line.strip() and not line.strip().startswith("#")]
     # pydantic 保持 fastapi 间接依赖（不直接 pin）——防止无理由显式 pin 回归
     assert not any(line.startswith("pydantic") for line in active)
+    # cu128 轮子（torch/torchaudio/torchcodec）只存在于 pytorch cu128 index——
+    # 本清单按 PyPI 安装拿不到 +cu128 本地版本轮，必须留在 bootstrap 侧安装
+    assert not any(
+        line.startswith(("torch==", "torchaudio==", "torchcodec")) for line in active
+    ), "cu128 轮子不得进入 PyPI 解析的最小清单"
     for excluded in (
         "deepspeed", "tensorrt", "vllm", "gradio", "librosa", "lightning",
         "pyworld", "matplotlib", "tensorboard", "grpcio", "gdown", "diffusers",

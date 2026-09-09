@@ -15,6 +15,12 @@
 #   asset/zero_shot_prompt.wav 执行 torchaudio.load），失败才点名补救。
 # - torch 决策不变：cu128 轮子（RTX 5070 Ti/Blackwell），官方 cu121 pin 被剔除；
 #   官方仓库固定 commit 074ca6d（含子模块 third_party/Matcha-TTS）不变。
+# - torchcodec==0.11.1+cu128 随 cu128 torch 同装：torchaudio 2.11 的后端探测
+#   需要 torchcodec，干净环境缺它则 torchaudio 导入/加载探针失败（2026-09-10
+#   本机 venv 实证 torch 2.11.0+cu128 / torchaudio 2.11.0+cu128 /
+#   torchcodec 0.11.1+cu128 import 与 WAV 读写均通过）。+cu128 本地版本轮
+#   只存在于 pytorch cu128 index（PyPI 无），且其 METADATA 不 pin torch——
+#   同命令安装不替换、不重解 torch 依赖。
 #
 # 用途：Python 3.10 独立 venv 内克隆官方仓库、装 cu128 torch + 最小运行时依赖、
 #   下载 Fun-CosyVoice3-0.5B-2512 到 gitignored artifacts，然后在 127.0.0.1:8011
@@ -96,10 +102,13 @@ if [ ! -x "$VENV_DIR/bin/python" ]; then
 fi
 say "venv Python: $("$VENV_DIR/bin/python" --version 2>&1)"
 
-# ---- 依赖：先 cu128 torch，再最小运行时清单（或官方完整清单回退）----
-say "安装 cu128 torch/torchaudio（RTX 5070 Ti/Blackwell；网络受限时需代理）"
+# ---- 依赖：先 cu128 torch（含 torchcodec），再最小运行时清单（或官方完整清单回退）----
+# torchcodec 必须与 torch/torchaudio 同一条 cu128 index 命令安装：torchaudio 2.11
+# 后端探测需要它；+cu128 本地版本轮只在 pytorch cu128 index（PyPI 解析拿不到）；
+# torchcodec METADATA 不约束 torch 版本，不会替换/重解 torch 依赖。
+say "安装 cu128 torch/torchaudio/torchcodec==0.11.1+cu128（RTX 5070 Ti/Blackwell；网络受限时需代理）"
 "$VENV_DIR/bin/pip" install --upgrade pip
-"$VENV_DIR/bin/pip" install torch torchaudio --index-url https://download.pytorch.org/whl/cu128
+"$VENV_DIR/bin/pip" install torch torchaudio torchcodec==0.11.1+cu128 --index-url https://download.pytorch.org/whl/cu128
 if [ "${COSYVOICE_FULL_REQUIREMENTS:-0}" = "1" ]; then
   say "COSYVOICE_FULL_REQUIREMENTS=1：回退官方完整 requirements（剔除 torch/torchaudio 的 cu121 pin）"
   grep -vE '^(torch|torchaudio)==' "$COSYVOICE_DIR/requirements.txt" > "$ARTIFACTS/cosyvoice/requirements.full.txt"
@@ -168,7 +177,7 @@ PYEOF
 fi
 
 say "依赖就绪，已安装版本（记录用）："
-"$VENV_DIR/bin/pip" freeze | grep -E '^(torch|torchaudio|modelscope|transformers)=' || true
+"$VENV_DIR/bin/pip" freeze | grep -E '^(torch|torchaudio|torchcodec|modelscope|transformers)=' || true
 say "启动 OpenAI 兼容 bridge: http://$HOST:$PORT/v1/audio/speech（wav；key 可选）"
 say "模型在 bridge 启动后后台加载——/health 返回 200 才 ready（期间 503）"
 

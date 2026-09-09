@@ -7,8 +7,10 @@
 # 模型 YAML（hyperpyyaml instantiate）引用的类全部位于上述模块 + third_party/
 # Matcha-TTS 子模块（经 sys.path，非 pip）。
 #
-# torch/torchaudio 不在本文件：bootstrap 先装 cu128 轮子（RTX 5070 Ti/Blackwell），
-# 再装本清单；官方 requirements.txt 的 torch==2.3.1/cu121 pin 被有意覆盖。
+# torch/torchaudio/torchcodec 不在本文件：bootstrap 先从 pytorch cu128 index 装
+# torch/torchaudio + torchcodec==0.11.1+cu128（torchaudio 2.11 后端探测需要
+# torchcodec；+cu128 本地版本轮 PyPI 没有，本清单按 PyPI 解析装不到），再装本清单；
+# 官方 requirements.txt 的 torch==2.3.1/cu121 pin 被有意覆盖。
 # 版本策略：官方 requirements.txt 已 pin 的沿用其 pin（保持官方验证组合），
 # 未 pin 的（官方依赖链间接引入或官方缺口）不 pin。
 #
