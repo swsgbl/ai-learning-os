@@ -86,7 +86,7 @@ JSON5 兼容说明：`build-profile.json5` 解析先按纯 JSON，失败后退�
 - **B-1（外部材料，沿用 hmharness blockers）**：AGC 发布签名材料（发布证书 .cer / 发布 Profile .p7b / 发布密钥库 .p12）未就位 → preflight 在真实仓库上的结论是 `blocked_by_external_materials`。下一步（需运维授权）：AGC 后台创建发布证书与 Profile，材料放仓库外，经三个 `AIOS_HARMONY_*_PATH` 变量引用。
 - **B-2（签名配置接入）**：材料就位后 `build-profile.json5` signingConfigs 的接入由 hmharness 后续切片处理；届时 preflight 的 `signing_configs_not_empty` fail-closed 契约需同步修订（当前契约 = 仓库必须保持诚实未签名边界）。
 - 观察项（hmharness O-1）已由本切片关闭：`.gitignore` 显式 `*.p12/*.p7b/*.cer/*.csr/*.jks` 防护已补。
-- CI 未纳入 `tests/harmony_release`（CI 仅跑 `services/api`，与 `tests/android_smoke` 同为本地/canonical venv 口径）；如需纳入 CI 属后续治理决策。
+- CI 未纳入 `tests/harmony_release`（本切片时点事实：当时 CI 仅跑 `services/api`，与 `tests/android_smoke` 同为本地/canonical venv 口径）；如需纳入 CI 属后续治理决策——该治理决策已由 **M13-12** 随 PR #71 落地：CI 新增 release-tools job 运行 `tests/harmony_release`（该 job 仅验证 Python fail-closed 前置检查逻辑，不是 HarmonyOS 构建/签名/设备/运行时验证，CI 仍无 HarmonyOS job；见 ROADMAP/PROJECT_STATUS/DEVELOPMENT 的 M13-12 条目）。
 
 ## 七、合并后状态回填（2026-09-09，本节由状态回填切片追加）
 

@@ -2257,4 +2257,23 @@ python tools/harmony_mock/server.py --host 0.0.0.0 --port 8765
 
 ### 边界
 
-本切片不改变任何业务能力与签名边界：AGC 发布材料仍缺位（仓库与本机均无发布证书/Profile/密钥库，本机仅 DevEco 本地调试身份）→ **不声称已签名/可发布**——release 构建成功仅证明 `buildMode=release` 可执行，产物仍为 `entry-default-unsigned.hap`，不存在任何已签名 HAP；preflight 通过 ≠ 签名配置正确（材料与 bundleName `com.ailearningos.app` 的匹配、signingConfigs 接入方式属 hmharness 后续切片，均未验证）；未做真机验证与任何运行时验证（release 产物未在任何设备安装）；未启用/验证混淆（release 混淆提示 WARN 为既有 `ruleOptions.enable=false` 配置）；CI 无 HarmonyOS job，PR #69 的 PR CI run `34296903848` 与 merge 后 main CI run `34297190550` 四项 job 全部 success 均不扩大为 HarmonyOS 远端验证（`tests/harmony_release` 未纳入 CI，与 `tests/android_smoke` 同为本地/canonical venv 口径）；仓库状态（已回填 2026-09-09）：已随 PR #69 合并 main（远端功能分支已删除）；未打 tag、未部署；`production_ready=false` 语义不变。剩余生产阻塞：AGC 签名与发布流程（材料创建与 signingConfigs 接入）、真机验证、真实 provider 冒烟、生产后端/生产 DB 接入、HarmonyOS CI 缺位——均待运维显式授权评估。
+本切片不改变任何业务能力与签名边界：AGC 发布材料仍缺位（仓库与本机均无发布证书/Profile/密钥库，本机仅 DevEco 本地调试身份）→ **不声称已签名/可发布**——release 构建成功仅证明 `buildMode=release` 可执行，产物仍为 `entry-default-unsigned.hap`，不存在任何已签名 HAP；preflight 通过 ≠ 签名配置正确（材料与 bundleName `com.ailearningos.app` 的匹配、signingConfigs 接入方式属 hmharness 后续切片，均未验证）；未做真机验证与任何运行时验证（release 产物未在任何设备安装）；未启用/验证混淆（release 混淆提示 WARN 为既有 `ruleOptions.enable=false` 配置）；CI 无 HarmonyOS job，PR #69 的 PR CI run `34296903848` 与 merge 后 main CI run `34297190550` 四项 job 全部 success 均不扩大为 HarmonyOS 远端验证（M13-10 时点 `tests/harmony_release` 未纳入 CI——已由 M13-12 随 PR #71 的 CI release-tools job 纳入；`tests/android_smoke` 仍为本地/canonical venv 口径）；仓库状态（已回填 2026-09-09）：已随 PR #69 合并 main（远端功能分支已删除）；未打 tag、未部署；`production_ready=false` 语义不变。剩余生产阻塞：AGC 签名与发布流程（材料创建与 signingConfigs 接入）、真机验证、真实 provider 冒烟、生产后端/生产 DB 接入、HarmonyOS CI 缺位——均待运维显式授权评估。
+
+## Harmony release preflight 工具 CI 覆盖（M13-12）
+
+### 范围与实现
+
+- 分支 `feature/harmony-release-preflight-ci`，feature commit `9dc9b1790f01ff370741e606d54e80d0a563fa7c`（ci: cover harmony release preflight tools）基于 `main@f8437e0`（PR #70 merge commit，本地 git 可验证）；仓库状态（已回填 2026-09-09）：**PR #71 已合并 main**——merge commit `984539e2d2481f84695c6dd4e1020bec93abd245`（本地 git 可验证：parents 为 PR #70 merge commit `f8437e0` 与 feature commit `9dc9b17`，merge 与 feature 差异为空）；PR CI run `34302054517` 五项 job（Web/API/Docker/Android/Release tools）全部 success，merge 后 main CI 同一 head/merge commit 五项 job 全部 success；远端功能分支 `feature/harmony-release-preflight-ci` 已删除。
+- 目标：为 M13-10 引入的签名前置 fail-closed 工具（`tools/harmony_release`）补齐最小 CI 覆盖——仅改 `.github/workflows/ci.yml` 与既有 action 数量契约测试，不改业务代码、不改测试断言语义、不新增任何业务能力。
+- 改动共 2 个文件（+24/−5）：
+  - `.github/workflows/ci.yml`（+18）：新增 `release-tools` job（name "Release tools (Python tests)"，ubuntu-latest，`actions/checkout@v7` + `actions/setup-python@v7`（Python 3.11），仅 `pip install "pytest>=9,<10"`——沿用 `services/api/requirements-dev.txt` 既有约束；依次执行 `python -m compileall tools/harmony_release` 与 `python -m pytest tests/harmony_release`；workflow 注释明示这不是 HarmonyOS 构建/设备/签名/运行时验证 job；不安装 API 依赖、Android SDK、DevEco SDK、证书、secrets 或任何签名材料；沿用 workflow 级既有触发（push main + pull_request），job 同时覆盖 PR 与 main push）。
+  - `services/api/tests/test_workflow_actions_runtime.py`（+11/−5）：`EXPECTED_USES` 数量契约同步——ci `actions/checkout` 4→5、`actions/setup-python` 1→2（`setup-node` 仍 1，release-candidate.yml 契约不变）；相邻注释同步为「ci 五个 job 各一次 checkout；setup-node 仅 Web；setup-python 分别在 API 与 release-tools 两个 job」。
+
+### 验证（最小可复现，本地口径）
+
+- canonical venv：`python -m compileall tools/harmony_release` 通过；`python -m pytest tests/harmony_release -q` → **35 passed**（与 M13-10 基线一致）；`python -m pytest services/api/tests/test_workflow_actions_runtime.py -q` → **13 passed**（含契约修复后原失败的 `test_node24_runtime_actions_pinned_to_v7[ci]`）；ci.yml 经 PyYAML 6.0.3 `safe_load` 结构校验（触发器/job/步骤逐项核对）；`git diff --check` 干净。
+- 远端（状态回填事实）：PR CI run `34302054517` 五项 job（Web/API/Docker/Android/Release tools）全部 success；merge 后 main CI 同一 head/merge commit `984539e` 五项 job 全部 success。
+
+### 边界
+
+本切片不改变任何业务能力与签名边界：release-tools 仅验证 `tools/harmony_release` 的 Python fail-closed 签名前置检查逻辑——**不是 HarmonyOS 构建/签名/设备/运行时验证**；不安装 DevEco SDK、证书或任何签名材料，无 secrets；CI 仍无 HarmonyOS job（PR run `34302054517` 与 merge 后 main 五项 success 均不扩大为 HarmonyOS 远端验证）；AGC 发布材料仍缺位（preflight 真实仓库结论仍 `blocked_by_external_materials`）、不存在已签名 HAP、真机/真实 provider/生产后端/生产 DB/生产链路均未验证；未打 tag、未部署；`production_ready=false` 语义不变。剩余生产阻塞与 M13-10 相同：AGC 签名与发布流程、真机验证、真实 provider 冒烟、生产后端/生产 DB 接入、HarmonyOS CI 缺位——均待运维显式授权评估。
