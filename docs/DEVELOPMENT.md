@@ -1193,6 +1193,13 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   `/proc/<pid>/cmdline` 核验「本脚本起的 http.server <PORT>」后只杀记录的 PID
   并删 PID 文件；实测运行中 pidfile→PID→cmdline 一致，结束后探针进程/PID
   文件/端口监听三重缺席。
+- **复现性复审修正（2026-09-10，independent verification）**：`bash -n` 语法检查
+  host-aware——Windows PowerShell 默认 PATH 下 `shutil.which("bash")` 可解析到
+  WSL 启动器（system32\bash.EXE，读不了 Windows 盘符路径）；探测所选 bash 的
+  `uname -r`（WSL 内核含 `microsoft`）判为 WSL 时先经 `wsl.exe wslpath -u`
+  转换路径（缺失/失败退回确定性手工转换），Git Bash/MSYS/POSIX 直用原路径；
+  注入式回归测试锁定转换分支（不依赖宿主装 WSL），见
+  `services/api/tests/test_voice_local_scripts.py`。
 - **测试**：`services/api/tests/test_voice_local_providers.py`（路由选择/成功/
   未配置降级/HTTP 失败脱敏/非法 JSON/空与非 WAV/provider header/未知 provider
   422/配置不可达显式 502——最后一项为真实 loopback 连接拒绝，其余 MockTransport

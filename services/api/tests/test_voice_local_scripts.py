@@ -1,6 +1,10 @@
-"""M14-01 tools/voice 脚本契约测试：语法/结构锁定 + bridge 行为（不触网、不装 SDK）。
+r"""M14-01 tools/voice 脚本契约测试：语法/结构锁定 + bridge 行为（不触网、不装 SDK）。
 
-- bash -n：两个 bootstrap 脚本语法合法（不执行——bootstrap 只在 WSL 显式运行）；
+- bash -n（host-aware）：Windows 上选中的 bash 可能是 WSL 启动器
+  （C:\Windows\System32\bash.EXE——PowerShell 默认 PATH 下 shutil.which("bash")
+  常解析到它），其读不了 Windows 盘符路径——复审修正：探测到 WSL bash 时经
+  wsl.exe wslpath -u 把脚本路径转成 /mnt/… 再检查（wsl.exe 不可用则确定性
+  手工转换）；Git Bash / MSYS / Cygwin / POSIX 保持 Windows 路径/原样直用；
 - py_compile：bridge 与 smoke 脚本可编译；
 - bridge 单元：_samples_to_wav_bytes 纯标准库序列化（RIFF/WAVE、采样率回读、
   越界钳制、空样本），create_app 的 OpenAI 兼容面（/health 加载中 503、
@@ -16,9 +20,11 @@ from __future__ import annotations
 
 import importlib.util
 import io
+import os
 import shutil
 import subprocess
 import wave
+from functools import lru_cache
 from pathlib import Path
 
 import pytest
@@ -37,6 +43,64 @@ EVIDENCE_PS1 = TOOLS_VOICE / "run_api_tests.ps1"
 BASH = shutil.which("bash")
 
 SECRET_PATTERNS = ("sk-", "AKIA", "ghp_", "xoxb-", "-----BEGIN")
+
+
+# ---------- host-aware bash 语法检查（复审修正：Windows/WSL 路径转换） ----------
+
+
+def _is_wsl_kernel_release(uname_release: str) -> bool:
+    """WSL 内核 uname -r 含 "microsoft"（WSL1 …-Microsoft / WSL2 …-microsoft-standard-）；
+    Git Bash / MSYS / Cygwin / Linux 均不含（实测 Git Bash 3.6.10-710e5275.x86_64、
+    WSL2 6.18.33.2-microsoft-standard-WSL2）。"""
+    return "microsoft" in (uname_release or "").casefold()
+
+
+@lru_cache(maxsize=8)
+def _bash_flavor_is_wsl(bash_path: str, probe=subprocess.run) -> bool:
+    """探测该 bash 是否 WSL 启动器（经 uname -r 判别；探测失败按非 WSL 保守处理）。"""
+    try:
+        result = probe(
+            [bash_path, "-c", "uname -r"],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, ValueError):
+        return False
+    return _is_wsl_kernel_release(result.stdout or "")
+
+
+def _manual_windows_to_wsl_path(windows_path: str) -> str:
+    """确定性手工转换（wsl.exe 不可用时的回退）：盘符→/mnt/<小写>、反斜杠→正斜杠。"""
+    drive, _, rest = windows_path.partition(":")
+    return f"/mnt/{drive.lower()}{rest.replace(chr(92), '/')}"
+
+
+def _windows_to_wsl_path(windows_path: str, *, runner=subprocess.run) -> str:
+    """Windows 路径 → WSL 路径。优先 wsl.exe wslpath -u（尊重真实挂载根配置）；
+    wsl.exe 缺失/失败/输出非 / 开头时退回手工转换。"""
+    try:
+        result = runner(
+            ["wsl.exe", "wslpath", "-u", windows_path],
+            capture_output=True, text=True, timeout=30, check=False,
+        )
+    except (OSError, ValueError):
+        result = None
+    if result is not None and result.returncode == 0:
+        converted = (getattr(result, "stdout", "") or "").strip()
+        if converted.startswith("/"):
+            return converted
+    return _manual_windows_to_wsl_path(windows_path)
+
+
+def _bash_syntax_command(script: Path) -> list[str] | None:
+    """host-aware bash -n 命令：POSIX 或 Windows 上选中 Git Bash/MSYS → 直用原路径
+    （现状行为）；Windows 上选中 WSL 启动器 → 先转换路径（否则 WSL bash 报
+    「No such file or directory」——PowerShell 宿主实测缺陷）。"""
+    if BASH is None:
+        return None
+    script_arg = str(script)
+    if os.name == "nt" and _bash_flavor_is_wsl(BASH):
+        script_arg = _windows_to_wsl_path(str(script))
+    return [BASH, "-n", script_arg]
 
 
 def _load_bridge_module():
@@ -62,8 +126,79 @@ def bridge():
     ids=["funasr", "cosyvoice", "reachability"],
 )
 def test_bash_scripts_pass_bash_n(script: Path) -> None:
-    result = subprocess.run([BASH, "-n", str(script)], capture_output=True, text=True, timeout=60, check=False)
+    command = _bash_syntax_command(script)
+    assert command is not None
+    result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
     assert result.returncode == 0, result.stderr
+
+
+# ---------- host-aware 转换分支回归（不依赖宿主装了 WSL/Git Bash） ----------
+
+
+class _FakeCompleted:
+    def __init__(self, returncode: int = 0, stdout: str = "") -> None:
+        self.returncode = returncode
+        self.stdout = stdout
+        self.stderr = ""
+
+
+def test_wsl_kernel_release_detection_by_uname() -> None:
+    """判别函数纯逻辑：WSL1/WSL2 内核串判 True；Git Bash/MSYS/Linux 判 False。"""
+    assert _is_wsl_kernel_release("6.18.33.2-microsoft-standard-WSL2")
+    assert _is_wsl_kernel_release("4.4.0-19041-Microsoft")
+    assert not _is_wsl_kernel_release("3.6.10-710e5275.x86_64")  # Git Bash（实测）
+    assert not _is_wsl_kernel_release("6.1.0-26-amd64")  # 常规 Linux
+    assert not _is_wsl_kernel_release("")
+
+
+def test_bash_flavor_probe_injected() -> None:
+    """uname 探测分支（注入 runner，不 spawn 真进程、不依赖 WSL 安装）。"""
+
+    def wsl_probe(cmd, **kwargs):
+        return _FakeCompleted(0, "6.18.33.2-microsoft-standard-WSL2\n")
+
+    def msys_probe(cmd, **kwargs):
+        return _FakeCompleted(0, "3.6.10-710e5275.x86_64\n")
+
+    def dead_probe(cmd, **kwargs):
+        raise FileNotFoundError("no such bash")
+
+    assert _bash_flavor_is_wsl("C:\\Windows\\System32\\bash.exe", probe=wsl_probe) is True
+    assert _bash_flavor_is_wsl("C:\\Program Files\\Git\\usr\\bin\\bash.exe", probe=msys_probe) is False
+    # 探测进程失败 → 保守按非 WSL（保持现状直用路径）
+    assert _bash_flavor_is_wsl("X:\\bash.exe", probe=dead_probe) is False
+
+
+def test_windows_to_wsl_path_prefers_wslpath_output() -> None:
+    """wsl.exe wslpath -u 可用且输出 / 开头 → 采用其结果（尊重真实挂载根）。"""
+    seen: list[list[str]] = []
+
+    def runner(cmd, **kwargs):
+        seen.append(list(cmd))
+        return _FakeCompleted(0, "/mnt/d/AI Learning OS/x/script.sh\r\n")
+
+    converted = _windows_to_wsl_path("D:\\AI Learning OS\\x\\script.sh", runner=runner)
+    assert converted == "/mnt/d/AI Learning OS/x/script.sh"
+    assert seen == [["wsl.exe", "wslpath", "-u", "D:\\AI Learning OS\\x\\script.sh"]]
+
+
+def test_windows_to_wsl_path_falls_back_to_manual_conversion() -> None:
+    """wsl.exe 缺失/非零退出/输出异常 → 确定性手工转换（盘符小写+正斜杠）。"""
+
+    def no_wsl(cmd, **kwargs):
+        raise FileNotFoundError("wsl.exe not installed")
+
+    def failing(cmd, **kwargs):
+        return _FakeCompleted(1, "")
+
+    def garbage(cmd, **kwargs):
+        return _FakeCompleted(0, "not-a-path")
+
+    target = "D:\\AI Learning OS\\x\\a b.sh"
+    expected = "/mnt/d/AI Learning OS/x/a b.sh"
+    assert _windows_to_wsl_path(target, runner=no_wsl) == expected
+    assert _windows_to_wsl_path("C:\\repo\\s.sh", runner=failing) == "/mnt/c/repo/s.sh"
+    assert _windows_to_wsl_path(target, runner=garbage) == expected
 
 
 @pytest.mark.parametrize("script", [BRIDGE, SMOKE], ids=["bridge", "smoke"])
