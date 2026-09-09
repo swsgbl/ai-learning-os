@@ -29,3 +29,12 @@ apps/harmony/entry/build/
 
 # HarmonyOS hvigor 构建缓存(仓库根 .hvigor/)禁止入库
 /.hvigor/
+
+# M13-10 AGC/HarmonyOS 签名材料防护:发布证书/Profile/密钥库等材料禁止入库
+# (仓库内当前无任何此类文件;材料只能放仓库外,经 AIOS_HARMONY_*_PATH 环境变量引用,
+#  并用 tools/harmony_release/preflight.py 做前置校验)
+*.p12
+*.p7b
+*.cer
+*.csr
+*.jks
