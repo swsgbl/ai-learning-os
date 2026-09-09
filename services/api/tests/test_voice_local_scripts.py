@@ -22,13 +22,14 @@ import importlib.util
 import io
 import os
 import shutil
-import subprocess
 import wave
 from functools import lru_cache
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
+
+from tests._subprocess_utf8 import run_bash, run_utf8
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 TOOLS_VOICE = REPO_ROOT / "tools" / "voice"
@@ -56,13 +57,15 @@ def _is_wsl_kernel_release(uname_release: str) -> bool:
 
 
 @lru_cache(maxsize=8)
-def _bash_flavor_is_wsl(bash_path: str, probe=subprocess.run) -> bool:
-    """探测该 bash 是否 WSL 启动器（经 uname -r 判别；探测失败按非 WSL 保守处理）。"""
+def _bash_flavor_is_wsl(bash_path: str, probe=run_utf8) -> bool:
+    """探测该 bash 是否 WSL 启动器（经 uname -r 判别；探测失败按非 WSL 保守处理）。
+
+    默认 probe 走 run_utf8（UTF-8 + replace）：WSL 启动器在部分宿主下向
+    stderr 打 GBK 本地化报错（byte 0xff），locale 文本模式的 reader 线程会抛
+    UnicodeDecodeError（见 _subprocess_utf8 模块说明）。注入的 fake 形态为
+    ``f(cmd, **kwargs)``，与本调用签名兼容。"""
     try:
-        result = probe(
-            [bash_path, "-c", "uname -r"],
-            capture_output=True, text=True, timeout=30, check=False,
-        )
+        result = probe([bash_path, "-c", "uname -r"], timeout=30)
     except (OSError, ValueError):
         return False
     return _is_wsl_kernel_release(result.stdout or "")
@@ -74,14 +77,15 @@ def _manual_windows_to_wsl_path(windows_path: str) -> str:
     return f"/mnt/{drive.lower()}{rest.replace(chr(92), '/')}"
 
 
-def _windows_to_wsl_path(windows_path: str, *, runner=subprocess.run) -> str:
+def _windows_to_wsl_path(windows_path: str, *, runner=run_utf8) -> str:
     """Windows 路径 → WSL 路径。优先 wsl.exe wslpath -u（尊重真实挂载根配置）；
-    wsl.exe 缺失/失败/输出非 / 开头时退回手工转换。"""
+    wsl.exe 缺失/失败/输出非 / 开头时退回手工转换。
+
+    默认 runner 走 run_utf8（UTF-8 + replace）：wsl.exe 不可用时输出 GBK
+    本地化报错，locale 文本模式的 reader 线程会抛 UnicodeDecodeError
+    （见 _subprocess_utf8 模块说明）。"""
     try:
-        result = runner(
-            ["wsl.exe", "wslpath", "-u", windows_path],
-            capture_output=True, text=True, timeout=30, check=False,
-        )
+        result = runner(["wsl.exe", "wslpath", "-u", windows_path], timeout=30)
     except (OSError, ValueError):
         result = None
     if result is not None and result.returncode == 0:
@@ -128,7 +132,10 @@ def bridge():
 def test_bash_scripts_pass_bash_n(script: Path) -> None:
     command = _bash_syntax_command(script)
     assert command is not None
-    result = subprocess.run(command, capture_output=True, text=True, timeout=60, check=False)
+    # 统一 UTF-8 文本模式：WSL 启动器/Git Bash 的 stderr 可能带 GBK 本地化
+    # 报错字节，locale 文本模式的 reader 线程会抛 UnicodeDecodeError
+    # （见 _subprocess_utf8 模块说明）。
+    result = run_bash(command, timeout=60)
     assert result.returncode == 0, result.stderr
 
 

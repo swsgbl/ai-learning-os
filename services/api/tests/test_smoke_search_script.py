@@ -23,6 +23,8 @@ from pathlib import Path
 
 import pytest
 
+from tests._subprocess_utf8 import run_bash
+
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "infra" / "smoke_search.sh"
 #: 调用脚本用的相对 POSIX 路径（配合 cwd=REPO_ROOT）——Windows 绝对路径
@@ -48,9 +50,9 @@ SECRET_PATTERNS = ("sk-", "AKIA", "ghp_", "xoxb-", "-----BEGIN")
 def _bash_tool_path(tool: str) -> str:
     """取 bash 视角的工具绝对路径（command -v 对 shell 内建只返回名字，
     脚本的 [ -x ] 又不做 PATH 查找——type -P 只搜 PATH 恒返回绝对路径）。"""
-    result = subprocess.run(
-        [BASH, "-c", f"type -P {tool}"], capture_output=True, text=True, timeout=30, check=False
-    )
+    # 统一 UTF-8 文本模式：脚本/桩输出含中文，locale 编码（cp936）下 reader
+    # 线程会抛 UnicodeDecodeError 把输出炸成 None（见 _subprocess_utf8 模块说明）。
+    result = run_bash([BASH, "-c", f"type -P {tool}"], timeout=30)
     path = result.stdout.strip()
     assert path, f"bash 找不到 {tool}"
     return path
@@ -73,14 +75,7 @@ def _run_script(env_overrides: dict[str, str]) -> subprocess.CompletedProcess:
         + [f"export {key}={shlex.quote(value)}" for key, value in env_overrides.items()]
         + [f"exec {shlex.quote(SCRIPT_RELATIVE)}"]
     )
-    return subprocess.run(
-        [BASH, "-c", command],
-        capture_output=True,
-        text=True,
-        timeout=60,
-        cwd=REPO_ROOT,
-        check=False,
-    )
+    return run_bash([BASH, "-c", command], timeout=60, cwd=REPO_ROOT)
 
 
 def test_script_fails_when_endpoint_missing() -> None:
