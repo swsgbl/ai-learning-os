@@ -397,6 +397,9 @@ export struct GovernancePane {
           Button('整体刷新')
             .fontSize(12)
             .height(28)
+            .enabled(this.versionStatus !== SectionStatus.LOADING &&
+                     this.opsStatus !== SectionStatus.LOADING &&
+                     this.auditStatus !== SectionStatus.LOADING)
             .onClick(() => {
               this.refreshAll();
             })
@@ -440,6 +443,7 @@ export struct GovernancePane {
             Button('刷新')
               .fontSize(11)
               .height(26)
+              .enabled(this.versionStatus !== SectionStatus.LOADING)
               .onClick(() => {
                 this.loadVersion();
               })
@@ -491,6 +495,7 @@ export struct GovernancePane {
             Button('刷新')
               .fontSize(11)
               .height(26)
+              .enabled(this.opsStatus !== SectionStatus.LOADING)
               .onClick(() => {
                 this.loadOpsSnapshot();
               })
@@ -549,6 +554,7 @@ export struct GovernancePane {
             Button('刷新')
               .fontSize(11)
               .height(26)
+              .enabled(this.auditStatus !== SectionStatus.LOADING)
               .onClick(() => {
                 this.loadAudit();
               })
