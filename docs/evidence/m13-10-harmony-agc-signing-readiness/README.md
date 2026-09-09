@@ -87,3 +87,16 @@ JSON5 兼容说明：`build-profile.json5` 解析先按纯 JSON，失败后退�
 - **B-2（签名配置接入）**：材料就位后 `build-profile.json5` signingConfigs 的接入由 hmharness 后续切片处理；届时 preflight 的 `signing_configs_not_empty` fail-closed 契约需同步修订（当前契约 = 仓库必须保持诚实未签名边界）。
 - 观察项（hmharness O-1）已由本切片关闭：`.gitignore` 显式 `*.p12/*.p7b/*.cer/*.csr/*.jks` 防护已补。
 - CI 未纳入 `tests/harmony_release`（CI 仅跑 `services/api`，与 `tests/android_smoke` 同为本地/canonical venv 口径）；如需纳入 CI 属后续治理决策。
+
+## 七、合并后状态回填（2026-09-09，本节由状态回填切片追加）
+
+上文一～六节为合并前本地切片时点的历史记录，**原样保留**（含当时「本地提交完成、未 push、未开 PR」的仓库状态描述与「不得预写 PR/CI 状态」约束——那是文档时点事实，不代表当前状态）。已验证事实如下（注意时点：hmharness 复检一条为 PR #69 合并**前**、基于 feature commit 的事实，其余为合并后观察）：
+
+- **PR #69 已合并 main**：https://github.com/swsgbl/ai-learning-os/pull/69「M13-10: Harmony AGC signing preflight」；feature commit `7342c519111893763d199c104aa3d22c403389d7`（chore: add harmony signing preflight，7 files +889、零删除——即第二节所列全部文件，`apps/harmony/**` 零改动）。
+- **PR CI run `34296903848`** 四项 job（API/Android/Docker/Web）全部 success（Web 1m25s、Docker 2m28s、API 3m49s、Android 3m36s）。
+- **merge commit `bc41d6cf083191958ca9710ae5b71ba31e056aa5`**（本地 git 可验证：parents 为 PR #68 merge commit `2fded00` 与 feature commit `7342c519`；merge 与 feature 的差异仅为 PR #68 的四份 M13-09 状态回填文档——本切片文件全部按 feature commit 原样入库）。
+- **merge 后 main CI run `34297190550`** 四项 job（API/Android/Docker/Web）全部 success（Web 1m26s、Docker 2m36s、API 3m45s、Android 3m25s）。
+- **远端功能分支 `feature/m13-10-harmony-agc-signing-readiness` 已在合并后删除**。
+- **hmharness 复检（合并前时点，非合并后）**：clean/release 两次构建均基于 feature commit `7342c519111893763d199c104aa3d22c403389d7`、完成于 PR #69 合并之前，时点 worktree 相对远程跟踪分支 ahead 1 / behind 2；clean 与 release 构建均成功，0 ERROR、2 条预期 WARN（与第一节清单一致：release 混淆开关提示 + `No signingConfig found`）；未签名 HAP **198569 bytes、SHA256 `D67FDA0B46018B30CD5F28A6D64BB320D592CE90246053E5102ABABF777490FD`**——与第一节留存产物（198569 bytes、`21CF87CA…76D3B`）同字节数、不同哈希，符合第五节第 5 条「HAP 为 zip 打包产物、同源重建哈希可能不同」的已知边界；两次 preflight 调用均 exit 0 且 `status=blocked_by_external_materials`；tracked 文件未变。
+
+第五节「不得声称的事项」在合并后**全部继续有效**，特别重申：AGC 发布材料仍缺位（仓库与本机均无发布签名材料，preflight 结论仍为 `blocked_by_external_materials`）；不存在任何已签名 HAP（release 构建成功 ≠ 已签名 ≠ 可发布）；未做真机验证与任何运行时验证；CI 无 HarmonyOS job（PR run `34296903848` 与 main run `34297190550` 四项 success 均不扩大为 HarmonyOS 远端验证）；preflight 通过 ≠ 签名配置正确；`production_ready=false` 语义不变。ROADMAP/PROJECT_STATUS/DEVELOPMENT 的 M13-10 条目已由本回填切片同步补记（实现切片当时按约刻意未预写，本 README 第一节「状态」行为历史时点记录）。
