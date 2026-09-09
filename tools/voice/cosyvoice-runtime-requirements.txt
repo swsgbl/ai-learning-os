@@ -16,8 +16,8 @@
 # - deepspeed：运行时闭包零引用（仅训练脚本使用）
 # - tensorrt / tensorrt-cu12*：仅函数内 import（TensorRT 部署路径，默认不走）
 # - vllm：仅函数内 import（load_vllm/inference_wrapper 的 vLLM 加速路径）
-# - gradio / fastapi-cli：仅 webui.py 使用；bridge 自带 FastAPI 服务由 venv 内
-#   fastapi/uvicorn 提供（bootstrap 显式安装，不在此重复）
+# - gradio / fastapi-cli：仅 webui.py 使用（bridge 的 FastAPI 服务面见下方
+#   fastapi/uvicorn 条目——属本清单，非 webui 依赖）
 # - librosa / lightning / pyworld / jieba / pyarrow / matplotlib / networkx /
 #   tensorboard / gdown / wget / grpcio / grpcio-tools / diffusers / conformer：
 #   运行时闭包零引用（file_utils 只调用 logging.getLogger('matplotlib')，不 import）
@@ -52,3 +52,9 @@ modelscope==1.20.0
 soundfile==0.12.1
 # frontend.py 文本正则化回退链 ttsfrd→wetext→无（ttsfrd 需手动装；wetext 推荐保留）
 wetext==0.0.4
+# bridge 服务面（cosyvoice_openai_bridge.py 顶层 import fastapi/pydantic +
+# main() 内 uvicorn.run）——服务依赖随本清单安装，非推理闭包成员；pin 沿用
+# 官方 requirements.txt 同款（与固定 commit 同源的已测组合；pydantic 经
+# fastapi 间接引入，不单独 pin）
+fastapi==0.115.6
+uvicorn==0.30.0

@@ -136,7 +136,9 @@ secret（bridge 可选 key 只经 `COSYVOICE_BRIDGE_API_KEY` 环境变量注入�
 ## 最小运行时依赖（M14-01 修正轮）
 
 CosyVoice **只装推理路径真实需要的包**：`tools/voice/cosyvoice-runtime-
-requirements.txt`（16 个包 + torch/torchaudio）由固定 commit `074ca6d` 的
+requirements.txt`（18 个包 + torch/torchaudio：推理闭包 16 + bridge 服务面
+fastapi/uvicorn——复审修正补入，bridge 顶层 import fastapi 且 main() 调
+uvicorn.run）由固定 commit `074ca6d` 的
 导入闭包静态推导（起点 `cosyvoice.cli.cosyvoice.AutoModel`，覆盖 cli/utils/
 llm/flow/hifigan/tokenizer/transformer 模块；Matcha-TTS 经子模块 sys.path）。
 安装后 bootstrap **真实执行** `import cosyvoice.cli.cosyvoice` 验证（不下载
@@ -162,8 +164,9 @@ REQUIREMENTS=1` 回退官方完整 requirements（剔除 torch pin），并把�
 
 `services/api` 全量测试的准确命令/解释器/commit 由 `run_api_tests.ps1` 固化
 （解释器解析顺序：`-Python` 参数 → `AIOS_TEST_PYTHON` → 工作树 `.venv` →
-canonical venv `D:\AI Learning OS\ai-learning-os\.venv`——2026-09-09/10 记录
-数字所用解释器，Python 3.11.15 / pytest 9.1.1）：
+相对同级主检出 `..\..\ai-learning-os\.venv`（标准 worktree 布局探测，无盘符
+假设——复审修正，不硬编码机器特定绝对路径）；记录数字所用解释器形态
+Python 3.11.15 / pytest 9.1.1）：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\voice\run_api_tests.ps1

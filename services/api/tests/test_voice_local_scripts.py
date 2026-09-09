@@ -285,14 +285,22 @@ def test_bootstrap_python_missing_hints_are_actionable() -> None:
 
 
 def test_runtime_requirements_contract() -> None:
-    """最小运行时依赖清单：导入闭包必需包齐全；训练/WebUI/TensorRT 系一律排除。"""
+    """最小运行时依赖清单：导入闭包必需包 + bridge 服务面（fastapi/uvicorn，复审
+    修正——bridge 顶层 import fastapi 且 main() 调 uvicorn.run，必须随清单安装）
+    齐全；训练/WebUI/TensorRT 系一律排除。"""
     text = RUNTIME_REQUIREMENTS.read_text(encoding="utf-8")
     for required in (
         "HyperPyYAML", "omegaconf", "transformers", "tiktoken", "openai-whisper",
         "onnxruntime", "einops", "x-transformers", "inflect", "regex", "modelscope",
         "soundfile", "wetext", "numpy", "scipy", "tqdm",
+        # bridge 服务面（复审修正）：顶层 import fastapi + uvicorn.run
+        "fastapi==", "uvicorn==",
     ):
         assert required in text, required
+    active = [line for line in text.splitlines()
+              if line.strip() and not line.strip().startswith("#")]
+    # pydantic 保持 fastapi 间接依赖（不直接 pin）——防止无理由显式 pin 回归
+    assert not any(line.startswith("pydantic") for line in active)
     for excluded in (
         "deepspeed", "tensorrt", "vllm", "gradio", "librosa", "lightning",
         "pyworld", "matplotlib", "tensorboard", "grpcio", "gdown", "diffusers",
@@ -304,7 +312,8 @@ def test_runtime_requirements_contract() -> None:
 
 
 def test_reachability_script_contract() -> None:
-    """可达性检查脚本：host.docker.internal 探测 + 恒绑 127.0.0.1 + setsid 存活修复。"""
+    """可达性检查脚本：host.docker.internal 探测 + 恒绑 127.0.0.1 + setsid 存活修复
+    + 精确清理（复审修正：唯一 PID 文件 + /proc cmdline 核验，绝不 pkill 广撒网）。"""
     text = REACHABILITY.read_text(encoding="utf-8")
     for anchor in (
         "set -euo pipefail",
@@ -314,8 +323,17 @@ def test_reachability_script_contract() -> None:
         'WSL_LOOPBACK="127.0.0.1"',
         "setsid nohup",  # 实测修复：wsl.exe 会话退出会杀同会话后台进程
         "aios/api:local",
+        # 精确清理语义：唯一 PID 文件 + /proc/<pid>/cmdline 核验后才 kill + 删文件
+        "/tmp/aios-voice-probe-",
+        "/proc/$p/cmdline",
+        r"echo \$\$ >",  # 探针 sh 先落 PID 再 exec python3（exec 保 PID；\$\$ 供 WSL bash 透传）
+        "rm -f",
     ):
         assert anchor in text, anchor
+    # 复审修正：生效代码绝不按端口 pkill（可能误杀同参数无关进程；注释提及不算）
+    active_lines = [line for line in text.splitlines()
+                    if line.strip() and not line.strip().startswith("#")]
+    assert not any("pkill" in line for line in active_lines)
     # 生效的 --bind 行绝不绑 0.0.0.0（探针只走 loopback；注释里提及不算）
     bind_lines = [line for line in text.splitlines() if "--bind" in line and not line.strip().startswith("#")]
     assert bind_lines, "探针脚本应有 --bind 行"
@@ -325,7 +343,8 @@ def test_reachability_script_contract() -> None:
 
 
 def test_evidence_script_contract() -> None:
-    """测试证据脚本：可复现命令 + 解释器解析顺序留档（含 canonical venv 路径）。"""
+    """测试证据脚本：可复现命令 + 解释器解析顺序留档（复审修正：无机器特定绝对路径——
+    canonical venv 回退改为相对同级主检出探测）。"""
     data = EVIDENCE_PS1.read_bytes()
     assert data.startswith(b"\xef\xbb\xbf"), "Windows PowerShell 5.1 需要 UTF-8 BOM（中文注释）"
     text = data.decode("utf-8-sig")
@@ -335,9 +354,12 @@ def test_evidence_script_contract() -> None:
         "rev-parse HEAD",
         "requirements.txt",
         "requirements-dev.txt",
-        # canonical venv 是记录数字所用的解释器（留档其路径 = 可复现声明）
-        r"D:\AI Learning OS\ai-learning-os\.venv\Scripts\python.exe",
+        # 相对同级主检出回退（标准 worktree 布局，无盘符假设）
+        r"..\..\ai-learning-os\.venv\Scripts\python.exe",
     ):
         assert anchor in text, anchor
+    # 复审修正：不硬编码任何盘符/机器特定绝对路径
+    assert "D:\\" not in text
+    assert "C:\\" not in text
     for pattern in SECRET_PATTERNS:
         assert pattern not in text

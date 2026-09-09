@@ -36,16 +36,19 @@ if grep -qi microsoft /proc/version 2>/dev/null; then
 fi
 
 PROBE_PID=""
-WSL_STARTED=0
+# 探针生命周期精确所有权（复审修正）：每次运行生成唯一 PID 文件，setsid 探针
+# 在 WSL 内先落自己的 PID 再 exec python3（exec 保持同 PID）；清理只读回该 PID、
+# 经 /proc/<pid>/cmdline 核验确为「本脚本起的 http.server <PORT>」才 kill，最后
+# 删除 PID 文件——绝不 pkill 按端口广撒网（可能误杀同参数无关进程）。
+PROBE_TOKEN="$$-$RANDOM"
+WSL_PID_FILE="/tmp/aios-voice-probe-$PROBE_TOKEN.pid"
 cleanup() {
   if [ -n "$PROBE_PID" ]; then
     kill "$PROBE_PID" >/dev/null 2>&1 || true
     wait "$PROBE_PID" 2>/dev/null || true
   fi
-  if [ "$WSL_STARTED" = "1" ]; then
-    # setsid 探针无会话句柄——按「命令+探针端口」精确清理（勿把 VOICE_PROBE_PORT
-    # 设为引擎端口：清理会按该端口匹配 http.server 进程）
-    wsl.exe -e bash -c "pkill -f 'http.server $PORT' 2>/dev/null || true" >/dev/null 2>&1 || true
+  if [[ "$WSL_PID_FILE" == /tmp/aios-voice-probe-*.pid ]]; then
+    wsl.exe -e bash -c 'f="'"$WSL_PID_FILE"'"; [ -f "$f" ] || exit 0; p=$(cat "$f"); cmd=$(tr "\0" " " < "/proc/$p/cmdline" 2>/dev/null || true); case "$cmd" in *"http.server"*" '"$PORT"' "*) kill "$p" 2>/dev/null || true;; *) ;; esac; rm -f "$f"' >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -60,9 +63,9 @@ else
   WSL_CMD="$(command -v wsl.exe || command -v wsl)"
   say "Windows 侧运行：经 WSL 起探针（http.server 仅绑 WSL $WSL_LOOPBACK:$PORT）"
   # setsid+nohup 必需：wsl.exe 会话退出会连带终止同会话后台进程（实测 WSL 2.7.13），
-  # setsid 脱离会话后探针才能存活供宿主/容器探测。
-  "$WSL_CMD" -e bash -c "setsid nohup python3 -m http.server $PORT --bind $WSL_LOOPBACK >/dev/null 2>&1 < /dev/null & sleep 0.5; ss -tln | grep -q ':$PORT ' || exit 1" >/dev/null 2>&1 || fail "WSL 探针启动失败（wsl.exe 不可用或 WSL 内无 python3）"
-  WSL_STARTED=1
+  # setsid 脱离会话后探针才能存活供宿主/容器探测；sh 先把自身 PID 写入本运行的
+  # 唯一 PID 文件再 exec python3（exec 保持同 PID）——清理据此精确回收。
+  "$WSL_CMD" -e bash -c "setsid nohup sh -c 'echo \$\$ > $WSL_PID_FILE; exec python3 -m http.server $PORT --bind $WSL_LOOPBACK' >/dev/null 2>&1 < /dev/null & sleep 0.5; ss -tln | grep -q ':$PORT ' || exit 1" >/dev/null 2>&1 || fail "WSL 探针启动失败（wsl.exe 不可用或 WSL 内无 python3）"
 fi
 sleep 1
 

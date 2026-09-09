@@ -5,15 +5,17 @@
 # 用法（仓库根或任意目录均可，脚本自定位仓库根）：
 #   powershell -ExecutionPolicy Bypass -File tools\voice\run_api_tests.ps1
 #   # 指定解释器（默认自动解析，见下方顺序）：
-#   powershell -ExecutionPolicy Bypass -File tools\voice\run_api_tests.ps1 -Python C:\path\to\python.exe
+#   powershell -ExecutionPolicy Bypass -File tools\voice\run_api_tests.ps1 -Python <python.exe full path>
 #
-# 解释器解析顺序（找到即用，并在输出中打印实际路径——这就是证据）：
+# 解释器解析顺序（找到即用，并在输出中打印实际路径——这就是证据；不硬编码任何
+# 盘符/机器特定绝对路径）：
 #   1. -Python 参数
 #   2. $env:AIOS_TEST_PYTHON
 #   3. 本工作树 .venv\Scripts\python.exe（存在即用——推荐：工作树自包含）
-#   4. D:\AI Learning OS\ai-learning-os\.venv\Scripts\python.exe
-#      （canonical venv——2026-09-09/10 记录的 1729/1754 passed 数字所用解释器；
-#       Python 3.11.15 + fastapi/httpx/pytest 等 services/api/requirements*.txt 全集）
+#   4. 相对同级主检出 .venv：..\..\ai-learning-os\.venv\Scripts\python.exe
+#      （相对仓库根探测，无盘符假设——标准 worktree 布局
+#       <root>\ai-learning-os-worktrees\<name> 下即主检出的 canonical venv；
+#       非该布局的机器请用 -Python / AIOS_TEST_PYTHON 显式指定）
 # 依赖缺失时不自动安装（无副作用）：给出安装命令并退出 2。
 param(
     [string]$Python = ""
@@ -28,9 +30,10 @@ function Resolve-TestPython {
     if ($env:AIOS_TEST_PYTHON) { return $env:AIOS_TEST_PYTHON }
     $worktreeVenv = Join-Path $RepoRoot ".venv\Scripts\python.exe"
     if (Test-Path $worktreeVenv) { return $worktreeVenv }
-    $canonical = "D:\AI Learning OS\ai-learning-os\.venv\Scripts\python.exe"
-    if (Test-Path $canonical) { return $canonical }
-    Write-Error "未找到可用解释器：用 -Python 指定，或创建工作树 venv：`n  py -3.11 -m venv .venv`n  .venv\Scripts\pip install -r services/api/requirements.txt -r services/api/requirements-dev.txt"
+    # 相对同级主检出（标准 worktree 布局；无盘符假设）
+    $siblingVenv = Join-Path $RepoRoot "..\..\ai-learning-os\.venv\Scripts\python.exe"
+    if (Test-Path $siblingVenv) { return (Resolve-Path $siblingVenv).Path }
+    Write-Error "未找到可用解释器：用 -Python / `$env:AIOS_TEST_PYTHON 指定，或创建工作树 venv：`n  py -3.11 -m venv .venv`n  .venv\Scripts\pip install -r services/api/requirements.txt -r services/api/requirements-dev.txt"
 }
 
 $Py = Resolve-TestPython

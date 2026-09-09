@@ -1164,7 +1164,8 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
 - **修正轮（supervisor corrections）**：① Python 隔离改经 **uv**（`uv venv
   --python 3.11/3.10 --seed`，uv 探测含 `~/.local/bin`——非登录 bash 的 PATH
   不含它；本机实测 WSL 无 apt python3.10，uv 缺失时给安装指引 fail-closed）；
-  ② CosyVoice 依赖**最小化**——只装推理路径真实需要的 16 包
+  ② CosyVoice 依赖**最小化**——只装推理路径真实需要的 18 包（推理闭包 16 +
+  bridge 服务面 fastapi/uvicorn——复审修正补入）
   （`tools/voice/cosyvoice-runtime-requirements.txt`，固定 commit 导入闭包静态
   推导；deepspeed/tensorrt/vllm 仅函数内可选导入、gradio 等 webui 专用一律
   排除），安装后真实执行 `import cosyvoice.cli.cosyvoice` 验证，不足时
@@ -1180,8 +1181,18 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   `tools/voice/compose_voice_reachability.sh`）；⑤ **配置但不可达 = fail
   visibly**（providers 视图仍如实报 `local-*` 不静默换替身，请求 502 脱敏
   文案，有真实 connection-refused 单测锁定）；⑥ API 测试证据脚本
-  `tools/voice/run_api_tests.ps1` 固化准确命令/解释器/commit（canonical
-  venv 路径留档，UTF-8 BOM 兼容 Windows PowerShell 5.1）。
+  `tools/voice/run_api_tests.ps1` 固化准确命令/解释器/commit（解释器回退为
+  相对同级主检出 `..\..\ai-learning-os\.venv` 探测，无盘符假设——复审修正；
+  UTF-8 BOM 兼容 Windows PowerShell 5.1）。
+- **复审修正（2026-09-10，supervisor review 3 defects）**：① bridge 服务面依赖
+  补入最小运行时清单——`fastapi==0.115.6` / `uvicorn==0.30.0`（官方固定 commit
+  同源 pin；此前清单注释声称 bootstrap 显式安装而实际未装，已修正为随清单安装，
+  pydantic 保持 fastapi 间接依赖不单独 pin）；② 证据脚本去机器特定绝对路径
+  （canonical venv 改相对同级主检出探测，契约测试锁定无盘符硬编码）；③ 可达性
+  脚本清理弃 `pkill -f`（可误杀同参数无关进程）——每次运行唯一 PID 文件 +
+  `/proc/<pid>/cmdline` 核验「本脚本起的 http.server <PORT>」后只杀记录的 PID
+  并删 PID 文件；实测运行中 pidfile→PID→cmdline 一致，结束后探针进程/PID
+  文件/端口监听三重缺席。
 - **测试**：`services/api/tests/test_voice_local_providers.py`（路由选择/成功/
   未配置降级/HTTP 失败脱敏/非法 JSON/空与非 WAV/provider header/未知 provider
   422/配置不可达显式 502——最后一项为真实 loopback 连接拒绝，其余 MockTransport
