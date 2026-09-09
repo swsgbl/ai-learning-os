@@ -101,3 +101,21 @@ jobs:
         uses: gradle/actions/wrapper-validation@v4
       - name: Unit tests + lint + assemble (debug)
         run: sh ./gradlew testDebugUnitTest lintDebug assembleDebug --no-daemon
+
+  release-tools:
+    name: Release tools (Python tests)
+    # M13-12: 仅验证 tools/harmony_release 的 Python fail-closed 签名前置
+    # 检查逻辑(compileall + pytest)。这不是 HarmonyOS 构建/设备/签名/运行时
+    # 验证 job —— 不安装 API 依赖、Android/DevEco SDK、证书或签名材料。
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.11"
+      - name: Install pytest only
+        run: pip install "pytest>=9,<10"
+      - name: Byte-compile tools/harmony_release
+        run: python -m compileall tools/harmony_release
+      - name: Pytest tests/harmony_release
+        run: python -m pytest tests/harmony_release
