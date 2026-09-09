@@ -2234,3 +2234,27 @@ python tools/harmony_mock/server.py --host 0.0.0.0 --port 8765
 ### 边界
 
 本加固未改变任何业务能力边界：仍为本地模拟器 + mock only，未验真机、真实 provider、生产后端/生产 DB、任何写链路；未使用 AGC key/签名配置，未签名 HAP（`No signingConfig found` 为唯一保留告警，诚实未签名边界）直装仅为本地验收形态，**不构成发布形态，不声称已签名/可发布**；CI 无 HarmonyOS job，本地验收不构成远端 CI 验证；仓库状态（已回填 2026-09-09）：已随 PR #67 合并 main（merge commit `4572551f8ce88b150c5cb9bf6a2d910af2ab18d6`，PR CI run `34293394598` 与 merge 后 main CI run `34293722342` 四项 job 全部 success，CI 结果不扩大为 HarmonyOS 远端验证；远端功能分支已删除）；未打 tag、未部署；`production_ready=false` 语义不变。剩余生产阻塞：AGC 签名与发布流程、真机验证、真实 provider 冒烟、生产后端/生产 DB 接入、HarmonyOS CI 缺位——均待运维显式授权评估。
+
+## HarmonyOS AGC 签名 readiness preflight（M13-10）
+
+### 范围与实现
+
+- 分支 `feature/m13-10-harmony-agc-signing-readiness`，基于 `main@4572551`（PR #67 merge commit，本地 git 可验证）；仓库状态（已回填 2026-09-09）：**PR #69 已合并 main**——feature commit `7342c519111893763d199c104aa3d22c403389d7`（chore: add harmony signing preflight，7 files +889、零删除），PR CI run `34296903848` 四项 job（API/Android/Docker/Web）全部 success（Web 1m25s、Docker 2m28s、API 3m49s、Android 3m36s）；merge commit `bc41d6cf083191958ca9710ae5b71ba31e056aa5`（本地 git 可验证：parents 为 PR #68 merge commit `2fded00` 与 feature commit `7342c519`，merge 与 feature 的差异仅为 PR #68 的四份 M13-09 状态回填文档），merge 后 main CI run `34297190550` 四项 job 全部 success（Web 1m26s、Docker 2m36s、API 3m45s、Android 3m25s）；远端功能分支 `feature/m13-10-harmony-agc-signing-readiness` 已删除。
+- 目标：把 AGC 签名 readiness 的非 Harmony 工程面固化为 fail-closed preflight 门禁——仅工具/测试/防护，`apps/harmony/**` 零改动，不新增任何业务能力，不创建/修改/读取任何真实签名材料。
+- 改动共 7 个文件（`tools/` 3 + `tests/` 2 + `.gitignore` + 证据 README，+889、零删除）：
+  - `tools/harmony_release/preflight.py`（新增，标准库实现，300 行）：签名前置 fail-closed 门禁 CLI——① 校验 `apps/harmony/build-profile.json5` 的 `signingConfigs` 仍为空数组，并把 unsigned 边界写进结果（当前契约 = 仓库必须保持诚实未签名边界）；② 仓库内扫描 `.p12/.p7b/.cer/.csr/.jks`（排除 `.git`/`.verify`/`build`/`node_modules` 等目录），存在即失败并报告扩展名+相对路径（**只看文件名，绝不读取内容**）；③ 仅检查 `AIOS_HARMONY_CERT_PATH` / `AIOS_HARMONY_PROFILE_PATH` / `AIOS_HARMONY_KEYSTORE_PATH` 三个约定变量名的存在性，存在时校验路径存在、是常规文件、扩展名分别为 `.cer/.p7b/.p12`、resolved 路径在仓库外，任何违规 fail-closed 失败；**绝不打印环境变量值/路径值/文件内容**；④ `--hap` 只记录存在/字节数/SHA256/文件名是否含 unsigned，不推断已签名；⑤ `--strict` 把 warning 升级为 failure；缺材料不是 warning，而是明确的 `blocked_by_external_materials` 状态；输出 deterministic JSON（排序键、无时间戳、无绝对路径）。
+  - `tools/harmony_release/json5lite.py`（新增，85 行）：preflight 的最小 JSON5 兼容加载器（纯 JSON 优先，失败后退到注释/尾逗号剥离重试、字符串感知；不支持非引号键；任何不可解析返回 None 由调用方 fail-closed 为 `build_profile_unparseable`）；同时支持 `python -m tools.harmony_release.preflight` 与直接脚本两种入口。
+  - `tests/harmony_release/test_preflight.py`（新增，405 行）：35 项针对性测试，全部使用临时目录+占位字节（`placeholder-not-a-real-certificate`），不生成真实证书。
+  - `.gitignore`（+9）：签名材料扩展名防护 `*.p12` `*.p7b` `*.cer` `*.csr` `*.jks`（仓库内本无此类 tracked 文件，纯防御未来误提交，`git ls-files` 本地可验证）。
+- 退出码契约：`0` = ok 或（默认模式下）blocked；`1` = failure（fail-closed 违规，或 `--strict` 升级）；`2` = blocked 且给了 `--require-materials`。外部材料唯一约定：上述三个 `AIOS_HARMONY_*_PATH` 环境变量，材料文件必须放在仓库外；JSON 输出对每个变量只含变量名/present/valid/expected_extension/error 类别，不含任何路径值。
+
+### 验证（最小可复现，本地口径）
+
+- 本地测试：canonical venv `python -m pytest tests/harmony_release -q` → **35 passed**（覆盖干净仓库 blocked/exit 0、`--require-materials` 缺材料 exit 2、仓库内材料 fail、外部正确材料通过、各类 fail-closed 违规类别、JSON 不含环境变量值/绝对路径双向断言、真实仓库 signingConfigs 各分支、`--hap` 记录与 `--strict` 升级、CLI 子进程 exit 码）；全量 `pytest tests/android_smoke -q` → **295 passed / 1 skipped**（与 M13-09 基线一致）；`python -m compileall tools/harmony_release` 通过；`git diff --check` 干净。
+- 真实仓库冒烟：preflight → `status=blocked_by_external_materials`、`repo_materials.count=0`、`build_profile.unsigned_boundary=true`、exit 0。
+- hmharness 上游验证轮（基线 `origin/main@4572551`）：release 构建 `hvigorw.bat assembleHap --mode module -p product=default -p buildMode=release --no-daemon` exit 0 / BUILD SUCCESSFUL（6s347ms）；仅 2 WARN、0 ERROR（release 混淆开关提示 + `No signingConfig found for product default`）；`signingConfigs: []` 原样；未签名 HAP 198569 bytes、SHA256 `21CF87CA17BF2FBEAED9591BDE619B7627303DA0DDDF08216F0B65832C476D3B`。
+- hmharness 复检（基于 feature commit `7342c519111893763d199c104aa3d22c403389d7`，clean/release 两次构建均完成于 PR #69 合并之前；时点 worktree 相对远程跟踪分支 ahead 1 / behind 2）：clean 与 release 构建均成功，0 ERROR、2 条预期 WARN（与上游验证轮清单一致）；未签名 HAP **198569 bytes、SHA256 `D67FDA0B46018B30CD5F28A6D64BB320D592CE90246053E5102ABABF777490FD`**（zip 重建产物，与上游验证轮留存产物同字节数、不同哈希——符合「HAP 为 zip 打包产物、同源重建哈希可能不同」的已知边界）；两次 preflight 调用均 exit 0 且 `blocked_by_external_materials`；tracked 文件未变。
+
+### 边界
+
+本切片不改变任何业务能力与签名边界：AGC 发布材料仍缺位（仓库与本机均无发布证书/Profile/密钥库，本机仅 DevEco 本地调试身份）→ **不声称已签名/可发布**——release 构建成功仅证明 `buildMode=release` 可执行，产物仍为 `entry-default-unsigned.hap`，不存在任何已签名 HAP；preflight 通过 ≠ 签名配置正确（材料与 bundleName `com.ailearningos.app` 的匹配、signingConfigs 接入方式属 hmharness 后续切片，均未验证）；未做真机验证与任何运行时验证（release 产物未在任何设备安装）；未启用/验证混淆（release 混淆提示 WARN 为既有 `ruleOptions.enable=false` 配置）；CI 无 HarmonyOS job，PR #69 的 PR CI run `34296903848` 与 merge 后 main CI run `34297190550` 四项 job 全部 success 均不扩大为 HarmonyOS 远端验证（`tests/harmony_release` 未纳入 CI，与 `tests/android_smoke` 同为本地/canonical venv 口径）；仓库状态（已回填 2026-09-09）：已随 PR #69 合并 main（远端功能分支已删除）；未打 tag、未部署；`production_ready=false` 语义不变。剩余生产阻塞：AGC 签名与发布流程（材料创建与 signingConfigs 接入）、真机验证、真实 provider 冒烟、生产后端/生产 DB 接入、HarmonyOS CI 缺位——均待运维显式授权评估。
