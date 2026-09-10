@@ -93,6 +93,8 @@ class FakeRunner:
                 return pr.CommandResult(argv, 1, "", "Error: No such object")
             return pr.CommandResult(argv, 0, self.live_env, "")
         if argv[:2] == ("docker", "inspect"):
+            if self.live_image is None:  # 模拟「镜像事实探测失败/缺失」
+                return pr.CommandResult(argv, 1, "", "Error: No such object")
             return pr.CommandResult(argv, 0, self.live_image + "\n", "")
         if argv[:2] == ("docker", "port"):
             return pr.CommandResult(argv, 0, self.web_port + "\n", "")
@@ -284,7 +286,131 @@ def test_pin_all_match_ok(tmp_path: Path) -> None:
     log = pr.RunLog(echo=False)
     report = pr.check_pins(env_file, runner, "proj", log)
     assert report.ok and not report.mismatched_keys
+    assert not report.missing_live_keys and not report.placeholder_keys
     _assert_no_marker_leak(log)
+
+
+# ------------------------------------------- 回归：在线事实部分缺失（fail-open 修正）
+
+def test_pin_partial_live_missing_web_port_refuses(tmp_path: Path) -> None:
+    """docker port 无输出（AIOS_WEB_PORT 事实缺失）→ ok=False，键名可见，值不回显。"""
+    env_file = tmp_path / "pin.env"
+    env_file.write_text(_matching_env_text(), encoding="utf-8")
+    runner = FakeRunner(live_env=_matching_live_env(), web_port="")
+    log = pr.RunLog(echo=False)
+    report = pr.check_pins(env_file, runner, "proj", log)
+    assert not report.ok
+    assert report.missing_live_keys == ("AIOS_WEB_PORT",)
+    joined = "\n".join(log.lines)
+    assert "AIOS_WEB_PORT" in joined and "事实缺失" in joined
+    _assert_no_marker_leak(log)
+
+
+def test_pin_partial_live_missing_image_fact_refuses(tmp_path: Path) -> None:
+    """镜像 inspect 失败（AIOS_IMAGE_TAG 事实缺失）→ ok=False（不得按跳过放行）。"""
+    env_file = tmp_path / "pin.env"
+    env_file.write_text(_matching_env_text(), encoding="utf-8")
+    runner = FakeRunner(live_env=_matching_live_env(), live_image=None)
+    log = pr.RunLog(echo=False)
+    report = pr.check_pins(env_file, runner, "proj", log)
+    assert not report.ok
+    assert report.missing_live_keys == ("AIOS_IMAGE_TAG",)
+
+
+def test_pin_partial_live_missing_secret_fact_refuses(tmp_path: Path) -> None:
+    """api 容器 env 缺 AUTH_SECRET 行（事实缺失）→ ok=False（与「值不等」同权重）。"""
+    env_file = tmp_path / "pin.env"
+    env_file.write_text(_matching_env_text(), encoding="utf-8")
+    partial_live = _matching_live_env().replace(f"AUTH_SECRET={MARK_AUTH}\n", "")
+    runner = FakeRunner(live_env=partial_live)
+    log = pr.RunLog(echo=False)
+    report = pr.check_pins(env_file, runner, "proj", log)
+    assert not report.ok
+    assert report.missing_live_keys == ("AIOS_AUTH_SECRET",)
+    _assert_no_marker_leak(log)
+
+
+def test_pin_multiple_missing_live_facts_ok_false(tmp_path: Path) -> None:
+    """多处在线事实同时缺失 → 全部键名可见、ok=False（缺事实 ≠ 跳过）。"""
+    env_file = tmp_path / "pin.env"
+    env_file.write_text(_matching_env_text(), encoding="utf-8")
+    runner = FakeRunner(live_env="APP_ENV=production\n", live_image=None, web_port="")
+    log = pr.RunLog(echo=False)
+    report = pr.check_pins(env_file, runner, "proj", log)
+    assert not report.ok
+    assert set(report.missing_live_keys) == {"AIOS_AUTH_SECRET", "AIOS_LIVEKIT_API_SECRET",
+                                             "AIOS_IMAGE_TAG", "AIOS_WEB_PORT"}
+    assert report.mismatched_keys == ()  # 缺失与不等分类分离，报告清晰
+    _assert_no_marker_leak(log)
+
+
+def test_e2e_enforce_partial_live_facts_refuse_before_up(tmp_path: Path) -> None:
+    """端到端等价：在线事实不完整 → enforce 在 up 之前拒绝（零容器改动）。"""
+    env_file = tmp_path / "pin.env"
+    env_file.write_text(_matching_env_text(), encoding="utf-8")
+    runner = FakeRunner(live_env=_matching_live_env(), web_port="")
+    voice = FakeVoice(_healthy_voice())
+    code, log = _run(runner, voice, dry_run=False, env_file=env_file)
+    assert code == pr.EXIT_ERROR
+    assert _up_calls(runner) == []
+    assert any("事实缺失" in line for line in log.lines)
+    _assert_no_marker_leak(log)
+
+
+# ------------------------------------------- 回归：模板占位 secret 恒拒绝
+
+TEMPLATE_SECRET_PLACEHOLDER = "<部署时生成的真实值——绝不提交>"
+
+
+def test_placeholder_pin_keys_pure() -> None:
+    values = {
+        "AIOS_IMAGE_TAG": "m14-03-prod-rehearsal",  # 真实值 → 非占位
+        "AIOS_APP_ENV": "production",
+        "AIOS_WEB_PORT": "3011",
+        "AIOS_AUTH_SECRET": TEMPLATE_SECRET_PLACEHOLDER,  # 模板原文
+        "AIOS_LIVEKIT_API_SECRET": "<fill-me>",  # 通用 <...> 包裹
+    }
+    assert pr.placeholder_pin_keys(values) == ("AIOS_AUTH_SECRET", "AIOS_LIVEKIT_API_SECRET")
+    assert pr.placeholder_pin_keys({"AIOS_IMAGE_TAG": "x"}) == ()
+    assert pr.placeholder_pin_keys({"AIOS_WEB_PORT": "<>"}) == ()  # 空尖括号不算（len>2 约束）
+
+
+def test_pin_placeholder_secrets_refused_with_stack_up(tmp_path: Path) -> None:
+    """照抄模板（占位 secret）+ 在线栈存在 → 拒绝；键名可见、占位文本不回显。"""
+    env_file = tmp_path / "pin.env"
+    env_file.write_text(
+        "AIOS_IMAGE_TAG=m14-03-prod-rehearsal\nAIOS_APP_ENV=production\nAIOS_WEB_PORT=3011\n"
+        f"AIOS_AUTH_SECRET={TEMPLATE_SECRET_PLACEHOLDER}\n"
+        f"AIOS_LIVEKIT_API_SECRET={TEMPLATE_SECRET_PLACEHOLDER}\n",
+        encoding="utf-8",
+    )
+    runner = FakeRunner(live_env=_matching_live_env())
+    log = pr.RunLog(echo=False)
+    report = pr.check_pins(env_file, runner, "proj", log)
+    assert not report.ok
+    assert report.placeholder_keys == ("AIOS_AUTH_SECRET", "AIOS_LIVEKIT_API_SECRET")
+    joined = "\n".join(log.lines)
+    assert TEMPLATE_SECRET_PLACEHOLDER not in joined  # 占位文本本身也不回显（键名-only 纪律）
+    assert "AIOS_AUTH_SECRET" in joined and "占位" in joined
+
+
+def test_e2e_placeholder_env_with_stack_down_refuses_up(tmp_path: Path) -> None:
+    """原 fail-open 关口：栈未起（无在线容器可比对）+ 模板占位 secret →
+    修正前 ok=True 会用占位值创建容器；修正后 enforce 拒绝 up（键名-only）。"""
+    env_file = tmp_path / "pin.env"
+    env_file.write_text(
+        "AIOS_IMAGE_TAG=m14-03-prod-rehearsal\nAIOS_APP_ENV=production\nAIOS_WEB_PORT=3011\n"
+        f"AIOS_AUTH_SECRET={TEMPLATE_SECRET_PLACEHOLDER}\n"
+        f"AIOS_LIVEKIT_API_SECRET=<fill-me>\n",
+        encoding="utf-8",
+    )
+    runner = FakeRunner(live_env=None)  # api 容器不存在 = 栈未起
+    voice = FakeVoice(_healthy_voice())
+    code, log = _run(runner, voice, dry_run=False, env_file=env_file)
+    assert code == pr.EXIT_ERROR
+    assert _up_calls(runner) == []
+    joined = "\n".join(log.lines)
+    assert "占位" in joined and TEMPLATE_SECRET_PLACEHOLDER not in joined and "<fill-me>" not in joined
 
 
 def test_runlog_redacts_secrets(tmp_path: Path) -> None:

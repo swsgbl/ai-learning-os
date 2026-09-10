@@ -11,10 +11,11 @@ Docker/WSL/8010/8011）：
   ``up -d --no-build``（幂等：配置未变即 no-op；--env-file 锁定部署事实）→
   六服务健康等待 → 本地语音调和（status first）。
 - pin check（fail-closed）：``infra/env.production-recovery``（gitignored，
-  模板 infra/env.production-recovery.example）缺失、必需键缺失、或值与在线
-  容器不一致（仅报键名）→ enforce 在 up 之前可见拒绝——防止恢复路径用默认
-  值/漂移值静默重建容器（镜像 tag / 端口 / 密钥轮换）。secret 永不进入进程
-  env、日志或输出：所有子进程输出经 redact() 防御性脱敏后才落日志。
+  模板 infra/env.production-recovery.example）缺失、必需键缺失、含模板占位
+  值、在线容器事实缺失、或值与在线容器不一致（仅报键名）→ enforce 在 up
+  之前可见拒绝——防止恢复路径用默认值/漂移值/占位值静默重建容器（镜像 tag /
+  端口 / 密钥轮换）。secret 永不进入进程 env、日志或输出：所有子进程输出经
+  redact() 防御性脱敏后才落日志。
 - 语音调和决策（decide_voice_action，纯函数）：先经既有 status 控制
   （tools/voice/voice_service_control.py 的 inspect_engine，只读）取状态——
   * unmanaged-running/managed-running 且 /health 200 → 不触碰（leave）；
@@ -158,6 +159,8 @@ class PinReport:
     env_present: bool
     missing_keys: tuple[str, ...] = ()
     mismatched_keys: tuple[str, ...] = ()
+    missing_live_keys: tuple[str, ...] = ()
+    placeholder_keys: tuple[str, ...] = ()
     live_present: bool = True
     reasons: tuple[str, ...] = ()
 
@@ -212,8 +215,31 @@ def collect_live_pins(runner: Runner, project: str) -> dict[str, str] | None:
     return live
 
 
+#: 模板（infra/env.production-recovery.example）中的占位值——照抄模板未填真实
+#: 值时（尤其「栈未起、无在线容器可比对」的恢复场景）必须在 up 之前拒绝
+TEMPLATE_PLACEHOLDER_VALUES = frozenset({
+    "<部署时生成的真实值——绝不提交>",
+})
+
+
+def placeholder_pin_keys(values: dict[str, str]) -> tuple[str, ...]:
+    """识别仍是模板占位值的 pin 键（``<...>`` 包裹或模板原文）——返回键名。"""
+    placeholders: list[str] = []
+    for key in PIN_KEYS:
+        value = values.get(key, "")
+        wrapped = value.startswith("<") and value.endswith(">") and len(value) > 2
+        if wrapped or value in TEMPLATE_PLACEHOLDER_VALUES:
+            placeholders.append(key)
+    return tuple(placeholders)
+
+
 def check_pins(env_path: Path, runner: Runner, project: str, log: RunLog) -> PinReport:
-    """env 文件与在线容器的 pin 一致性核查（输出仅键名与布尔，绝不输出值）。"""
+    """env 文件与在线容器的 pin 一致性核查（输出仅键名与布尔，绝不输出值）。
+
+    五键一致性 fail-closed：在线容器存在时，任一 PIN_KEY 在线事实缺失
+    （inspect/port 探测不完整）或与 env 不等 → ok=False（supervisor 评审
+    修正：缺事实不得按「跳过」放行）；模板占位值恒拒绝（含无在线容器路径）。
+    """
     env_values = parse_env_file(env_path)
     if not env_path.is_file():
         log.say(f"pin: env 文件缺失（{env_path}）——enforce 将拒绝执行 up")
@@ -222,26 +248,37 @@ def check_pins(env_path: Path, runner: Runner, project: str, log: RunLog) -> Pin
     missing = tuple(key for key in PIN_KEYS if not env_values.get(key))
     if missing:
         log.say(f"pin: env 文件缺必需键: {', '.join(missing)}——enforce 将拒绝执行 up")
+    placeholders = placeholder_pin_keys(env_values)
+    if placeholders:
+        log.say(f"pin: env 文件含模板占位值键: {', '.join(placeholders)}——请填入真实部署值（值不回显）")
+        log.say("      enforce 将拒绝执行 up（占位 secret 不得用于创建/重建容器）")
     live = collect_live_pins(runner, project)
     if live is None:
-        log.say("pin: 在线容器不存在（栈未起）——跳过比对，up 将首次拉起")
-        report = PinReport(ok=not missing, env_present=True, missing_keys=missing, live_present=False)
+        log.say("pin: 在线容器不存在（栈未起）——跳过在线比对，up 将按 env 事实拉起")
+        report = PinReport(ok=not missing and not placeholders, env_present=True,
+                           missing_keys=missing, placeholder_keys=placeholders, live_present=False)
         if report.ok:
-            log.say("pin: OK（env 键齐全；无在线容器可比对）")
+            log.say("pin: OK（env 五键齐全且无占位值；无在线容器可比对）")
         return report
+    missing_live = tuple(key for key in PIN_KEYS if live.get(key) is None)
+    if missing_live:
+        log.say(f"pin: 在线容器事实缺失键: {', '.join(missing_live)}——五键一致性不可证")
+        log.say("      enforce 将拒绝执行 up（inspect/port 探测不完整时不得按跳过放行）")
     mismatched = tuple(
-        key for key in PIN_KEYS if env_values.get(key) and live.get(key) is not None and env_values[key] != live[key]
+        key for key in PIN_KEYS
+        if key not in missing_live and env_values.get(key) != live.get(key)
     )
-    matched = [key for key in PIN_KEYS if key not in mismatched and key in live and env_values.get(key)]
+    matched = [key for key in PIN_KEYS if key not in mismatched and key not in missing_live]
     log.say(f"pin: 一致键 {len(matched)}/{len(PIN_KEYS)}（值不回显）；比对对象: api/web 容器")
     if mismatched:
         # 仅报键名：值差异（密钥轮换/漂移）用 up 重建是危险的，必须可见拒绝
         log.say(f"pin: 不一致键: {', '.join(mismatched)}——与在线容器不符（值不回显）")
         log.say("      enforce 将拒绝执行 up（防止漂移值静默重建容器）；请人工核实后更新 env 文件")
-    report = PinReport(ok=not missing and not mismatched, env_present=True,
-                       missing_keys=missing, mismatched_keys=mismatched)
+    report = PinReport(ok=not missing and not placeholders and not missing_live and not mismatched,
+                       env_present=True, missing_keys=missing, mismatched_keys=mismatched,
+                       missing_live_keys=missing_live, placeholder_keys=placeholders)
     if report.ok:
-        log.say("pin: OK（必需键齐全且与在线容器一致）")
+        log.say("pin: OK（五键齐全：env 无缺键/占位，且与在线容器逐键一致）")
     return report
 
 

@@ -1,7 +1,17 @@
 # M14-06 Round 1 证据报告：生产恢复编排（compose restart 策略 + 恢复脚本 + env 护栏）
 
+> **Round 1.1 修正（supervisor 评审，2026-09-11 03:10）**：`check_pins()` 修复
+> fail-open 缺陷——在线容器存在但部分 PIN_KEY 事实缺失时曾被静默跳过（`ok`
+> 可为 True）；现「缺事实」与「值不等」同权重拒绝（键名-only 报告），并新增
+> 模板占位 secret（`<...>` 包裹/模板原文）恒拒绝（含栈未起、无在线容器可比
+> 对的原 fail-open 关口）。回归测试 +8（部分在线事实×5、占位×3）；全套件
+> **150 passed, 2 skipped**；ruff/py_compile/compose config 复验通过；真实
+> 只读 dry-run（占位模板副本 `05-*.log`）与漂移复验（`06-*.txt`）均可见拒绝、
+> exit 1、零 up。六容器 ID 与基线逐一相同、8010/8011 未触碰（仍为外部故障
+> 停机态）。详见下文「Round 1.1 修正记录」。
+
 - 分支/工作树：`feature/m14-06-production-resilience` @ `D:\AI Learning OS\ai-learning-os-worktrees\m14-06-production-resilience`（基线 6319eb0，M14-04）
-- 日期：2026-09-11（01:25–03:05 GMT+8）
+- 日期：2026-09-11（01:25–03:05 GMT+8；Round 1.1 修正 03:06–03:10）
 - 原始日志：`.verify/m14-06-production-resilience/`（gitignored，本机留存）；编排运行日志另见 `artifacts/recovery/`
 - 边界遵守：**未停止/重启/重置任何容器、Docker Desktop、8010/8011、模拟器或代理**；未注册计划任务；无弹窗；无 secret 入库/入日志。
 
@@ -53,6 +63,42 @@
 无任何停止动作——退出属外部因素（疑似 WSL VM 回收/宿主休眠），**恰为 M14-06
 要自愈的故障形态**：dry-run 如实检出 `stopped → start`（受控，未执行——
 Round 1 边界禁触碰 8010/8011）。Docker 六容器不受影响，全程 healthy。
+
+## Round 1.1 修正记录（fail-open 缺陷）
+
+**缺陷（supervisor 评审发现）**：`check_pins()` 中 `collect_live_pins()` 在 api
+容器存在但只回出部分 PIN_KEYS 事实时（如 `docker port` 空输出、镜像 inspect
+失败、容器 env 缺行），缺失键既不计 mismatch 也不计 matched——若其余键一致，
+`report.ok=True`，违反「五键在线一致性」承诺（fail-open）。另一关口：栈未起
+（无在线容器）路径从不校验值本身——照抄模板的占位 secret 可通过并用于 `up`
+创建容器。
+
+**修复（`tools/ops/production_recovery.py`）**：
+- 新增 `missing_live_keys` 检测与报告：在线容器存在时任一 PIN_KEY 事实缺失 →
+  `ok=False`（「inspect/port 探测不完整时不得按跳过放行」）；`PinReport` 增
+  `missing_live_keys`/`placeholder_keys` 字段，与 `mismatched_keys` 分类分离。
+- 新增 `placeholder_pin_keys()`：`<...>` 包裹值或模板原文
+  （`TEMPLATE_PLACEHOLDER_VALUES`）→ 键名-only 拒绝；**在两条路径（有/无在线
+  容器）均生效**——占位 secret 在任何情况下不得进入 compose up。
+- ok 语义：`env 五键齐全 ∧ 无占位 ∧ (无在线容器 ∨ (在线五键齐全 ∧ 逐键相等))`。
+- dry-run 退出语义与 enforce 对齐不变：pin 未就绪 → dry-run 记
+  `pin-not-ready` 失败并 exit 1（镜像 enforce 拒绝）。
+
+**回归测试（`test_production_recovery.py`，+8）**：部分在线事实（缺 web 端口
+/ 缺镜像事实 / 缺 secret env 行 / 多键同缺 + 分类断言）×4 + 端到端 enforce
+零 up ×1；占位（纯函数 / 在线栈存在照抄模板 / 栈未起照抄模板→原 fail-open
+关口）×3。全部断言键名-only（占位文本与 secret 值均不回显）。
+
+**复验（2026-09-11 03:06–03:10）**：
+- 缺陷复现脚本（修复前 `ok=True` → 修复后 `ok=False`,
+  `missing_live_keys=('AIOS_IMAGE_TAG','AIOS_WEB_PORT')`）。
+- `pytest` 五套件（新 2 + 相邻 3）→ **150 passed, 2 skipped**（逐文件
+  43/8+1s/64/30/5+1s）。
+- `ruff check` / `py_compile` → OK；`docker compose config --quiet` ×4 → PASS。
+- 真实只读 dry-run：占位模板副本（`05-recovery-dry-run-placeholder.log`）→
+  占位键 + 不一致键双拒绝、零 up、exit 1；漂移复验 exit 1（`06-*.txt`）。
+- 事后核查：六容器 ID 与基线逐一相同（零重建零触碰）；8010/8011 只读探测
+  未触碰（仍为外部故障停机态）。
 
 ## Supervisor 交接（后续轮）
 

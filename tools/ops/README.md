@@ -22,10 +22,11 @@ python tools/ops/production_recovery.py               # enforce（需 pin env �
 3. **pin check（fail-closed）**：`infra/env.production-recovery`（gitignored，
    模板 `infra/env.production-recovery.example`）必须存在、五键齐全
    （`AIOS_IMAGE_TAG/AIOS_APP_ENV/AIOS_WEB_PORT/AIOS_AUTH_SECRET/
-   AIOS_LIVEKIT_API_SECRET`），且值与在线 api/web 容器一致（仅报键名，值
-   绝不回显；子进程输出写日志前经防御性 redact）。任一不满足 → enforce 在
-   `up` 之前可见拒绝——防止恢复路径用默认值/漂移值静默重建容器（tag/端口/
-   密钥轮换）。
+   AIOS_LIVEKIT_API_SECRET`）、不含模板占位值（`<...>` 包裹或模板原文）；
+   在线容器存在时**五键在线事实必须齐全且逐键相等**（缺事实 ≠ 跳过——
+   inspect/port 探测不完整同样拒绝）。仅报键名，值绝不回显（子进程输出写
+   日志前经防御性 redact）。任一不满足 → enforce 在 `up` 之前可见拒绝——
+   防止恢复路径用默认值/漂移值/占位值静默重建容器（tag/端口/密钥轮换）。
 4. **幂等 up**：`docker compose -f infra/docker-compose.yml -p
    aios-m14-03-production-rehearsal --profile local --env-file <pin>
    up -d --no-build`（绝不 `--build`；dry-run 模式附加 compose 原生
