@@ -272,6 +272,22 @@ wetext 离线缓存（M14-03）均命中 gitignored artifacts 内既有缓存；
 用户家目录 ModelScope/HuggingFace 缓存。stop 拒绝时 restart 中止，不启动
 第二实例。
 
+**三条 fail-closed（修正轮 2，2026-09-11）**：
+
+1. `/health` 探测恒经零代理 opener（`ProxyHandler({})`）直连 127.0.0.1——
+   继承的 `HTTP_PROXY`/`http_proxy`/系统代理不得劫持回环探测（本机实证：
+   代理工具代笔回环端口返回 502/RST 会污染健康判定）；进程代理环境变量
+   保持原样（不 set/unset）。
+2. **端口不符拒绝**：manifest 记录端口 ≠ 当前请求端口（`--port`/环境变量）
+   → status 如实报告双端口并保留 manifest；start/stop/restart 一律拒绝
+   （不 spawn、不发信号、manifest 不清理——PID 已死也不并入 stale 清理）。
+   操作该实例请用 manifest 记录的端口重跑。
+3. **`--service-dir` 仓库内约束**：写路径命令（start/stop/restart——lock/
+   launcher/spawn 均写入该目录）要求目录位于仓库内，否则在任何写动作之前
+   拒绝（退出码 2）——launcher 以仓库根 cwd 的 repo-relative 路径寻址，
+   仓库外目录在 WSL/bash 侧不可达。`status` 只读不受限。测试/诊断需显式设
+   `VOICE_SERVICE_ALLOW_OUTSIDE_SERVICE_DIR=1`（仅测试用，生产勿设）。
+
 **失败恢复**：start 后立即退出 / pidfile 未落 → 打印 service.log 尾部并
 exit 1（manifest 不写）；terminate 后进程仍存活（TERM+KILL 均无效）→
 manifest 保留以便重试；`status` 显示 `managed-starting` 且长期不变 →

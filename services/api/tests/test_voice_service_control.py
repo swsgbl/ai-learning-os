@@ -16,6 +16,12 @@ r"""M14-04 tools/voice/voice_service_control.py 契约测试：受控生命周�
 - restart = stop→start 受控序列（stop 拒绝则中止，不启动第二实例）；
 - 端口/路径配置：--port 与 FUNASR_PORT/COSYVOICE_PORT 优先级；默认服务目录
   repo-relative 派生（无机器绝对路径）；
+- 修正轮 2（三条 fail-closed）：/health 探测忽略继承代理（HTTP_PROXY 指向
+  关闭端口时回环探测仍 200，且不改进程代理环境）；manifest 端口与当前端口
+  不符 → status 报双端口且保留 manifest，start/stop/restart 拒绝（不
+  spawn/不发信号，PID 死亡也不并入 stale 清理）；写路径命令的仓库外
+  --service-dir 拒在写之前（rc 2、目录零创建），status 只读不受限，
+  测试豁免开关 VOICE_SERVICE_ALLOW_OUTSIDE_SERVICE_DIR 仅显式 opt-in；
 - 真实回环（仅本机 127.0.0.1 空闲端口）：stdlib http.server 假 health 端点
   验证真实 HTTP 探测与 503 分支；TCP 探测空闲端口为 False；
 - CLI 子进程：--help 与 status（空闲端口 + 空 manifest 目录 = 纯只读路径）；
@@ -23,7 +29,9 @@ r"""M14-04 tools/voice/voice_service_control.py 契约测试：受控生命周�
   命令内；无 secret；无机器特定绝对路径；不 import 仓库 app 代码。
 
 平台操作全部经注入的 FakeOps（真实探测仅 tcp/http 回环与一次只读 ss）；
-生产 8010/8011 不被本套件触碰（唯一真实端口断言见 test_real_*）。
+生产 8010/8011 不被本套件触碰（唯一真实端口断言见 test_real_*）。本模块
+经 autouse fixture 显式开启仓库外 --service-dir 测试豁免（FakeOps 套件
+全用 tmp 目录）；豁免关闭的行为由专项测试覆盖，不弱化生产校验。
 """
 from __future__ import annotations
 
@@ -37,6 +45,7 @@ import socket
 import sys
 import threading
 import time
+import urllib.request
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -143,12 +152,17 @@ class FakeOps:
             return
         pid = self.next_pid
         self.next_pid += 1
-        service_dir = Path(launcher).parent
+        # 相对 launcher 路径按真实 bash 语义以仓库根为 cwd 解析（REPO_ROOT 可
+        # 被测试 monkeypatch，与生产解析保持同源）
+        launcher_path = Path(launcher)
+        if not launcher_path.is_absolute():
+            launcher_path = voice_module.REPO_ROOT / launcher_path
+        service_dir = launcher_path.parent
         (service_dir / "spawn.pid").write_text(f"{pid}\n", encoding="utf-8")
         (service_dir / "workdir.txt").write_text(f"{FAKE_WORKDIR}\n", encoding="utf-8")
         if not self.spawn_dead:
             # launcher 末行 exec bash <bootstrap>：cmdline 与 manifest 标记同源
-            text = Path(launcher).read_text(encoding="utf-8")
+            text = launcher_path.read_text(encoding="utf-8")
             exec_line = next(line for line in text.splitlines() if line.startswith("exec bash "))
             bootstrap = shlex.split(exec_line[len("exec bash "):])[0]
             self.processes[pid] = f"bash {bootstrap}"
@@ -166,6 +180,17 @@ class FakeOps:
                 self.listeners.pop(port, None)
                 self.local_tcp.discard(port)
         return self.terminate_outcome
+
+
+@pytest.fixture(autouse=True)
+def outside_service_dir_hatch(monkeypatch):
+    """FakeOps 套件的服务目录全在 pytest tmp（仓库外）——显式开启测试豁免。
+
+    修正轮 3 的生产校验（写路径命令拒绝仓库外 --service-dir）不因此弱化：
+    豁免关闭的行为由 test_mutating_commands_reject_outside_service_dir /
+    test_in_repo_service_dir_passes_validation_without_hatch 专项覆盖。
+    """
+    monkeypatch.setenv("VOICE_SERVICE_ALLOW_OUTSIDE_SERVICE_DIR", "1")
 
 
 @pytest.fixture()
@@ -756,6 +781,128 @@ def test_cli_rejects_service_dir_with_engine_all(voice, ops, tmp_svc) -> None:
     rc, out = run_cli(voice, ["status", "--engine", "all", "--service-dir", str(tmp_svc)], ops)
     assert rc == 2
     assert "--service-dir 只能配合单引擎" in out
+
+
+# ---------- 修正轮 2：三条 fail-closed ----------
+
+
+def test_health_probe_ignores_inherited_proxies(fake_health_server, monkeypatch) -> None:
+    """修正轮 2-1：/health 探测忽略继承代理——HTTP_PROXY/http_proxy 指向关闭
+    端口（127.0.0.1:9）时，真实回环探测仍 200（若经代理路由必连接失败）；
+    且不改动进程代理环境变量（零副作用，不 set/unset）。"""
+    port = fake_health_server.server_address[1]
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9")
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")
+    # 危险真实存在（回归有意义的前提）：默认 opener 确会从环境拿到该代理
+    assert urllib.request.getproxies().get("http") == "http://127.0.0.1:9"
+    ops = FakeOps(real_probes=True)
+    env_snapshot = dict(os.environ)
+    code, body = ops.http_health(port)
+    assert code == 200, body
+    assert "loopback-fake-model" in body  # 经关闭端口的代理不可能返回
+    assert dict(os.environ) == env_snapshot  # 进程代理环境原样
+
+
+def _port_mismatch_world(voice, ops, tmp_svc) -> None:
+    """manifest 记录端口 18010，运行时以 --port 18099 请求。"""
+    managed_running(voice, ops)  # PID 41001 存活、18010 监听 + 健康
+    voice.write_manifest(make_manifest(voice, port=18010), tmp_svc)
+
+
+def _mismatch_argv(command: str, tmp_svc: Path) -> list[str]:
+    return argv_for(command, tmp_svc, port=18099)
+
+
+def test_status_port_mismatch_reports_both_ports_and_preserves(voice, ops, tmp_svc) -> None:
+    _port_mismatch_world(voice, ops, tmp_svc)
+    rc, out = run_cli(voice, _mismatch_argv("status", tmp_svc), ops)
+    assert rc == 0
+    assert "state: port-mismatch" in out
+    assert "manifest 端口=18010（当前请求: 18099）" in out
+    assert "manifest 保留" in out
+    assert (tmp_svc / "manifest.json").exists()  # 不清理
+
+
+def test_start_refuses_port_mismatch_without_spawn(voice, ops, tmp_svc) -> None:
+    _port_mismatch_world(voice, ops, tmp_svc)
+    rc, out = run_cli(voice, _mismatch_argv("start", tmp_svc), ops)
+    assert rc == 3
+    assert "拒绝启动" in out and "--port 18010" in out
+    assert ops.spawn_calls == []  # 不 spawn
+    assert (tmp_svc / "manifest.json").exists()  # manifest 保留
+
+
+def test_stop_refuses_port_mismatch_without_signal(voice, ops, tmp_svc) -> None:
+    _port_mismatch_world(voice, ops, tmp_svc)
+    rc, out = run_cli(voice, _mismatch_argv("stop", tmp_svc), ops)
+    assert rc == 3
+    assert "拒绝停止" in out and "不发信号" in out
+    assert ops.terminate_calls == []
+    assert (tmp_svc / "manifest.json").exists()
+    assert 41001 in ops.processes  # 实例毫发无损
+
+
+def test_restart_aborts_on_port_mismatch(voice, ops, tmp_svc) -> None:
+    _port_mismatch_world(voice, ops, tmp_svc)
+    rc, out = run_cli(voice, _mismatch_argv("restart", tmp_svc), ops)
+    assert rc == 3
+    assert "restart 中止" in out
+    assert ops.spawn_calls == [] and ops.terminate_calls == []
+
+
+def test_port_mismatch_preserves_manifest_even_when_pid_dead(voice, ops, tmp_svc) -> None:
+    """端口不符 + PID 已死：仍不并入 stale 清理（fail-closed，manifest 保留）。"""
+    voice.write_manifest(make_manifest(voice, pid=41099, port=18010), tmp_svc)  # PID 不在进程表
+    rc, out = run_cli(voice, _mismatch_argv("status", tmp_svc), ops)
+    assert rc == 0
+    assert "state: port-mismatch" in out
+    assert (tmp_svc / "manifest.json").exists()
+    assert ops.terminate_calls == []
+
+
+def test_mutating_commands_reject_outside_service_dir(voice, ops, tmp_path, monkeypatch) -> None:
+    """修正轮 2-3：写路径命令（start/stop/restart）拒绝仓库外 --service-dir——
+    拒在任何写动作之前（目录零创建、零 spawn、零 terminate）。"""
+    monkeypatch.delenv("VOICE_SERVICE_ALLOW_OUTSIDE_SERVICE_DIR", raising=False)
+    outside = tmp_path / "outside" / "service"
+    for command in ("start", "stop", "restart"):
+        rc, out = run_cli(voice, [command, "--engine", "funasr", "--port", "18010",
+                                  "--service-dir", str(outside)], ops)
+        assert rc == 2, (command, out)
+        assert "--service-dir 须位于仓库内" in out
+        assert "VOICE_SERVICE_ALLOW_OUTSIDE_SERVICE_DIR" in out  # 指引含豁免开关名
+    assert ops.spawn_calls == [] and ops.terminate_calls == []
+    assert not outside.exists()  # fail-closed 在写之前
+
+
+def test_status_allows_outside_service_dir(voice, ops, tmp_path, monkeypatch) -> None:
+    """status 只读不受仓库内约束（诊断自由；无写动作）。"""
+    monkeypatch.delenv("VOICE_SERVICE_ALLOW_OUTSIDE_SERVICE_DIR", raising=False)
+    rc, out = run_cli(voice, ["status", "--engine", "funasr", "--port", "18010",
+                              "--service-dir", str(tmp_path / "anywhere")], ops)
+    assert rc == 0
+    assert "state: stopped" in out
+
+
+def test_outside_service_dir_escape_hatch_is_explicit_opt_in(voice, ops, tmp_svc, monkeypatch) -> None:
+    """豁免开关是显式 opt-in（autouse 已设；此处显式再设自文档化）。"""
+    monkeypatch.setenv("VOICE_SERVICE_ALLOW_OUTSIDE_SERVICE_DIR", "1")
+    rc, _ = run_cli(voice, argv_for("start", tmp_svc), ops)
+    assert rc == 0
+    assert len(ops.spawn_calls) == 1
+
+
+def test_in_repo_service_dir_passes_validation_without_hatch(voice, ops, tmp_path, monkeypatch) -> None:
+    """仓库内目录默认通过校验（生产路径不依赖豁免）：REPO_ROOT 指向测试根，
+    服务目录在其内 → start 正常执行（FakeOps 同源解析相对 launcher 路径）。"""
+    monkeypatch.delenv("VOICE_SERVICE_ALLOW_OUTSIDE_SERVICE_DIR", raising=False)
+    monkeypatch.setattr(voice, "REPO_ROOT", tmp_path)
+    svc = tmp_path / "artifacts" / "voice" / "funasr" / "service"
+    rc, out = run_cli(voice, ["start", "--engine", "funasr", "--port", "18010",
+                              "--service-dir", str(svc)], ops)
+    assert rc == 0, out
+    assert (svc / "manifest.json").exists()
+    assert json.loads((svc / "manifest.json").read_text(encoding="utf-8"))["pid"] == 41000
 
 
 # ---------- 真实回环探测（仅 127.0.0.1 空闲端口；不触 8010/8011） ----------

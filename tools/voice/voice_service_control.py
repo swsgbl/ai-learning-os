@@ -26,6 +26,15 @@
   （M14-02 实证重启不重新下载 8.5GB 模型；wetext 离线缓存见 M14-03）。
 - 端口/路径可配置：``--port`` 或 FUNASR_PORT / COSYVOICE_PORT（默认
   8010/8011）；所有路径自脚本位置 repo-relative 派生，无机器特定绝对路径。
+- 修正轮 2（三条 fail-closed）：/health 探测恒经零代理 opener（继承的
+  HTTP_PROXY/http_proxy 或系统代理不得劫持 127.0.0.1 探测；不改动进程
+  代理环境变量）；manifest 记录端口与当前请求端口不符 → 拒绝
+  start/stop/restart（不 spawn、不发信号、manifest 保留不清理），status
+  如实报告双端口；写路径命令（start/stop/restart）的 --service-dir 必须
+  位于仓库内（launcher 以仓库根 cwd 的 repo-relative 路径寻址，仓库外
+  目录 WSL/bash 侧不可达——在 lock/launcher/spawn 任何写动作之前拒绝；
+  status 只读不受限；测试豁免开关 VOICE_SERVICE_ALLOW_OUTSIDE_SERVICE_DIR
+  仅测试用，生产勿设）。
 
 可测性：平台操作全部经 ServiceOps 注入——真实实现 BashOps 只做只读探测与
 显式 spawn/terminate；测试注入 FakeOps（services/api/tests/
@@ -76,6 +85,11 @@ SPAWN_PID_TIMEOUT_SECONDS = 20.0
 TERMINATE_GRACE_SECONDS = 15
 #: HTTP 健康探测超时（秒）
 HEALTH_TIMEOUT_SECONDS = 5.0
+#: 回环健康探测专用 opener：显式零代理（ProxyHandler({})）——继承的
+#: HTTP_PROXY/http_proxy/ALL_PROXY 或 Windows 系统代理注册表设置不得劫持
+#: 127.0.0.1 探测（本机实证：代理工具代答回环端口返回 502/RST，健康判定
+#: 被污染）。不改动进程代理环境变量（零副作用；契约测试锁定）。
+_HEALTH_OPENER = urllib_request.build_opener(urllib_request.ProxyHandler({}))
 #: TCP 端口探测超时（秒）
 TCP_TIMEOUT_SECONDS = 2.0
 MANIFEST_NAME = "manifest.json"
@@ -207,15 +221,20 @@ class ServiceOps:
             return False
 
     def http_health(self, port: int, host: str = "127.0.0.1") -> tuple[int | None, str]:
-        """GET /health → (状态码, body 片段)；不可达 → (None, 错误类别名)。"""
+        """GET /health → (状态码, body 片段)；不可达 → (None, 错误类别名)。
+
+        恒经 _HEALTH_OPENER（零代理）直连回环——继承的代理环境/系统代理
+        不参与（修正轮 2：代理代答回环端口会污染健康判定）；进程代理环境
+        变量保持原样（不 set/unset）。
+        """
         url = f"http://{host}:{port}/health"
         try:
-            with urllib_request.urlopen(url, timeout=HEALTH_TIMEOUT_SECONDS) as response:
+            with _HEALTH_OPENER.open(url, timeout=HEALTH_TIMEOUT_SECONDS) as response:
                 return int(response.status), response.read(4096).decode("utf-8", "replace")
         except urllib_error.HTTPError as cause:
             body = cause.read(4096).decode("utf-8", "replace") if cause.fp else ""
             return int(cause.code), body
-        except OSError as cause:
+        except OSError as cause:  # URLError 亦属 OSError（连接层失败统一口径）
             return None, type(cause).__name__
 
     # ---- 进程面操作（真实实现见 BashOps；FakeOps 覆盖） ----
@@ -367,7 +386,8 @@ class Inspection:
     port: int
     manifest: Manifest | None = None
     #: None=无 manifest；"ok"=归属成立；"foreign"=cmdline 匹配但工作区不符；
-    #: "unknown"=无法核实（/proc 探测不可用）
+    #: "unknown"=无法核实（/proc 探测不可用）；"port-mismatch"=manifest 记录
+    #: 端口与当前请求端口不符（修正轮 2：fail-closed，manifest 保留不清理）
     ownership: str | None = None
     listening: bool = False
     owners: list[int] | None = None
@@ -379,6 +399,8 @@ class Inspection:
     def state(self) -> str:
         if self.manifest is None:
             return "unmanaged-running" if self.listening else "stopped"
+        if self.ownership == "port-mismatch":
+            return "port-mismatch"
         if self.ownership == "ok":
             return "managed-running" if self.listening else "managed-starting"
         if self.ownership == "foreign":
@@ -433,7 +455,23 @@ def inspect_engine(
     """只读体检（stale manifest 清理是唯一写动作，且明确记录在 notes）。"""
     result = Inspection(spec=spec, port=port)
     manifest = load_manifest(service_dir, spec, result.notes)
-    if manifest is not None:
+    if manifest is not None and manifest.port != port:
+        # 端口不符（修正轮 2，fail-closed）：manifest 描述的是另一端口配置的
+        # 实例——归属认定、stale 清理、信号发送一律不做，manifest 原样保留；
+        # status 如实报告双端口，start/stop/restart 由调用方拒绝。
+        result.ownership = "port-mismatch"
+        result.notes.append(
+            f"端口不符：manifest 记录端口 {manifest.port} ≠ 当前请求端口 {port}——"
+            f"拒绝认定归属（manifest 保留、不清理、不发信号）；如需操作该实例"
+            f"请用 --port {manifest.port}"
+        )
+        if ops.pid_alive(manifest.pid) is False:
+            result.notes.append(
+                f"（参考）manifest PID {manifest.pid} 已退出——端口不符路径仍保留"
+                f" manifest（不并入 stale 清理）"
+            )
+        result.manifest = manifest
+    elif manifest is not None:
         alive = ops.pid_alive(manifest.pid)
         if alive is False:
             manifest_path = service_dir / MANIFEST_NAME
@@ -634,6 +672,9 @@ def print_status(result: Inspection, service_dir: Path, out: IO[str]) -> None:
     for note in result.notes:
         say(out, f"note: {note}")
     say(out, f"state: {result.state}")
+    if result.state == "port-mismatch":
+        say(out, f"端口不符: manifest 端口={result.manifest.port}（当前请求: {result.port}）")
+        say(out, "      manifest 保留；start/stop/restart 将拒绝（防误杀/双实例）")
     if result.manifest is not None:
         say(out, f"pid: {result.manifest.pid}（manifest 记录；归属核验={result.ownership}）")
         say(out, f"started_at: {result.manifest.started_at or '(未记录)'}")
@@ -673,6 +714,10 @@ def cmd_start(spec: EngineSpec, port: int, service_dir: Path, ops: ServiceOps, o
         result = inspect_engine(spec, port, service_dir, ops)
         for note in result.notes:
             say(out, note)
+        if result.ownership == "port-mismatch":
+            say(out, f"{spec.name}: 拒绝启动——manifest 记录端口 {result.manifest.port} 与当前端口 {port} 不符")
+            say(out, f"      不 spawn、不清理 manifest；如需操作该实例请用 --port {result.manifest.port}")
+            return EXIT_REFUSED
         if result.ownership == "ok":
             health = describe_health(result)
             say(out, f"{spec.name}: 已在运行（PID {result.manifest.pid}，{result.state}，{health}）——幂等跳过")
@@ -754,6 +799,10 @@ def cmd_stop(spec: EngineSpec, port: int, service_dir: Path, ops: ServiceOps, ou
                 return EXIT_REFUSED
             say(out, f"{spec.name}: 无 manifest——无需停止（幂等）")
             return EXIT_OK
+        if result.ownership == "port-mismatch":
+            say(out, f"{spec.name}: 拒绝停止——manifest 记录端口 {result.manifest.port} 与当前端口 {port} 不符")
+            say(out, f"      不发信号、不清理 manifest；如需操作该实例请用 --port {result.manifest.port}")
+            return EXIT_REFUSED
         if result.ownership == "unknown":
             say(out, f"{spec.name}: manifest PID {result.manifest.pid} 归属无法核实——拒绝发送信号")
             return EXIT_REFUSED
@@ -801,6 +850,30 @@ def _parse_int_env(name: str) -> int | None:
         return None
 
 
+#: 测试豁免开关（修正轮 3）：--service-dir 仓库内约束只对写路径
+#: （start/stop/restart——lock/launcher/spawn 均写入该目录）强制；status
+#: 只读不受限。仓库外目录在本 launcher 设计下不可达（launcher 以仓库根
+#: cwd 的 repo-relative 路径寻址，仓库外 Windows 盘符路径 WSL bash 不认），
+#: 必须 fail-closed 拒在写之前。生产不得设置本变量（README 标注 test-only）。
+ALLOW_OUTSIDE_SERVICE_DIR_ENV = "VOICE_SERVICE_ALLOW_OUTSIDE_SERVICE_DIR"
+MUTATING_COMMANDS = frozenset({"start", "stop", "restart"})
+
+
+def service_dir_usable(service_dir: Path) -> bool:
+    """写路径（start/stop/restart）的 --service-dir 仓库内约束校验。
+
+    默认服务目录恒在仓库内（不触发）；自定义目录在仓库外（或显式测试豁免
+    环境变量置位）时分别拒绝/放行。resolve 后比较，符号链接/相对路径透明。
+    """
+    if os.environ.get(ALLOW_OUTSIDE_SERVICE_DIR_ENV, "") == "1":
+        return True
+    try:
+        service_dir.resolve().relative_to(REPO_ROOT)
+    except ValueError:
+        return False
+    return True
+
+
 def build_parser() -> argparse.ArgumentParser:
     engine_choices = [spec.name for spec in ENGINE_SPECS] + ["all"]
     common = argparse.ArgumentParser(add_help=False)
@@ -842,6 +915,18 @@ def main(argv: Sequence[str] | None = None, *, ops: ServiceOps | None = None,
     for spec in specs:
         port = resolve_port(spec, args.port)
         service_dir = args.service_dir if args.service_dir is not None else default_service_dir(spec)
+        if args.command in MUTATING_COMMANDS and not service_dir_usable(service_dir):
+            # 修正轮 3（fail-closed）：仓库外 --service-dir 对本 launcher 设计
+            # 无效——必须在任何写动作（lock/launcher/spawn）之前拒绝
+            say(out, f"{spec.name}: 拒绝执行——--service-dir 须位于仓库内（{REPO_ROOT}）："
+                     f"launcher 以仓库根 cwd 的 repo-relative 路径寻址，仓库外目录"
+                     f"在 WSL/bash 侧不可达")
+            say(out, f"      status 只读不受限；测试/诊断需显式设 "
+                     f"{ALLOW_OUTSIDE_SERVICE_DIR_ENV}=1（仅测试用，生产勿设）")
+            worst = max(worst, 2)  # 参数错误（与 argparse 口径一致）
+            if out is not sys.stdout:
+                out.write("\n")
+            continue
         try:
             rc = handler(spec, port, service_dir, service_ops, out)
         except OpsError as cause:
