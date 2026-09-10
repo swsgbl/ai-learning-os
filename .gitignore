@@ -38,3 +38,7 @@ apps/harmony/entry/build/
 *.cer
 *.csr
 *.jks
+
+# M14-06 生产恢复编排 env 文件（含部署 secret，仅本机存在；模板见
+# infra/env.production-recovery.example，恢复编排 pin check 强制其存在与一致）
+infra/env.production-recovery
