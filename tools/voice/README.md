@@ -56,9 +56,13 @@ docker compose -f infra/docker-compose.yml --profile local up -d
 ```
 
 **网络路径可达性已实证**（2026-09-10，本机：WSL 2.7.13 NAT 模式 + Docker
-Desktop，引擎 29.7.2）：容器 → `host.docker.internal:18010` → Windows 宿主
-→ WSL2 localhost 转发 → WSL 内**只绑 127.0.0.1** 的 stdlib 探针服务 = HTTP
-200。两个实测要点已固化进 `compose_voice_reachability.sh`：
+Desktop 29.7.2）：容器 → `host.docker.internal` → Windows 宿主 → WSL2
+localhost 转发 → WSL 内**只绑 127.0.0.1** 的服务 = HTTP 200。先以 stdlib
+探针（`:18010`）实证路径，后升级到**真实引擎端到端**：API 容器经
+`host.docker.internal` 直探 8010/8011 `/health` 双 200，隔离 compose 项目
+（`aios-m14-02-voice-e2e`，`AIOS_WEB_PORT=13000`）以真实鉴权跑通
+providers / synthesize / transcribe 全链（见下方「边界」首条）。两个实测
+要点已固化进 `compose_voice_reachability.sh`：
 
 1. WSL 内绑 `127.0.0.1` 的服务在本机 WSL 版本下同样被 localhostForwarding
    转发（无需绑 0.0.0.0——引擎保持 loopback-only）；
@@ -92,12 +96,16 @@ localhost 转发——Windows 侧直接访问 `127.0.0.1:8010/8011` 即可（冒
 wsl -e bash -c "command -v ~/.local/bin/uv >/dev/null 2>&1 || curl -LsSf https://astral.sh/uv/install.sh | sh"
 
 # 1) 起 ASR（funasr-server，CPU，127.0.0.1:8010；首次启动下载 SenseVoiceSmall）
-#    仓库路径含空格——必须整体加引号（见下方「PowerShell 调 WSL 的引号规则」）
-wsl -e bash -c "cd '/mnt/d/AI Learning OS/ai-learning-os-worktrees/m14-01-local-voice-deployment' && bash tools/voice/bootstrap_funasr_wsl.sh"
+#    在仓库根（任意检出/worktree 均可）执行；wsl --cd . 让 WSL 直接落在当前
+#    检出根，不再手写机器特定的 /mnt/<盘>/... 绝对路径
+wsl --cd . bash -c "bash tools/voice/bootstrap_funasr_wsl.sh"
 
 # 2) 另开一个终端起 TTS（CosyVoice + bridge，GPU，127.0.0.1:8011；
 #    首次运行克隆官方仓库、装 cu128 torch + 最小运行时依赖、下载 Fun-CosyVoice3-0.5B-2512）
-wsl -e bash -c "cd '/mnt/d/AI Learning OS/ai-learning-os-worktrees/m14-01-local-voice-deployment' && bash tools/voice/bootstrap_cosyvoice_wsl.sh"
+wsl --cd . bash -c "bash tools/voice/bootstrap_cosyvoice_wsl.sh"
+
+#    （等价写法：wsl -e bash -c "cd '<仓库的 /mnt 路径>' && bash tools/voice/…"——
+#     仓库路径含空格时必须整体加引号，见下方「PowerShell 调 WSL 的引号规则」）
 
 # 3) 等待就绪（另开终端；/health 200 = ready，加载中 503）
 wsl -e bash -c "curl -s http://127.0.0.1:8010/health && echo && curl -s http://127.0.0.1:8011/health && echo"
@@ -213,19 +221,32 @@ powershell -ExecutionPolicy Bypass -File tools\voice\run_api_tests.ps1
   落位 gitignored artifacts；`COSYVOICE_SKIP_DOWNLOAD=1` 复用重启后
   `127.0.0.1:8010` 与 `127.0.0.1:8011` /health 均 200，
   `smoke_local_voice.py` 全过（ASR 真实转写中文样例文本 + TTS 返回
-  RIFF/WAV 字节，证据 `.verify/m14-02-real-voice-deployment/evidence/`）。
-  **但 `production_ready=false` 不变**：以上仅为单机验证——未接生产后端、
-  未做并发/长稳/断电恢复验证、无开机自启与 SLA（前台进程手动起停）、
-  首次 TTS 推理延迟 ~16s（GPU 冷启）未优化、WSL systemd 会话层重启会连带
-  杀掉两个引擎（2026-09-10 12:00 实证，需运维重拉）。
+  RIFF/WAV 字节；冒烟轮 178604 B / 2.6s，主管复跑 241964 B / 11.4s 冷启，
+  证据 `.verify/m14-02-real-voice-deployment/evidence/`）。
+  **但 `production_ready=false` 不变**：以上仅为单机验证——未接生产后端/
+  生产 DB、未做并发/长稳/断电恢复验证、无开机自启与 SLA（前台进程手动
+  起停）、首次 TTS 推理延迟（冷启 ~11-16s）未优化、WSL systemd 会话层
+  重启会连带杀掉两个引擎（2026-09-10 12:00 实证，需运维重拉）。
+- **compose 容器内 API 调真实引擎的端到端已验证**（2026-09-10 收口轮）：
+  API 容器经 `host.docker.internal` 直探引擎 `/health` 双 200
+  （`8010 …sensevoice` / `8011 …Fun-CosyVoice3-0.5B-2512`，证据
+  `evidence/container_to_host_engine_health_20260910.log`）；隔离 compose
+  项目 `aios-m14-02-voice-e2e`（`AIOS_WEB_PORT=13000`）以真实鉴权令牌
+  验证：providers HTTP 200 且 local-funasr / local-cosyvoice 双 provider
+  `fallback=false`；synthesize HTTP 200（provider=local-cosyvoice，
+  134444 B RIFF/WAV）；transcribe HTTP 200（provider=local-funasr，文本
+  正确，139ms）。
+- **wetext 前端惰性 FST 缓存是明确的剩余边界**：重启复用 8.5GB CosyVoice
+  主模型载荷，但 wetext 文本正则化资源（MB 级 FST：full_to_half / en/tn/*
+  等）在**首次加载时一次性下载**到 `~/.cache/modelscope`（非 CosyVoice
+  主模型，bootstrap 不预置）。已下载后同机复用；离线冷机首次起 bridge
+  需外网（或预置该缓存）——缓存预置/离线打包未实现，属后续运维项。
 - 最小运行时依赖清单已按**真实 AutoModel 加载实证**修正（M14-02）：静态
   导入闭包漏掉模型 YAML `!new:/!name:` 动态实例化路径上的 11 个包
   （conformer/diffusers/lightning/hydra-core/matplotlib/rich/gdown/wget/
   librosa/pyarrow/pyworld，官方 pin 沿用）——已补入清单并由契约测试锁定。
 - bridge 加载失败现打印完整 traceback（M14-02 修复：旧版提示「细节见上方栈」
   但从未输出）。
-- compose 可达性实证是**网络路径**口径（stdlib 探针 + 本地镜像），容器内 API
-  调真实引擎的端到端验证随部署轮进行。
 - 流式 ASR / 流式 TTS 未实现、未宣称（funasr-server 的 WebSocket 流式与
   CosyVoice bi-streaming 均为后续单独立项）。
 - bridge 为单 worker、单模型串行推理（本地单用户口径）；并发容量未测。
