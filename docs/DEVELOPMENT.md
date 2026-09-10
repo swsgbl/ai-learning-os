@@ -731,6 +731,12 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   写入失败稳定 exit 2、无 traceback、旧报告字节原样保留、无 `.tmp` 残留，
   且不再打印门禁结论摘要（防半途报告被误读为完整结论）。九项门禁的命令、
   超时、环境隔离与 live 检查逻辑零改动。
+- **依赖安全门禁（M14-05）不在九项自动门禁内**：Web 生产依赖审计
+  `npm audit --omit=dev --registry=https://registry.npmjs.org`（要求 0
+  vulnerabilities）作为发布前**人工门禁**执行，命令与口径见「本地验证」
+  章节。未纳入 release-check 九项是为保持 M11-03 JSON 证据契约（total/
+  passed/not_executed 计数与 readiness/rehearsal 两侧评估器白名单）零改动；
+  后续若要自动化，需同步扩展 release_check.py 与两侧评估器及测试。
 
 ## 隔离本地 full release-check 一键编排（M11-10）
 
@@ -1307,6 +1313,7 @@ localhost-only CORS / **缺 PUBLIC_LIVEKIT_URL 或其仍是容器内部地址**�
 npm run typecheck
 npm run lint
 npm run build
+npm audit --omit=dev --registry=https://registry.npmjs.org
 ruff check services/api
 # 真实 PG 集成测试：先创建隔离测试库（只查存在 + CREATE，不碰任何既有库），再指向它
 Push-Location services/api
@@ -1316,6 +1323,19 @@ $env:AIOS_PG_TEST_URL='postgresql+asyncpg://aios:aios@127.0.0.1:5433/ai_learning
 Remove-Item Env:DATABASE_URL -ErrorAction SilentlyContinue
 python -m pytest services/api -q
 ```
+
+> **Web 生产依赖安全门禁（M14-05 起）**：`npm audit --omit=dev
+> --registry=https://registry.npmjs.org` 必须为 **0 vulnerabilities**（exit 0）
+> 方可提交/发布 Web 变更。显式指定官方 registry 是因为 advisory 数据以官方
+> 源为准（本机 `.npmrc` 默认 npmmirror 镜像不影响 lock 的 sha512 完整性校验，
+> 但审计口径统一走官方源）。修复漏洞必须升级依赖版本（经 npm 官方 registry
+> 正常解析），**禁止**用 overrides 压制、忽略脚本或手工篡改 lock 版本字符串。
+> 教训案例：next@15.x 曾精确 pin 内嵌 `postcss@8.4.31`（high，≤8.5.22 系列
+> GHSA），15.x 内无法重解析修复，只能整体升级 next@16.3.4（详见
+> `docs/evidence/m14-05-web-security/README.md`）。2026-09-11 已基于
+> `main@cae7aa0`（PR #76 rebase 后）复验：audit/install/lint/typecheck/build
+> 全 exit 0、lock 零漂移、standalone 产物路径与 Dockerfile 吻合——复验命令
+> 与结果见证据 README「基于 main@cae7aa0 的复验」一节。
 
 > **禁止把 5433/`ai_learning_os`（主/共享库）设为 `AIOS_PG_TEST_URL`**（M10-04 事故：
 > 该用法曾让全量 pytest 每轮向主库写入 8 张「PG 验证卷」，6 批共 48 张永久污染，
