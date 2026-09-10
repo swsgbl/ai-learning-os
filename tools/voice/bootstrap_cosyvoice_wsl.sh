@@ -45,9 +45,17 @@
 #   COSYVOICE_SKIP_DOWNLOAD=1  跳过模型下载（模型已就位时）
 #   COSYVOICE_PORT             监听端口（默认 8011；恒绑 127.0.0.1）
 #   COSYVOICE_BRIDGE_API_KEY   bridge 可选鉴权 key（透传给 bridge 进程，不回显）
+#   COSYVOICE_BOOTSTRAP_SNAPSHOT / COSYVOICE_BOOTSTRAP_REPO_ROOT
+#                              内部自保护变量（快照重执行机制），外部无需设置
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+# 快照重执行（见下方自保护块）后 $0 指向 artifacts 内副本——仓库根只能经
+# COSYVOICE_BOOTSTRAP_REPO_ROOT 透传，不能从 $0 再推导
+if [ -n "${COSYVOICE_BOOTSTRAP_REPO_ROOT:-}" ]; then
+  REPO_ROOT="$COSYVOICE_BOOTSTRAP_REPO_ROOT"
+else
+  REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
+fi
 ARTIFACTS="${VOICE_ARTIFACTS_DIR:-$REPO_ROOT/artifacts/voice}"
 COSYVOICE_DIR="$ARTIFACTS/cosyvoice/CosyVoice"
 VENV_DIR="$ARTIFACTS/cosyvoice/venv"
@@ -57,6 +65,28 @@ MODEL_ID="FunAudioLLM/Fun-CosyVoice3-0.5B-2512"
 COSYVOICE_COMMIT_DEFAULT="074ca6dc9e80a2f424f1f74b48bdd7d3fea531cc"
 HOST="127.0.0.1"
 PORT="${COSYVOICE_PORT:-8011}"
+
+# ---- 运行期自保护：快照重执行（M14-02 生产实证修复）----
+# bash 按字节偏移增量解析脚本：本脚本的模型下载可运行数小时，期间仓库内任何
+# 并行会话的 git 操作（commit/checkout 重写本文件）都会让 bash 在旧字节偏移
+# 上解析新内容——产生与真实语法无关的伪语法错误（实证：运行中 66eb080→
+# 6c2f7aa 改写后，下载完成的续读点落在探针 Python 代码上，报「line 169:
+# syntax error near unexpected token ')'」，而两个版本各自 bash -n 均通过）。
+# 启动即把自身原子快照进 gitignored artifacts 并 exec 快照副本：此后本文件
+# 被改写不再影响本进程（快照仅在下一次启动时整体替换——临时文件 + mv 原子
+# 改名，正在运行的旧快照 inode 不被触碰）。
+if [ "${COSYVOICE_BOOTSTRAP_SNAPSHOT:-0}" != "1" ]; then
+  mkdir -p "$ARTIFACTS/cosyvoice"
+  SNAPSHOT="$ARTIFACTS/cosyvoice/bootstrap_cosyvoice_wsl.snapshot.sh"
+  SNAPSHOT_TMP="$SNAPSHOT.tmp.$$"
+  if ! cat -- "$0" > "$SNAPSHOT_TMP" 2>/dev/null; then
+    printf '[bootstrap-cosyvoice] FAIL: 无法写入脚本快照(%s)\n' "$SNAPSHOT" >&2
+    exit 1
+  fi
+  mv -f "$SNAPSHOT_TMP" "$SNAPSHOT"
+  COSYVOICE_BOOTSTRAP_SNAPSHOT=1 COSYVOICE_BOOTSTRAP_REPO_ROOT="$REPO_ROOT" \
+    exec bash "$SNAPSHOT" "$@"
+fi
 
 say() { printf '[bootstrap-cosyvoice] %s\n' "$*"; }
 fail() { printf '[bootstrap-cosyvoice] FAIL: %s\n' "$*" >&2; exit 1; }
@@ -159,11 +189,33 @@ then
   fail "音频后端探针失败（见上）"
 fi
 
-# ---- 模型下载（幂等：目录已有文件即跳过；可 COSYVOICE_SKIP_DOWNLOAD=1 显式跳过）----
+# ---- 模型就位检测与下载（幂等；可 COSYVOICE_SKIP_DOWNLOAD=1 显式跳过）----
+# 就位判定以关键载荷文件为准（cosyvoice3.yaml/flow.pt/llm.pt/hift.pt），不以
+# 「目录非空」为准：ModelScope 断点残留 ._____temp/ 会让空壳目录非空（本机
+# 实证），误判已下载会让 bridge 启动后加载失败。MODEL_DIR 载荷不完整时回落
+# ModelScope 缓存布局（hub/models/<org>/<name>/snapshots/<id>/ 新版或
+# models/<org>/<name>/ 旧版，根可用 MODELSCOPE_CACHE 改址）——缓存与
+# MODEL_DIR 不同位时自动采用缓存快照，不重新下载。
+model_payload_ready() {
+  [ -f "$1/cosyvoice3.yaml" ] && [ -f "$1/flow.pt" ] \
+    && [ -f "$1/llm.pt" ] && [ -f "$1/hift.pt" ]
+}
+
+modelscope_cache_model_dir() {
+  msc_root="${MODELSCOPE_CACHE:-$HOME/.cache/modelscope}"
+  for cand in "$msc_root/hub/models/$MODEL_ID"/snapshots/*/ "$msc_root/models/$MODEL_ID"/; do
+    if model_payload_ready "${cand%/}"; then
+      printf '%s\n' "${cand%/}"
+      return 0
+    fi
+  done
+  return 1
+}
+
 if [ "${COSYVOICE_SKIP_DOWNLOAD:-0}" = "1" ]; then
   say "跳过模型下载（COSYVOICE_SKIP_DOWNLOAD=1）"
-elif [ -n "$(ls -A "$MODEL_DIR" 2>/dev/null || true)" ]; then
-  say "模型目录已存在，跳过下载: artifacts/voice/cosyvoice/Fun-CosyVoice3-0.5B"
+elif model_payload_ready "$MODEL_DIR"; then
+  say "模型载荷已就位，跳过下载: artifacts/voice/cosyvoice/Fun-CosyVoice3-0.5B"
 else
   say "经 ModelScope 下载 $MODEL_ID（数 GB，gitignored artifacts；可断点续传）"
   "$VENV_DIR/bin/python" - "$MODEL_ID" "$MODEL_DIR" <<'PYEOF'
@@ -174,6 +226,18 @@ from modelscope import snapshot_download
 
 snapshot_download(model_id, local_dir=local_dir)
 PYEOF
+fi
+
+# ---- 模型目录终检：载荷缺失时回落 ModelScope 缓存；仍缺失则 fail-closed ----
+if ! model_payload_ready "$MODEL_DIR"; then
+  if CACHE_DIR="$(modelscope_cache_model_dir)"; then
+    say "MODEL_DIR 载荷不完整，回落 ModelScope 缓存模型目录: $CACHE_DIR"
+    MODEL_DIR="$CACHE_DIR"
+  elif [ "${COSYVOICE_SKIP_DOWNLOAD:-0}" = "1" ]; then
+    fail "模型未就位：MODEL_DIR 载荷不完整且 ModelScope 缓存未命中（COSYVOICE_SKIP_DOWNLOAD=1 不下载——去掉该变量重跑补齐，或核对 VOICE_ARTIFACTS_DIR / MODELSCOPE_CACHE 指向）"
+  else
+    fail "下载后载荷校验失败（cosyvoice3.yaml/flow.pt/llm.pt/hift.pt 应齐备）——重跑可断点续传"
+  fi
 fi
 
 say "依赖就绪，已安装版本（记录用）："

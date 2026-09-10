@@ -405,6 +405,9 @@ def test_bridge_script_text_contract() -> None:
         "127.0.0.1",
         "inference_zero_shot",
         "_samples_to_wav_bytes",
+        # M14-02 修复回归：加载失败必须显式打印完整栈（被捕获的异常不自动打印，
+        # 旧文案「细节见上方栈」从未兑现——生产失败无法定位）
+        "traceback.print_exc()",
     ):
         assert anchor in text, anchor
     for pattern in SECRET_PATTERNS:
@@ -443,6 +446,53 @@ def test_bootstrap_torchcodec_pinned_on_cu128_install_line() -> None:
     assert "--index-url https://download.pytorch.org/whl/cu128" in line
 
 
+def test_bootstrap_cosyvoice_self_snapshot_contract() -> None:
+    """运行期自保护回归（2026-09-10 生产实证缺陷）：bash 按字节偏移增量解析
+    脚本——bootstrap 的模型下载可运行数小时，期间本文件被并行会话的 git 操作
+    （commit/checkout）改写后，bash 在旧字节偏移上解析新内容，产生与真实语法
+    无关的伪错误（实证「line 169: syntax error near unexpected token ')'」，
+    而改写前后两个版本各自 bash -n 均通过）。契约：启动即把自身原子快照进
+    gitignored artifacts 并 exec 快照副本，此后本文件被改写不再影响运行中
+    进程；快照运行经内部 env 守卫防循环，仓库根经 env 透传（快照内 $0 已
+    不能推导 REPO_ROOT）。"""
+    text = BOOTSTRAP_COSYVOICE.read_text(encoding="utf-8")
+    for anchor in (
+        'COSYVOICE_BOOTSTRAP_SNAPSHOT:-0}" != "1"',  # 防循环守卫（快照运行不再快照）
+        'cat -- "$0"',  # 快照内容 = 启动时本文件的字节
+        "mv -f",  # 临时文件 + 原子改名（不触碰运行中旧快照的 inode）
+        "bootstrap_cosyvoice_wsl.snapshot.sh",  # 快照落位 gitignored artifacts/cosyvoice/
+        "COSYVOICE_BOOTSTRAP_REPO_ROOT",  # 仓库根经 env 透传给快照运行
+        'exec bash "$SNAPSHOT"',  # 以快照副本接管进程（退出码/信号语义不变）
+    ):
+        assert anchor in text, anchor
+    # 快照重执行必须发生在任何长耗时阶段之前（首个重活 = 官方仓库克隆）
+    assert text.index('exec bash "$SNAPSHOT"') < text.index("git clone --recursive")
+
+
+def test_bootstrap_cosyvoice_model_detection_contract() -> None:
+    """模型目录检测契约：就位判定 = 关键载荷文件齐全，而非「目录非空」
+    （ModelScope 断点残留 ._____temp/ 会让空壳目录非空——本机实证，误判已
+    下载会让 bridge 启动后加载失败）。MODEL_DIR 载荷不完整时回落 ModelScope
+    缓存布局（hub/models/<org>/<name>/snapshots/<id>/ 新版与 models/<org>/
+    <name>/ 旧版，根可用 MODELSCOPE_CACHE 改址）——缓存与 MODEL_DIR 不同位
+    时自动采用缓存，不重新下载；SKIP_DOWNLOAD 下仍无可用模型则 fail-closed
+    给出指引，绝不静默启动空 bridge。"""
+    text = BOOTSTRAP_COSYVOICE.read_text(encoding="utf-8")
+    for anchor in (
+        "model_payload_ready()",
+        "cosyvoice3.yaml", "flow.pt", "llm.pt", "hift.pt",  # 载荷谓词四要素
+        "modelscope_cache_model_dir()",
+        "hub/models/$MODEL_ID",  # ModelScope ≥1.x 缓存布局
+        "models/$MODEL_ID",  # 旧版缓存布局
+        "MODELSCOPE_CACHE",  # 缓存根可改址（与 FunASR bootstrap 同名变量）
+        "回落 ModelScope 缓存",  # 命中回落时必须明示（运维可观测）
+        "模型未就位",  # 载荷缺失 + 缓存未命中 → fail-closed 文案
+    ):
+        assert anchor in text, anchor
+    # 旧的「目录非空即跳过下载」判定必须移除（会误判 ._____temp 空壳目录）
+    assert 'ls -A "$MODEL_DIR"' not in text
+
+
 def test_runtime_requirements_contract() -> None:
     """最小运行时依赖清单：导入闭包必需包 + bridge 服务面（fastapi/uvicorn，复审
     修正——bridge 顶层 import fastapi 且 main() 调 uvicorn.run，必须随清单安装）
@@ -452,6 +502,13 @@ def test_runtime_requirements_contract() -> None:
         "HyperPyYAML", "omegaconf", "transformers", "tiktoken", "openai-whisper",
         "onnxruntime", "einops", "x-transformers", "inflect", "regex", "modelscope",
         "soundfile", "wetext", "numpy", "scipy", "tqdm",
+        # M14-02 实测补入：模型 YAML !new:/!name: 动态实例化（pydoc.locate）
+        # 链上的 Matcha-TTS 自身 PyPI 依赖与 dataset 模块导入——静态闭包不可见，
+        # AutoModel 在 venv 内真实加载逐项实证缺失（官方 pin 沿用）
+        "conformer==0.3.2", "diffusers==0.29.0", "lightning==2.2.4",
+        "hydra-core==1.3.2", "matplotlib==3.7.5", "rich==13.7.1",
+        "gdown==5.1.0", "wget", "librosa==0.10.2", "pyarrow==18.1.0",
+        "pyworld==0.3.4",
         # bridge 服务面（复审修正）：顶层 import fastapi + uvicorn.run
         "fastapi==", "uvicorn==",
     ):
@@ -466,8 +523,10 @@ def test_runtime_requirements_contract() -> None:
         line.startswith(("torch==", "torchaudio==", "torchcodec")) for line in active
     ), "cu128 轮子不得进入 PyPI 解析的最小清单"
     for excluded in (
-        "deepspeed", "tensorrt", "vllm", "gradio", "librosa", "lightning",
-        "pyworld", "matplotlib", "tensorboard", "grpcio", "gdown", "diffusers",
+        # M14-02 修正：librosa/lightning/pyworld/matplotlib/gdown/diffusers 曾列
+        # 排除（静态闭包"零引用"），被真实 AutoModel 加载证伪——已移入上方必需
+        # 清单（模型 YAML 动态实例化路径）；仍排除的仅剩真正训练/部署侧包
+        "deepspeed", "tensorrt", "vllm", "gradio", "tensorboard", "grpcio",
     ):
         # 排除项允许出现在注释（排除依据），不允许出现在生效行首
         active = [line for line in text.splitlines()

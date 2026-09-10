@@ -28,6 +28,7 @@ import io
 import os
 import sys
 import threading
+import traceback
 import wave
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -98,10 +99,13 @@ class _Engine:
             self.model = AutoModel(model_dir=str(self._model_dir))
             self.phase = "ready"
             print("[cosyvoice-bridge] model ready", flush=True)
-        except Exception:  # noqa: BLE001 —— phase 即结论；异常细节只进本进程日志
+        except Exception:  # noqa: BLE001 —— phase 即结论；完整栈只进本进程日志
             self.phase = "failed"
-            print("[cosyvoice-bridge] model load FAILED（依赖缺失或模型不完整；细节见上方栈）",
+            print("[cosyvoice-bridge] model load FAILED（依赖缺失或模型不完整；完整栈如下）",
                   file=sys.stderr, flush=True)
+            # M14-02 修复：被捕获的异常不会自动打印栈——此前提示「细节见上方栈」
+            # 但从未输出，加载失败无法定位（生产实证）；必须显式打印完整栈
+            traceback.print_exc()
 
     def synthesize(self, text: str, prompt_text: str, prompt_wav: str) -> bytes:
         """zero-shot 合成 → WAV 字节。调用方须保证 phase == ready。"""

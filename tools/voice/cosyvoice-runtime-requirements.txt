@@ -6,6 +6,8 @@
 # flow/*（含 DiT）、hifigan/generator.py、tokenizer/tokenizer.py、transformer/*；
 # 模型 YAML（hyperpyyaml instantiate）引用的类全部位于上述模块 + third_party/
 # Matcha-TTS 子模块（经 sys.path，非 pip）。
+# （M14-02 修正：该静态口径漏掉两类依赖——Matcha-TTS 子模块自身的 PyPI 依赖，
+# 与 !name: 动态解析的 dataset 模块导入——见下方「M14-02 实测补入」段。）
 #
 # torch/torchaudio/torchcodec 不在本文件：bootstrap 先从 pytorch cu128 index 装
 # torch/torchaudio + torchcodec==0.11.1+cu128（torchaudio 2.11 后端探测需要
@@ -20,8 +22,7 @@
 # - vllm：仅函数内 import（load_vllm/inference_wrapper 的 vLLM 加速路径）
 # - gradio / fastapi-cli：仅 webui.py 使用（bridge 的 FastAPI 服务面见下方
 #   fastapi/uvicorn 条目——属本清单，非 webui 依赖）
-# - librosa / lightning / pyworld / jieba / pyarrow / matplotlib / networkx /
-#   tensorboard / gdown / wget / grpcio / grpcio-tools / diffusers / conformer：
+# - jieba / networkx / tensorboard / grpcio / grpcio-tools：
 #   运行时闭包零引用（file_utils 只调用 logging.getLogger('matplotlib')，不 import）
 # - onnxruntime-gpu：frontend.py 显式 providers=["CPUExecutionProvider"]，
 #   CPU onnxruntime 即可（避免 CUDA 耦合）
@@ -46,6 +47,31 @@ onnxruntime
 einops
 # flow/DiT/*.py 顶层 `from x_transformers.x_transformers import ...`
 x-transformers==2.11.24
+# M14-02 实测补入（2026-09-10，AutoModel 在 venv 内真实加载逐项实证）：模型
+# YAML 经 HyperPyYAML !new:/!name: 动态实例化（pydoc.locate）——静态导入闭包
+# 与 bootstrap 的 import 探针均探不到。补入包与实证依据：
+# - conformer/diffusers/lightning/hydra-core/matplotlib/rich/gdown/wget/
+#   librosa：YAML 实例化 cosyvoice.flow.flow_matching → matcha.models.
+#   components（decoder.py 顶层 `from conformer import ConformerBlock`、
+#   `from diffusers.models.activations import ...`；transformer.py 顶层
+#   diffusers.models.*）及 matcha.utils 链（pylogger→lightning、
+#   instantiators→hydra、rich_utils→rich、download→gdown/wget、
+#   audio→librosa）与 matcha.hifigan 包 init（matplotlib）
+# - pyarrow/pyworld：YAML !name: 解析 cosyvoice.dataset.processor（顶层
+#   `import pyarrow.parquet` / `import pyworld`——!name: 仅解析不实例化，
+#   但 pydoc.locate 仍须完成整模块导入）
+# 官方 requirements.txt 已 pin 的沿用其 pin；wget 官方未 pin（不 pin）。
+conformer==0.3.2
+diffusers==0.29.0
+lightning==2.2.4
+hydra-core==1.3.2
+matplotlib==3.7.5
+rich==13.7.1
+gdown==5.1.0
+wget
+librosa==0.10.2
+pyarrow==18.1.0
+pyworld==0.3.4
 inflect==7.3.1
 regex
 # cosyvoice.py 顶层 `from modelscope import snapshot_download`（亦用于模型下载）

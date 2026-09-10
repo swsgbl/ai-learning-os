@@ -1,8 +1,9 @@
 # 本地真实语音引擎部署（M14-01 第一切片）
 
-本目录是本地真实语音引擎的可复现 bootstrap 与冒烟工具。**本切片只交付
-adapter + 脚本 + 文档；真实模型部署与端到端验证是另立的验收任务，在此之前
-`production_ready=false`**（见 docs/PROJECT_STATUS.md M14-01 边界）。
+本目录是本地真实语音引擎的可复现 bootstrap 与冒烟工具。M14-01 切片只交付
+adapter + 脚本 + 文档；**M14-02 轮（2026-09-10）已在本机完成真实部署与端到端
+冒烟（双引擎 /health 200 + ASR/TTS 冒烟全过），但 `production_ready=false`
+不变**——单机验证口径与剩余边界见下方「边界」节（docs/PROJECT_STATUS.md 同步）。
 
 ## 架构（定版）
 
@@ -125,6 +126,7 @@ artifacts/voice/                      # 根：VOICE_ARTIFACTS_DIR 可整体改�
 │   ├── CosyVoice/                    # 官方仓库克隆（固定 commit 074ca6d，含子模块）
 │   ├── venv/                         # Python 3.10 独立 venv（uv 管理；cu128 torch + 最小运行时依赖）
 │   ├── requirements.full.txt         # 仅 COSYVOICE_FULL_REQUIREMENTS=1 时生成的完整清单
+│   ├── bootstrap_cosyvoice_wsl.snapshot.sh  # 运行期自保护快照（每次启动原子替换）
 │   └── Fun-CosyVoice3-0.5B/          # Fun-CosyVoice3-0.5B-2512 模型目录
 └── smoke/asr_sample_zh.wav           # 冒烟用官方中文样例（自动下载，可 ASR_SMOKE_AUDIO 覆盖）
 ```
@@ -152,6 +154,21 @@ REQUIREMENTS=1` 回退官方完整 requirements（剔除 torch pin），并把�
 
 - venv/克隆/模型已存在即复用或断点续传；`pip install` 满足即 no-op；uv venv
   已存在则直接复用（解释器版本不重装）。
+- **CosyVoice bootstrap 运行期自保护（M14-02 实证修复）**：bash 按字节偏移
+  增量解析脚本——模型下载可运行数小时，期间仓库内并行会话的 git 操作改写
+  `bootstrap_cosyvoice_wsl.sh` 会让 bash 在旧偏移上解析新内容，产生与真实
+  语法无关的伪错误（生产实证「line 169: syntax error near unexpected token
+  `)`」，改写前后两版本各自 `bash -n` 均通过）。bootstrap 启动即把自身原子
+  快照进 `artifacts/voice/cosyvoice/bootstrap_cosyvoice_wsl.snapshot.sh` 并
+  exec 快照副本——运行期改写仓库内脚本不再影响已启动的 bootstrap。
+- **模型就位判定以载荷文件为准**（cosyvoice3.yaml / flow.pt / llm.pt /
+  hift.pt 齐备），不以「目录非空」为准（ModelScope 断点残留 `._____temp/`
+  会让空壳目录非空）；`MODEL_DIR` 载荷不完整时自动回落 ModelScope 缓存
+  （`hub/models/<org>/<name>/snapshots/<id>/` 新版或 `models/<org>/<name>/`
+  旧版布局，根可用 `MODELSCOPE_CACHE` 改址），命中即采用、不重新下载；
+  `COSYVOICE_SKIP_DOWNLOAD=1` 下仍无可用模型则显式 FAIL（不静默启动空
+  bridge）。模型已就位、只重启 bridge 时用：
+  `COSYVOICE_SKIP_DOWNLOAD=1 wsl -e bash -c "cd '<仓库>' && bash tools/voice/bootstrap_cosyvoice_wsl.sh"`。
 - `funasr==1.4.15`（PyPI，已验证含 `funasr-server` CLI 与
   `/v1/audio/transcriptions`）；CosyVoice 官方仓库固定 commit
   `074ca6dc9e80a2f424f1f74b48bdd7d3fea531cc`（2026-05-25 main HEAD，含
@@ -189,14 +206,24 @@ powershell -ExecutionPolicy Bypass -File tools\voice\run_api_tests.ps1
 `TTS_LOCAL_ENDPOINT` / `ASR_LOCAL_MODEL` / `TTS_LOCAL_MODEL` /
 `ASR_LOCAL_API_KEY` / `TTS_LOCAL_API_KEY` / `VOICE_SMOKE_TEXT`。
 
-## 边界（未验证事项，勿视为已完成）
+## 边界（实际部署状态，2026-09-10 M14-02 轮更新）
 
-- **真实模型未在本切片部署/启动**（本机尚未执行 bootstrap、未下载模型）；
-  脚本正确性由语法检查 + 契约测试锁定（`services/api/tests/test_voice_local_scripts.py`），
-  实际部署验证是另立的验收任务——完成前 `production_ready=false`。
-- 最小运行时依赖清单为**静态推导 + 安装时 import 验证**口径：`AutoModel`
-  完整加载（模型文件 + YAML 实例化）在真实部署轮验证；不足时用
-  `COSYVOICE_FULL_REQUIREMENTS=1` 回退并回报缺失包。
+- **本机已完成真实部署与冒烟**（2026-09-10，WSL2 + RTX 5070 Ti）：模型
+  Fun-CosyVoice3-0.5B-2512（约 8.5GB）与 SenseVoiceSmall 均经 bootstrap 下载
+  落位 gitignored artifacts；`COSYVOICE_SKIP_DOWNLOAD=1` 复用重启后
+  `127.0.0.1:8010` 与 `127.0.0.1:8011` /health 均 200，
+  `smoke_local_voice.py` 全过（ASR 真实转写中文样例文本 + TTS 返回
+  RIFF/WAV 字节，证据 `.verify/m14-02-real-voice-deployment/evidence/`）。
+  **但 `production_ready=false` 不变**：以上仅为单机验证——未接生产后端、
+  未做并发/长稳/断电恢复验证、无开机自启与 SLA（前台进程手动起停）、
+  首次 TTS 推理延迟 ~16s（GPU 冷启）未优化、WSL systemd 会话层重启会连带
+  杀掉两个引擎（2026-09-10 12:00 实证，需运维重拉）。
+- 最小运行时依赖清单已按**真实 AutoModel 加载实证**修正（M14-02）：静态
+  导入闭包漏掉模型 YAML `!new:/!name:` 动态实例化路径上的 11 个包
+  （conformer/diffusers/lightning/hydra-core/matplotlib/rich/gdown/wget/
+  librosa/pyarrow/pyworld，官方 pin 沿用）——已补入清单并由契约测试锁定。
+- bridge 加载失败现打印完整 traceback（M14-02 修复：旧版提示「细节见上方栈」
+  但从未输出）。
 - compose 可达性实证是**网络路径**口径（stdlib 探针 + 本地镜像），容器内 API
   调真实引擎的端到端验证随部署轮进行。
 - 流式 ASR / 流式 TTS 未实现、未宣称（funasr-server 的 WebSocket 流式与
