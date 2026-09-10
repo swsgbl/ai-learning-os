@@ -39,6 +39,116 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field
 
 DEFAULT_MODEL_NAME = "Fun-CosyVoice3-0.5B-2512"
+
+# ---- wetext 离线缓存与零网络复用（M14-03 Round 2）----
+# CosyVoice 固定 commit 的 frontend 以 wetext.Normalizer()（无路径参数）构造
+# 文本正则化前端 → wetext 内部 snapshot_download("pengzhendong/wetext")
+# （revision=master，可变）默认落用户家目录缓存，且 modelscope 1.20 的
+# snapshot_download 即使缓存命中也会先经 API 做 revision/文件清单元数据请求
+# （无 offline 环境变量，local_files_only 仅函数参数，API 失败无缓存回退）。
+# ——宿主"已预置"仍依赖网络，复用路径也发 ModelScope 请求（M14-03 Round 1
+# 被驳回的根因）。Round 2 修法（全部在受支持边界内、窄作用域、契约锁定）：
+#   1. MODELSCOPE_CACHE 确定性指向 gitignored artifacts（setdefault，显式 env 优先）；
+#   2. 引擎加载前预热：payload 缺失才 snapshot_download（唯一容忍网络的步骤，
+#      冷机一次性；COSYVOICE_SKIP_WETEXT_WARMUP=1 显式跳过）；
+#   3. payload 齐备后窄绑定：仅当 model_id == pengzhendong/wetext 时给
+#      snapshot_download 传 local_files_only=True（其余 model id 原样透传，
+#      不影响主模型/其它下载路径）。绑定发生在 cosyvoice/wetext 导入之前
+#      （本函数在 main() 引擎线程启动前执行），wetext 顶层
+#      `from modelscope import snapshot_download` 取到的即包装函数；其
+#      local_files_only 分支零网络直返缓存根目录。
+#   4. 不修改任何第三方包文件、不读写用户家目录 ModelScope 缓存。
+# wetext==0.0.4 Normalizer(lang="auto", operator="tn", remove_erhua=False)
+# 恰好打开以下四个 FST（en/zh 各 tagger+verbalizer）——payload 判定以此为准。
+WETEXT_MODEL_ID = "pengzhendong/wetext"
+WETEXT_PAYLOAD_FILES = (
+    "en/tn/tagger.fst",
+    "en/tn/verbalizer.fst",
+    "zh/tn/tagger.fst",
+    "zh/tn/verbalizer.fst",
+)
+
+
+def wetext_payload_missing(cache_root: Path) -> list[str]:
+    """返回 artifacts 缓存中缺失的 wetext payload 文件（相对路径；空 = 齐备）。"""
+    repo_dir = cache_root.joinpath("hub", *WETEXT_MODEL_ID.split("/"))
+    return [rel for rel in WETEXT_PAYLOAD_FILES if not repo_dir.joinpath(rel).is_file()]
+
+
+def _bind_wetext_snapshot_local_only() -> None:
+    """窄绑定：pengzhendong/wetext 的 snapshot_download 强制 local_files_only=True。
+
+    作用域刻意收窄（契约测试锁定）：
+    - 只拦截 WETEXT_MODEL_ID 一个 model id，其余调用原样透传原始函数；
+    - 只改调用参数，不替换 modelscope 模块逻辑、不落盘任何第三方文件；
+    - 必须在 cosyvoice/wetext 导入前执行（wetext 顶层 from-import 绑定的是
+      modelscope 包命名空间里的当前属性值）。
+    """
+    import modelscope
+
+    _original_snapshot_download = modelscope.snapshot_download
+
+    def _wetext_local_only_snapshot_download(model_id, *args, **kwargs):
+        if model_id != WETEXT_MODEL_ID:
+            return _original_snapshot_download(model_id, *args, **kwargs)
+        kwargs["local_files_only"] = True
+        return _original_snapshot_download(model_id, *args, **kwargs)
+
+    modelscope.snapshot_download = _wetext_local_only_snapshot_download
+    print("[cosyvoice-bridge] wetext snapshot_download bound LOCAL-ONLY "
+          f"(model_id == {WETEXT_MODEL_ID} -> local_files_only=True; others pass through)")
+
+
+def _wire_wetext_offline_cache(model_dir: Path) -> None:
+    """确定性 wetext 离线缓存 + 零网络复用（M14-03 Round 2）。
+
+    - MODELSCOPE_CACHE 未设时指向 <model-dir>/../modelscope-cache（gitignored
+      artifacts 内，随检出可移植）；显式设置的环境变量优先（不覆盖）。
+    - payload 齐备：直接窄绑定 local-only（复用路径零 ModelScope 网络——
+      零文件下载、零元数据/API 请求）。
+    - payload 缺失且未设 COSYVOICE_SKIP_WETEXT_WARMUP=1：先预热（唯一网络
+      步骤，冷机一次性）再绑定；预热失败不阻断 bridge，但显式告警（此时
+      不绑定——frontend 按上游行为自行尝试在线，失败会退化为无 normalizer，
+      加载后内省会再告警一次）。
+    - 预热/绑定均发生在引擎线程启动、/health ready 之前。
+    """
+    default_cache = model_dir.parent / "modelscope-cache"
+    os.environ.setdefault("MODELSCOPE_CACHE", str(default_cache))
+    cache_root = Path(os.environ["MODELSCOPE_CACHE"])
+    skip = os.environ.get("COSYVOICE_SKIP_WETEXT_WARMUP", "") == "1"
+    missing = wetext_payload_missing(cache_root)
+    if not missing:
+        print(f"[cosyvoice-bridge] wetext offline cache READY: {cache_root} "
+              "(payload complete — binding local-only, zero ModelScope traffic)")
+        _bind_wetext_snapshot_local_only()
+        return
+    if skip:
+        print(f"[cosyvoice-bridge] wetext warmup SKIPPED (COSYVOICE_SKIP_WETEXT_WARMUP=1); "
+              f"cache={cache_root} payload_missing={len(missing)} — NOT binding local-only "
+              "(frontend will follow upstream online behavior)")
+        return
+    print(f"[cosyvoice-bridge] wetext payload incomplete ({len(missing)}/{len(WETEXT_PAYLOAD_FILES)} "
+          f"files) — provisioning into {cache_root} BEFORE engine load (one-time network) ...")
+    try:
+        from modelscope import snapshot_download
+
+        snapshot_download(WETEXT_MODEL_ID)
+    except Exception:  # noqa: BLE001 —— 预热失败不阻断 bridge（见 docstring）
+        print("[cosyvoice-bridge] WARN: wetext resource provisioning FAILED "
+              "(network?) — not binding local-only; frontend will follow upstream "
+              "online behavior and may degrade to no-normalizer (post-load "
+              "introspection will WARN); fix network and rerun bootstrap",
+              file=sys.stderr, flush=True)
+        traceback.print_exc()
+        return
+    still = wetext_payload_missing(cache_root)
+    if still:
+        print(f"[cosyvoice-bridge] WARN: wetext payload still incomplete after "
+              f"provisioning: {still} — NOT binding local-only (see introspection)",
+              file=sys.stderr, flush=True)
+        return
+    print(f"[cosyvoice-bridge] wetext offline cache PROVISIONED: {cache_root}")
+    _bind_wetext_snapshot_local_only()
 #: 官方示例的 zero-shot 提示语（asset/zero_shot_prompt.wav 的内容，见仓库 example.py）
 DEFAULT_PROMPT_TEXT = "You are a helpful assistant.<|endofprompt|>希望你以后能够做的比我还好呦。"
 DEFAULT_PROMPT_WAV = "asset/zero_shot_prompt.wav"
@@ -99,6 +209,24 @@ class _Engine:
             self.model = AutoModel(model_dir=str(self._model_dir))
             self.phase = "ready"
             print("[cosyvoice-bridge] model ready", flush=True)
+            # M14-03：文本正则化前端状态内省（fail-soft 只为可观测）——上游
+            # wetext/ttsfrd 构造失败会被 frontend 的裸 except 吞掉、静默退化为
+            # 无 normalizer（TTS 仍可用但质量降级）；这里把降级显式打出来。
+            try:
+                frontend_kind = str(
+                    getattr(getattr(self.model, "frontend", None), "text_frontend", "")
+                    or "",
+                )
+                if frontend_kind:
+                    print(f"[cosyvoice-bridge] text frontend active: {frontend_kind}", flush=True)
+                else:
+                    print("[cosyvoice-bridge] WARN: text frontend EMPTY — text "
+                          "normalization DISABLED (wetext/ttsfrd unavailable; TTS "
+                          "quality degraded; check wetext cache/network)",
+                          file=sys.stderr, flush=True)
+            except Exception:  # noqa: BLE001 —— 内省失败不影响服务
+                print("[cosyvoice-bridge] text frontend status: unknown (introspection failed)",
+                      flush=True)
         except Exception:  # noqa: BLE001 —— phase 即结论；完整栈只进本进程日志
             self.phase = "failed"
             print("[cosyvoice-bridge] model load FAILED（依赖缺失或模型不完整；完整栈如下）",
@@ -200,6 +328,9 @@ def main() -> int:
     if not prompt_wav.is_file():
         print("[cosyvoice-bridge] FAIL: prompt wav 不存在", file=sys.stderr)
         return 2
+
+    # M14-03：确定性 wetext 离线缓存 + 引擎加载前预热（见 _wire_wetext_offline_cache）
+    _wire_wetext_offline_cache(model_dir)
 
     import uvicorn
 

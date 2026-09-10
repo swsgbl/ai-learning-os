@@ -43,6 +43,10 @@
 #   COSYVOICE_FULL_REQUIREMENTS=1  回退官方完整 requirements（剔除 torch pin）
 #   COSYVOICE_COMMIT           官方仓库固定 commit（默认下方默认值）
 #   COSYVOICE_SKIP_DOWNLOAD=1  跳过模型下载（模型已就位时）
+#   COSYVOICE_SKIP_WETEXT_WARMUP=1  跳过 wetext 离线缓存预热（M14-03；启动延迟
+#                              敏感时用——bridge 启动时仍会按需预热/告警）
+#   MODELSCOPE_CACHE           ModelScope 缓存根（默认 <artifacts>/cosyvoice/
+#                              modelscope-cache；wetext 离线缓存所在，见 M14-03 段）
 #   COSYVOICE_PORT             监听端口（默认 8011；恒绑 127.0.0.1）
 #   COSYVOICE_BRIDGE_API_KEY   bridge 可选鉴权 key（透传给 bridge 进程，不回显）
 #   COSYVOICE_BOOTSTRAP_SNAPSHOT / COSYVOICE_BOOTSTRAP_REPO_ROOT
@@ -237,6 +241,47 @@ if ! model_payload_ready "$MODEL_DIR"; then
     fail "模型未就位：MODEL_DIR 载荷不完整且 ModelScope 缓存未命中（COSYVOICE_SKIP_DOWNLOAD=1 不下载——去掉该变量重跑补齐，或核对 VOICE_ARTIFACTS_DIR / MODELSCOPE_CACHE 指向）"
   else
     fail "下载后载荷校验失败（cosyvoice3.yaml/flow.pt/llm.pt/hift.pt 应齐备）——重跑可断点续传"
+  fi
+fi
+
+# ---- wetext 离线缓存（M14-03 Round 2）：确定性 artifacts 内 ModelScope 缓存 + 预热 ----
+# CosyVoice frontend 以无路径参数的 wetext.Normalizer() 构造文本正则化前端 →
+# wetext 内部 snapshot_download("pengzhendong/wetext")（revision=master，可变）
+# 默认落用户家目录 ~/.cache/modelscope——宿主"已预置"仍依赖网络、重启不可预测。
+# 修法（上游支持层，源码实证）：modelscope 1.20 的 snapshot_download 调用时读
+# MODELSCOPE_CACHE 环境变量 → 缓存确定性指向 gitignored artifacts；本步骤在
+# bridge 启动前预热（payload 以 wetext==0.0.4 lang=auto/tn 实际打开的四个 FST
+# 为准），齐备即跳过。预热只是缓存落位；真正的零网络复用由 bridge 完成——
+# 其在引擎加载前对 pengzhendong/wetext 的 snapshot_download 窄绑定
+# local_files_only=True（见 cosyvoice_openai_bridge.py，契约测试锁定），
+# 复用路径零文件下载且零 ModelScope 元数据/API 请求。
+# COSYVOICE_SKIP_WETEXT_WARMUP=1 显式跳过预热；预热失败只告警不阻断
+# （bridge 会按 payload 状态决定预热重试/绑定/告警）。
+export MODELSCOPE_CACHE="${MODELSCOPE_CACHE:-$ARTIFACTS/cosyvoice/modelscope-cache}"
+wetext_repo_dir="$MODELSCOPE_CACHE/hub/pengzhendong/wetext"
+wetext_payload_ready() {
+  [ -f "$wetext_repo_dir/en/tn/tagger.fst" ] \
+    && [ -f "$wetext_repo_dir/en/tn/verbalizer.fst" ] \
+    && [ -f "$wetext_repo_dir/zh/tn/tagger.fst" ] \
+    && [ -f "$wetext_repo_dir/zh/tn/verbalizer.fst" ]
+}
+if [ "${COSYVOICE_SKIP_WETEXT_WARMUP:-0}" = "1" ]; then
+  say "跳过 wetext 预热（COSYVOICE_SKIP_WETEXT_WARMUP=1）；MODELSCOPE_CACHE=$MODELSCOPE_CACHE"
+elif wetext_payload_ready; then
+  say "wetext 离线缓存就绪（payload 齐备，无需下载）: $wetext_repo_dir"
+else
+  say "预置 wetext 文本正则化 FST 到 artifacts 缓存（pengzhendong/wetext，约 52MB）"
+  if ! "$VENV_DIR/bin/python" - <<'PYEOF'
+from modelscope import snapshot_download
+
+snapshot_download("pengzhendong/wetext")
+PYEOF
+  then
+    say "WARN: wetext 预热失败（网络？）——不阻断；bridge 启动时会重试，仍失败将退化为无文本正则化（bridge 会显式告警）"
+  elif wetext_payload_ready; then
+    say "wetext 离线缓存已就位: $wetext_repo_dir"
+  else
+    say "WARN: wetext 预热后 payload 仍不齐（仓库布局变更？）——bridge 启动时会重试并告警"
   fi
 fi
 

@@ -493,6 +493,81 @@ def test_bootstrap_cosyvoice_model_detection_contract() -> None:
     assert 'ls -A "$MODEL_DIR"' not in text
 
 
+def test_bridge_wetext_offline_cache_contract() -> None:
+    """M14-03 Round 2 wetext 零网络复用（bridge 侧契约）：
+    - 缓存位置确定性：MODELSCOPE_CACHE 经 setdefault 指向 model-dir 同级的
+      artifacts 内 modelscope-cache（显式设置的环境变量优先，跨 worktree/
+      Windows/WSL 可移植——不得出现机器特定绝对路径）；
+    - payload 判定 = wetext==0.0.4 lang=auto/tn 实际打开的四个 FST；
+    - payload 齐备即窄绑定：仅 model_id == pengzhendong/wetext 的
+      snapshot_download 强制 local_files_only=True（其余 id 原样透传原始
+      函数——不得是全局 monkeypatch）；绑定在引擎线程/cosyvoice 导入执行前
+      发生（main() wiring 先于 uvicorn 服务启动）；
+    - 预热是唯一容忍网络的步骤（冷机一次性），失败不绑定并显式告警；
+    - COSYVOICE_SKIP_WETEXT_WARMUP=1 为显式跳过 hatch（跳过 = 不绑定）；
+    - 加载后内省 text_frontend——降级必须可见；
+    - 无 secret 泄漏。"""
+    text = BRIDGE.read_text(encoding="utf-8")
+    for anchor in (
+        'WETEXT_MODEL_ID = "pengzhendong/wetext"',
+        "en/tn/tagger.fst", "en/tn/verbalizer.fst",
+        "zh/tn/tagger.fst", "zh/tn/verbalizer.fst",
+        'os.environ.setdefault("MODELSCOPE_CACHE"',
+        'model_dir.parent / "modelscope-cache"',
+        "COSYVOICE_SKIP_WETEXT_WARMUP",
+        "wetext offline cache READY",
+        "wetext resource provisioning FAILED",  # fail-visible（不静默）
+        "text frontend active",  # M14-03：加载后前端状态内省（可观测）
+        "WARN: text frontend EMPTY",  # 降级必须显式告警（上游静默吞掉）
+        "traceback.print_exc()",
+        # Round 2：窄绑定 local-only
+        "_bind_wetext_snapshot_local_only",
+        'kwargs["local_files_only"] = True',
+        "if model_id != WETEXT_MODEL_ID:",  # 窄作用域守卫
+        "return _original_snapshot_download(model_id, *args, **kwargs)",  # 透传
+        "wetext snapshot_download bound LOCAL-ONLY",
+    ):
+        assert anchor in text, anchor
+    # 绑定调用必须由 wiring 函数发出，且 wiring 在服务启动（uvicorn）之前
+    assert text.count("_bind_wetext_snapshot_local_only()") >= 2  # 定义调用 + 齐备路径调用
+    assert text.index("_wire_wetext_offline_cache(model_dir)") < text.index("import uvicorn")
+    # 不落盘第三方文件、不全局替换：绑定只出现在 wetext 常量守卫分支内
+    assert "modelscope.snapshot_download = " in text  # 窄替换（仅包命名空间单属性）
+    # 可移植性：不得硬编码机器特定绝对路径（盘符 / 家目录 / WSL 挂载点）
+    for forbidden in ("/home/", "/mnt/", "D:\\", "C:\\"):
+        assert forbidden not in text, forbidden
+    for pattern in SECRET_PATTERNS:
+        assert pattern not in text, pattern
+
+
+def test_bootstrap_wetext_warmup_contract() -> None:
+    """M14-03 wetext 离线缓存（bootstrap 侧契约）：
+    - MODELSCOPE_CACHE 默认指向 gitignored artifacts 内
+      ($ARTIFACTS/cosyvoice/modelscope-cache)，显式设置优先；
+    - payload 判定同 bridge（四个 FST 齐备 = 就绪，纯本地复用不下载）；
+    - 预热在 bridge exec 之前、在主模型缓存回落判定之后（不改变既有回落语义）；
+    - COSYVOICE_SKIP_WETEXT_WARMUP=1 显式跳过；
+    - 预热失败只告警不阻断（bridge 会重试；fail-closed 会把可用性绑在 ~52MB
+      辅助资源上——设计取舍已在脚本注释与 README 说明）。"""
+    text = BOOTSTRAP_COSYVOICE.read_text(encoding="utf-8")
+    for anchor in (
+        'export MODELSCOPE_CACHE="${MODELSCOPE_CACHE:-$ARTIFACTS/cosyvoice/modelscope-cache}"',
+        "wetext_payload_ready()",
+        "en/tn/tagger.fst", "en/tn/verbalizer.fst",
+        "zh/tn/tagger.fst", "zh/tn/verbalizer.fst",
+        'snapshot_download("pengzhendong/wetext")',
+        "COSYVOICE_SKIP_WETEXT_WARMUP",
+        "WARN: wetext 预热失败",  # 告警不阻断
+    ):
+        assert anchor in text, anchor
+    # 顺序：缓存导出 + 预热必须发生在 bridge exec 之前（锚定 exec 行本身，
+    # 文件头部注释里也提及 bridge 文件名，不能用裸文件名判序）
+    exec_line = 'exec "$VENV_DIR/bin/python" "$REPO_ROOT/tools/voice/cosyvoice_openai_bridge.py"'
+    assert text.index('export MODELSCOPE_CACHE=') < text.index(exec_line)
+    # 顺序：导出必须在主模型缓存回落判定之后（回落语义读用户级默认缓存，不受影响）
+    assert text.index("modelscope_cache_model_dir()") < text.index('export MODELSCOPE_CACHE=')
+
+
 def test_runtime_requirements_contract() -> None:
     """最小运行时依赖清单：导入闭包必需包 + bridge 服务面（fastapi/uvicorn，复审
     修正——bridge 顶层 import fastapi 且 main() 调 uvicorn.run，必须随清单安装）
