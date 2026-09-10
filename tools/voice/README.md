@@ -121,7 +121,8 @@ python tools/voice/smoke_local_voice.py
 - 也可用 `wsl --cd '<仓库的 Windows 路径>'` 让 WSL 直接落在仓库目录后再执行
   `bash tools/voice/bootstrap_funasr_wsl.sh`，避免手写 `/mnt/d/...`。
 - 脚本内部一律 `set -euo pipefail` + 全量引号，bash 侧不怕空格。
-- 两个 bootstrap 前台运行（`exec` 起服务）；停止用 `Ctrl+C` 或关闭终端。
+- 两个 bootstrap 前台运行（`exec` 起服务）；停止用 `Ctrl+C` 或关闭终端
+  ——或改用下方 M14-04 的受控生命周期管理（后台 setsid + manifest 精确回收）。
 
 ## 工件布局（全部 gitignored，绝不入库）
 
@@ -129,13 +130,16 @@ python tools/voice/smoke_local_voice.py
 artifacts/voice/                      # 根：VOICE_ARTIFACTS_DIR 可整体改址
 ├── funasr/
 │   ├── venv/                         # Python 3.11 独立 venv（CPU torch + funasr）
-│   └── modelscope-cache/             # SenseVoiceSmall 模型缓存（MODELSCOPE_CACHE）
+│   ├── modelscope-cache/             # SenseVoiceSmall 模型缓存（MODELSCOPE_CACHE）
+│   └── service/                      # M14-04 受控生命周期：manifest.json / launcher.sh /
+│                                     #   service.log / spawn.pid / workdir.txt / control.lock
 ├── cosyvoice/
 │   ├── CosyVoice/                    # 官方仓库克隆（固定 commit 074ca6d，含子模块）
 │   ├── venv/                         # Python 3.10 独立 venv（uv 管理；cu128 torch + 最小运行时依赖）
 │   ├── requirements.full.txt         # 仅 COSYVOICE_FULL_REQUIREMENTS=1 时生成的完整清单
 │   ├── bootstrap_cosyvoice_wsl.snapshot.sh  # 运行期自保护快照（每次启动原子替换）
-│   └── Fun-CosyVoice3-0.5B/          # Fun-CosyVoice3-0.5B-2512 模型目录
+│   ├── Fun-CosyVoice3-0.5B/          # Fun-CosyVoice3-0.5B-2512 模型目录
+│   └── service/                      # M14-04 受控生命周期（同 funasr/service/ 布局）
 └── smoke/asr_sample_zh.wav           # 冒烟用官方中文样例（自动下载，可 ASR_SMOKE_AUDIO 覆盖）
 ```
 
@@ -214,6 +218,71 @@ powershell -ExecutionPolicy Bypass -File tools\voice\run_api_tests.ps1
 `TTS_LOCAL_ENDPOINT` / `ASR_LOCAL_MODEL` / `TTS_LOCAL_MODEL` /
 `ASR_LOCAL_API_KEY` / `TTS_LOCAL_API_KEY` / `VOICE_SMOKE_TEXT`。
 
+## 生命周期管理（M14-04：status / start / stop / restart）
+
+`tools/voice/voice_service_control.py` 是两个引擎统一的受控生命周期入口
+（单文件、纯标准库；Windows 侧自动经 `wsl.exe --cd <仓库> bash -c` 编排，
+WSL/Linux 内直接跑同一套命令）。复杂度留给系统，简单留给用户：
+
+```powershell
+# Windows 侧（仓库根；PowerShell / Git Bash 均可；WSL 内用 python3 同名命令）
+python tools/voice/voice_service_control.py status                 # 只读体检
+python tools/voice/voice_service_control.py start --engine funasr   # 幂等启动
+python tools/voice/voice_service_control.py stop  --engine cosyvoice
+python tools/voice/voice_service_control.py restart                 # stop → start
+```
+
+- `--engine funasr|cosyvoice|all`（默认 all）；`--port` 覆盖单引擎端口
+  （默认取 `FUNASR_PORT`/`COSYVOICE_PORT` 环境变量，再默认 8010/8011）；
+- 退出码：0 成功/幂等无操作；1 操作失败；2 参数错误；3 安全拒绝。
+  `status` 恒只读（不写不杀），退出码不反映健康度。
+
+**manifest 即事实源**：start 生成 `artifacts/voice/<engine>/service/launcher.sh`
+——`echo $$ > spawn.pid` 后 `exec bash bootstrap_*.sh`；bash 的 exec 链
+（launcher → bootstrap（cosyvoice 含快照 re-exec）→ 服务进程）保持同一 PID，
+故 spawn.pid 恒等于最终服务进程 PID。PID、端口、启动时间、cmdline 匹配标记、
+WSL 工作区（launcher 内 `pwd -P` 落档）原子写入同目录 `manifest.json`；
+进程输出追加到 `service.log`（全部 gitignored）。
+
+**start 幂等（manifest/PID/端口三重事实校验）**：manifest PID 活且 cmdline
+仍含启动标记 → 不重复启动（健康 200 = already running；端口未起/503 =
+bootstrap 阶段，可达数分钟）；stale manifest（PID 已死 / 被无关进程复用 /
+损坏）→ 清理并明确报告后放行；端口已有不受管监听 → 拒绝启动并报告属主 PID
+（不 spawn 注定绑不上端口的第二实例）；并发 start/stop 经 O_EXCL 锁文件
+串行化（崩溃残留的锁 10 分钟后安全回收，回收动作明确报告）。
+
+**stop 安全边界（拒绝误杀）**——只停同时满足以下三点的进程，否则显式拒绝：
+
+1. manifest 归属（无 manifest 的进程一概不碰，包括当前占用 8010/8011 的
+   手工前台实例）；
+2. `/proc/<pid>/cmdline` 仍含启动标记（PID 被无关进程复用 → 判 stale 清理
+   manifest，绝不发信号）；
+3. `/proc/<pid>/cwd` 与 manifest 记录的工作区一致（cmdline 匹配但 cwd 指向
+   别的检出 → 疑似另一 worktree 的实例，拒绝并保留 manifest 供人工核实；
+   cwd 不可读时跳过此项——PID + cmdline 双事实已是防御纵深）。
+
+终止序列：`kill -TERM` → 宽限轮询（15s 内 /proc 消失即优雅退出）→
+`kill -KILL` 兜底。**绝无 pkill / killall / fuser / 按端口杀进程**——kill
+目标恒为 manifest 核验过的单个 PID（契约测试锁定，见
+test_voice_service_control.py）。
+
+**restart 复用缓存**：stop → start 序列中模型不重新下载——bootstrap 的载荷
+文件判定（M14-02：cosyvoice3.yaml/flow.pt/llm.pt/hift.pt 齐备即跳过）与
+wetext 离线缓存（M14-03）均命中 gitignored artifacts 内既有缓存；不改写
+用户家目录 ModelScope/HuggingFace 缓存。stop 拒绝时 restart 中止，不启动
+第二实例。
+
+**失败恢复**：start 后立即退出 / pidfile 未落 → 打印 service.log 尾部并
+exit 1（manifest 不写）；terminate 后进程仍存活（TERM+KILL 均无效）→
+manifest 保留以便重试；`status` 显示 `managed-starting` 且长期不变 →
+看 service.log（bootstrap 阶段含 pip/模型下载，首启可很久）。接管 M14-02
+手工前台实例：先在原终端 `Ctrl+C` 停掉，再 `start` 即纳入受管。
+
+**测试与证据**：生命周期分支（幂等/stale/拒绝误杀/端口竞争/锁/路径解析）
+全部由注入 FakeOps 的单测覆盖，fake health 端点（stdlib http.server，
+仅 127.0.0.1 空闲端口）验证真实 HTTP 探测——测试不启动真实引擎、不占用
+8010/8011（见 `services/api/tests/test_voice_service_control.py`）。
+
 ## 边界（实际部署状态，2026-09-10 M14-02 轮更新）
 
 - **本机已完成真实部署与冒烟**（2026-09-10，WSL2 + RTX 5070 Ti）：模型
@@ -250,4 +319,11 @@ powershell -ExecutionPolicy Bypass -File tools\voice\run_api_tests.ps1
 - 流式 ASR / 流式 TTS 未实现、未宣称（funasr-server 的 WebSocket 流式与
   CosyVoice bi-streaming 均为后续单独立项）。
 - bridge 为单 worker、单模型串行推理（本地单用户口径）；并发容量未测。
-- 本地引擎不提供 SLA/开机自启（前台进程，由运维手动起停）。
+- 本地引擎不提供 SLA/开机自启（前台进程，由运维手动起停；M14-04 起受控
+  生命周期入口可用，见上方「生命周期管理」节，但开机自启仍不在范围）。
+- **M14-04（2026-09-10）**：受控生命周期管理已交付（status / start / stop /
+  restart + manifest 三重事实校验 + 拒绝误杀边界），`production_ready=false`
+  **不变**——仍无开机自启/断电自愈，WSL systemd 会话层重启后仍需运维经
+  restart 重拉；当前本机 8010/8011 两个实例为 M14-02 轮手工前台启动，处于
+  unmanaged 状态，本工具对其只读探测（status 如实显示 unmanaged-running），
+  stop/restart 会拒绝触碰——接管需先在原终端手动停一次再 start。
