@@ -93,16 +93,36 @@ class CommandResult:
     stderr: str
 
 
+@dataclass(frozen=True)
+class RawCommandResult:
+    """子进程原始字节结果——供调用方自行做编码鲁棒解码（如 schtasks /XML）。
+
+    M14-06 R3：schtasks /Query /XML 管道输出实测为 UTF-16LE **可带可不带 BOM**；
+    text-mode（encoding='utf-16'）解法会在读线程抛 UnicodeError 丢输出（生产
+    实证）。需要字节面判断编码的调用方改用 ``run_raw`` 后自行解码。
+    """
+
+    argv: tuple[str, ...]
+    returncode: int
+    stdout: bytes
+    stderr: bytes
+
+
 class Runner(Protocol):
     def run(self, argv: tuple[str, ...] | list[str], *, timeout: float = 60.0,
             encoding: str | None = None) -> CommandResult: ...
+
+    def run_raw(self, argv: tuple[str, ...] | list[str], *, timeout: float = 60.0,
+                ) -> RawCommandResult: ...
 
 
 class RealRunner:
     """真实子进程执行：capture + UTF-8 + Windows 侧恒 CREATE_NO_WINDOW（无弹窗）。
 
-    encoding 覆写供需要 UTF-16 管道输出的调用方使用（如 schtasks /Query /XML，
-    见 windows_startup_task.py）；默认 UTF-8 + replace。
+    ``run`` 默认 UTF-8 + replace（向后兼容，语义不变）；encoding 覆写保留给
+    已知恒定编码的调用方。UTF-16 管道输出（schtasks /Query /XML，BOM 有无随
+    版本/通道而变）一律改走 ``run_raw`` 原始字节 + 调用方鲁棒解码（M14-06 R3，
+    见 windows_startup_task.decode_schtasks_xml）。
     """
 
     def run(self, argv: tuple[str, ...] | list[str], *, timeout: float = 60.0,
@@ -123,6 +143,22 @@ class RealRunner:
         except (OSError, subprocess.TimeoutExpired) as cause:
             raise RunnerError(f"命令不可执行/超时: {text_argv[0]}: {type(cause).__name__}") from cause
         return CommandResult(tuple(text_argv), result.returncode, result.stdout or "", result.stderr or "")
+
+    def run_raw(self, argv: tuple[str, ...] | list[str], *, timeout: float = 60.0,
+                ) -> RawCommandResult:
+        """字节面 capture（不做任何文本解码）：调用方自行判定编码后解码。"""
+        text_argv = [str(item) for item in argv]
+        kwargs: dict[str, object] = {"capture_output": True}
+        if os_windows():
+            kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW  # type: ignore[attr-defined]
+        try:
+            result = subprocess.run(
+                text_argv, check=False, timeout=timeout, **kwargs  # type: ignore[arg-type]
+            )
+        except (OSError, subprocess.TimeoutExpired) as cause:
+            raise RunnerError(f"命令不可执行/超时: {text_argv[0]}: {type(cause).__name__}") from cause
+        return RawCommandResult(tuple(text_argv), result.returncode,
+                                result.stdout or b"", result.stderr or b"")
 
 
 def os_windows() -> bool:

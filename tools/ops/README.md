@@ -59,44 +59,59 @@ python tools/ops/production_recovery.py --dry-run   # 应见「pin: OK」并给�
 六个容器**（compose 对 restart 策略变更的正常反应；之后恢复为 no-op）。该步
 骤由 supervisor 在获准窗口执行——编排脚本自身不会在 pin 未就绪时动任何容器。
 
-## windows_startup_task.py（Round 2，开发-only）
+## windows_startup_task.py（Round 2/3）
 
-隐藏 logon 自愈任务管理器 + 静默执行入口；**Round 2 未注册任何真实任务**——
-真实 install 由 supervisor 在审查通过后另行执行。
+隐藏 logon 自愈任务管理器 + 静默执行入口。**install 需提升令牌**：生产实证
+（2026-09-11）`schtasks /Create /TN AIOS-Production-Recovery /XML <tmp>` 仅在
+elevated token 下成功（非提升被 UAC 拒绝）；在提升的管理终端、主仓库检出上
+执行。
 
 ```
 python tools/ops/windows_startup_task.py dry-run    # 只读预检 + 安装计划（零写操作）
 python tools/ops/windows_startup_task.py status     # 只读状态（exit 0/1/2/3/4 = installed/unknown/missing/foreign/malformed）
-python tools/ops/windows_startup_task.py install    # 真实安装（supervisor 执行；见下）
+python tools/ops/windows_startup_task.py install    # 真实安装（提升令牌 + supervisor 审查后；见下）
 python tools/ops/windows_startup_task.py uninstall  # 仅删本工具精确拥有的任务
 ```
 
-语义与安全性质（契约测试 `test_windows_startup_task.py` 锁定；R2.1 修正）：
+语义与安全性质（契约测试 `test_windows_startup_task.py` 锁定；R2.1 + R3 修正）：
 
 - Task：`AIOS-Production-Recovery`；XML 关键项 Hidden=true / LogonTrigger
   (Enabled=true) / Settings/Enabled=true / InteractiveToken+LeastPrivilege
   （当前用户）/ IgnoreNew / StartWhenAvailable / ExecutionTimeLimit=PT2H /
   电池不禁启不停；Action=`wscript.exe //B //Nologo "<repo>\tools\ops\
-  run_production_recovery_silent.vbs"`；WorkingDirectory=repo；归属标识
-  `RegistrationInfo/URI=urn:aios:m14-06:production-recovery`。**XML 生成时
-  repo/VBS 路径与 Arguments 经 xml.sax.saxutils.escape 转义**（&、<、>、"）
-  ——含特殊字符的路径仍产出可解析 XML，解析后字段精确还原。
+  run_production_recovery_silent.vbs"`；WorkingDirectory=repo；写入
+  `RegistrationInfo/URI=urn:aios:m14-06:production-recovery` +
+  `Description=AIOS production recovery (M14-06) …`（持久归属标记）。**XML
+  生成时 repo/VBS 路径与 Arguments 经 xml.sax.saxutils.escape 转义**（&、<、
+  >、"）——含特殊字符的路径仍产出可解析 XML，解析后字段精确还原。
+- **归属判定适配 Task Scheduler 归一化（R3，生产 + COM 快照实证）**：
+  schtasks 注册后回读的 XML 与写入不同——URI 被重写为 `\AIOS-Production-
+  Recovery`（该形态对**任何**同名任务都会出现，不具区分性）；默认值元素
+  （LogonTrigger/Enabled、Settings/Enabled、Principal/RunLevel）被省略；
+  调度器自行新增 UserId/IdleSettings 等；Action/Arguments/WorkingDirectory/
+  Hidden 与非默认设置逐字保留。exact-owned 判定 = URI 为两种形态之一 **且**
+  Description 持久标记精确相等 **且** Command/Arguments/WorkingDirectory 与
+  全部安全相关设置逐项精确。省略的默认值元素仅在（a）父节点/触发器类型
+  在场、（b）其余必检字段全部精确匹配时按 Windows 默认值认可；显式非默认
+  值（Enabled=false / RunLevel=HighestAvailable）仍逐项拒绝。
 - **wrapper 调用目标一致（无覆盖面）**：VBS 固定调用
   `<repo>\.venv\Scripts\python.exe`；本工具不提供 `--python` 覆盖——
   preflight/dry-run/install 恒检查 `_repo_paths(repo_root)["venv_python"]`，
   feature worktree 无 `.venv` 即 fail-closed（dry-run/install 均拒绝，
   外部 python 路径无法使其成功）。
 - 绝不覆盖同名任务（install 前双重存在性确认，且 install 绝不 /F）；绝不
-  Run 子命令。**uninstall 安全删除**：仅当 URI 与全部归属关键字段（Command/
-  Arguments/WorkingDirectory/Hidden/LogonTrigger(Enabled)/Settings/Enabled/
-  IgnoreNew/StartWhenAvailable/电池双 false/时限/InteractiveToken/
-  LeastPrivilege）exact-owned 时才执行 `/Delete /F`（附 /F 是因为 schtasks
-  无 /F 会交互式确认、capture 管道下挂起）；元素缺失即 mismatch（不短路）；
-  foreign/missing/malformed/unknown/查询失败一律键名-only 拒绝且零删除。
+  Run 子命令。**uninstall 安全删除**：仅当上述 exact-owned 判定全部成立才
+  执行 `/Delete /F`（附 /F 是因为 schtasks 无 /F 会交互式确认、capture 管道
+  下挂起）；元素缺失即 mismatch（不短路，归一化省略面除外且条件严苛）；
+  foreign/missing/malformed/unknown/查询失败/解码失败一律键名-only 拒绝且
+  零删除——归一化 URI 单独**绝不**构成归属凭据。
 - 存在性判定编码无关（schtasks 错误输出是 OEM 代码页，UTF-16 强解会丢输出
   ——2026-09-11 实证）：先全量列表 `/Query /FO CSV /NH`（任务名 ASCII 跨代码
-  页稳定）判存在，存在才以 UTF-16 读 `/XML` 明细；XML 解析前拒绝
-  DOCTYPE/ENTITY（XXE/实体膨胀加固）。
+  页稳定）判存在；存在才取 `/XML` 明细——**原始字节**（`Runner.run_raw`，
+  R3）+ `decode_schtasks_xml` 鲁棒解码（生产实证管道输出为 UTF-16LE **无
+  BOM**；text-mode `encoding='utf-16'` 在读线程抛 UnicodeError 丢输出），
+  解码失败按 unknown fail-closed；XML 解析前拒绝 DOCTYPE/ENTITY（XXE/实体
+  膨胀加固）。
 - pin env 仅存在性检查（install 必需；dry-run 缺失降级为提示——recovery
   自身 fail-closed 兜底），绝不读取/展示值。
 
@@ -107,19 +122,25 @@ python tools/ops/windows_startup_task.py uninstall  # 仅删本工具精确拥�
 弹窗/不开浏览器/不写 secret（日志复用 recovery 的 artifacts/recovery/）。
 预检失败专用退出码：2=venv python 缺失、3=recovery 脚本缺失、4=仓库根缺失。
 
-回滚：`python tools/ops/windows_startup_task.py uninstall`（幂等；仅当
-URI+全部归属关键字段 exact-owned 才 `/Delete /F`，其余状态零删除、无级联）。
+回滚：`python tools/ops/windows_startup_task.py uninstall`（幂等；仅
+exact-owned 才 `/Delete /F`，其余状态零删除、无级联）。
 
-## 状态（Round 2 + R2.1 修正，2026-09-11）
+## 状态（Round 2 + R2.1 + R3，2026-09-11）
 
 - Round 1 已交付：compose restart 策略、恢复编排 + 契约测试、env 模板/护栏
   （R1.1 修正五键 fail-closed 与占位拒绝）。
-- Round 2 已交付：任务管理器 + 静默 wrapper + 契约测试；**未注册真实任务**
-  （status = missing）；生产栈与 8010/8011 未触碰。
+- Round 2 已交付：任务管理器 + 静默 wrapper + 契约测试。
 - R2.1 修正（supervisor 评审 5 缺陷）：① wrapper/preflight 调用目标一致——
-  移除 `--python` 覆盖，恒查 repo 自带 `.venv`（worktree 无 `.venv` 时
-  dry-run/install fail-closed）；② Task XML 路径/Arguments 转义；③
-  WorkingDirectory 缺失即 mismatch；④ 归属校验补齐 8 项逐项精确匹配；
-  ⑤ uninstall 仅 exact-owned 才 `/Delete /F`。测试 46 项（FakeSchtasks）。
-- 待 supervisor：审查后执行 install（需在主仓库检出上运行，使 wrapper 的
-  `<repo>\.venv` 与 Task Scheduler 工作目录一致）。
+  移除 `--python` 覆盖，恒查 repo 自带 `.venv`；② Task XML 路径/Arguments
+  转义；③ WorkingDirectory 缺失即 mismatch；④ 归属校验逐项精确；⑤
+  uninstall 仅 exact-owned 才 `/Delete /F`。
+- **R3 修正（真实安装回环实证，2026-09-11）**：supervisor 在 canonical 主
+  仓库以提升令牌 install 成功（任务 `AIOS-Production-Recovery` 已注册），
+  暴露三处真实行为——① `schtasks /Create` 需 elevated token（UAC）；②
+  `/Query /XML` 管道输出 UTF-16LE **无 BOM**（原 text-mode 读取炸读线程）；
+  ③ Task Scheduler 归一化存储（URI 重写/默认值元素省略/额外元素注入）。
+  修复：`Runner.run_raw` 字节面 capture + `decode_schtasks_xml` 鲁棒解码；
+  归属判定改为「URI 两形态 + Description 持久标记 + 全字段精确（条件认可
+  归一化省略的默认值）」。测试 60 项（FakeSchtasks，零真实 schtasks 写路径）。
+- 边界不变：foreign/malformed/unknown 永不 force、永不删除；本目录工具
+  绝不触碰 Docker/8010/8011。

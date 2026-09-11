@@ -1,4 +1,4 @@
-r"""M14-06 Round 2（R2.1 修正）契约测试：windows_startup_task.py + 静默 VBS wrapper。
+r"""M14-06 Round 2/3（R2.1 + R3 修正）契约测试：windows_startup_task.py + 静默 VBS wrapper。
 
 零真实系统触碰：全部经 FakeSchtasks 注入——绝不调用真实 schtasks 写路径、
 不注册/删除/运行任何任务、不碰 Docker/8010/8011。
@@ -7,25 +7,32 @@ r"""M14-06 Round 2（R2.1 修正）契约测试：windows_startup_task.py + 静�
 - Task XML 关键项逐项断言（Hidden/LogonTrigger(Enabled)/Settings/Enabled/
   InteractiveToken/LeastPrivilege/IgnoreNew/StartWhenAvailable/PT2H/电池不禁
   启停/wscript //B //Nologo + 仓库内 wrapper 路径/WorkingDirectory=repo/
-  URI 标识）；
+  URI 标识 + Description 持久归属标记）；
 - XML 转义（R2.1 缺陷 2）：repo/VBS 路径含 &、<、>、" 时 XML 仍可解析、
   解析后字段精确还原、verify round-trip 仍 installed；
-- verify_task_xml 四态（R2.1 缺陷 3/4）：installed（round-trip）/ foreign
-  （URI 或 Command 别处）/ malformed（任一归属关键字段缺失或漂移——含
-  WorkingDirectory 元素缺失即 mismatch；XML 垃圾；DOCTYPE/ENTITY 拒绝），
-  且缺失/漂移逐项报告字段名；
+- verify_task_xml 四态（R2.1 缺陷 3/4；R3 归一化适配）：installed（round-trip
+  及 Task Scheduler 归一化形态）/ foreign（URI 非两种形态之一，或 Command
+  别处）/ malformed（归属标识匹配但任一字段缺失或漂移——含 WorkingDirectory
+  等元素缺失即 mismatch；XML 垃圾；DOCTYPE/ENTITY 拒绝），且缺失/漂移逐项
+  报告字段名；
+- R3 真实回读回归：/XML 输出 UTF-16LE **无 BOM**（生产实证形态）/ 带 BOM /
+  BE BOM 均解码；OEM 乱码/奇数字节 → unknown fail-closed + 零删除；Task
+  Scheduler 归一化（URI 重写为 \\<TaskName>、默认值元素省略、新增 UserId/
+  IdleSettings 等额外元素）仍判 exact-owned；归一化 URI 单独不构成归属
+  （Description 漂移/缺失 → 拒绝）；省略默认值仅在其余字段全部精确在场时
+  认可（其余字段漂移时省略同样计 mismatch）；
 - wrapper 一致性（R2.1 缺陷 1）：无 --python 覆盖（parser 拒绝、cmd_dry_run/
   cmd_install 签名无 python_path）、preflight 恒查 repo 自带 .venv——有
   .venv dry-run OK、无 .venv fail-closed（外部 python 存在也不放行）；
 - dry-run：零写操作（仅 /Query）、任务缺失 + 预检过 → exit 0；预检缺项/任务
   存在/查询事实不完整 → exit 1；
 - install：happy path（/Create /TN /XML 临时文件、临时 XML 内容精确等于
-  build_task_xml、UTF-16、用后即删、复查通过）；拒绝同名（installed/foreign/
-  unknown）、二次复核不确认 missing、pin env 缺失、venv python 缺失——一律零
-  /Create；
-- status 五态 + 退出码；uninstall（R2.1 缺陷 5）：仅 exact-owned（URI+全部
-  归属关键字段精确匹配）才 /Delete /F；missing 幂等 exit 0；foreign/
-  malformed/明细不可读 unknown/全量列表查询失败 → 零 /Delete；
+  build_task_xml、UTF-16、用后即删、**归一化回读**复查通过——R3 真实回环）；
+  拒绝同名（installed/foreign/unknown）、二次复核不确认 missing、pin env
+  缺失、venv python 缺失——一律零 /Create；
+- status 五态 + 退出码；uninstall（R2.1 缺陷 5）：仅 exact-owned（归属标识+
+  全部关键字段精确匹配）才 /Delete /F；missing 幂等 exit 0；foreign/
+  malformed/明细不可读 unknown/全量列表查询失败/解码失败 → 零 /Delete；
 - wrapper 契约：无盘符硬编码、不内嵌 secret、隐藏窗口 Run(...,0,True)、
   WScript.Quit 透传、仓库根经 GetParentFolderName 推导、固定 repo/.venv
   python 调用目标；
@@ -67,18 +74,46 @@ def _load_module(path: Path, name: str):
 wst = _load_module(SCRIPT, "windows_startup_task_under_test")
 
 
+def normalize_task_xml(xml_text: str) -> str:
+    """模拟 Task Scheduler 归一化存储（2026-09-11 生产 + COM 快照实证形态）。
+
+    schtasks /Create 注册后回读的 XML 与写入 XML 的差异：URI 重写为
+    ``\\<TaskName>``；省略「值恰为 Windows 默认值」的元素（LogonTrigger/
+    Enabled、Settings/Enabled、Principal/RunLevel）；Action/Arguments/
+    WorkingDirectory/Hidden 与非默认设置逐字保留。测试用它把 build_task_xml
+    输出变换成真实回读形态（extra 元素注入见各测试）。
+    """
+    text = xml_text.replace(wst.TASK_URI, wst.NORMALIZED_TASK_URI)
+    text = text.replace(
+        "    <LogonTrigger>\n      <Enabled>true</Enabled>\n    </LogonTrigger>",
+        "    <LogonTrigger />")
+    text = text.replace(
+        "    <Hidden>true</Hidden>\n    <Enabled>true</Enabled>\n  </Settings>",
+        "    <Hidden>true</Hidden>\n  </Settings>")
+    text = text.replace("      <RunLevel>LeastPrivilege</RunLevel>\n", "")
+    return text
+
+
 # ---------------------------------------------------------------- fakes / fixtures
 
 class FakeSchtasks:
     """伪 schtasks：按命令形态回放预制结果；记录全部 argv；/Create 时捕获临时 XML。
 
     list_query_rc != 0 模拟「全量列表查询失败」（STATE_UNKNOWN 的事实不完整路径）。
+    R3：/XML 明细经 run_raw 回放**原始字节**；xml_output 选择编码形态——
+    "utf-16le-nobom"（生产实证形态）/ "utf-16le-bom"（经典形态）/
+    "utf-16be-bom"（解码兼容面）/ "oem-garbage"（rc=0 但非 XML 字节 → 解码
+    fail-closed）。xml_bytes 直接给定字节时优先于一切。默认 _xml() 回放
+    **归一化**形态（真实 schtasks 注册后的回读即归一化——R3 回归主路径）。
     """
 
     def __init__(self, *, repo_root: Path, task_state: str = "missing",
                  xml_text: str | None = None, create_rc: int = 0, delete_rc: int = 0,
                  plain_query_exists: bool | None = None,
-                 list_query_rc: int = 0) -> None:
+                 list_query_rc: int = 0,
+                 xml_output: str = "utf-16le-nobom",
+                 xml_bytes: bytes | None = None,
+                 normalized_readback: bool = True) -> None:
         self.repo_root = repo_root
         self.task_state = task_state
         self.xml_text = xml_text
@@ -86,6 +121,9 @@ class FakeSchtasks:
         self.delete_rc = delete_rc
         self.plain_query_exists = plain_query_exists
         self.list_query_rc = list_query_rc
+        self.xml_output = xml_output
+        self.xml_bytes = xml_bytes
+        self.normalized_readback = normalized_readback
         self.calls: list[tuple[str, ...]] = []
         self.captured_xml: str | None = None
         self.captured_xml_path: Path | None = None
@@ -93,7 +131,22 @@ class FakeSchtasks:
     def _xml(self) -> str:
         if self.xml_text is not None:
             return self.xml_text
+        if self.normalized_readback:
+            return normalize_task_xml(wst.build_task_xml(self.repo_root))
         return wst.build_task_xml(self.repo_root)
+
+    def _xml_payload(self) -> bytes:
+        if self.xml_bytes is not None:
+            return self.xml_bytes
+        if self.xml_output == "oem-garbage":
+            # rc=0 但输出不是 XML：模拟 OEM 代码页错误文案被误当明细回读
+            return "ERROR: 拒绝访问: 取不到任务详细信息。\r\n".encode("gbk")
+        text = self._xml()
+        if self.xml_output == "utf-16le-bom":
+            return b"\xff\xfe" + text.encode("utf-16-le")
+        if self.xml_output == "utf-16be-bom":
+            return b"\xfe\xff" + text.encode("utf-16-be")
+        return text.encode("utf-16-le")  # utf-16le-nobom：生产实证形态
 
     def run(self, argv, *, timeout: float = 60.0, encoding: str | None = None):
         argv = tuple(str(item) for item in argv)
@@ -120,12 +173,18 @@ class FakeSchtasks:
             if exists:
                 rows += f'"HOST","\\{wst.TASK_NAME}","2026/09/11 09:30:00","Ready"\n'
             return ok(argv, 0, rows, "")
-        # /Query /TN ... /XML（仅在任务存在时被调用）
+        raise AssertionError(f"FakeSchtasks.run 不应再被 /XML 明细路径调用（应走 run_raw）: {argv}")
+
+    def run_raw(self, argv, *, timeout: float = 60.0):
+        """R3：/Query /TN ... /XML 明细走原始字节（真实 schtasks 管道形态）。"""
+        argv = tuple(str(item) for item in argv)
+        self.calls.append(argv)
+        ok = wst.pr.RawCommandResult  # type: ignore[attr-defined]
         if self.task_state == "missing":
-            return ok(argv, 1, "", "ERROR: cannot find")
+            return ok(argv, 1, b"", "ERROR: cannot find".encode("gbk"))
         if self.task_state == "unknown":
-            return ok(argv, 1, "", "ERROR: Access is denied.")
-        return ok(argv, 0, self._xml(), "")
+            return ok(argv, 1, b"", "ERROR: Access is denied.".encode("gbk"))
+        return ok(argv, 0, self._xml_payload(), b"")
 
 
 @pytest.fixture()
@@ -169,6 +228,7 @@ def test_task_xml_key_settings(fake_repo: Path) -> None:
         return node.text.strip()
 
     assert text_of("t:RegistrationInfo/t:URI") == wst.TASK_URI
+    assert text_of("t:RegistrationInfo/t:Description") == wst.TASK_DESCRIPTION  # 持久归属标记
     assert root.find("t:Triggers/t:LogonTrigger", NS) is not None
     assert text_of("t:Triggers/t:LogonTrigger/t:Enabled") == "true"
     assert text_of("t:Settings/t:Enabled") == "true"
@@ -259,7 +319,11 @@ def test_verify_task_xml_drift_reports_field_names_only(fake_repo: Path, mutate,
     (r"<WorkingDirectory>[^<]*</WorkingDirectory>", "Actions/Exec/WorkingDirectory"),
     (r"<Arguments>[^<]*</Arguments>", "Actions/Exec/Arguments"),
     (r"<MultipleInstancesPolicy>[^<]*</MultipleInstancesPolicy>", "Settings/MultipleInstancesPolicy"),
-    (r"<RunLevel>[^<]*</RunLevel>", "Principals/Principal/RunLevel"),
+    # R3：RunLevel/LogonTrigger(Enabled)/Settings(Enabled) 属归一化省略面（值=
+    # Windows 默认时 Task Scheduler 会省略），不再作为「缺失即 mismatch」样本；
+    # 非默认值元素缺失仍拒绝：
+    (r"<Hidden>[^<]*</Hidden>", "Settings/Hidden"),
+    (r"<Description>[^<]*</Description>", "RegistrationInfo/Description"),
 ])
 def test_verify_task_xml_missing_elements_are_mismatches(fake_repo: Path, pattern, field) -> None:
     """R2.1 缺陷 3：元素缺失 = mismatch（不得 if working_dir and ... 短路放行）。"""
@@ -275,6 +339,116 @@ def test_verify_task_xml_rejects_garbage_and_entities(fake_repo: Path) -> None:
         "<Task ", "<!DOCTYPE Task [<!ENTITY xxe SYSTEM \"file:///c:/win.ini\">]><Task ", 1)
     state, issues = wst.verify_task_xml(entity, fake_repo)
     assert state == wst.STATE_MALFORMED and any("ENTITY" in i for i in issues)
+
+
+# ------------------------------------------------- R3：真实回读/归一化回归
+# 生产实证（2026-09-11，canonical 安装 AIOS-Production-Recovery 后回读）：
+# ① /XML 管道输出 UTF-16LE 无 BOM——text-mode encoding='utf-16' 在读线程抛
+#    UnicodeError 丢输出（status 误判 unknown 的根因）；
+# ② Task Scheduler 归一化存储：URI 重写为 \\<TaskName>，省略默认值元素
+#    （LogonTrigger/Enabled、Settings/Enabled、Principal/RunLevel），自行
+#    新增 UserId/IdleSettings 等；Action/Arguments/cwd/Hidden 与非默认设置
+#    逐字保留（COM 快照 .verify/m14-06-production-resilience/）。
+
+def test_decode_schtasks_xml_bom_and_byte_variants(fake_repo: Path) -> None:
+    """R3：UTF-16LE 无 BOM（生产形态）/ LE BOM / BE BOM 三形态解码等价。"""
+    xml_text = wst.build_task_xml(fake_repo)
+    assert wst.decode_schtasks_xml(xml_text.encode("utf-16-le")) == xml_text.strip()
+    assert wst.decode_schtasks_xml(b"\xff\xfe" + xml_text.encode("utf-16-le")) == xml_text.strip()
+    assert wst.decode_schtasks_xml(b"\xfe\xff" + xml_text.encode("utf-16-be")) == xml_text.strip()
+
+
+@pytest.mark.parametrize("bad", [
+    b"ERROR: something in plain ASCII",  # ASCII/OEM 文案强解成乱码 → 非 '<' 开头
+    b"\xd2\xfb\xbe\xfc\xbd\xfb",        # GBK 错误文案字节 → 解出 CJK 乱码
+    b"<",                                # 奇数字节（截断的 UTF-16）
+    b"\xff\xfe",                         # 仅 BOM 无正文
+])
+def test_decode_schtasks_xml_rejects_non_xml_bytes(bad: bytes) -> None:
+    """非 XML 字节一律 ValueError——调用方按 unknown fail-closed，绝不弱解。"""
+    with pytest.raises(ValueError):
+        wst.decode_schtasks_xml(bad)
+
+
+def test_query_task_decodes_production_no_bom_output(fake_repo: Path) -> None:
+    """R3 主回归：真实回读形态（UTF-16LE 无 BOM + 归一化 XML）→ installed。"""
+    runner = FakeSchtasks(repo_root=fake_repo, task_state="installed",
+                          xml_output="utf-16le-nobom")
+    query = wst.query_task(runner, fake_repo)
+    assert query.state == wst.STATE_INSTALLED and query.issues == ()
+
+
+@pytest.mark.parametrize("xml_output", ["utf-16le-bom", "utf-16be-bom"])
+def test_query_task_accepts_bommed_variants(fake_repo: Path, xml_output: str) -> None:
+    runner = FakeSchtasks(repo_root=fake_repo, task_state="installed", xml_output=xml_output)
+    assert wst.query_task(runner, fake_repo).state == wst.STATE_INSTALLED
+
+
+def test_query_task_decode_failure_is_unknown_and_uninstall_refuses(fake_repo: Path) -> None:
+    """rc=0 但输出非 XML 字节（OEM 乱码）→ unknown；uninstall 可见拒绝、零 /Delete。"""
+    runner = FakeSchtasks(repo_root=fake_repo, task_state="installed", xml_output="oem-garbage")
+    query = wst.query_task(runner, fake_repo)
+    assert query.state == wst.STATE_UNKNOWN
+    _, log = _log_spy()
+    assert wst.cmd_uninstall(runner=runner, repo_root=fake_repo, log=log) == wst.EXIT_ERROR
+    assert not any("/Delete" in argv for argv in runner.calls)
+
+
+def test_verify_accepts_scheduler_normalized_roundtrip(fake_repo: Path) -> None:
+    """归一化回读（URI 重写 + 默认值元素省略 + 调度器新增额外元素）仍 exact-owned。"""
+    normalized = normalize_task_xml(wst.build_task_xml(fake_repo))
+    with_extras = normalized.replace(
+        "    <Principal id=\"Author\">",
+        "    <Principal id=\"Author\">\n"
+        "      <UserId>S-1-5-21-0000000000-0000000000-0000000000-0000</UserId>")
+    with_extras = with_extras.replace(
+        "  </Settings>",
+        "    <IdleSettings>\n      <StopOnIdleEnd>true</StopOnIdleEnd>\n"
+        "      <RestartOnIdle>false</RestartOnIdle>\n    </IdleSettings>\n  </Settings>")
+    assert wst.verify_task_xml(with_extras, fake_repo) == (wst.STATE_INSTALLED, [])
+
+
+def test_verify_normalized_uri_alone_is_not_ownership(fake_repo: Path) -> None:
+    """归一化 URI 形态对任何同名任务都出现——单独绝不构成归属（须叠加
+    Description 持久标记；其他任意 URI / 别处 Command → foreign）。"""
+    normalized = normalize_task_xml(wst.build_task_xml(fake_repo))
+    desc_missing = normalized.replace(f"    <Description>{wst.TASK_DESCRIPTION}</Description>\n", "")
+    assert wst.verify_task_xml(desc_missing, fake_repo)[0] == wst.STATE_MALFORMED
+    desc_drift = normalized.replace(wst.TASK_DESCRIPTION, "some other tool owns this task")
+    assert wst.verify_task_xml(desc_drift, fake_repo)[0] == wst.STATE_MALFORMED
+    other_uri = normalized.replace(wst.NORMALIZED_TASK_URI, "\\SomeOtherTask")
+    assert wst.verify_task_xml(other_uri, fake_repo)[0] == wst.STATE_FOREIGN
+    evil_cmd = normalized.replace("<Command>wscript.exe</Command>", "<Command>evil.exe</Command>")
+    assert wst.verify_task_xml(evil_cmd, fake_repo)[0] == wst.STATE_FOREIGN
+
+
+def test_verify_omitted_defaults_require_all_other_fields_exact(fake_repo: Path) -> None:
+    """省略的默认值元素仅在其余必检字段全部精确在场时认可——Hidden 缺失或
+    触发器类型缺失时，省略同样计 mismatch（默认值假设绝不独立放行）。"""
+    normalized = normalize_task_xml(wst.build_task_xml(fake_repo))
+    hidden_missing = normalized.replace("    <Hidden>true</Hidden>\n", "")
+    state, issues = wst.verify_task_xml(hidden_missing, fake_repo)
+    assert state == wst.STATE_MALFORMED
+    assert "Settings/Hidden" in issues
+    assert "Triggers/LogonTrigger/Enabled" in issues  # 其余事实不全时省略不再被掩盖
+    no_trigger = normalized.replace("    <LogonTrigger />", "")
+    state, issues = wst.verify_task_xml(no_trigger, fake_repo)
+    assert state == wst.STATE_MALFORMED and "Triggers/LogonTrigger" in issues
+
+
+def test_status_and_uninstall_on_normalized_no_bom_roundtrip(fake_repo: Path) -> None:
+    """端到端（R3 生产形态）：归一化 + 无 BOM 回读下 status=exit 0、
+    uninstall 仅 exact-owned 才 /Delete /F。"""
+    runner = FakeSchtasks(repo_root=fake_repo, task_state="installed",
+                          xml_output="utf-16le-nobom")
+    _, log = _log_spy()
+    assert wst.cmd_status(runner=runner, repo_root=fake_repo, log=log) == wst.EXIT_OK
+    runner2 = FakeSchtasks(repo_root=fake_repo, task_state="installed",
+                           xml_output="utf-16le-nobom")
+    _, log2 = _log_spy()
+    assert wst.cmd_uninstall(runner=runner2, repo_root=fake_repo, log=log2) == wst.EXIT_OK
+    deletes = [argv for argv in runner2.calls if "/Delete" in argv]
+    assert deletes == [("schtasks.exe", "/Delete", "/TN", wst.TASK_NAME, "/F")]
 
 
 # ------------------------------------------------- wrapper 一致性（R2.1 缺陷 1）
