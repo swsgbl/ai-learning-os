@@ -1,11 +1,12 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
 `restart: unless-stopped`（M14-06）承担；本目录的 `production_recovery.py`
 承担编排面：等引擎 → 校验 → 幂等 up → 健康核查 → 本地语音受控调和；
 `soak_rehearsal.py`（M14-11）承担只读 soak/并发彩排面（fail-closed 五要素
-门禁，默认 plan 零网络）。
+门禁，默认 plan 零网络）；`production_monitor.py`（M14-12）承担只读
+监控采集 + 阈值判定 + 证据报告面（默认 plan 零采集，不接外部告警）。
 
 ## production_recovery.py
 
@@ -203,3 +204,59 @@ python tools/ops/soak_rehearsal.py --execute \
   样本（栈疑似未起）；2 用法/门禁拒绝。
 - 本工具零子进程、零容器面/计划任务命令（源码契约锁定）；绝不触碰
   8010/8011 进程状态（仅当 `--include-voice` 时对其发低频 GET `/health`）。
+
+## production_monitor.py（M14-12）
+
+生产监控 readiness：**只读采集 → 阈值判定 → 证据报告**（监控/告警收口的
+第一块可控基础；本里程碑**不接外部告警系统**）。开发/排障默认零采集；
+真实采集仅由 supervisor 在获准窗口运行。
+
+```
+python tools/ops/production_monitor.py                # plan（默认：零 subprocess/零网络/零生产读取）
+python tools/ops/production_monitor.py --execute \
+    --confirm "EXECUTE READ-ONLY PRODUCTION MONITORING"   # execute（旗标+精确短语齐备才放行）
+```
+
+安全性质（契约测试 `services/api/tests/test_production_monitor.py` 锁定；
+细节见脚本头注释与 `docs/evidence/m14-12-production-monitoring/README.md`）：
+
+- **双模式门禁**：默认 plan 零副作用（socket/subprocess 双阻断下照常出
+  计划与 plan 报告，且 plan 报告不出现任何状态宣称）；execute 需
+  `--execute` 旗标 + 精确确认短语 `EXECUTE READ-ONLY PRODUCTION
+  MONITORING`（一字不差）+ 全部阈值在硬顶内——缺一即 EXIT 2 零采集。
+  R1 起：非有限浮点（nan/inf/-inf）与非法 `--project`（严格白名单：
+  ASCII 字母数字开头、仅字母数字/连字符/下划线、≤64；被拒值不回显）
+  同样在 plan 报告写入/采集之前拒绝。
+- **只读采集面**（固定画像）：compose project
+  `aios-m14-03-production-rehearsal`（--profile local）——compose ps
+  （六受管服务 health/state）、六容器 docker inspect（state/health/
+  RestartCount/image/started）、五默认端点 GET（Web 3011 `/`+`/login`、
+  API 8000 `/health`、FunASR 8010/CosyVoice 8011 `/health`）状态+延迟、
+  容器日志安全错误摘要（`docker logs --tail`——只记匹配计数/级别/安全
+  类别，**原文绝不持久化**）。
+- **子进程白名单门（结构性）**：一切 docker 命令经 `ReadonlyRunner` 的
+  `is_readonly_docker_command` 校验——仅 compose ps / inspect --format /
+  logs --tail 三形态放行，stop/rm/kill/restart/down/exec/up/logs -f 等
+  一律在任何执行之前拒绝；Windows 侧恒 CREATE_NO_WINDOW。
+- **loopback 纪律**（与 soak 同款）：五端点固定画像仅字面 loopback IP；
+  `http.client` 直连零代理面（proxy env 仅键名存在性入注记）；GET-only、
+  无认证/cookie/token、不读响应体、带超时。
+- **部分失败如实入档**：任一采集器失败 → `partial=true` + 安全类别
+  （仅类别+异常类名）→ `overall_status=incomplete`；**缺失绝不当作
+  healthy**（fail-closed：failed 项恒为可见 critical alert）。
+- **阈值**（全部含边界，warn 恒可见）：compose 6/6 healthy、五端点恒
+  200、容器 health/state、RestartCount（默认 warn≥1/critical≥5）、日志
+  错误计数（默认 warn≥5/critical≥20）、端点延迟（默认 warn≥1000ms/
+  critical≥5000ms）；CLI 可调但受硬顶 fail-closed。
+- **报告**：schema 版本化 JSON + Markdown **原子写**（同目录 tmp +
+  os.replace；拒绝 symlink 组件/越界 stem）；**默认落 gitignored
+  `.verify/artifacts/m14-12-production-monitoring/`，`--artifact-dir`
+  自定义路径为操作者显式自选覆盖——其位置与 gitignore 状态由操作者
+  负责**（报告边界注记/CLI help/运行时注记同口径）；含 UTC 时间、配置、
+  边界注记、collector 状态、阈值结果；`monitoring_ready` 仅采集完整且
+  零 warn/critical 时 true——**≠ production ready，本工具绝不宣称生产
+  就绪**；本里程碑零外部告警发送。
+- 退出码：0 plan 成功 / execute 完整采集且 ok|warn（warn 恒可见不隐藏）；
+  2 非法/fail-closed（含确认缺失、阈值超顶、非有限浮点、非法项目名、
+  symlink/越界路径）或采集 incomplete 或存在 critical（含证据报告写入
+  失败——证据不可失）。
