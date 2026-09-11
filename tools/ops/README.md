@@ -107,11 +107,16 @@ python tools/ops/windows_startup_task.py uninstall  # 仅删本工具精确拥�
   零删除——归一化 URI 单独**绝不**构成归属凭据。
 - 存在性判定编码无关（schtasks 错误输出是 OEM 代码页，UTF-16 强解会丢输出
   ——2026-09-11 实证）：先全量列表 `/Query /FO CSV /NH`（任务名 ASCII 跨代码
-  页稳定）判存在；存在才取 `/XML` 明细——**原始字节**（`Runner.run_raw`，
-  R3）+ `decode_schtasks_xml` 鲁棒解码（生产实证管道输出为 UTF-16LE **无
-  BOM**；text-mode `encoding='utf-16'` 在读线程抛 UnicodeError 丢输出），
-  解码失败按 unknown fail-closed；XML 解析前拒绝 DOCTYPE/ENTITY（XXE/实体
-  膨胀加固）。
+  页稳定）判存在；存在才取 `/XML` 明细——**原始字节**（`Runner.run_raw`）
+  + `decode_schtasks_xml` 按**字节形态**严格解码。/XML 输出编码随捕获通道
+  而变（**不宣称单一编码**）：R3 在 PowerShell 管道观测为 UTF-16LE 无 BOM
+  （text-mode `encoding='utf-16'` 在读线程抛 UnicodeError 丢输出）；R4 在
+  生产机经本工具实际路径（Python `run_raw` 原始捕获）观测为 **ASCII/UTF-8**
+  无 BOM（len 1446、`<?xml` 起始、`\n</Task>` 结尾；prolog 仍声明 UTF-16——
+  声明与字节可不一致，不作判定依据）。解码器严格接受四形态（UTF-16LE 无
+  BOM / LE BOM / BE BOM / UTF-8 `<?xml` 起始），无 BOM 形态要求 prolog 起始；
+  四形态之外/解码失败/截断按 unknown fail-closed；XML 解析前拒绝
+  DOCTYPE/ENTITY（XXE/实体膨胀加固）。
 - pin env 仅存在性检查（install 必需；dry-run 缺失降级为提示——recovery
   自身 fail-closed 兜底），绝不读取/展示值。
 
@@ -137,10 +142,19 @@ exact-owned 才 `/Delete /F`，其余状态零删除、无级联）。
 - **R3 修正（真实安装回环实证，2026-09-11）**：supervisor 在 canonical 主
   仓库以提升令牌 install 成功（任务 `AIOS-Production-Recovery` 已注册），
   暴露三处真实行为——① `schtasks /Create` 需 elevated token（UAC）；②
-  `/Query /XML` 管道输出 UTF-16LE **无 BOM**（原 text-mode 读取炸读线程）；
-  ③ Task Scheduler 归一化存储（URI 重写/默认值元素省略/额外元素注入）。
+  `/Query /XML` 输出编码随捕获通道而变（PowerShell 管道观测 UTF-16LE 无
+  BOM，原 text-mode 读取炸读线程）；③ Task Scheduler 归一化存储（URI 重写/
+  默认值元素省略/额外元素注入）。
   修复：`Runner.run_raw` 字节面 capture + `decode_schtasks_xml` 鲁棒解码；
   归属判定改为「URI 两形态 + Description 持久标记 + 全字段精确（条件认可
-  归一化省略的默认值）」。测试 60 项（FakeSchtasks，零真实 schtasks 写路径）。
+  归一化省略的默认值）」。
+- **R4 修正（生产验收 blocker，2026-09-11）**：canonical 5bd3db7 上
+  `status` 仍 unknown——生产机经本工具实际路径（`RealRunner.run_raw`
+  Python 原始捕获）回读的 /XML 字节为 **ASCII/UTF-8**（len 1446、前缀
+  `<?xml version="1`、后缀 `\n</Task>`），与 R3 在 PowerShell 管道观测的
+  UTF-16LE 无 BOM 是**两种并存形态**。`decode_schtasks_xml` 改为按字节
+  形态严格判定：接受 UTF-16LE 无 BOM / LE BOM / BE BOM / UTF-8 `<?xml`
+  起始四形态，拒绝垃圾/截断/未观测形态（fail-closed 不变）。测试 66 项
+  （FakeSchtasks，零真实 schtasks 写路径）。
 - 边界不变：foreign/malformed/unknown 永不 force、永不删除；本目录工具
   绝不触碰 Docker/8010/8011。

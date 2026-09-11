@@ -34,10 +34,15 @@
   RunLevel（生产 + COM 快照实证）。仅在（a）父节点/触发器类型存在、（b）
   其余全部必检字段精确在场且匹配时，省略才按 Windows 默认值认可；显式
   非默认值（如 Enabled=false / RunLevel=HighestAvailable）仍逐项拒绝。
-- /XML 解码（R3）：schtasks /Query /XML 管道输出实测 UTF-16LE **无 BOM**
-  （text-mode encoding='utf-16' 在读线程抛 UnicodeError 且丢输出）；一律经
-  ``runner.run_raw`` 取原始字节 + ``decode_schtasks_xml`` 鲁棒解码（UTF-16LE
-  带/不带 BOM，兼容 BE BOM）；解码失败按 unknown fail-closed，绝不猜。
+- /XML 解码（R3/R4）：schtasks /XML 输出编码随**捕获通道**而变——R3 在
+  PowerShell 管道观测为 UTF-16LE **无 BOM**（text-mode encoding='utf-16'
+  在读线程抛 UnicodeError 且丢输出）；R4 在生产机经本工具实际路径
+  （``RealRunner.run_raw`` Python 原始捕获）观测为 **ASCII/UTF-8**（len
+  1446、``<?xml`` 起始、``\n</Task>`` 结尾，prolog 仍声明 UTF-16——声明与
+  字节可不一致，不作判定依据）。一律经 ``runner.run_raw`` 取原始字节 +
+  ``decode_schtasks_xml`` 按**字节形态**严格解码（UTF-16LE 无 BOM / LE
+  BOM / BE BOM / UTF-8 ``<?xml`` 起始四形态；不宣称单一编码）；四种形态
+  之外/解码失败/非 XML 形态按 unknown fail-closed，绝不猜。
 - XML 生成加固：repo/VBS 路径与 Arguments 经 xml.sax.saxutils.escape 转义
   （&、<、>、"）——含特殊字符的路径仍产出可解析 XML，解析后字段精确还原。
 - XML 解析加固（安全评审）：解析前拒绝 DOCTYPE/ENTITY（XXE/实体膨胀防护），
@@ -99,7 +104,12 @@ WSCRIPT_ARGS_TEMPLATE = '//B //Nologo "{vbs}"'
 #: （zh-CN 为 GBK），UTF-16 强解会在读线程炸掉且丢失输出（2026-09-11 实证）。
 #: 改用全量列表（/Query /FO CSV /NH，任务名为 ASCII，跨代码页稳定）判断
 #: 存在性；/XML 明细仅在任务存在时取**原始字节**（runner.run_raw）并经
-#: decode_schtasks_xml 鲁棒解码（UTF-16LE 带/不带 BOM，R3 生产实证无 BOM）。
+#: decode_schtasks_xml 鲁棒解码——编码随捕获通道而变（R3 PowerShell 管道
+#: 观测 UTF-16LE 无 BOM；R4 生产机 Python 原始捕获观测 ASCII/UTF-8），故
+#: 按字节形态严格判定，不宣称单一编码。
+#: 无 BOM 形态的 ``<?xml`` prolog 起始字节（双编码形态，decode 入口用）。
+_PROLOG_UTF8 = b"<?xml"                              # 3c 3f 78 6d 6c
+_PROLOG_UTF16LE = "<?xml".encode("utf-16-le")        # 3c 00 3f 00 78 00 6d 00 6c 00
 TASK_NS = {"t": "http://schemas.microsoft.com/windows/2004/02/mit/task"}
 
 EXIT_OK = 0
@@ -295,20 +305,31 @@ class TaskQuery:
 def decode_schtasks_xml(data: bytes) -> str:
     """鲁棒解码 schtasks /XML 原始输出（严格；失败抛 ValueError）。
 
-    生产实证（2026-09-11，canonical 安装后回读）：管道输出为 UTF-16LE
-    **无 BOM**——text-mode ``encoding='utf-16'`` 依赖 BOM/偶数分块，在读线程
-    抛 UnicodeError 且输出丢失（status 误判 unknown 的根因之一）。本函数按
-    字节面判定：LE BOM → 去 BOM 按 UTF-16LE；BE BOM → 去 BOM 按 UTF-16BE
-    （兼容）；无 BOM → 按 UTF-16LE 严格解（奇长度/孤代理即 ValueError）。
-    解码成功但首字符非 ``<``（如 OEM 错误文案被强解成的乱码）同样 ValueError
-    ——调用方按事实不完整（unknown）fail-closed，绝不猜编码、绝不弱解放行。
+    编码按**字节形态**严格判定——schtasks 的 XML prolog 声明（如
+    ``encoding="UTF-16"``）与实际字节编码可能不一致（R4 实证：UTF-8 字节
+    带着UTF-16 声明），故不以声明为依据。接受的形态（实证边界，不外推为
+    「单一编码」）：
+    ① UTF-16LE 无 BOM（R3 PowerShell 管道观测形态）；
+    ② LE BOM（FF FE）③ BE BOM（FE FF）——去 BOM 后严格解；
+    ④ ASCII/UTF-8 无 BOM（R4 生产机 Python 原始捕获观测形态：
+    ``RealRunner.run_raw`` 捕获 len 1446、前缀 hex ``3c3f786d6c2076657273
+    696f6e3d2231``（``<?xml version="1``）、后缀 ``0a3c2f5461736b3e``
+    （``\\n</Task>``）的合法 XML 字节）。
+    无 BOM 形态额外要求 ``<?xml`` prolog 起始（防把 OEM 错误文案按 UTF-16LE
+    强解成乱码、或残缺 UTF-8 当作有效负载）；四种形态之外、解码失败（奇
+    长度/孤代理/非法 UTF-8 续字节）、或解码后非 XML 形态，一律 ValueError
+    ——调用方按事实不完整（unknown）fail-closed，绝不猜、绝不弱解放行。
     """
     if data.startswith(b"\xff\xfe"):
         text = data[2:].decode("utf-16-le")
     elif data.startswith(b"\xfe\xff"):
         text = data[2:].decode("utf-16-be")
-    else:
+    elif data.startswith(_PROLOG_UTF16LE):
         text = data.decode("utf-16-le")
+    elif data.startswith(_PROLOG_UTF8):
+        text = data.decode("utf-8")
+    else:
+        raise ValueError("非可识别 XML 起始形态（既非 UTF-16 带/无 BOM，也非 UTF-8 <?xml 起始）")
     text = text.strip()
     if not text.startswith("<"):
         raise ValueError("解码成功但非 XML 形态（首字符非 '<'）")

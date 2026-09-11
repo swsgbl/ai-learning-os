@@ -1,5 +1,19 @@
 # M14-06 Round 1 证据报告：生产恢复编排（compose restart 策略 + 恢复脚本 + env 护栏）
 
+> **Round 4 修正（生产验收 blocker，2026-09-11，分支 fix/m14-07-startup-task-
+> byte-encoding）**：canonical 5bd3db7（PR #78 合并后）上 `status` 仍返回
+> unknown。诊断：PowerShell `schtasks /Query /XML` 表面为 UTF-16LE 无 BOM，
+> 但本工具实际路径（`production_recovery.RealRunner.run_raw` 的 Python 原始
+> 捕获）拿到的是**合法 ASCII/UTF-8 字节**（len 1446、前缀 hex
+> `3c3f786d6c2076657273696f6e3d2231` = `<?xml version="1`、后缀
+> `0a3c2f5461736b3e` = `\n</Task>`；prolog 仍声明 UTF-16——声明与字节不一致）；
+> R3 的 `decode_schtasks_xml` 把无 BOM 字节一律按 UTF-16LE 强解，该合法 XML
+> 被拒 → unknown。**/XML 输出编码随捕获通道而变（R3 PowerShell 管道 vs R4
+> Python raw capture 是两种并存形态，不宣称单一编码）**。修复：解码器按
+> **字节形态**严格判定——接受 UTF-16LE 无 BOM / LE BOM / BE BOM / UTF-8
+> `<?xml` 起始四形态（无 BOM 形态要求 prolog 起始防乱码/截断误判），其余
+> 拒绝 fail-closed。测试 60 → 66 项。详见「Round 4 修正记录」。
+>
 > **Round 3 修正（真实安装回环实证，2026-09-11）**：supervisor 在 canonical
 > 主仓库以**提升令牌**执行 install 成功（任务 `AIOS-Production-Recovery`
 > 已注册），真实回读暴露三处与开发期假设不符的行为——① `schtasks /Create`
@@ -358,3 +372,53 @@ happy path 的复查步骤即真实回环。
 schtasks 交互经 FakeSchtasks）；未触碰 Docker/8010/8011/模拟器/代理（sing-box
 保持运行，仅以 NO_PROXY 环境变量旁路回环）；无 secret 入库/入日志（COM
 快照仅结构，gitignored）。
+
+## Round 4 修正记录（/XML 字节编码随捕获通道而变，分支 fix/m14-07-startup-task-byte-encoding）
+
+**缺陷（supervisor 生产验收，canonical 5bd3db7）**：PR #78 合并后
+`python tools/ops/windows_startup_task.py status` 仍返回 unknown。诊断事实：
+PowerShell 手工 `schtasks /Query /TN AIOS-Production-Recovery /XML` 表面
+UTF-16LE 无 BOM；但工具实际路径 `RealRunner.run_raw`（Python subprocess
+原始字节 capture）捕获到的是**合法 ASCII/UTF-8**——len 1446、前缀 hex
+`3c3f786d6c2076657273696f6e3d2231`（`<?xml version="1`）、后缀
+`0a3c2f5461736b3e`（`\n</Task>`，无尾随换行）；prolog 声明仍是
+`encoding="UTF-16"`（声明与字节不一致）。R3 的 `decode_schtasks_xml` 将无
+BOM 字节一律按 UTF-16LE 强解 → ASCII 字节解成乱码 → 拒绝 → unknown。
+
+**结论（编码口径修正）**：schtasks /XML 的输出编码**随捕获通道而变**——
+R3 的 UTF-16LE 无 BOM 是 PowerShell 管道观测形态；R4 的 ASCII/UTF-8 是
+Python raw-capture 观测形态；两者并存，文档与实现均不宣称单一编码，XML
+prolog 声明不作判定依据。
+
+**修复（`tools/ops/windows_startup_task.py`，narrow）**：`decode_schtasks_xml`
+改为按**字节形态**严格判定——LE BOM（FF FE）/ BE BOM（FE FF）→ 去 BOM 严格
+解；无 BOM 且以 `<?xml` 的 UTF-16LE 字节起始（`3c 00 3f 00 …`）→ UTF-16LE
+严格解；无 BOM 且以 `<?xml` 的 UTF-8 字节起始（`3c 3f 78 6d 6c`）→ UTF-8
+严格解（ASCII ⊂ UTF-8）；其余起始形态（OEM 文案、裸 `<`、UTF-16BE 无 BOM
+等未观测形态）→ 直接 ValueError。无 BOM 形态的 prolog 起始要求同时防住
+「OEM 乱码被强解」与「残缺 UTF-8/奇数 UTF-16 截断被误收」。解码成功后仍
+要求首字符 `<`。`query_task`/归属判定/安装卸载语义零改动——unknown 仍
+fail-closed，仅扩大「可识别的合法形态」到实证的第四种。
+
+**测试（`test_windows_startup_task.py`，60 → 66 项，FakeSchtasks 注入、
+零真实 schtasks 写路径）**：新增 R4 回归——诊断字节形态逐字复刻（前缀/
+后缀 hex 断言 + 归一化 XML 经 UTF-8 管道形态完整还原 + 纯 ASCII 最小
+样本）；`run_raw` 默认回放改为 utf8-pipe（生产实际路径）；utf8-pipe 形态
+query_task=installed + status exit 0；拒绝面新增四参数（UTF-8 prolog 截断
+`<?xm`、非法 UTF-8 续字节、奇数长度 UTF-16LE 截断、UTF-16BE 无 BOM 未观测
+形态）；四形态解码等价测试扩至 UTF-8；malformed 路径样本改为 prolog 起始
+的不可解析 XML（解码器不再放行裸 `<<<garbage>>>` 字节——该形态现按 unknown
+fail-closed，更严）；R3 主回归更名标注为 PowerShell 管道形态，与 R4 并存。
+
+**文档**：`tools/ops/README.md` 与本报告的编码表述改为「随捕获通道而变，
+不宣称单一编码」，区分 PowerShell UTF-16LE 管道行为与 Python raw-capture
+UTF-8 行为。
+
+**验证（canonical venv 解释器，2026-09-11）**：聚焦
+`test_windows_startup_task.py` → **66 passed**；相邻六套件 → **216 passed,
+2 skipped**；`ruff check`（变更 Python 文件）→ All checks passed；
+`py_compile` → OK；`git diff --check` → 干净。（全套件复跑与 CI 见 PR 记录。）
+
+**边界遵守（R4 轮）**：未注册/删除/运行/触发任何真实 schtasks 任务；未
+触碰 canonical 检出（只读 git fetch/远端 API）；未触碰 Docker/8010/8011/
+模拟器/代理；无 secret。

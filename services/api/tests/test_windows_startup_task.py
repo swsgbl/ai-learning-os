@@ -15,12 +15,19 @@ r"""M14-06 Round 2/3（R2.1 + R3 修正）契约测试：windows_startup_task.py
   别处）/ malformed（归属标识匹配但任一字段缺失或漂移——含 WorkingDirectory
   等元素缺失即 mismatch；XML 垃圾；DOCTYPE/ENTITY 拒绝），且缺失/漂移逐项
   报告字段名；
-- R3 真实回读回归：/XML 输出 UTF-16LE **无 BOM**（生产实证形态）/ 带 BOM /
-  BE BOM 均解码；OEM 乱码/奇数字节 → unknown fail-closed + 零删除；Task
-  Scheduler 归一化（URI 重写为 \\<TaskName>、默认值元素省略、新增 UserId/
-  IdleSettings 等额外元素）仍判 exact-owned；归一化 URI 单独不构成归属
-  （Description 漂移/缺失 → 拒绝）；省略默认值仅在其余字段全部精确在场时
-  认可（其余字段漂移时省略同样计 mismatch）；
+- R3 真实回读回归：/XML 输出 UTF-16LE **无 BOM**（PowerShell 管道观测形态）/
+  带 BOM / BE BOM 均解码；OEM 乱码/奇数字节 → unknown fail-closed + 零删除；
+  Task Scheduler 归一化（URI 重写为 \\<TaskName>、默认值元素省略、新增
+  UserId/IdleSettings 等额外元素）仍判 exact-owned；归一化 URI 单独不构成
+  归属（Description 漂移/缺失 → 拒绝）；省略默认值仅在其余字段全部精确
+  在场时认可（其余字段漂移时省略同样计 mismatch）；
+- R4 字节编码回归（生产验收 blocker）：**Python run_raw 原始捕获**的
+  /XML 输出为 ASCII/UTF-8 无 BOM（canonical 实测 len 1446、前缀 hex
+  3c3f786d6c2076657273696f6e3d2231、后缀 0a3c2f5461736b3e，prolog 仍声明
+  UTF-16）——与 R3 PowerShell 管道观测的 UTF-16LE 无 BOM **是两种并存形
+  态**（不宣称单一编码）；解码器按字节形态严格接受四形态、拒绝残缺
+  prolog/非法 UTF-8 续字节/奇数 UTF-16 截断；utf8-pipe 形态下
+  query_task=installed、status=exit 0；
 - wrapper 一致性（R2.1 缺陷 1）：无 --python 覆盖（parser 拒绝、cmd_dry_run/
   cmd_install 签名无 python_path）、preflight 恒查 repo 自带 .venv——有
   .venv dry-run OK、无 .venv fail-closed（外部 python 存在也不放行）；
@@ -100,18 +107,20 @@ class FakeSchtasks:
     """伪 schtasks：按命令形态回放预制结果；记录全部 argv；/Create 时捕获临时 XML。
 
     list_query_rc != 0 模拟「全量列表查询失败」（STATE_UNKNOWN 的事实不完整路径）。
-    R3：/XML 明细经 run_raw 回放**原始字节**；xml_output 选择编码形态——
-    "utf-16le-nobom"（生产实证形态）/ "utf-16le-bom"（经典形态）/
-    "utf-16be-bom"（解码兼容面）/ "oem-garbage"（rc=0 但非 XML 字节 → 解码
-    fail-closed）。xml_bytes 直接给定字节时优先于一切。默认 _xml() 回放
-    **归一化**形态（真实 schtasks 注册后的回读即归一化——R3 回归主路径）。
+    R3/R4：/XML 明细经 run_raw 回放**原始字节**；xml_output 选择编码形态——
+    "utf8-pipe"（R4 生产机 Python run_raw 实测形态：ASCII/UTF-8 无 BOM，
+    **默认**——query_task 是生产实际路径）/ "utf-16le-nobom"（R3 PowerShell
+    管道观测形态）/ "utf-16le-bom"（经典形态）/ "utf-16be-bom"（解码兼容面）/
+    "oem-garbage"（rc=0 但非 XML 字节 → 解码 fail-closed）。xml_bytes 直接
+    给定字节时优先于一切。默认 _xml() 回放**归一化**形态（真实 schtasks
+    注册后的回读即归一化——R3/R4 回归主路径）。
     """
 
     def __init__(self, *, repo_root: Path, task_state: str = "missing",
                  xml_text: str | None = None, create_rc: int = 0, delete_rc: int = 0,
                  plain_query_exists: bool | None = None,
                  list_query_rc: int = 0,
-                 xml_output: str = "utf-16le-nobom",
+                 xml_output: str = "utf8-pipe",
                  xml_bytes: bytes | None = None,
                  normalized_readback: bool = True) -> None:
         self.repo_root = repo_root
@@ -142,11 +151,15 @@ class FakeSchtasks:
             # rc=0 但输出不是 XML：模拟 OEM 代码页错误文案被误当明细回读
             return "ERROR: 拒绝访问: 取不到任务详细信息。\r\n".encode("gbk")
         text = self._xml()
+        if self.xml_output == "utf8-pipe":
+            # R4 生产机实测形态：ASCII/UTF-8 无 BOM、<?xml 起始、\n</Task> 结尾
+            # （无尾随换行——按 canonical 诊断字节复刻）
+            return text.rstrip("\r\n").encode("utf-8")
         if self.xml_output == "utf-16le-bom":
             return b"\xff\xfe" + text.encode("utf-16-le")
         if self.xml_output == "utf-16be-bom":
             return b"\xfe\xff" + text.encode("utf-16-be")
-        return text.encode("utf-16-le")  # utf-16le-nobom：生产实证形态
+        return text.encode("utf-16-le")  # utf-16le-nobom：R3 PowerShell 管道观测形态
 
     def run(self, argv, *, timeout: float = 60.0, encoding: str | None = None):
         argv = tuple(str(item) for item in argv)
@@ -341,37 +354,76 @@ def test_verify_task_xml_rejects_garbage_and_entities(fake_repo: Path) -> None:
     assert state == wst.STATE_MALFORMED and any("ENTITY" in i for i in issues)
 
 
-# ------------------------------------------------- R3：真实回读/归一化回归
+# ------------------------------------------------- R3/R4：真实回读/归一化/字节编码回归
 # 生产实证（2026-09-11，canonical 安装 AIOS-Production-Recovery 后回读）：
-# ① /XML 管道输出 UTF-16LE 无 BOM——text-mode encoding='utf-16' 在读线程抛
-#    UnicodeError 丢输出（status 误判 unknown 的根因）；
+# ① /XML 输出编码随捕获通道而变——R3 PowerShell 管道观测 UTF-16LE 无 BOM
+#    （text-mode encoding='utf-16' 在读线程抛 UnicodeError 丢输出，status
+#    误判 unknown 的根因）；R4 生产机 Python run_raw 原始捕获观测 ASCII/
+#    UTF-8 无 BOM（len 1446、前缀 hex 3c3f786d6c2076657273696f6e3d2231、
+#    后缀 0a3c2f5461736b3e，prolog 仍声明 UTF-16——声明与字节不一致）。
+#    两种形态并存，不宣称单一编码。
 # ② Task Scheduler 归一化存储：URI 重写为 \\<TaskName>，省略默认值元素
 #    （LogonTrigger/Enabled、Settings/Enabled、Principal/RunLevel），自行
 #    新增 UserId/IdleSettings 等；Action/Arguments/cwd/Hidden 与非默认设置
 #    逐字保留（COM 快照 .verify/m14-06-production-resilience/）。
 
 def test_decode_schtasks_xml_bom_and_byte_variants(fake_repo: Path) -> None:
-    """R3：UTF-16LE 无 BOM（生产形态）/ LE BOM / BE BOM 三形态解码等价。"""
+    """R3/R4：UTF-16LE 无 BOM / LE BOM / BE BOM / UTF-8（Python 管道形态）
+    四形态解码等价。"""
     xml_text = wst.build_task_xml(fake_repo)
     assert wst.decode_schtasks_xml(xml_text.encode("utf-16-le")) == xml_text.strip()
     assert wst.decode_schtasks_xml(b"\xff\xfe" + xml_text.encode("utf-16-le")) == xml_text.strip()
     assert wst.decode_schtasks_xml(b"\xfe\xff" + xml_text.encode("utf-16-be")) == xml_text.strip()
+    assert wst.decode_schtasks_xml(xml_text.rstrip("\r\n").encode("utf-8")) == xml_text.strip()
 
 
 @pytest.mark.parametrize("bad", [
-    b"ERROR: something in plain ASCII",  # ASCII/OEM 文案强解成乱码 → 非 '<' 开头
-    b"\xd2\xfb\xbe\xfc\xbd\xfb",        # GBK 错误文案字节 → 解出 CJK 乱码
-    b"<",                                # 奇数字节（截断的 UTF-16）
+    b"ERROR: something in plain ASCII",  # ASCII/OEM 文案 → 非可识别 XML 起始
+    b"\xd2\xfb\xbe\xfc\xbd\xfb",        # GBK 错误文案字节 → 非可识别起始
+    b"<",                                # 裸 '<'（既非 <?xml 也非 <\\x00）
     b"\xff\xfe",                         # 仅 BOM 无正文
+    b"<?xm",                             # R4：UTF-8 prolog 截断
+    b'<?xml version="1.0"?>\n<Task>\xc3',  # R4：非法 UTF-8 续字节（截断）
+    "<?xml".encode("utf-16-le") + b"\x00",  # R4：奇数长度 UTF-16LE 截断
+    b"\x00<?xml",                        # UTF-16BE 无 BOM（未观测形态）拒绝
 ])
 def test_decode_schtasks_xml_rejects_non_xml_bytes(bad: bytes) -> None:
-    """非 XML 字节一律 ValueError——调用方按 unknown fail-closed，绝不弱解。"""
+    """非 XML 字节/截断/未观测形态一律 ValueError——unknown fail-closed。"""
     with pytest.raises(ValueError):
         wst.decode_schtasks_xml(bad)
 
 
-def test_query_task_decodes_production_no_bom_output(fake_repo: Path) -> None:
-    """R3 主回归：真实回读形态（UTF-16LE 无 BOM + 归一化 XML）→ installed。"""
+def test_decode_schtasks_xml_accepts_python_pipe_utf8_diagnostic_shape(fake_repo: Path) -> None:
+    """R4 blocker 回归：canonical 诊断字节形态——ASCII/UTF-8 无 BOM、前缀
+    hex 3c3f786d6c2076657273696f6e3d2231（<?xml version="1）、后缀
+    0a3c2f5461736b3e（\\n</Task>，无尾随换行）、prolog 声明 UTF-16 而字节
+    为 UTF-8。必须严格接受并完整还原。"""
+    xml_text = normalize_task_xml(wst.build_task_xml(fake_repo))
+    payload = xml_text.rstrip("\r\n").encode("utf-8")
+    assert payload[:16].hex() == "3c3f786d6c2076657273696f6e3d2231"  # 前缀逐字节
+    assert payload[-8:].hex() == "0a3c2f5461736b3e"  # \n</Task> 结尾（无尾随换行）
+    assert wst.decode_schtasks_xml(payload) == xml_text.strip()
+    # 最小字面样本（纯 ASCII + UTF-16 声明的 UTF-8 字节）
+    minimal = (b'<?xml version="1.0" encoding="UTF-16"?>\n'
+               b'<Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">\n'
+               b"</Task>")
+    assert wst.decode_schtasks_xml(minimal).startswith("<?xml")
+
+
+def test_query_task_utf8_pipe_capture_is_installed(fake_repo: Path) -> None:
+    """R4 主回归：生产实际路径（run_raw Python 捕获 → UTF-8 + 归一化 XML）
+    → installed、status exit 0。"""
+    runner = FakeSchtasks(repo_root=fake_repo, task_state="installed",
+                          xml_output="utf8-pipe")
+    query = wst.query_task(runner, fake_repo)
+    assert query.state == wst.STATE_INSTALLED and query.issues == ()
+    _, log = _log_spy()
+    assert wst.cmd_status(runner=runner, repo_root=fake_repo, log=log) == wst.EXIT_OK
+
+
+def test_query_task_decodes_powershell_no_bom_output(fake_repo: Path) -> None:
+    """R3 主回归：PowerShell 管道观测形态（UTF-16LE 无 BOM + 归一化 XML）
+    → installed——与 R4 UTF-8 形态并存，不宣称单一编码。"""
     runner = FakeSchtasks(repo_root=fake_repo, task_state="installed",
                           xml_output="utf-16le-nobom")
     query = wst.query_task(runner, fake_repo)
@@ -590,7 +642,10 @@ def test_status_four_states(fake_repo: Path) -> None:
 
 
 def test_status_malformed_exit_code(fake_repo: Path) -> None:
-    runner = FakeSchtasks(repo_root=fake_repo, task_state="installed", xml_text="<<<garbage>>>")
+    # R4：解码器只接受 <?xml 起始的已识别字节形态——malformed 路径的垃圾
+    # 必须也是 prolog 起始（schtasks 只会回读这种形态）但后续不可解析。
+    runner = FakeSchtasks(repo_root=fake_repo, task_state="installed",
+                          xml_text='<?xml version="1.0"?>\n<<<garbage>>>')
     _, log = _log_spy()
     assert wst.cmd_status(runner=runner, repo_root=fake_repo, log=log) == wst.EXIT_MALFORMED
 
