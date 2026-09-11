@@ -20,10 +20,13 @@ python tools/ops/production_recovery.py               # enforce（需 pin env �
    可调）——登录自愈场景给 Docker Desktop 留启动时间。
 2. **compose 静态校验**：`docker compose config --quiet`（零容器改动）。
 3. **pin check（fail-closed）**：`infra/env.production-recovery`（gitignored，
-   模板 `infra/env.production-recovery.example`）必须存在、五键齐全
-   （`AIOS_IMAGE_TAG/AIOS_APP_ENV/AIOS_WEB_PORT/AIOS_AUTH_SECRET/
-   AIOS_LIVEKIT_API_SECRET`）、不含模板占位值（`<...>` 包裹或模板原文）；
-   在线容器存在时**五键在线事实必须齐全且逐键相等**（缺事实 ≠ 跳过——
+   模板 `infra/env.production-recovery.example`）必须存在、六键齐全
+   （`AIOS_IMAGE_TAG/AIOS_WEB_IMAGE_TAG/AIOS_APP_ENV/AIOS_WEB_PORT/
+   AIOS_AUTH_SECRET/AIOS_LIVEKIT_API_SECRET`——M14-09 起 web 镜像 tag 独立
+   成键：Web-only 升级只改 `AIOS_WEB_IMAGE_TAG`，同 tag 发布两键显式同值）、
+   不含模板占位值（`<...>` 包裹或模板原文）；
+   在线容器存在时**六键在线事实必须齐全且逐键相等**（api/web 镜像分别
+   inspect，缺事实 ≠ 跳过——
    inspect/port 探测不完整同样拒绝）。仅报键名，值绝不回显（子进程输出写
    日志前经防御性 redact）。任一不满足 → enforce 在 `up` 之前可见拒绝——
    防止恢复路径用默认值/漂移值/占位值静默重建容器（tag/端口/密钥轮换）。

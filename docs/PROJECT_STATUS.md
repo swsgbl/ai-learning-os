@@ -9,7 +9,16 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-**M14-08 进度台账事实回填（docs-only，本切片）**（分支 `docs/m14-08-production-status-backfill`，基于 `origin/main@832e5eb`（PR #79 merge commit，本地 git 可验证）；唯一目的：把唯一进度真相源恢复可信——此前「当前任务」停在 M14-01「本地实现，待审查」，而 main 实际已前进三个合并点（aef48f6 / PR #78 merge 5bd3db7 / PR #79 merge 832e5eb）。本切片只改本文件与 `docs/ROADMAP.md`，不改任何代码/测试/workflow/配置，docs-only 不跑 pytest；`docs/delivery/11_IMPLEMENTATION_BACKLOG.md` **不改**——该 backlog 仅定义 M0–M7 任务 ID，M12–M14 从未在其中建目（既有惯例：M12+ 状态以本台账与 ROADMAP 为准），无可回填条目）：
+**M14-09 Web 镜像 tag 独立发布/回滚锚点（工程修正，本切片）**（分支 `fix/m14-09-web-image-tag`，基于本地 `main@539dbe1`（PR #76 树，本地 git 可验证）；动机：生产 pin 此前 `AIOS_IMAGE_TAG` 同时绑定 api/web——只升级 Web 时要么破坏 recovery pin、要么同 tag 混用两代镜像。**不改变当前生产容器、不触碰 `infra/env.production-recovery`、不启停任何服务**，只解锁后续 Web-only 升级路径）：
+
+- **设计**：compose 中 `web` 镜像改读独立 `AIOS_WEB_IMAGE_TAG`（默认 `local`），api 仍读 `AIOS_IMAGE_TAG`（默认 `local`）——两锚点互不跟随；普通 compose 用法（`up`/`down`/`config`/CI `--build`）不受影响（各自默认渲染，`docker compose config` 可见）；只设 `AIOS_IMAGE_TAG` **不会**改变 Web tag（不再有隐性同 tag 耦合）；同 tag 发布/回滚 = 显式同时设置两个变量；Web-only 升级 = 只设 `AIOS_WEB_IMAGE_TAG`。`production_recovery.py` pin 必需键扩为**六键**（新增 `AIOS_WEB_IMAGE_TAG`，在线事实取自 web 容器镜像、与 api 分别 inspect 互不派生；仍只报键名绝不输出值）；env 模板、`build_release_candidate.sh`（同 tag 显式双变量，发布包语义不变）、根 README 回滚 runbook、tools/ops README、DEVELOPMENT 同步。
+- **测试**：`test_production_recovery.py` +2（web 镜像事实独立缺失拒绝；web tag 漂移仅报 `AIOS_WEB_IMAGE_TAG` 不连坐 api）；`test_versioning_rollback.py` 渲染断言改四场景（默认 / api-only 不连坐 / 双变量同 tag / web-only）；`test_compose_restart_policy.py` 六键模板 + 静态镜像锚点契约（web 不引用 `AIOS_IMAGE_TAG`）；`test_release_candidate.py` 双变量断言。
+- **运维注意（fail-closed 推论）**：现有真实 `infra/env.production-recovery`（本切片**不触碰**）尚无 `AIOS_WEB_IMAGE_TAG` 键——合并后下一次 recovery enforce 会**可见拒绝**（缺必需键），须 supervisor 按当前在线 web 镜像 tag 补键后恢复绿灯；此前曾以单 `AIOS_IMAGE_TAG` 同滚 api/web 的用法，合并起须显式双变量。
+- **边界**：`production_ready=false` 不变；本切片零容器改动（全部验证为 compose config 渲染与全 fake 测试）。
+
+## 前一任务（M14-08 进度台账事实回填，PR #80 已合并）
+
+**M14-08 进度台账事实回填（docs-only）**（分支 `docs/m14-08-production-status-backfill`，基于 `origin/main@832e5eb`（PR #79 merge commit，本地 git 可验证）；已随 **PR #80** 合并 main（merge commit `cae7aa0`，本地 git 可验证）；唯一目的：把唯一进度真相源恢复可信——此前「当前任务」停在 M14-01「本地实现，待审查」，而 main 实际已前进三个合并点（aef48f6 / PR #78 merge 5bd3db7 / PR #79 merge 832e5eb）。该切片只改本文件与 `docs/ROADMAP.md`，不改任何代码/测试/workflow/配置，docs-only 不跑 pytest；`docs/delivery/11_IMPLEMENTATION_BACKLOG.md` **不改**——该 backlog 仅定义 M0–M7 任务 ID，M12–M14 从未在其中建目（既有惯例：M12+ 状态以本台账与 ROADMAP 为准），无可回填条目）：
 
 - **事实来源（本切片只用这些，不推测）**：本地 git 历史（merge/feature commit 及其 parents/统计，本地可验证）；入库证据 `docs/evidence/m14-06-production-resilience/REPORT.md`（R1–R4 全记录）；已合并提交 `aef48f6`（M14-01..04 + M14-06 R1–R2.1 汇总合并，37 files +8065/−182，提交信息载明合并前独立本地验证与 GitHub Actions 外部失败）、`5bd3db7`（PR #78 merge，M14-06 R3）、`832e5eb`（PR #79 merge，M14-07）；supervisor 生产验收给定事实（2026-09-11 本机生产恢复验收，见下方 M14-06 条目「生产验收」）。
 - **里程碑快照（回填后口径）**：M14-01/02 本地真实语音部署与部署验收（已随 aef48f6 进 main）；M14-03 离线 wetext 缓存零网络复用（`78ce29e`，随 aef48f6 进 main）；M14-04 voice_service_control 受控生命周期 + fail-closed 二轮（`a2b542c` + `6319eb0`，随 aef48f6 进 main）；M14-05 Next 16.3.4 安全升级（`5e47fd2`，**未合并入 main**，见专条）；M14-06 生产恢复编排 + restart 策略 + Windows 登录自愈任务（R1–R2.1 随 aef48f6；R3 随 PR #78）；M14-07 schtasks XML 字节编码回环修复（PR #79，`832e5eb`）。

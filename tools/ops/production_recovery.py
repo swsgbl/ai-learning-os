@@ -66,9 +66,13 @@ DEFAULT_ENV_FILE = REPO_ROOT / "infra" / "env.production-recovery"
 #: 渲染为准，此集合用于漂移告警（不硬性阻断，可见报告由人裁决）
 EXPECTED_STACK_SERVICES = frozenset({"postgres", "redis", "minio", "api", "web", "livekit"})
 
-#: pin 必需键（env 文件与在线容器比对；输出仅键名，值绝不落日志）
+#: pin 必需键（env 文件与在线容器比对；输出仅键名，值绝不落日志）。
+#: M14-09：AIOS_WEB_IMAGE_TAG 独立成键——web 镜像 tag 不再与 api 共用
+#: AIOS_IMAGE_TAG（同 tag 发布 = env 文件里两键显式同值；Web-only 升级 =
+#: 仅改 AIOS_WEB_IMAGE_TAG）。在线事实取自 web 容器镜像（collect_live_pins）。
 PIN_KEYS: tuple[str, ...] = (
     "AIOS_IMAGE_TAG",
+    "AIOS_WEB_IMAGE_TAG",
     "AIOS_APP_ENV",
     "AIOS_WEB_PORT",
     "AIOS_AUTH_SECRET",
@@ -248,6 +252,12 @@ def collect_live_pins(runner: Runner, project: str) -> dict[str, str] | None:
     )
     if image_result.returncode == 0 and ":" in image_result.stdout:
         live["AIOS_IMAGE_TAG"] = image_result.stdout.strip().rpartition(":")[2]
+    # M14-09：web 镜像 tag 独立事实（与 api 镜像分别 inspect，互不派生）
+    web_image_result = runner.run(
+        ["docker", "inspect", "--format", "{{.Config.Image}}", web], timeout=30.0
+    )
+    if web_image_result.returncode == 0 and ":" in web_image_result.stdout:
+        live["AIOS_WEB_IMAGE_TAG"] = web_image_result.stdout.strip().rpartition(":")[2]
     port_result = runner.run(
         ["docker", "port", web, "3000"], timeout=30.0
     )
@@ -278,7 +288,7 @@ def placeholder_pin_keys(values: dict[str, str]) -> tuple[str, ...]:
 def check_pins(env_path: Path, runner: Runner, project: str, log: RunLog) -> PinReport:
     """env 文件与在线容器的 pin 一致性核查（输出仅键名与布尔，绝不输出值）。
 
-    五键一致性 fail-closed：在线容器存在时，任一 PIN_KEY 在线事实缺失
+    六键一致性 fail-closed（M14-09 增 AIOS_WEB_IMAGE_TAG）：在线容器存在时，任一 PIN_KEY 在线事实缺失
     （inspect/port 探测不完整）或与 env 不等 → ok=False（supervisor 评审
     修正：缺事实不得按「跳过」放行）；模板占位值恒拒绝（含无在线容器路径）。
     """
@@ -300,11 +310,11 @@ def check_pins(env_path: Path, runner: Runner, project: str, log: RunLog) -> Pin
         report = PinReport(ok=not missing and not placeholders, env_present=True,
                            missing_keys=missing, placeholder_keys=placeholders, live_present=False)
         if report.ok:
-            log.say("pin: OK（env 五键齐全且无占位值；无在线容器可比对）")
+            log.say("pin: OK（env 六键齐全且无占位值；无在线容器可比对）")
         return report
     missing_live = tuple(key for key in PIN_KEYS if live.get(key) is None)
     if missing_live:
-        log.say(f"pin: 在线容器事实缺失键: {', '.join(missing_live)}——五键一致性不可证")
+        log.say(f"pin: 在线容器事实缺失键: {', '.join(missing_live)}——六键一致性不可证")
         log.say("      enforce 将拒绝执行 up（inspect/port 探测不完整时不得按跳过放行）")
     mismatched = tuple(
         key for key in PIN_KEYS
@@ -320,7 +330,7 @@ def check_pins(env_path: Path, runner: Runner, project: str, log: RunLog) -> Pin
                        env_present=True, missing_keys=missing, mismatched_keys=mismatched,
                        missing_live_keys=missing_live, placeholder_keys=placeholders)
     if report.ok:
-        log.say("pin: OK（五键齐全：env 无缺键/占位，且与在线容器逐键一致）")
+        log.say("pin: OK（六键齐全：env 无缺键/占位，且与在线容器逐键一致）")
     return report
 
 

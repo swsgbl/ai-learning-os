@@ -165,7 +165,11 @@ services:
       args:
         # M9-07: API 地址构建期注入（局域网设备访问时需设为实际 API 地址并 rebuild）
         NEXT_PUBLIC_API_BASE_URL: ${AIOS_PUBLIC_API_BASE_URL:-http://127.0.0.1:8000}
-    image: aios/web:${AIOS_IMAGE_TAG:-local}
+    # M14-09: Web 镜像 tag 独立锚点 —— 只读 AIOS_WEB_IMAGE_TAG（默认 local），
+    # 不再跟随 AIOS_IMAGE_TAG（避免 Web-only 升级时混用两代镜像或破坏 recovery
+    # pin）。只设 AIOS_IMAGE_TAG 不会改变 Web tag（compose config 可见）；
+    # 同 tag 发布/回滚 = 显式同时设置 AIOS_IMAGE_TAG 与 AIOS_WEB_IMAGE_TAG。
+    image: aios/web:${AIOS_WEB_IMAGE_TAG:-local}
     restart: unless-stopped
     environment:
       NODE_ENV: production

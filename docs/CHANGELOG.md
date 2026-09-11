@@ -14,6 +14,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   默认关闭保持确定性判分；真实端点冒烟脚本 infra/smoke_llm.sh）
 
 ### Security
+- M14-09 Web 镜像 tag 独立发布/回滚锚点：compose web 镜像改读独立
+  `AIOS_WEB_IMAGE_TAG`（默认 local，不再跟随 `AIOS_IMAGE_TAG`——只设
+  AIOS_IMAGE_TAG 不改变 Web tag，消除 Web-only 升级时同 tag 混用两代镜像/
+  破坏 recovery pin 的隐患）；production_recovery pin 扩为六键（新增
+  AIOS_WEB_IMAGE_TAG，web 容器镜像独立在线事实，仍键名-only 不回显值）；
+  build_release_candidate 同 tag 显式双变量（发布包语义不变）；env 模板与
+  文档同步。**不改变当前生产容器**；合并后真实 recovery env 须补
+  AIOS_WEB_IMAGE_TAG 键（否则 enforce 按缺必需键可见拒绝）。
 - M14-05 Web 生产依赖安全修复：next 15.5.24 → 16.3.4（连带 eslint-config-next
   16.3.4），消除 next 内嵌 postcss@8.4.31 的 1 high（≤8.5.22 系列 GHSA：XSS/
   sourceMappingURL 任意文件读取/路径穿越）+ next 自身 1 moderate；
