@@ -1,27 +1,44 @@
 # M14-12 生产监控 readiness（只读采集 + 阈值判定 + 证据报告）— 交付证据归档
 
-- 日期：2026-09-11（交付）/ 2026-09-12（supervisor 评审 R1 修正）
+- 日期：2026-09-11（交付 + 生产监控执行）/ 2026-09-12（supervisor 评审
+  R1 修正 + 生产结果回填）
 - 分支：`feat/m14-12-production-monitoring-readiness`（基于 `main@2a33ac5`，
   即 PR #84 merge commit `2a33ac541e7c24341931c4fd3659f9f6288d62f5`，本地
   git 可验证）。本 Claude 开发回合仅做本地 commit；supervisor 审查与
-  remote 发布（push/PR/合并）在其后进行。
-- 状态：**工具 + 聚焦契约测试交付；开发回合未执行任何真实生产采集**。
+  remote 发布（push/PR/合并）在其后进行。交付已随 **PR #85** 合并 main
+  （merged_at **2026-09-11T17:34:05Z**；merge commit
+  `52980c637f4e39fec196a6563dbab1875faa6a8f`，feature head
+  `80e599d07fb448766d97a105c99d83275a50784a`，本地 git 可验证；远端
+  feature 分支已删除）；本回填切片分支
+  `docs/m14-12-production-monitoring-results`（基于 main@52980c6，
+  docs-only，本 Claude 回合仅做本地 commit——remote 发布由 supervisor
+  审查后代行）。
+- 状态：**工具 + 聚焦契约测试交付并合并；开发回合未执行任何真实生产
+  采集（supervisor 已于合并后执行首次真实只读监控，见下）**。
   本切片是「监控/告警收口」的第一块可控基础：只读采集、阈值判定、
   证据报告；**不接外部告警系统**（本里程碑范围明确排除）。**R1 修正已
-  落实（supervisor 评审，2026-09-12，本地追加 commit）**：① 非有限浮点
+  落实（supervisor 评审，2026-09-12，本地追加 commit，随 PR #85 合并）**：
+  ① 非有限浮点
   （nan/inf/-inf）在 plan 报告写入/采集之前拒绝；② `--project` 严格
   白名单（ASCII 字母数字开头、仅字母数字/连字符/下划线、≤64——被拒值
   绝不回显）；③ `--artifact-dir` 口径修正（默认目录 gitignored，自定义
   路径为操作者显式自选）；④ 状态文档 commit 措辞修正（本回合口径 =
   仅本地 commit，supervisor 审查与 remote 发布在其后进行）。
+  **合并与生产执行状态（supervisor 给定事实，如实回填）**：PR CI run
+  `34627846208` 与合并后 main push CI run `34628419347` 均全部 5 job
+  （Web/API/Docker/Android/Release tools）SUCCESS；supervisor 已于
+  **2026-09-11T17:39:20Z–17:39:21Z** 在 canonical main 上用本工具执行
+  一次真实只读生产监控，结果全绿（见「生产监控执行结果」）。
 - 入库变更：`tools/ops/production_monitor.py`（单文件、纯标准库、零第三方
   依赖，与 soak_rehearsal.py / production_recovery.py 同款纪律：注入式
   Runner/Transport/Clock、schema 版本化、原子写、fail-closed）、
   `services/api/tests/test_production_monitor.py`（189 项契约测试，含 R1
   修正回归）、本 README，以及 PROJECT_STATUS / ROADMAP / CHANGELOG /
-  `tools/ops/README.md` 同步。
-- 结论口径（诚实边界）：**工具交付、未执行生产采集、`production_ready=false`
-  不变**。`monitoring_ready` 仅指「一次只读采集的阈值判定全绿」，与生产
+  `tools/ops/README.md` 同步；本回填切片 docs-only（仅上述文档）。
+- 结论口径（诚实边界，回填更新）：**工具交付并合并；开发回合未执行
+  生产采集（supervisor 已于合并后执行首次真实只读采集，见下）；
+  `production_ready=false` 仍不变**。`monitoring_ready` 仅指「一次只读
+  采集的阈值判定全绿」，与生产
   就绪是两个概念——本工具绝不宣称生产就绪。
 
 ## 产品形态
@@ -144,20 +161,48 @@ python tools/ops/production_monitor.py --execute \
 ## 安全边界（本回合零违背）
 
 - 开发回合未执行任何真实 Docker / HTTP 生产采集 / 计划任务 / 恢复任务 /
-  语音服务 / 代理操作；本 README 不含任何生产采集结果（**没有可写的**）。
+  语音服务 / 代理操作；下节「生产监控执行结果」为 **supervisor 给定
+  事实的如实回填**（本回填回合 docs-only，自身零生产采集）。
 - 不启动/停止/重建/构建/拉取/修改任何容器；不触碰恢复 env；零密钥/零
   env 原文/零 token/零 header/零 query/零原始日志行入档；本 Claude
   开发回合仅做本地 commit（supervisor 审查与 remote 发布在其后进行）；
   不触碰 untracked `.claude/`。
-- 真实 execute 采集（只读）由 supervisor 在获准窗口决定是否/何时运行；
-  运行结果落 gitignored `.verify/artifacts/m14-12-production-monitoring/`
-  绝不入库。
+- 真实 execute 采集（只读）由 supervisor 在获准窗口执行；运行结果落
+  gitignored `.verify/artifacts/m14-12-production-monitoring/` 绝不入库
+  （本 README 仅引用文件名与指标）。
+
+## 生产监控执行结果（supervisor 获准窗口执行，2026-09-11；本节为 supervisor 给定事实的如实回填）
+
+**执行形态**：canonical main（PR #85 merge `52980c6` 之后），一次只读
+execute（`--execute --confirm "EXECUTE READ-ONLY PRODUCTION MONITORING"`），
+**2026-09-11T17:39:20Z → 17:39:21Z**；原始报告为 gitignored
+`.verify/artifacts/m14-12-production-monitoring/monitor-20260911-173920.json`
+（14185 bytes）与 `monitor-20260911-173920.md`（3330 bytes）——绝不
+入库，本节仅引用文件名与指标。
+
+**采集与阈值结果（逐项摘自报告）**：
+
+| 项 | 结果 |
+|---|---|
+| compose `aios-m14-03-production-rehearsal` | 六服务全部 running healthy；restart_count 全 0 |
+| 五端点 GET | 全 200；延迟 ms：web-root 7.088、web-login 12.909、api-health 12.388、funasr-health 24.444、cosyvoice-health 27.641 |
+| 容器日志摘要（逐容器扫描） | error_total 全 0 |
+| 采集完整性 | partial=false |
+| 阈值计数 | ok=34 / warn=0 / critical=0 |
+| 总状态 | overall_status=ok；monitoring_ready=true |
+
+**边界（不过度引申）**：本次 `monitoring_ready=true` 仅为**单次只读快照
+全绿**——不等于 production_ready；`production_ready=false` 保持不变，
+因以下仍未开放：持续/定时采集与调度、外部告警接入、指标历史与留存、
+阈值随时间的标定、跨机监控。本回填切片（docs-only）零生产采集/零容器
+改动/零计划任务/零 env 触碰/零密钥读取/零生产数据写入——执行方为
+supervisor，事实由其给定并在此如实回填。
 
 ## 结论边界（不过度引申）
 
-- 本切片**仅交付监控/告警收口的第一块基础**：可复用、fail-closed 的只读
-  采集 + 阈值判定 + 证据报告工具，以及锁定其安全边界的契约测试。
+- 本切片交付了监控/告警收口的第一块基础（工具 + 契约测试，已随
+  PR #85 合并），并完成**首次单次真实只读生产监控（全绿快照）**。
 - 未覆盖（后续切片范围）：外部告警系统接入（webhook/邮件/IM）、持续/
-  定时采集与调度、指标时序存储、真实采集结果与阈值标定、跨机监控。
+  定时采集与调度、指标历史与留存、阈值随时间的标定、跨机监控。
 - **`production_ready=false` 不变**；`monitoring_ready=true` 也仅在单次
   只读采集阈值全绿时出现，不构成生产就绪宣称。

@@ -6,8 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 ## [Unreleased]
 
 ### Added
-- M14-12 生产监控/告警 readiness 开发切片：只读采集 + 阈值判定 + 证据
-  报告（`tools/ops/production_monitor.py`，**工具交付、未执行生产采集**；
+- M14-12 生产监控/告警 readiness 开发切片 + 首次真实只读生产监控结果：
+  只读采集 + 阈值判定 + 证据
+  报告（`tools/ops/production_monitor.py`，**工具交付并合并（PR #85）；
+  开发回合未执行生产采集——supervisor 已于合并后执行首次真实只读
+  监控（见本条末尾结果）**；
   本回合不接外部告警系统；本 Claude 开发回合仅做本地 commit，supervisor
   审查与 remote 发布在其后进行）：默认 plan 零
   subprocess/零网络/零生产读取（plan 报告零状态宣称）；execute 需
@@ -38,7 +41,26 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   绝不宣称生产就绪**；189 项契约测试锁定上述边界（含 supervisor 评审
   R1 修正回归：非有限浮点双路径、项目名白名单与零回显、artifact-dir
   口径、状态文档措辞 sweep；邻居回归 soak 61 /
-  recovery 45 / startup 66 全绿）；`production_ready=false` 不变；证据
+  recovery 45 / startup 66 全绿）。交付随 **PR #85** 合并 main
+  （merged_at 2026-09-11T17:34:05Z，merge commit
+  `52980c637f4e39fec196a6563dbab1875faa6a8f`，feature head
+  `80e599d07fb448766d97a105c99d83275a50784a`，远端 feature 分支已删除；
+  PR CI run `34627846208` 与合并后 main push CI run `34628419347` 均全部
+  5 job（Web/API/Docker/Android/Release tools）SUCCESS——CI 真实运行
+  全绿）。**supervisor 于 2026-09-11T17:39:20Z–17:39:21Z 在 canonical
+  main 执行首次真实只读生产监控**（gitignored
+  `monitor-20260911-173920.json`（14185B）/`.md`（3330B），不入库）：
+  compose `aios-m14-03-production-rehearsal` 六服务全部 running healthy、
+  restart_count 全 0，五端点 GET 全 200（延迟 ms web-root 7.088/
+  web-login 12.909/api-health 12.388/funasr-health 24.444/
+  cosyvoice-health 27.641），逐容器日志 error_total 全 0，
+  `partial=false`，阈值计数 ok=34/warn=0/critical=0，
+  `overall_status=ok`，`monitoring_ready=true`——**单次只读快照全绿
+  ≠ production ready**。本条目结果部分为 supervisor 给定事实的 docs-only
+  回填（本 Claude 回合未执行监控/未部署/未重启服务/未触碰计划任务/
+  未改 env/未读密钥/未写生产数据）。**仅闭环单次只读监控证据——持续/
+  定时采集与调度、外部告警接入、指标历史与留存、阈值随时间的标定、
+  跨机监控仍属未决；`production_ready=false` 不变**；证据
   见 docs/evidence/m14-12-production-monitoring/
 - M14-11 生产 soak/并发彩排 harness + 有界只读生产 soak 执行结果
   （`tools/ops/soak_rehearsal.py`，开发回合不执行生产负载）：默认 plan
