@@ -9,6 +9,17 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-11 生产 soak/并发彩排 harness（开发回合，不执行生产负载）**（分支 `feat/m14-11-production-soak`，基于 `main@3634d90`（PR #82 merge commit，本地 git 可验证）；动机：「长稳/并发 soak」是 `production_ready=false` 的既有阻塞项，但直接对生产栈发起负载缺乏安全护栏——本切片先交付**可复用、fail-closed 的只读彩排 harness**，把「能不能安全地打、打多狠、打什么」固化进工具与契约测试；**有界只读生产 soak 执行明确延后**至 supervisor 获准窗口，本回合零生产流量。新增 `tools/ops/soak_rehearsal.py`（单文件纯标准库，与 production_recovery.py 同款纪律：注入式 transport/clock、零第三方依赖）+ `services/api/tests/test_soak_rehearsal.py` + `docs/evidence/m14-11-production-soak/README.md`，更新本文件/ROADMAP/CHANGELOG/`tools/ops/README.md`；流程：Claude 只 commit + push 本分支，supervisor 审查 + 独立验证后经 GitHub REST API 创建并合并 PR（本地 gh/git 桥损坏）——本条目不宣称任何 PR 已创建/已合并）：
+
+- **双模式**：默认 **plan**（零网络，打印计划并落 plan 报告）；**execute** 需五要素齐备——`--execute` 旗标 + 精确确认短语 `EXECUTE READ-ONLY LOOPBACK SOAK` + 有界 duration（≤120s）+ 有界 concurrency（≤8）+ 总请求上限（≤2000），缺一即 EXIT_USAGE 零请求；全部限制为保守硬顶，超顶在发起任何请求前可见拒绝（即使五要素齐备）。
+- **目标面固定**（不可经 CLI 注入任意 URL）：Web `http://127.0.0.1:3011/` 与 `/login`、API `http://127.0.0.1:8000/health`；`--include-voice` 才加 FunASR/CosyVoice 低频 GET `/health`（8010/8011，默认每目标 ≥2s，硬顶 ≥1s——绝无音频/推理请求）。
+- **网络纪律**：GET-only、unauthenticated、无 cookie/token/mutation/DB 写/房间会话创建/LLM 调用；仅接受**字面 loopback IP**（127.0.0.0/8、`::1`），主机名一律拒绝（零 DNS）；`http.client` 直连 = 结构性代理旁路（恶意假代理零连接测试实证）；proxy env 仅探测键名存在性，值绝不读取/记录。
+- **报告**：schema 版本化 JSON + Markdown 落 gitignored `.verify/artifacts/m14-11-production-soak/`（原始生产结果绝不入库）；含 start/end UTC、限制、每目标计数/status 分布/latency min-p50-p95-p99-max/吞吐、安全归类错误（仅类别+异常类名）、停止原因与 `completed_after_deadline`（deadline 后零新发、在途限于单请求超时、部分结果如实入档）；绝不记录 header/body/query/凭据/env 值。
+- **验证**：聚焦契约测试 **60 passed**（三连跑全绿；覆盖 plan 零网络、门禁 fail-closed、loopback/代理、引擎 deadline/语音门控/并发硬顶、统计分位、报告 schema、脱敏层与源码契约——零 `urllib.request`/proxy 面/子进程/容器面字面量，恒 GET 仅 UA+Accept 头）；邻居套件（recovery/startup_task）111 passed；ruff/py_compile/`git diff --check` 全过；测试唯一真实 socket 流量为自起 127.0.0.1 ephemeral 假服务器/假代理，**生产端口 3011/8000/8010/8011 全程零触碰**。
+- **边界**：`production_ready=false` 不变——「长稳/并发 soak」阻塞项在 supervisor 真实执行 + 结果裁决前保持未决（工具就绪 ≠ 阻塞销项）；零容器/恢复 env/计划任务/FunASR·CosyVoice 进程/代理面触碰；零密钥/零 env 原文/零 token/零 SID 入档；不触碰 untracked `.claude/`。详见 `docs/evidence/m14-11-production-soak/`。
+
+## 前一任务（M14-10 生产 Web-only 升级收口 + 状态台账回填，PR #82 已合并）
+
 **M14-10 生产 Web-only 升级收口 + 状态台账回填（docs-only）**（分支 `docs/m14-10-production-web-upgrade`，基于 `main@433d018`（PR #81 merge commit，本地 git 可验证）；动机：M14-05（next 16.3.4 安全升级，**PR #76** 已合并）与 M14-09（独立 Web 镜像 tag 锚点，**PR #81** 已合并）两道前置都已在 main，但生产 web 容器仍是 `aios/web:m14-03-prod-rehearsal` 旧一代——supervisor 先完成**首次 Web-only 生产升级**，本切片再以 docs-only 把全部事实回填进唯一进度真相源（此前本台账与 ROADMAP 仍记 M14-05「未合并」、生产 Web 未升级——均为过期口径，一并修正）。只新增 `docs/evidence/m14-10-production-web-upgrade/README.md` 并更新本文件、`docs/ROADMAP.md`、`docs/CHANGELOG.md` 与 M14-09 证据 README 的过期措辞指针；不改任何代码/测试/workflow/env 文件/容器/服务/计划任务，docs-only 不跑 pytest；本地 gh/git 桥损坏，PR 创建/合并由 supervisor 经 GitHub REST API 代行（**PR #82**，即本分支）——本切片只 commit + push 分支，不自行合并）：
 
 - **M14-09 合并收口**：feature commit `321fb50c422af7257b9995c2b13ebcf23918da7d`，**PR #81** merge commit `433d0184e0202bd3379c74517f7d3e69fe6e88f6`（本地 git 可验证——merge 第二父即 feature commit）。合并前本地独立验证（M14-09 切片口径）：聚焦五套件 **237 passed / 2 skipped**；compose config quiet × {无 profile/local/hybrid/cloud} 4× exit 0；ruff、`bash -n`、`py_compile`、`git diff --check` 全过。PR #81 CI run `34582538887` 五 job 全失败且 `step_count=0`——与 PR #78/#79 同源的已知外部 GitHub Actions/billing 形态失败，**非代码回归**，亦不隐藏 CI 未运行（远端 CI 当前不构成门禁事实）。

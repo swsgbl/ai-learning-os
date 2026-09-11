@@ -1,9 +1,11 @@
-# tools/ops —— 生产恢复编排（M14-06）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）
 
-本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排。容器面
-兜底由 `infra/docker-compose.yml` 的 `restart: unless-stopped`（M14-06）承担；
-本目录的 `production_recovery.py` 承担编排面：等引擎 → 校验 → 幂等 up →
-健康核查 → 本地语音受控调和。
+本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
+只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
+`restart: unless-stopped`（M14-06）承担；本目录的 `production_recovery.py`
+承担编排面：等引擎 → 校验 → 幂等 up → 健康核查 → 本地语音受控调和；
+`soak_rehearsal.py`（M14-11）承担只读 soak/并发彩排面（fail-closed 五要素
+门禁，默认 plan 零网络）。
 
 ## production_recovery.py
 
@@ -161,3 +163,43 @@ exact-owned 才 `/Delete /F`，其余状态零删除、无级联）。
   （FakeSchtasks，零真实 schtasks 写路径）。
 - 边界不变：foreign/malformed/unknown 永不 force、永不删除；本目录工具
   绝不触碰 Docker/8010/8011。
+
+## soak_rehearsal.py（M14-11）
+
+生产 soak/并发彩排 harness：**只读 GET、loopback-only、fail-closed**。
+开发/排障默认零网络；真实执行仅由 supervisor 在获准窗口运行。
+
+```
+python tools/ops/soak_rehearsal.py                # plan（默认：零网络，打印计划 + plan 报告）
+python tools/ops/soak_rehearsal.py --execute \
+    --confirm "EXECUTE READ-ONLY LOOPBACK SOAK" \
+    --duration-seconds 60 --concurrency 4 --max-requests 300   # execute（五要素齐备才放行）
+```
+
+安全性质（契约测试 `services/api/tests/test_soak_rehearsal.py`，60 项锁定；
+细节见脚本头注释与 `docs/evidence/m14-11-production-soak/README.md`）：
+
+- **五要素门禁**：`--execute` 旗标 + 精确确认短语（一字不差）+ 有界
+  duration（1–120s）+ 有界 concurrency（1–8）+ 总请求上限（1–2000）；
+  缺一或任一超硬顶 → EXIT_USAGE 零请求（fail-closed，超顶在 plan 模式
+  同样拒绝）。worker 节拍 0.05–5s（聚合速率上限 = concurrency/pace）、
+  语音目标最小间隔 1–60s（默认 2s，每语音目标 ≤0.5 rps）。
+- **固定目标画像**（不可经 CLI 注入任意 URL）：Web `http://127.0.0.1:3011/`
+  与 `/login`、API `http://127.0.0.1:8000/health`；`--include-voice` 才加
+  FunASR/CosyVoice 低频 GET `/health`（8010/8011）——绝无音频/推理请求。
+- **loopback 纪律**：仅字面 loopback IP（127.0.0.0/8、`::1`）；主机名一律
+  拒绝（零 DNS）；query/fragment/userinfo/缺显式端口一律拒绝。
+  `http.client` 直连从不读取 proxy 环境变量/系统代理（结构性旁路，
+  「恶意假代理零连接」测试实证）；proxy env 仅探测键名存在性。
+- **零副作用**：GET-only、无认证、无 cookie/token、无 DB/对象写、无房间/
+  会话创建、无 LLM/provider 调用、不跟随重定向、不读响应体。
+- **报告**：schema 版本化 JSON + Markdown 落 gitignored
+  `.verify/artifacts/m14-11-production-soak/`（plan-* / soak-*）；含
+  start/end UTC、限制、每目标计数/status 分布/latency 分位/吞吐、安全
+  归类错误（仅类别+异常类名）、停止原因、`completed_after_deadline`
+  （deadline 后零新发、在途限于单请求超时、部分结果如实入档）。绝无
+  header/body/query/凭据/env 值入档（写前防御性脱敏兜底）。
+- 退出码：0 plan 成功 / execute 完成且有成功样本；1 execute 完成但零成功
+  样本（栈疑似未起）；2 用法/门禁拒绝。
+- 本工具零子进程、零容器面/计划任务命令（源码契约锁定）；绝不触碰
+  8010/8011 进程状态（仅当 `--include-voice` 时对其发低频 GET `/health`）。
