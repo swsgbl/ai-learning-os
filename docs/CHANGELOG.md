@@ -13,6 +13,18 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 - M10-01 LLM 接入：OpenAI 兼容 gateway + rubric LLM judge（fail-closed 进复核，
   默认关闭保持确定性判分；真实端点冒烟脚本 infra/smoke_llm.sh）
 
+### Security
+- M14-05 Web 生产依赖安全修复：next 15.5.24 → 16.3.4（连带 eslint-config-next
+  16.3.4），消除 next 内嵌 postcss@8.4.31 的 1 high（≤8.5.22 系列 GHSA：XSS/
+  sourceMappingURL 任意文件读取/路径穿越）+ next 自身 1 moderate；
+  `npm audit --omit=dev --registry=https://registry.npmjs.org` 归零，
+  无 overrides/忽略脚本/手工篡改 lock；eslint.config.mjs 迁移 flat config、
+  react-hooks v7 新诊断降 warn（业务组件零改动）；本地验证清单新增依赖安全
+  门禁命令，证据见 docs/evidence/m14-05-web-security/；
+  2026-09-11 rebase 至 main@cae7aa0 后全门禁复验通过（audit 0 漏洞 /
+  install 无锁漂移 / lint / typecheck / build 全 exit 0，next 16.3.4 +
+  嵌套 postcss 8.5.23 复核，standalone 产物与 Dockerfile 吻合）
+
 ## [0.1.0] - 2026-09-02
 
 ### Added — Foundation (M0)
