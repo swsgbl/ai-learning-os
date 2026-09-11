@@ -138,8 +138,9 @@ schtasks /XML 管道输出 UTF-16 所需，向后兼容）、
   存在性确认 missing → 临时 UTF-16 XML → `schtasks /Create /TN <task> /XML`
   （绝不 /F）→ 回读复查逐项匹配；任何一步不符 → 键名-only 可见拒绝。
 - status：installed/missing/foreign/malformed/unknown 五态（exit 0/2/3/4/1）。
-- uninstall：仅精确匹配（URI+Action+参数+cwd+Hidden+触发器+时限）才 /Delete；
-  missing 幂等 exit 0；绝不 force、绝不 Run 子命令（源码契约锁定）。
+- uninstall：仅 STATE_INSTALLED 精确归属（exact-owned）才执行 `/Delete /F`；
+  missing 幂等 exit 0；foreign/malformed/unknown 永不 force、永不 delete；
+  工具从不调用 /Run 子命令（R2.1 修正语义，源码契约锁定）。
 - 编码无关存在性判定：真实运行实证 schtasks 错误输出为 OEM 代码页（zh-CN=
   GBK），UTF-16 强解在读线程抛 UnicodeError 且输出丢失（首轮真实 dry-run 的
   unknown 误判根因）——改为全量列表 `/Query /FO CSV /NH`（ASCII 任务名跨代码
