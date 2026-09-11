@@ -6,6 +6,17 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 ## [Unreleased]
 
 ### Added
+- M14-11 生产 soak/并发彩排 harness（`tools/ops/soak_rehearsal.py`，开发回合
+  不执行生产负载）：默认 plan 零网络；execute 五要素门禁（`--execute` +
+  精确确认短语 + duration≤120s + concurrency≤8 + 总请求≤2000，超顶
+  fail-closed 零请求）；固定目标画像（Web 3011 `/`+`/login`、API 8000
+  `/health`，`--include-voice` 才加 8010/8011 低频 GET `/health`）；
+  GET-only/unauthenticated/仅字面 loopback IP（零 DNS）/`http.client`
+  直连零代理面；schema 版本化 JSON+MD 报告落 gitignored
+  `.verify/artifacts/m14-11-production-soak/`（含每目标计数/分位延迟/
+  吞吐/安全归类错误/deadline 语义，绝无 header/body/query/凭据/env 值
+  入档）；60 项契约测试锁定上述边界。有界只读生产 soak 执行延后至
+  supervisor 获准窗口；证据见 docs/evidence/m14-11-production-soak/
 - M9-01 多用户与认证基座：users 表（alembic 0022）+ bcrypt 密码哈希 + JWT（HS256）
   + register/login/me/status 端点 + 全业务路径 Bearer 门禁；
   AUTH_SECRET 未配置 = 认证关闭且 status 如实透出（存量客户端零破坏）
