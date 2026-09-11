@@ -1,20 +1,23 @@
-# M14-11 生产 soak/并发彩排 harness（开发回合）— 验收证据归档
+# M14-11 生产 soak/并发彩排 harness + 生产 soak 执行结果 — 验收证据归档
 
-- 日期：2026-09-11
-- 分支：`feat/m14-11-production-soak`（基于 `main@3634d90`（PR #82 merge
-  commit，本地 git 可验证））；流程：Claude 只 commit + push 本分支；
-  supervisor 审查 + 独立验证后经 GitHub REST API 创建并合并 PR
-  （本地 gh/git 桥损坏）——本 README 不宣称任何 PR 已创建/已合并
-- 状态：harness + 聚焦契约测试交付完毕；**有界只读生产 soak 执行明确延后**，
-  由 supervisor 在获准窗口运行——本开发回合**未发起任何生产流量**
-  （spec 约定：开发回合不得运行负载测试）
-- 入库变更：`tools/ops/soak_rehearsal.py`（单文件、纯标准库、零第三方依赖）、
-  `services/api/tests/test_soak_rehearsal.py`（60 项契约测试）、本 README，
-  以及 PROJECT_STATUS / ROADMAP / CHANGELOG / `tools/ops/README.md` 同步
+- 日期：2026-09-11（交付）/ 2026-09-11（soak 执行 + 结果回填）
+- 分支：交付分支 `feat/m14-11-production-soak`（基于 `main@3634d90`），已随
+  **PR #83** 合并 main（merge commit `14d7e2f5c1193783c1a84aa7a5cd5418abb3029b`，
+  feature head `bc3b5ceb618bf9f4e415e2f8ba6a82636b0ca27c`，本地 git 可验证）；
+  本回填切片分支 `docs/m14-11-production-soak-results`（基于上述 main，
+  docs-only，只 commit 不 push——remote/PR 由 supervisor 审查后代行）
+- 状态：harness + 聚焦契约测试交付并合并（PR #83）；**supervisor 已于
+  2026-09-11 获准窗口用本 harness 执行三轮有界只读生产 soak，全部零失败**
+  （见下「生产 soak 执行结果」）；开发回合自身零生产流量（spec 约定：
+  开发回合不得运行负载测试——该约束已被遵守，执行方为 supervisor）
+- 入库变更（交付回合）：`tools/ops/soak_rehearsal.py`（单文件、纯标准库、
+  零第三方依赖）、`services/api/tests/test_soak_rehearsal.py`（61 项契约
+  测试）、本 README，以及 PROJECT_STATUS / ROADMAP / CHANGELOG /
+  `tools/ops/README.md` 同步；本回填回合 docs-only
 - 结论：GET-only、unauthenticated、loopback-literal-only、零代理面、
   fail-closed 五要素门禁 + 保守硬顶全部由测试锁定；原始生产结果落
-  gitignored `.verify/artifacts/m14-11-production-soak/` 绝不入库；
-  **单机生产栈口径，`production_ready=false` 不变**
+  gitignored `.verify/artifacts/m14-11-production-soak/` 绝不入库（本 README
+  仅引用文件名与指标）；**单机生产栈口径，`production_ready=false` 不变**
 
 ## 产品形态
 
@@ -90,11 +93,45 @@ python tools/ops/soak_rehearsal.py --execute \
 - 全程零生产网络请求；不入库任何原始生产结果；零密钥/零 env 原文/
   零 token/零 SID 入档（含本 README）；不触碰 untracked `.claude/`。
 
-## 延后项（supervisor 获准窗口）
+## 生产 soak 执行结果（supervisor 获准窗口执行，2026-09-11；本节为 supervisor 给定事实的如实回填）
 
-- 用本 harness 对生产栈执行**有界只读 soak**（建议从保守档起步：
-  `--duration-seconds 60 --concurrency 2 --max-requests 120`，观察后再升
-  `--concurrency 4 --max-requests 300`）；`--include-voice` 仅在确认语音面
-  低频 /health 无影响后加入。执行结果（gitignored `.verify/artifacts/
-  m14-11-production-soak/soak-*.json/md`）由 supervisor 裁决后再回填台账。
-- 「长稳/并发 soak」生产阻塞项在真实执行 + 结果裁决完成前保持未决。
+**合并与 CI 事实**：PR #83 合并 main（merge commit
+`14d7e2f5c1193783c1a84aa7a5cd5418abb3029b`，feature head
+`bc3b5ceb618bf9f4e415e2f8ba6a82636b0ca27c`）；PR CI run `34612290177` 与
+合并后 main CI run `34612382356` 均为 **5 job 全失败且 `step_count=0`**——
+与 PR #82 同源的已知外部 GitHub Actions 0-step 形态失败（非代码回归，
+CI 未运行不隐藏）。
+
+**执行前基线**：compose 项目 `aios-m14-03-production-rehearsal` 6/6
+healthy；api 容器 `909f99fc20d4…`（started
+`2026-09-11T01:12:47.107522172Z`，镜像 `aios/api:m14-03-prod-rehearsal`）；
+web 容器 `5be2e19db2e7…`（started `2026-09-11T09:09:05.420392796Z`，镜像
+`aios/web:m14-05-security`）；Web `/`、`/login`、API `/health`、
+FunASR `/health`、CosyVoice `/health` 全 200；voice PID 1183/2061 不变；
+恢复任务 `LastTaskResult=0`。
+
+**三轮执行**（原始报告为 gitignored `.verify/artifacts/m14-11-production-soak/`
+下同名文件，绝不入库；以下指标逐项摘自报告）：
+
+| 报告 | 配置 | wall | 成功/失败 | 停止原因 | 越界完成 | 吞吐 | p50(ms) | p95(ms) | p99(ms) | max(ms) | 每目标（全 200） |
+|---|---|---:|---|---|---:|---:|---:|---:|---:|---:|---|
+| `soak-20260911-145423.json` | concurrency 2 | 6.5s | 120/0 | max-requests | 0 | 18.462 rps | 11.517400009324774 | 12.881899980129674 | 13.361999997869134 | 13.679999974556267 | web-root/web-login/api-health = 40/40/40 |
+| `soak-20260911-145508.json` | concurrency 4 | 8.266s | 300/0 | max-requests | 0 | 36.293 rps | 11.757700055546212 | 12.74930001818575 | 12.928699987241998 | 13.968399987788871 | 100/100/100 |
+| `soak-20260911-145557.json` | 60s / concurrency 4 / max 2000 | 54.579s | 2000/0 | max-requests | 0 | 36.644 rps | 11.696300003677607 | 12.702000007266179 | 13.048099994193763 | 14.182499988237396 | web-root/web-login/api-health = 667/668/665 |
+
+**执行后基线**：与执行前逐项一致——compose 6/6 healthy、五端点全 200、
+api/web 容器 ID 与 started 时间不变、voice PID 1183/2061 不变、**零恢复
+任务触发**。
+
+## 结论边界（不过度引申）
+
+- 本 soak 为**合成、只读、loopback GET**（仅 `/`、`/login`、`/health`）：
+  无认证、无 cookie、无任何 mutation、无模型推理；**语音面零负载**
+  （supervisor 给定事实「voice did not receive load」；报告每目标仅
+  web-root/web-login/api-health——不宣称语音 soak，也不宣称真实用户负载）。
+- 本证据**仅闭环「M14-11 有界本地彩排 soak」**：不覆盖真实客户端验收、
+  跨机复现、>60s 长稳、监控/告警收口、外部 GitHub Actions 故障恢复、
+  Harmony AGC/发布链，也不改变全局就绪判断——**`production_ready=false`
+  保持不变**。
+- 开发回合（交付 harness + 测试）自身零生产流量的约束已被遵守；三轮
+  执行均由 supervisor 在获准窗口运行。

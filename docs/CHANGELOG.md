@@ -6,17 +6,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 ## [Unreleased]
 
 ### Added
-- M14-11 生产 soak/并发彩排 harness（`tools/ops/soak_rehearsal.py`，开发回合
-  不执行生产负载）：默认 plan 零网络；execute 五要素门禁（`--execute` +
-  精确确认短语 + duration≤120s + concurrency≤8 + 总请求≤2000，超顶
-  fail-closed 零请求）；固定目标画像（Web 3011 `/`+`/login`、API 8000
-  `/health`，`--include-voice` 才加 8010/8011 低频 GET `/health`）；
+- M14-11 生产 soak/并发彩排 harness + 有界只读生产 soak 执行结果
+  （`tools/ops/soak_rehearsal.py`，开发回合不执行生产负载）：默认 plan
+  零网络；execute 五要素门禁（`--execute` + 精确确认短语 +
+  duration≤120s + concurrency≤8 + 总请求≤2000，超顶 fail-closed 零请求）；
+  固定目标画像（Web 3011 `/`+`/login`、API 8000 `/health`，
+  `--include-voice` 才加 8010/8011 低频 GET `/health`）；
   GET-only/unauthenticated/仅字面 loopback IP（零 DNS）/`http.client`
   直连零代理面；schema 版本化 JSON+MD 报告落 gitignored
   `.verify/artifacts/m14-11-production-soak/`（含每目标计数/分位延迟/
   吞吐/安全归类错误/deadline 语义，绝无 header/body/query/凭据/env 值
-  入档）；60 项契约测试锁定上述边界。有界只读生产 soak 执行延后至
-  supervisor 获准窗口；证据见 docs/evidence/m14-11-production-soak/
+  入档）；61 项契约测试锁定上述边界。交付随 **PR #83** 合并 main（merge
+  `14d7e2f`、feature `bc3b5ce`）；supervisor 于 2026-09-11 获准窗口执行
+  三轮有界只读生产 soak **全部零失败**（120/300/2000 请求，concurrency
+  2/4/4，p99 12.929–13.362ms，吞吐 18.462–36.644 rps，零
+  `completed_after_deadline`，每目标全 200）；执行前后基线逐项一致
+  （compose 6/6 healthy、五端点 200、api/web 容器 ID 与 started 不变、
+  voice PID 1183/2061 不变、零恢复任务触发），语音面零负载（不宣称语音
+  soak 或真实用户负载）；PR/main CI（run `34612290177`/`34612382356`）
+  为已知外部 0-step 形态失败。仅闭环有界本地彩排 soak 证据——>60s 长稳、
+  真实客户端负载形态、跨机等仍属未决；production_ready=false 不变；
+  证据见 docs/evidence/m14-11-production-soak/
 - M9-01 多用户与认证基座：users 表（alembic 0022）+ bcrypt 密码哈希 + JWT（HS256）
   + register/login/me/status 端点 + 全业务路径 Bearer 门禁；
   AUTH_SECRET 未配置 = 认证关闭且 status 如实透出（存量客户端零破坏）
