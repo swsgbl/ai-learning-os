@@ -6,6 +6,32 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 ## [Unreleased]
 
 ### Added
+- M14-12 生产监控/告警 readiness 开发切片：只读采集 + 阈值判定 + 证据
+  报告（`tools/ops/production_monitor.py`，**工具交付、未执行生产采集**；
+  本回合不接外部告警系统，不 push/不开 PR/不合并）：默认 plan 零
+  subprocess/零网络/零生产读取（plan 报告零状态宣称）；execute 需
+  `--execute` 旗标 + 精确确认短语 `EXECUTE READ-ONLY PRODUCTION
+  MONITORING` + 全部阈值在硬顶内，缺一即 EXIT 2 零采集；只读采集面
+  固定画像（compose project `aios-m14-03-production-rehearsal`：compose
+  ps + 六受管容器 inspect 五事实（state/health/RestartCount/image/
+  started）+ 五默认端点 GET（Web 3011 `/`+`/login`、API 8000 `/health`、
+  FunASR 8010/CosyVoice 8011 `/health`）状态+延迟 + `docker logs
+  --tail` 容器日志安全错误摘要——只记匹配计数/级别/安全类别，原文绝不
+  持久化）；一切 docker 命令经只读白名单门（仅 compose ps / inspect
+  --format / logs --tail 三形态，stop/rm/kill/restart/down/exec/up/
+  logs -f 等在任何执行之前拒绝；Windows 恒 CREATE_NO_WINDOW）；
+  loopback 字面 IP/GET-only/`http.client` 直连零代理面与 M14-11 同款；
+  采集器部分失败 `partial=true` + 安全类别（仅类别+异常类名）→
+  `overall_status=incomplete`，缺失绝不当作 healthy；阈值全部含边界且
+  warn 恒可见（compose 6/6 healthy、五端点恒 200、容器 health、
+  RestartCount、日志错误计数、端点延迟 warn/critical）；schema v1
+  JSON+Markdown 原子写（同目录 tmp+fsync+os.replace，拒绝 symlink
+  组件/越界 stem）落 gitignored
+  `.verify/artifacts/m14-12-production-monitoring/`；`monitoring_ready`
+  仅采集完整且零 warn/critical 时 true——**≠ production ready，本工具
+  绝不宣称生产就绪**；149 项契约测试锁定上述边界（邻居回归 soak 61 /
+  recovery 45 / startup 66 全绿）；`production_ready=false` 不变；证据
+  见 docs/evidence/m14-12-production-monitoring/
 - M14-11 生产 soak/并发彩排 harness + 有界只读生产 soak 执行结果
   （`tools/ops/soak_rehearsal.py`，开发回合不执行生产负载）：默认 plan
   零网络；execute 五要素门禁（`--execute` + 精确确认短语 +
