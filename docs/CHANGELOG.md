@@ -8,10 +8,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 ### Added
 - M14-12 生产监控/告警 readiness 开发切片：只读采集 + 阈值判定 + 证据
   报告（`tools/ops/production_monitor.py`，**工具交付、未执行生产采集**；
-  本回合不接外部告警系统，不 push/不开 PR/不合并）：默认 plan 零
+  本回合不接外部告警系统；本 Claude 开发回合仅做本地 commit，supervisor
+  审查与 remote 发布在其后进行）：默认 plan 零
   subprocess/零网络/零生产读取（plan 报告零状态宣称）；execute 需
   `--execute` 旗标 + 精确确认短语 `EXECUTE READ-ONLY PRODUCTION
-  MONITORING` + 全部阈值在硬顶内，缺一即 EXIT 2 零采集；只读采集面
+  MONITORING` + 全部阈值在硬顶内（R1 起非有限浮点 nan/inf/-inf 拒绝；
+  `--project` 严格白名单——ASCII 字母数字开头、仅字母数字/连字符/
+  下划线、≤64，被拒值不回显；均在 plan 报告写入/采集之前），缺一即
+  EXIT 2 零采集；只读采集面
   固定画像（compose project `aios-m14-03-production-rehearsal`：compose
   ps + 六受管容器 inspect 五事实（state/health/RestartCount/image/
   started）+ 五默认端点 GET（Web 3011 `/`+`/login`、API 8000 `/health`、
@@ -26,10 +30,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   warn 恒可见（compose 6/6 healthy、五端点恒 200、容器 health、
   RestartCount、日志错误计数、端点延迟 warn/critical）；schema v1
   JSON+Markdown 原子写（同目录 tmp+fsync+os.replace，拒绝 symlink
-  组件/越界 stem）落 gitignored
-  `.verify/artifacts/m14-12-production-monitoring/`；`monitoring_ready`
+  组件/越界 stem）默认落 gitignored
+  `.verify/artifacts/m14-12-production-monitoring/`（`--artifact-dir`
+  自定义路径为操作者显式自选覆盖，位置与 gitignore 状态由操作者负责）；
+  `monitoring_ready`
   仅采集完整且零 warn/critical 时 true——**≠ production ready，本工具
-  绝不宣称生产就绪**；149 项契约测试锁定上述边界（邻居回归 soak 61 /
+  绝不宣称生产就绪**；189 项契约测试锁定上述边界（含 supervisor 评审
+  R1 修正回归：非有限浮点双路径、项目名白名单与零回显、artifact-dir
+  口径、状态文档措辞 sweep；邻居回归 soak 61 /
   recovery 45 / startup 66 全绿）；`production_ready=false` 不变；证据
   见 docs/evidence/m14-12-production-monitoring/
 - M14-11 生产 soak/并发彩排 harness + 有界只读生产 soak 执行结果

@@ -1,19 +1,25 @@
 # M14-12 生产监控 readiness（只读采集 + 阈值判定 + 证据报告）— 交付证据归档
 
-- 日期：2026-09-11（交付）
+- 日期：2026-09-11（交付）/ 2026-09-12（supervisor 评审 R1 修正）
 - 分支：`feat/m14-12-production-monitoring-readiness`（基于 `main@2a33ac5`，
   即 PR #84 merge commit `2a33ac541e7c24341931c4fd3659f9f6288d62f5`，本地
-  git 可验证）。**本回合只本地 commit，不 push、不开 PR、不合并**——
-  remote/PR/合并由 supervisor 审查后代行。
+  git 可验证）。本 Claude 开发回合仅做本地 commit；supervisor 审查与
+  remote 发布（push/PR/合并）在其后进行。
 - 状态：**工具 + 聚焦契约测试交付；开发回合未执行任何真实生产采集**。
   本切片是「监控/告警收口」的第一块可控基础：只读采集、阈值判定、
-  证据报告；**不接外部告警系统**（本里程碑范围明确排除）。
+  证据报告；**不接外部告警系统**（本里程碑范围明确排除）。**R1 修正已
+  落实（supervisor 评审，2026-09-12，本地追加 commit）**：① 非有限浮点
+  （nan/inf/-inf）在 plan 报告写入/采集之前拒绝；② `--project` 严格
+  白名单（ASCII 字母数字开头、仅字母数字/连字符/下划线、≤64——被拒值
+  绝不回显）；③ `--artifact-dir` 口径修正（默认目录 gitignored，自定义
+  路径为操作者显式自选）；④ 状态文档 commit 措辞修正（本回合口径 =
+  仅本地 commit，supervisor 审查与 remote 发布在其后进行）。
 - 入库变更：`tools/ops/production_monitor.py`（单文件、纯标准库、零第三方
   依赖，与 soak_rehearsal.py / production_recovery.py 同款纪律：注入式
   Runner/Transport/Clock、schema 版本化、原子写、fail-closed）、
-  `services/api/tests/test_production_monitor.py`（149 项契约测试）、本
-  README，以及 PROJECT_STATUS / ROADMAP / CHANGELOG / `tools/ops/README.md`
-  同步。
+  `services/api/tests/test_production_monitor.py`（189 项契约测试，含 R1
+  修正回归）、本 README，以及 PROJECT_STATUS / ROADMAP / CHANGELOG /
+  `tools/ops/README.md` 同步。
 - 结论口径（诚实边界）：**工具交付、未执行生产采集、`production_ready=false`
   不变**。`monitoring_ready` 仅指「一次只读采集的阈值判定全绿」，与生产
   就绪是两个概念——本工具绝不宣称生产就绪。
@@ -32,9 +38,12 @@ python tools/ops/production_monitor.py --execute \
 - **双模式门禁（fail-closed）**：默认 plan 零副作用（测试以 socket +
   subprocess 双阻断实证）；execute 需 `--execute` 旗标 + 精确确认短语
   `EXECUTE READ-ONLY PRODUCTION MONITORING`（一字不差）+ 全部阈值在
-  硬顶内——任一不满足即 EXIT 2 且零采集（Runner/Transport 零构造，
-  测试以构造计数器实证）。plan 报告不出现任何 `overall_status` /
-  `monitoring_ready` 状态宣称。
+  硬顶内（R1 起：非有限浮点 nan/inf/-inf 显式拒绝；`--project` 严格
+  白名单——ASCII 字母数字开头、仅字母数字/连字符/下划线、≤64，空/
+  空白/控制/路径/换行/非 ASCII 一律拒绝且被拒值绝不回显；均在 plan
+  报告写入/采集之前）——任一不满足即 EXIT 2 且零采集（Runner/
+  Transport 零构造，测试以构造计数器实证）。plan 报告不出现任何
+  `overall_status` / `monitoring_ready` 状态宣称。
 - **只读采集面（固定画像，不可经 CLI 注入任意目标）**：compose project
   `aios-m14-03-production-rehearsal`（`--profile local`）——
   ① `docker compose ps --format json`（六受管服务 health/state）；
@@ -74,8 +83,11 @@ python tools/ops/production_monitor.py --execute \
   `monitoring_ready`（仅采集完整且零 warn/critical 时 true）。
 - **报告**：schema 版本化（`schema_version=1`）JSON + Markdown **原子写**
   （同目录 tmp + fsync + `os.replace`；拒绝 symlink 组件（目标/祖先目录）
-  与越界 stem；无 tmp 残留、同 stem 覆盖干净）落 gitignored
-  `.verify/artifacts/m14-12-production-monitoring/`；含 UTC start/end、
+  与越界 stem；无 tmp 残留、同 stem 覆盖干净）；**默认目录
+  `REPO_ROOT/.verify/artifacts/m14-12-production-monitoring`（gitignored），
+  `--artifact-dir` 自定义路径为操作者显式自选覆盖——其位置与 gitignore
+  状态由操作者负责**（报告边界注记与 CLI help 同口径，不宣称自定义路径
+  恒 gitignored）；含 UTC start/end、
   配置（项目/画像/阈值）、边界注记、collector 状态、阈值结果与计数
   （自洽性测试锁定）；写盘前经防御性脱敏终防线（凭据形态标记值测试实证
   绝不入档）。
@@ -86,10 +98,11 @@ python tools/ops/production_monitor.py --execute \
 - **本里程碑不做的事**：零外部告警发送（webhook/邮件/IM 等一概没有）；
   不宣称 production ready；不改动任何容器/服务/env/计划任务。
 
-## 本回合验证（2026-09-11，canonical venv Python 3.11.15 / pytest 9.1.1 / ruff 0.16.5）
+## 本回合验证（2026-09-11 交付 + 2026-09-12 R1 修正，canonical venv Python 3.11.15 / pytest 9.1.1 / ruff 0.16.5）
 
 1. **聚焦契约测试**：`python -m pytest services/api/tests/test_production_monitor.py -q`
-   → **149 passed**（连跑两遍全绿 149/149）。覆盖：plan 零副作用（socket+
+   → **189 passed**（连跑两遍全绿；交付回合 149 + R1 修正回归 40）。
+   覆盖：plan 零副作用（socket+
    subprocess 双阻断 + plan 报告零状态宣称）、execute 门禁 fail-closed
    （缺旗标/短语不精确 ×6/阈值超硬顶 ×16——含「旗标+短语齐备但超顶」同
    样拒绝，且 Runner/Transport 零构造）、固定画像与 loopback 校验矩阵
@@ -112,13 +125,17 @@ python tools/ops/production_monitor.py --execute \
    critical 2 / compose ps 失败 2 / 端点不可达 2 / 报告写失败 2）、CLI
    注册（parser 默认值/旗标/README 文档化）、真实 transport 行为（本机
    假服务器 GET-only+仅 UA/Accept 头、恶意假代理零连接实证、不可达安全
-   归类）。
+   归类）；**R1 修正回归**（非有限浮点 ×7 双路径零产物零采集、项目名
+   接受 ×5 / 拒绝 ×15 + 固定词汇拒绝原因 + CLI 双路径 + 被拒值零回显、
+   artifact-dir 口径三面锁定（REPORT_BOUNDARIES/CLI help/运行时注记）、
+   状态文档措辞 sweep）。
 2. **邻居回归（共享模块零改动，纯干扰排查）**：`test_soak_rehearsal.py`
    → **61 passed**；`test_production_recovery.py` → **45 passed**；
    `test_windows_startup_task.py` → **66 passed**。
 3. **静态**：`python -m ruff check services/api` 全过（另对工具与测试
    文件单独跑 ruff 亦全过）、`python -m py_compile
-   tools/ops/production_monitor.py` 过、`git diff --check` 过。
+   tools/ops/production_monitor.py` 过、`git diff --check HEAD^ HEAD`
+   过（R1 提交增量）。
 
 测试中唯一真实 socket 流量：测试自起的 127.0.0.1 ephemeral 假 HTTP 服务
 器与计数假代理——**零生产端口流量**（3011/8000/8010/8011 全程未触碰），
@@ -129,8 +146,9 @@ python tools/ops/production_monitor.py --execute \
 - 开发回合未执行任何真实 Docker / HTTP 生产采集 / 计划任务 / 恢复任务 /
   语音服务 / 代理操作；本 README 不含任何生产采集结果（**没有可写的**）。
 - 不启动/停止/重建/构建/拉取/修改任何容器；不触碰恢复 env；零密钥/零
-  env 原文/零 token/零 header/零 query/零原始日志行入档；不推送、不开
-  PR、不合并；不触碰 untracked `.claude/`。
+  env 原文/零 token/零 header/零 query/零原始日志行入档；本 Claude
+  开发回合仅做本地 commit（supervisor 审查与 remote 发布在其后进行）；
+  不触碰 untracked `.claude/`。
 - 真实 execute 采集（只读）由 supervisor 在获准窗口决定是否/何时运行；
   运行结果落 gitignored `.verify/artifacts/m14-12-production-monitoring/`
   绝不入库。

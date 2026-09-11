@@ -10,7 +10,11 @@ HTTP/零计划任务，全部行为用 fake/stub 测试锁定；真实采集仅�
 - 双模式：默认 **plan（dry-run）**——零 subprocess、零网络、零生产读取，
   仅打印计划并落 plan 报告；**execute** 需同时满足「旗标 + 精确确认短语」
   （``--execute`` + ``--confirm "EXECUTE READ-ONLY PRODUCTION MONITORING"``
-  一字不差），缺一即 EXIT 拒绝且**零采集**（fail-closed）。
+  一字不差），缺一即 EXIT 拒绝且**零采集**（fail-closed）。数值面硬性
+  拒绝（plan 报告写入/采集之前）：非有限浮点（nan/inf/-inf）一律拒绝；
+  compose 项目名严格白名单（ASCII 字母数字开头、仅字母数字/连字符/
+  下划线、长度 ≤64——空/空白/控制/路径/换行/非 ASCII 一律拒绝，被拒值
+  绝不回显）。
 - 只读采集面（固定画像，不可经 CLI 注入任意目标）：compose project
   ``aios-m14-03-production-rehearsal``（--profile local）——
   ① ``docker compose ps --format json``（六受管服务 health/state）；
@@ -38,12 +42,15 @@ HTTP/零计划任务，全部行为用 fake/stub 测试锁定；真实采集仅�
   true）。``monitoring_ready`` ≠ production ready——本工具绝不宣称生产
   就绪。
 - 报告：schema 版本化 JSON + Markdown **原子写入**（同目录 tmp +
-  os.replace）gitignored ``.verify/artifacts/m14-12-production-monitoring/``；
-  拒绝 symlink 组件与越界 stem；内容含 UTC 时间、配置、限制/边界、
-  collector 状态、阈值结果。本里程碑**不做外部告警发送**。
+  os.replace）；默认目录 ``REPO_ROOT/.verify/artifacts/m14-12-production-monitoring``
+  **gitignored**，``--artifact-dir`` 自定义路径为**操作者显式自选覆盖**
+  （其位置与 gitignore 状态由操作者负责）；拒绝 symlink 组件与越界 stem；
+  内容含 UTC 时间、配置、限制/边界、collector 状态、阈值结果。本里程碑
+  **不做外部告警发送**。
 - 退出码：0 plan 成功 / execute 完整采集且 ok|warn（warn 恒可见不隐藏）；
-  2 非法或 fail-closed（确认缺失、限制超顶、symlink/越界路径）或采集
-  incomplete 或存在 critical（含证据报告写入失败——证据不可失）。
+  2 非法或 fail-closed（确认缺失、限制超顶、非有限浮点、非法项目名、
+  symlink/越界路径）或采集 incomplete 或存在 critical（含证据报告写入
+  失败——证据不可失）。
 
 用法（仓库根）：
   python tools/ops/production_monitor.py                        # plan（默认，零采集）
@@ -56,6 +63,7 @@ import argparse
 import http.client
 import ipaddress
 import json
+import math
 import os
 import re
 import subprocess
@@ -188,6 +196,28 @@ def select_endpoints(only: list[str] | None) -> tuple[list[Endpoint], str | None
     return [e for e in ENDPOINTS if e.endpoint_id in set(only)], None
 
 
+# ---------------------------------------------------------------- compose 项目名（严格白名单）
+
+#: 项目名白名单：ASCII 字母数字开头，仅字母数字/连字符/下划线，长度 ≤64
+#: （空白/控制/路径/换行/markdown 字符天然被白名单排除）
+MAX_PROJECT_NAME_LENGTH = 64
+PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
+
+
+def validate_project_name(name: str) -> str | None:
+    """fail-closed 校验 ``--project``（任意 CLI 输入面）。返回拒绝原因
+    （固定词汇，**绝不回显被拒值**）或 None（放行）。"""
+    if not name:
+        return "empty"
+    if len(name) > MAX_PROJECT_NAME_LENGTH:
+        return "too-long"
+    if not (name[0].isascii() and name[0].isalnum()):
+        return "first-char-not-alnum"
+    if PROJECT_NAME_RE.match(name) is None:
+        return "invalid-character"
+    return None
+
+
 # ---------------------------------------------------------------- 阈值
 
 
@@ -215,8 +245,14 @@ def validate_thresholds(*, request_timeout: float, latency_warn: float,
                         latency_critical: float, restart_warn: int, restart_critical: int,
                         log_error_warn: int, log_error_critical: int,
                         log_tail: int) -> list[str]:
-    """纯函数：返回违规清单（空 = 放行）。所有硬顶 fail-closed（plan 同样校验）。"""
+    """纯函数：返回违规清单（空 = 放行）。所有硬顶 fail-closed（plan 同样校验）。
+    非有限浮点（nan/inf/-inf）显式拒绝——不依赖比较语义的隐式行为。"""
     problems: list[str] = []
+    for name, value in (("request-timeout-seconds", request_timeout),
+                        ("latency-warn-ms", latency_warn),
+                        ("latency-critical-ms", latency_critical)):
+        if not math.isfinite(value):
+            problems.append(f"{name} 必须为有限数值（nan/inf 一律拒绝）")
     if not MIN_REQUEST_TIMEOUT_SECONDS <= request_timeout <= MAX_REQUEST_TIMEOUT_SECONDS:
         problems.append(f"request-timeout-seconds 必须在 {MIN_REQUEST_TIMEOUT_SECONDS}-{MAX_REQUEST_TIMEOUT_SECONDS}s（收到 {request_timeout}）")
     if not MIN_LATENCY_MS <= latency_warn <= MAX_LATENCY_MS:
@@ -903,8 +939,19 @@ REPORT_BOUNDARIES: tuple[str, ...] = (
     "collector failures are recorded as partial=true with a safe category; missing is never treated as healthy",
     "no external alerting is performed in this milestone; reports are local evidence only",
     "monitoring_ready is not production readiness; this tool never claims production ready",
-    "reports land in a gitignored directory and never enter the repository",
+    (
+        "default artifact directory is .verify/artifacts/m14-12-production-monitoring under the repo root and is gitignored;"
+        " a custom --artifact-dir is an explicit operator selection whose location and gitignore status are the operator's responsibility"
+    ),
 )
+
+
+def artifact_dir_note(directory: Path) -> str:
+    """报告目录注记（固定词汇）：默认目录 gitignored；自定义路径为操作者
+    显式自选——不对其 gitignore 状态作任何宣称。"""
+    if directory == ARTIFACT_DIR:
+        return "默认目录（gitignored，不入库）"
+    return "自定义目录（操作者显式自选，位置与入库与否由操作者负责）"
 
 
 def build_report(*, mode: str, started_utc: str, ended_utc: str, config: dict[str, object],
@@ -1048,7 +1095,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--only", action="append", metavar="ENDPOINT_ID",
                         help="仅采集指定端点（可重复；候选见 plan 输出；阈值恒评全五端点画像的已选子集）")
     parser.add_argument("--artifact-dir", type=Path, default=ARTIFACT_DIR,
-                        help="报告目录（默认 .verify/artifacts/m14-12-production-monitoring，gitignored）")
+                        help="报告目录（默认 .verify/artifacts/m14-12-production-monitoring，gitignored；"
+                             "自定义路径为操作者显式自选，其位置与入库与否由操作者负责）")
     return parser
 
 
@@ -1072,6 +1120,11 @@ def main(argv: list[str] | None = None) -> int:
     if problems:
         for problem in problems:
             log.say(f"拒绝: {problem}")
+        return EXIT_USAGE
+    # 1.5) compose 项目名严格白名单（plan 报告写入/采集之前；被拒值不回显）
+    project_problem = validate_project_name(args.project)
+    if project_problem is not None:
+        log.say(f"拒绝: --project 名非法（原因: {project_problem}）——被拒值不回显")
         return EXIT_USAGE
     # 2) 端点面（固定画像；--only 仅限已启用集合）
     endpoints, endpoint_error = select_endpoints(args.only)
@@ -1112,7 +1165,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         try:
             json_path, md_path = write_reports_atomic(report, args.artifact_dir, f"plan-{stamp}")
-            log.say(f"plan 报告: {json_path.name} / {md_path.name}（目录 gitignored，不入库）")
+            log.say(f"plan 报告: {json_path.name} / {md_path.name}（{artifact_dir_note(args.artifact_dir)}）")
         except ReportPathError as cause:
             log.say(f"plan 报告路径非法: {type(cause).__name__}")
             return EXIT_USAGE
@@ -1141,7 +1194,7 @@ def main(argv: list[str] | None = None) -> int:
     )
     try:
         json_path, md_path = write_reports_atomic(report, args.artifact_dir, f"monitor-{stamp}")
-        log.say(f"报告: {json_path.name} / {md_path.name}（目录 gitignored，不入库）")
+        log.say(f"报告: {json_path.name} / {md_path.name}（{artifact_dir_note(args.artifact_dir)}）")
     except (ReportPathError, OSError) as cause:
         log.say(f"报告写入失败（证据不可失——按拒绝处理）: {type(cause).__name__}")
         return EXIT_USAGE

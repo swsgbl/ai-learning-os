@@ -224,6 +224,9 @@ python tools/ops/production_monitor.py --execute \
   计划与 plan 报告，且 plan 报告不出现任何状态宣称）；execute 需
   `--execute` 旗标 + 精确确认短语 `EXECUTE READ-ONLY PRODUCTION
   MONITORING`（一字不差）+ 全部阈值在硬顶内——缺一即 EXIT 2 零采集。
+  R1 起：非有限浮点（nan/inf/-inf）与非法 `--project`（严格白名单：
+  ASCII 字母数字开头、仅字母数字/连字符/下划线、≤64；被拒值不回显）
+  同样在 plan 报告写入/采集之前拒绝。
 - **只读采集面**（固定画像）：compose project
   `aios-m14-03-production-rehearsal`（--profile local）——compose ps
   （六受管服务 health/state）、六容器 docker inspect（state/health/
@@ -246,11 +249,14 @@ python tools/ops/production_monitor.py --execute \
   错误计数（默认 warn≥5/critical≥20）、端点延迟（默认 warn≥1000ms/
   critical≥5000ms）；CLI 可调但受硬顶 fail-closed。
 - **报告**：schema 版本化 JSON + Markdown **原子写**（同目录 tmp +
-  os.replace；拒绝 symlink 组件/越界 stem）落 gitignored
-  `.verify/artifacts/m14-12-production-monitoring/`；含 UTC 时间、配置、
+  os.replace；拒绝 symlink 组件/越界 stem）；**默认落 gitignored
+  `.verify/artifacts/m14-12-production-monitoring/`，`--artifact-dir`
+  自定义路径为操作者显式自选覆盖——其位置与 gitignore 状态由操作者
+  负责**（报告边界注记/CLI help/运行时注记同口径）；含 UTC 时间、配置、
   边界注记、collector 状态、阈值结果；`monitoring_ready` 仅采集完整且
   零 warn/critical 时 true——**≠ production ready，本工具绝不宣称生产
   就绪**；本里程碑零外部告警发送。
 - 退出码：0 plan 成功 / execute 完整采集且 ok|warn（warn 恒可见不隐藏）；
-  2 非法/fail-closed（含确认缺失、阈值超顶、symlink/越界路径）或采集
-  incomplete 或存在 critical（含证据报告写入失败——证据不可失）。
+  2 非法/fail-closed（含确认缺失、阈值超顶、非有限浮点、非法项目名、
+  symlink/越界路径）或采集 incomplete 或存在 critical（含证据报告写入
+  失败——证据不可失）。

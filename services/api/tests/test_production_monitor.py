@@ -29,7 +29,13 @@ FakeRunner/FakeTransport 注入）：
 - CLI：退出码矩阵（plan 0 / warn 0 但 warn 恒可见 / incomplete·critical·
   报告写失败 2）、旗标默认值注册、README 文档化；
 - 真实 transport（本机假服务器）：GET-only + 仅 UA/Accept 头、环境代理被
-  无视（恶意假代理零连接实证）、不可达目标安全归类。
+  无视（恶意假代理零连接实证）、不可达目标安全归类；
+- R1 修正（supervisor 评审，2026-09-12）：非有限浮点（nan/inf/-inf）在
+  plan 与 fully-confirmed-execute 双路径 fail-closed（零 plan 产物/零采集/
+  零执行报告）；`--project` 严格白名单（接受矩阵/拒绝矩阵/固定词汇拒绝
+  原因/CLI 双路径/被拒值零回显）；`--artifact-dir` 口径修正（默认目录
+  gitignored vs 操作者显式自选——REPORT_BOUNDARIES/CLI help/运行时注记
+  三面锁定）；状态文档 commit 措辞 sweep（supervisor 审查与 remote 发布）。
 """
 from __future__ import annotations
 
@@ -1067,6 +1073,170 @@ def test_ops_readme_documents_tool() -> None:
     text = OPS_README.read_text(encoding="utf-8")
     assert "production_monitor.py" in text
     assert pm.CONFIRM_PHRASE in text
+
+
+# ---------------------------------------------------------------- R1 修正（supervisor 评审，2026-09-12）
+
+
+def test_validate_thresholds_rejects_non_finite_floats() -> None:
+    """R1 修正 1：request timeout / latency 阈值的 nan/inf/-inf 显式拒绝。"""
+    base: dict[str, object] = {"restart_warn": 1, "restart_critical": 5,
+                               "log_error_warn": 5, "log_error_critical": 20, "log_tail": 200}
+    for overrides in (
+        {"request_timeout": float("nan")},
+        {"request_timeout": float("inf")},
+        {"request_timeout": float("-inf")},
+        {"latency_warn": float("nan")},
+        {"latency_warn": float("inf")},
+        {"latency_critical": float("-inf")},
+    ):
+        values = {"request_timeout": 5.0, "latency_warn": 1000.0, "latency_critical": 5000.0}
+        values.update(overrides)
+        problems = pm.validate_thresholds(**values, **base)  # type: ignore[arg-type]
+        assert any("有限数值" in problem for problem in problems), overrides
+    problems = pm.validate_thresholds(request_timeout=5.0, latency_warn=1000.0,
+                                      latency_critical=5000.0, **base)  # type: ignore[arg-type]
+    assert not any("有限数值" in problem for problem in problems)  # 有限值不触发
+
+
+@pytest.mark.parametrize("args", [
+    ["--request-timeout-seconds", "nan"],
+    ["--request-timeout-seconds", "inf"],
+    # 注："-inf" 单独成 token 会被 argparse 当作旗标（SystemExit 2，仍零
+    # 副作用）；受控拒绝路径经 "=" 形式覆盖
+    ["--request-timeout-seconds=-inf"],
+    ["--latency-warn-ms", "nan"],
+    ["--latency-warn-ms", "inf"],
+    ["--latency-critical-ms", "nan"],
+    ["--latency-critical-ms=-inf"],
+])
+def test_nonfinite_floats_fail_closed_in_plan_zero_artifacts(monkeypatch, tmp_path, args: list[str]) -> None:
+    """R1 修正 1：plan 报告写入之前即拒绝——零 plan 产物。"""
+    _block_sockets(monkeypatch)
+    rc = pm.main([*args, "--artifact-dir", str(tmp_path)])
+    assert rc == pm.EXIT_USAGE
+    assert list(tmp_path.iterdir()) == []
+
+
+def test_nonfinite_floats_fail_closed_in_fully_confirmed_execute(monkeypatch, tmp_path) -> None:
+    """R1 修正 1：旗标+精确短语齐备但阈值非有限 → 仍零采集、零执行报告。"""
+    _block_sockets(monkeypatch)
+    runner, transport = FakeRunner(), FakeTransport()
+    constructions = _patch_gate(monkeypatch, runner, transport)
+    rc = pm.main(["--execute", "--confirm", pm.CONFIRM_PHRASE,
+                  "--latency-warn-ms", "nan", "--artifact-dir", str(tmp_path)])
+    assert rc == pm.EXIT_USAGE
+    assert runner.calls == [] and constructions["runner"] == 0  # 零采集
+    assert not list(tmp_path.glob("monitor-*"))
+
+
+@pytest.mark.parametrize("name", [pm.DEFAULT_PROJECT, "my-stack_2", "a", "A9-_x", "x" * 64])
+def test_validate_project_name_accepts_strict_names(name: str) -> None:
+    """R1 修正 2：ASCII 字母数字开头 + 字母数字/连字符/下划线 + ≤64（恰 64 合法）。"""
+    assert pm.validate_project_name(name) is None
+
+
+@pytest.mark.parametrize("name", [
+    "",                                  # 空
+    "proj\nname",                        # 换行
+    "../evil",                           # 路径穿越
+    "a/b", "a\\b",                       # 路径分隔
+    "x" * 65,                            # 超长
+    "生产栈",                            # 非 ASCII
+    " lead", "a b",                      # 空白
+    "a`b", "a|b", "a#b", "a>b",          # markdown/控制面字符
+    "\x00x", "a\x00b",                   # 控制字符
+])
+def test_validate_project_name_rejects_bad_names(name: str) -> None:
+    assert pm.validate_project_name(name) is not None
+
+
+def test_validate_project_name_reasons_are_fixed_vocabulary() -> None:
+    """R1 修正 2：拒绝原因为固定词汇（绝不回显被拒值）。"""
+    assert pm.validate_project_name("") == "empty"
+    assert pm.validate_project_name("x" * 65) == "too-long"
+    assert pm.validate_project_name("../evil") == "first-char-not-alnum"
+    assert pm.validate_project_name("a/b") == "invalid-character"
+    assert pm.validate_project_name("生产栈") == "first-char-not-alnum"
+
+
+def test_plan_accepts_alternate_valid_project(monkeypatch, tmp_path) -> None:
+    _block_sockets(monkeypatch)
+    rc = pm.main(["--project", "my-stack_2", "--artifact-dir", str(tmp_path)])
+    assert rc == pm.EXIT_OK
+    report = json.loads(next(tmp_path.glob("plan-*.json")).read_text(encoding="utf-8"))
+    assert report["config"]["project"] == "my-stack_2"
+
+
+@pytest.mark.parametrize("bad", ["", "proj\nname", "../evil", "x" * 65, "生产栈"])
+def test_invalid_project_fail_closed_in_plan_no_echo(monkeypatch, tmp_path, capsys, bad: str) -> None:
+    """R1 修正 2：plan 报告写入之前即拒绝；被拒值绝不回显到日志。"""
+    _block_sockets(monkeypatch)
+    rc = pm.main(["--project", bad, "--artifact-dir", str(tmp_path)])
+    assert rc == pm.EXIT_USAGE
+    assert list(tmp_path.iterdir()) == []
+    out = capsys.readouterr().out
+    if bad:
+        assert bad not in out  # 被拒值零回显（空串为任意串子串，跳过）
+
+
+def test_invalid_project_fail_closed_in_fully_confirmed_execute(monkeypatch, tmp_path) -> None:
+    """R1 修正 2：旗标+精确短语齐备但项目名非法 → 仍零采集、零执行报告。"""
+    _block_sockets(monkeypatch)
+    runner, transport = FakeRunner(), FakeTransport()
+    constructions = _patch_gate(monkeypatch, runner, transport)
+    rc = pm.main(["--execute", "--confirm", pm.CONFIRM_PHRASE,
+                  "--project", "../evil", "--artifact-dir", str(tmp_path)])
+    assert rc == pm.EXIT_USAGE
+    assert runner.calls == [] and constructions["runner"] == 0
+    assert not list(tmp_path.glob("monitor-*"))
+
+
+def test_report_boundaries_artifact_dir_claim_corrected() -> None:
+    """R1 修正 3：不再宣称「报告恒落 gitignored 目录」——默认目录 gitignored，
+    --artifact-dir 自定义路径为操作者显式自选。"""
+    joined = "\n".join(pm.REPORT_BOUNDARIES)
+    assert "default artifact directory" in joined
+    assert "explicit operator selection" in joined
+    assert "operator's responsibility" in joined
+    assert "reports land in a gitignored directory and never enter the repository" not in joined
+
+
+def test_artifact_dir_help_and_runtime_notes(monkeypatch, tmp_path, capsys) -> None:
+    """R1 修正 3：CLI help 与运行时注记区分默认目录（gitignored）与自定义目录。"""
+    help_text = pm.build_parser().format_help()
+    assert "操作者显式自选" in help_text
+    monkeypatch.setattr(pm, "ARTIFACT_DIR", tmp_path / "default-artifacts")
+    rc = pm.main([])  # 默认目录（ARTIFACT_DIR 已被指到 tmp 下）
+    assert rc == pm.EXIT_OK
+    assert "gitignored" in capsys.readouterr().out
+    rc = pm.main(["--artifact-dir", str(tmp_path / "custom")])
+    assert rc == pm.EXIT_OK
+    out = capsys.readouterr().out
+    assert "操作者显式自选" in out
+    assert "gitignored" not in out  # 自定义路径不对其 gitignore 状态作任何宣称
+
+
+def test_r1_docs_commit_wording_sweep() -> None:
+    """R1 修正 4：状态文档不再含绝对化「本回合不 push/不开 PR/不合并」承诺；
+    统一为「supervisor 审查与 remote 发布（push/PR/合并）在其后进行」。
+    匹配前做空白归一化——中文长条目折行不构成措辞差异。"""
+    docs = {
+        "evidence": REPO_ROOT / "docs/evidence/m14-12-production-monitoring/README.md",
+        "status": REPO_ROOT / "docs/PROJECT_STATUS.md",
+        "changelog": REPO_ROOT / "docs/CHANGELOG.md",
+        "roadmap": REPO_ROOT / "docs/ROADMAP.md",
+    }
+
+    def flatten(text: str) -> str:
+        return "".join(text.split())
+
+    for name, path in docs.items():
+        flat = flatten(path.read_text(encoding="utf-8"))
+        assert "supervisor审查与remote发布" in flat, name
+        assert "只本地commit，不push、不开PR、不合并" not in flat, name
+        assert "不push/不开PR/不合并" not in flat, name
+        assert "不推送、不开PR、不合并" not in flat, name
 
 
 # ---------------------------------------------------------------- 真实 transport（本机假服务器）
