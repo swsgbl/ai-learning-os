@@ -94,6 +94,43 @@ def test_hybrid_without_env_falls_back_to_local() -> None:
     assert _voice_mode(model) == "local"
 
 
+def _api_env(model: dict) -> dict[str, str]:
+    env = model["services"]["api"]["environment"]
+    return env if isinstance(env, dict) else dict(entry.split("=", 1) for entry in env)
+
+
+@pytest.mark.skipif(  # 渲染断言需要 docker compose CLI
+    not _compose_available(), reason="需要 docker compose CLI"
+)
+def test_local_voice_env_passthrough_and_host_gateway() -> None:
+    """M14-01：AIOS_*_LOCAL_* 插值透传到 api 容器 env + host.docker.internal host-gateway。
+
+    容器形态下本地引擎经 host.docker.internal 访问宿主 WSL 的 127.0.0.1 服务
+    （可达性实证脚本 tools/voice/compose_voice_reachability.sh）；默认留空 =
+    降级替身透出 fallback。
+    """
+    model = _render("local", {
+        "AIOS_ASR_LOCAL_ENDPOINT": "http://host.docker.internal:8010/v1",
+        "AIOS_TTS_LOCAL_ENDPOINT": "http://host.docker.internal:8011/v1",
+    })
+    env = _api_env(model)
+    assert env["ASR_LOCAL_ENDPOINT"] == "http://host.docker.internal:8010/v1"
+    assert env["TTS_LOCAL_ENDPOINT"] == "http://host.docker.internal:8011/v1"
+    assert env["ASR_LOCAL_MODEL"] == "sensevoice"
+    assert env["TTS_LOCAL_MODEL"] == "Fun-CosyVoice3-0.5B-2512"
+    assert env["ASR_LOCAL_API_KEY"] == ""
+    assert env["TTS_LOCAL_API_KEY"] == ""
+    # Linux 引擎上 host.docker.internal 需显式 host-gateway（Docker Desktop 自带）；
+    # compose config JSON 归一化为 "name=ip" 形态（compose 文件内是 "name:ip"）
+    extra_hosts = model["services"]["api"]["extra_hosts"]
+    assert any(entry.replace("=", ":") == "host.docker.internal:host-gateway" for entry in extra_hosts)
+
+    defaults = _render("local")
+    default_env = _api_env(defaults)
+    assert default_env["ASR_LOCAL_ENDPOINT"] == ""  # 默认留空 → 降级替身（不虚报）
+    assert default_env["TTS_LOCAL_ENDPOINT"] == ""
+
+
 # ---------------------------------------------------------------- 门控真启动冒烟
 
 def _wait_healthy(deadline_s: float = 420.0) -> dict[str, str]:

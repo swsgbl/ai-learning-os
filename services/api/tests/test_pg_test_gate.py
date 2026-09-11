@@ -25,6 +25,7 @@ from app.db.test_gate import (
     is_isolated_test_database,
     pg_test_gate_from_env,
 )
+from tests._subprocess_utf8 import run_utf8
 
 API_DIR = Path(__file__).resolve().parents[1]
 PG_PREFIX = "postgresql+asyncpg://aios:aios@127.0.0.1:5433/"
@@ -130,16 +131,20 @@ def test_reason_never_echoes_credentials() -> None:
     assert gate.url is None
 
 
-def _run_pytest_module(env_url: str) -> subprocess.CompletedProcess[str]:
+def _run_pytest_module(env_url: str) -> subprocess.CompletedProcess:
     """子进程跑 PG 集成模块；端口故意用不可达的 59999——门控若失效，
-    结果是连接失败（错误），绝不会静默写到任何真实库。"""
+    结果是连接失败（错误），绝不会静默写到任何真实库。
+
+    统一走 run_utf8（UTF-8 + replace）：子进程是 python 而非 bash，
+    locale 编码（cp936）下 reader 线程会抛 UnicodeDecodeError 把输出
+    炸成 None（见 _subprocess_utf8 模块说明；断言锚点均为 ASCII，替换符
+    不影响判读）。"""
     env = {**os.environ, ENV_VAR: env_url}
     env.pop("DATABASE_URL", None)
-    return subprocess.run(
+    return run_utf8(
         [sys.executable, "-m", "pytest", "tests/test_pg_integration.py", "-q",
          "--no-header", "-p", "no:cacheprovider"],
-        cwd=str(API_DIR), env=env, capture_output=True, text=True, timeout=300,
-        check=False,
+        timeout=300, cwd=str(API_DIR), env=env,
     )
 
 

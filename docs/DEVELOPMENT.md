@@ -1138,6 +1138,82 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   （不触网、不读真实 secret：必填 env 缺失 FAIL、音频文件缺失 FAIL、探针失败
   传播、文本契约与零敏感回显）。
 
+## 本地真实语音引擎（M14-01 第一切片）
+
+- **架构**：主 API 不嵌模型 SDK，只经 OpenAI 兼容 HTTP 调本机服务（全部只绑
+  `127.0.0.1`）——ASR 用 `local-funasr`（funasr-server，SenseVoiceSmall，
+  CPU，`/v1/audio/transcriptions`，无鉴权）；TTS 用 `local-cosyvoice`
+  （CosyVoice 官方仓库 + `tools/voice/cosyvoice_openai_bridge.py`，
+  `/v1/audio/speech` 恒返回 WAV）。首发不做三引擎同卡常驻：ASR 走 CPU、
+  TTS 用 GPU（cu128），LLM 另行安排。
+- **配置**：`ASR_LOCAL_ENDPOINT` / `ASR_LOCAL_MODEL` / `ASR_LOCAL_API_KEY` /
+  `TTS_LOCAL_ENDPOINT` / `TTS_LOCAL_MODEL` / `TTS_LOCAL_API_KEY`（key 可选，
+  本地服务默认无鉴权；真实 key 只放本机 .env）。endpoint 配好 → local 模式
+  选中真实引擎；未配置 → 降级 `fake`/`tone` 并在 `GET /api/v1/voice/providers`
+  与 `X-Voice-Provider` / `X-Voice-Fallback` 响应头透出 fallback（transcribe
+  与 synthesize 同口径），不虚报已接真实引擎。hybrid 语义：ASR 本地（同上），
+  TTS 仍按云端语义。未知 provider 名 422；引擎失败 ProviderUnavailable → 502
+  固定脱敏文案（与云端 M10-13 同口径，本地/云端文案明确区分，不互相冒充）。
+- **部署与冒烟**：可复现脚本在 `tools/voice/`——`bootstrap_funasr_wsl.sh`
+  （Python 3.11 venv + CPU torch + funasr 1.4.15，127.0.0.1:8010）、
+  `bootstrap_cosyvoice_wsl.sh`（Python 3.10 venv + 官方仓库固定 commit
+  `074ca6d` + cu128 torch + Fun-CosyVoice3-0.5B-2512，bridge 127.0.0.1:8011）、
+  `smoke_local_voice.py`（真实 HTTP 探测 ASR/TTS，输出 latency/bytes/RIFF/
+  文本与 PASS/FAIL）。模型与 venv 全部落 gitignored `artifacts/voice/`；
+  Windows 从 PowerShell 调 WSL 的命令与引号规则见 `tools/voice/README.md`。
+- **修正轮（supervisor corrections）**：① Python 隔离改经 **uv**（`uv venv
+  --python 3.11/3.10 --seed`，uv 探测含 `~/.local/bin`——非登录 bash 的 PATH
+  不含它；本机实测 WSL 无 apt python3.10，uv 缺失时给安装指引 fail-closed）；
+  ② CosyVoice 依赖**最小化**——只装推理路径真实需要的 18 包（推理闭包 16 +
+  bridge 服务面 fastapi/uvicorn——复审修正补入）
+  （`tools/voice/cosyvoice-runtime-requirements.txt`，固定 commit 导入闭包静态
+  推导；deepspeed/tensorrt/vllm 仅函数内可选导入、gradio 等 webui 专用一律
+  排除），安装后真实执行 `import cosyvoice.cli.cosyvoice` 验证，不足时
+  `COSYVOICE_FULL_REQUIREMENTS=1` 回退官方完整清单；③ **sox 不需要**——官方
+  `load_wav` 显式 `torchaudio.load(..., backend='soundfile')`，bootstrap 用
+  asset wav 真实加载探针实证（soundfile wheel 自带 libsndfile）；④ **compose
+  接线**——api 服务透传 `AIOS_ASR/TTS_LOCAL_*`（容器内地址
+  `host.docker.internal`，配 `extra_hosts: host-gateway`；引擎仍只绑 WSL
+  127.0.0.1，绝不 0.0.0.0），网络路径可达性已实证（2026-09-10 本机 WSL
+  2.7.13 NAT + Docker Desktop：容器 → host.docker.internal → WSL loopback
+  探针 HTTP 200；两个实测要点——loopback 绑定同样被 localhostForwarding
+  转发、`wsl -e` 后台进程须 `setsid nohup` 存活——已固化进
+  `tools/voice/compose_voice_reachability.sh`）；⑤ **配置但不可达 = fail
+  visibly**（providers 视图仍如实报 `local-*` 不静默换替身，请求 502 脱敏
+  文案，有真实 connection-refused 单测锁定）；⑥ API 测试证据脚本
+  `tools/voice/run_api_tests.ps1` 固化准确命令/解释器/commit（解释器回退为
+  相对同级主检出 `..\..\ai-learning-os\.venv` 探测，无盘符假设——复审修正；
+  UTF-8 BOM 兼容 Windows PowerShell 5.1）。
+- **复审修正（2026-09-10，supervisor review 3 defects）**：① bridge 服务面依赖
+  补入最小运行时清单——`fastapi==0.115.6` / `uvicorn==0.30.0`（官方固定 commit
+  同源 pin；此前清单注释声称 bootstrap 显式安装而实际未装，已修正为随清单安装，
+  pydantic 保持 fastapi 间接依赖不单独 pin）；② 证据脚本去机器特定绝对路径
+  （canonical venv 改相对同级主检出探测，契约测试锁定无盘符硬编码）；③ 可达性
+  脚本清理弃 `pkill -f`（可误杀同参数无关进程）——每次运行唯一 PID 文件 +
+  `/proc/<pid>/cmdline` 核验「本脚本起的 http.server <PORT>」后只杀记录的 PID
+  并删 PID 文件；实测运行中 pidfile→PID→cmdline 一致，结束后探针进程/PID
+  文件/端口监听三重缺席。
+- **复现性复审修正（2026-09-10，independent verification）**：`bash -n` 语法检查
+  host-aware——Windows PowerShell 默认 PATH 下 `shutil.which("bash")` 可解析到
+  WSL 启动器（system32\bash.EXE，读不了 Windows 盘符路径）；探测所选 bash 的
+  `uname -r`（WSL 内核含 `microsoft`）判为 WSL 时先经 `wsl.exe wslpath -u`
+  转换路径（缺失/失败退回确定性手工转换），Git Bash/MSYS/POSIX 直用原路径；
+  注入式回归测试锁定转换分支（不依赖宿主装 WSL），见
+  `services/api/tests/test_voice_local_scripts.py`。
+- **测试**：`services/api/tests/test_voice_local_providers.py`（路由选择/成功/
+  未配置降级/HTTP 失败脱敏/非法 JSON/空与非 WAV/provider header/未知 provider
+  422/配置不可达显式 502——最后一项为真实 loopback 连接拒绝，其余 MockTransport
+  或注入替身，不触网）与
+  `services/api/tests/test_voice_local_scripts.py`（脚本语法与文本契约 +
+  bridge `/health`、404/400/503/401 与 WAV 序列化行为 + 最小依赖清单/可达性
+  脚本/证据脚本契约）；compose 透传与 host-gateway 渲染断言在
+  `services/api/tests/test_compose_profiles.py`。
+- **边界**：真实模型**未在本切片部署**（脚本未执行、模型未下载）——实际部署
+  验证是另立的验收任务，完成前 `production_ready=false`；最小依赖清单为
+  静态推导 + 安装时 import 验证口径（AutoModel 完整加载随部署轮验证）；
+  compose 可达性实证是网络路径口径（端到端随部署轮）；流式 ASR/TTS 未实现
+  未宣称；bridge 单 worker 串行推理，并发容量未测。
+
 ## 运行观测快照（M10-14）
 
 - **用途**：runbook（`docs/delivery/12_DEPLOYMENT_OPERATIONS_RUNBOOK.md` 第 7 节

@@ -66,6 +66,7 @@ from app.ops.release_candidate import (
     verify_release_package,
     write_release_package,
 )
+from tests._subprocess_utf8 import run_bash
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 BUILD_SCRIPT = REPO_ROOT / "infra" / "build_release_candidate.sh"
@@ -883,10 +884,7 @@ def test_build_script_exists_and_passes_bash_n() -> None:
     assert BUILD_SCRIPT.is_file(), "缺少 infra/build_release_candidate.sh"
     if BASH is None:
         pytest.skip("bash 不可用（语法检查需要 bash）")
-    result = subprocess.run(
-        [BASH, "-n", BUILD_SCRIPT_RELATIVE],
-        cwd=REPO_ROOT, capture_output=True, text=True, timeout=60, check=False,
-    )
+    result = run_bash([BASH, "-n", BUILD_SCRIPT_RELATIVE], timeout=60, cwd=REPO_ROOT)
     assert result.returncode == 0, result.stderr
 
 
@@ -995,10 +993,7 @@ def test_compose_project_name_mapping_matches_bash_semantics(
         encoding="utf-8", newline="\n",
     )
     script.chmod(0o755)
-    result = subprocess.run(
-        [BASH, script.name],
-        cwd=tmp_path, capture_output=True, text=True, timeout=60, check=False,
-    )
+    result = run_bash([BASH, script.name], timeout=60, cwd=tmp_path)
     assert result.returncode == 0, result.stderr
     derived = result.stdout
     assert derived == _expected_compose_project_name(tag)
@@ -1047,10 +1042,7 @@ def _bash_env() -> str:
     cached = _BASH_ENV_CACHE.get(BASH)
     if cached is not None:
         return cached
-    result = subprocess.run(
-        [BASH, "-c", "uname -s; uname -r"],
-        capture_output=True, text=True, timeout=30, check=False,
-    )
+    result = run_bash([BASH, "-c", "uname -s; uname -r"], timeout=30)
     info = " ".join(result.stdout.lower().split())
     if result.returncode == 0 and "linux" in info \
             and ("microsoft" in info or "wsl" in info):
@@ -1083,10 +1075,7 @@ def _nearest_existing(text: str) -> str | None:
 def _bash_exists(posix_path: str) -> bool:
     """在 BASH 侧确认路径存在（单引号内嵌，零 $ 变量）。"""
     assert BASH is not None
-    result = subprocess.run(
-        [BASH, "-c", f"test -e {_sh_sq(posix_path)}"],
-        capture_output=True, text=True, timeout=30, check=False,
-    )
+    result = run_bash([BASH, "-c", f"test -e {_sh_sq(posix_path)}"], timeout=30)
     return result.returncode == 0
 
 
@@ -1113,10 +1102,7 @@ def _bash_path(path: Path | str) -> str | None:
     if env_kind == "wsl":
         candidate = _wsl_lexical(text)
     elif env_kind == "msys":
-        result = subprocess.run(
-            [BASH, "-c", f"cygpath -u {_sh_sq(text)}"],
-            capture_output=True, text=True, timeout=30, check=False,
-        )
+        result = run_bash([BASH, "-c", f"cygpath -u {_sh_sq(text)}"], timeout=30)
         candidate = result.stdout.strip()
     else:
         return None
@@ -1130,9 +1116,8 @@ def _bash_path(path: Path | str) -> str | None:
     elif env_kind == "wsl":
         anchor_posix = _wsl_lexical(anchor)
     else:
-        anchor_result = subprocess.run(
-            [BASH, "-c", f"cygpath -u {_sh_sq(anchor)}"],
-            capture_output=True, text=True, timeout=30, check=False,
+        anchor_result = run_bash(
+            [BASH, "-c", f"cygpath -u {_sh_sq(anchor)}"], timeout=30
         )
         anchor_posix = anchor_result.stdout.strip()
     if not _bash_exists(anchor_posix):
@@ -1266,10 +1251,9 @@ class _StubEnv:
             f'export AIOS_RELEASE_SMOKE_SCRIPT="{self.smoke_posix}"'
         )
         joined = " ".join(args)
-        return subprocess.run(
+        return run_bash(
             [BASH, "-c", f"{exports}; bash {BUILD_SCRIPT_RELATIVE} {joined}"],
-            cwd=REPO_ROOT, capture_output=True, text=True, timeout=180,
-            check=False,
+            timeout=180, cwd=REPO_ROOT,
         )
 
     def calls(self) -> list[str]:
@@ -1555,10 +1539,9 @@ def test_real_docker_release_build_smoke_opt_in() -> None:
     out_dir = REPO_ROOT / "temp" / f"rc-real-{tag}"
     shutil.rmtree(out_dir, ignore_errors=True)
     try:
-        result = subprocess.run(
+        result = run_bash(
             [BASH, BUILD_SCRIPT_RELATIVE, "--tag", tag, "--output-dir", out_rel],
-            cwd=REPO_ROOT, capture_output=True, text=True, timeout=1800,
-            check=False,
+            timeout=1800, cwd=REPO_ROOT,
         )
         assert result.returncode == 0, result.stdout + result.stderr
         report = verify_release_package(out_dir, version_file=REPO_ROOT / "VERSION")

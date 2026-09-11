@@ -4,9 +4,16 @@ name: ai-learning-os
 # 需要 LAN/外网访问时：AIOS_BIND_IP=0.0.0.0 且必须同时设置强 AUTH_SECRET
 # 与 APP_ENV=production（API 启动 fail-closed 校验），见 docs/DEVELOPMENT.md。
 
+# M14-06: 全部长驻服务 restart: unless-stopped —— Docker 引擎重启/容器崩溃后
+# 自动拉起（自愈基线）；显式 `docker compose stop/down` 仍会被尊重（unless-
+# stopped 语义）。恢复编排（tools/ops/production_recovery.py）负责引擎等待与
+# 幂等 up -d --no-build；本策略是容器面兜底。已存在的容器需一次 up -d 重建
+# 才能获得该策略（compose 首次应用时的预期行为）。
+
 services:
   postgres:
     image: postgres:17-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: aios
       POSTGRES_PASSWORD: aios
@@ -24,6 +31,7 @@ services:
 
   redis:
     image: redis:7-alpine
+    restart: unless-stopped
     ports:
       - "127.0.0.1:6379:6379"
     healthcheck:
@@ -34,6 +42,7 @@ services:
 
   minio:
     image: minio/minio:latest
+    restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: aios
@@ -55,6 +64,7 @@ services:
       dockerfile: services/api/Dockerfile
     # M7-06: 应用回滚锚点 —— 发布时 docker tag 固化版本镜像；回滚 = AIOS_IMAGE_TAG=<旧tag> up -d --no-build
     image: aios/api:${AIOS_IMAGE_TAG:-local}
+    restart: unless-stopped
     environment:
       APP_ENV: ${AIOS_APP_ENV:-docker}
       # M9-06: 宿主绑定意图传入 API（容器内 env 名对齐 settings 字段 host_bind_ip）
@@ -90,6 +100,21 @@ services:
       AUTH_COOKIE_SAMESITE: ${AIOS_AUTH_COOKIE_SAMESITE:-lax}
       # M7-01: profile 分离 local/hybrid/cloud —— AIOS_VOICE_MODE 插值注入语音隐私路由
       VOICE_MODE: ${AIOS_VOICE_MODE:-local}
+      # M14-01: 本地真实语音引擎槽位（引擎部署在宿主 WSL，恒绑 WSL 127.0.0.1；
+      # 容器经 host.docker.internal 访问——形如 AIOS_ASR_LOCAL_ENDPOINT=
+      # http://host.docker.internal:8010/v1。endpoint 留空 = 降级 fake/tone 并透出
+      # fallback；配好但不可达 = fail visibly（providers 视图仍报 local-*，请求 502
+      # 固定脱敏文案，绝不静默换替身）。key 只经部署 secret 注入，不入库）
+      ASR_LOCAL_ENDPOINT: ${AIOS_ASR_LOCAL_ENDPOINT:-}
+      ASR_LOCAL_MODEL: ${AIOS_ASR_LOCAL_MODEL:-sensevoice}
+      ASR_LOCAL_API_KEY: ${AIOS_ASR_LOCAL_API_KEY:-}
+      TTS_LOCAL_ENDPOINT: ${AIOS_TTS_LOCAL_ENDPOINT:-}
+      TTS_LOCAL_MODEL: ${AIOS_TTS_LOCAL_MODEL:-Fun-CosyVoice3-0.5B-2512}
+      TTS_LOCAL_API_KEY: ${AIOS_TTS_LOCAL_API_KEY:-}
+    # M14-01: Linux 引擎上 host.docker.internal 需显式 host-gateway 映射
+    # （Docker Desktop 自带；此行使 compose 在两类引擎上行为一致，不暴露引擎端口）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "${AIOS_BIND_IP:-127.0.0.1}:8000:8000"
     healthcheck:
@@ -109,6 +134,7 @@ services:
 
   livekit:
     image: livekit/livekit-server:latest
+    restart: unless-stopped
     # M9-07/M9-08: --keys 与 API 共用同一组凭据；config 可切换 local/public
     # （AIOS_LIVEKIT_CONFIG，public 版 use_external_ip=true 适合公网自动探测）；
     # --node-ip 显式通告媒体地址（局域网必配 AIOS_LIVEKIT_EXTERNAL_IP=<LAN_IP>；
@@ -140,6 +166,7 @@ services:
         # M9-07: API 地址构建期注入（局域网设备访问时需设为实际 API 地址并 rebuild）
         NEXT_PUBLIC_API_BASE_URL: ${AIOS_PUBLIC_API_BASE_URL:-http://127.0.0.1:8000}
     image: aios/web:${AIOS_IMAGE_TAG:-local}
+    restart: unless-stopped
     environment:
       NODE_ENV: production
       # Next standalone server.js 读 HOSTNAME 作为绑定地址；容器默认 HOSTNAME=容器 ID
