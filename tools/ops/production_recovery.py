@@ -94,18 +94,24 @@ class CommandResult:
 
 
 class Runner(Protocol):
-    def run(self, argv: tuple[str, ...] | list[str], *, timeout: float) -> CommandResult: ...
+    def run(self, argv: tuple[str, ...] | list[str], *, timeout: float = 60.0,
+            encoding: str | None = None) -> CommandResult: ...
 
 
 class RealRunner:
-    """真实子进程执行：capture + UTF-8 + Windows 侧恒 CREATE_NO_WINDOW（无弹窗）。"""
+    """真实子进程执行：capture + UTF-8 + Windows 侧恒 CREATE_NO_WINDOW（无弹窗）。
 
-    def run(self, argv: tuple[str, ...] | list[str], *, timeout: float = 60.0) -> CommandResult:
+    encoding 覆写供需要 UTF-16 管道输出的调用方使用（如 schtasks /Query /XML，
+    见 windows_startup_task.py）；默认 UTF-8 + replace。
+    """
+
+    def run(self, argv: tuple[str, ...] | list[str], *, timeout: float = 60.0,
+            encoding: str | None = None) -> CommandResult:
         text_argv = [str(item) for item in argv]
         kwargs: dict[str, object] = {
             "capture_output": True,
             "text": True,
-            "encoding": "utf-8",
+            "encoding": encoding or "utf-8",
             "errors": "replace",
         }
         if os_windows():
