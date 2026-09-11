@@ -14,6 +14,22 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   默认关闭保持确定性判分；真实端点冒烟脚本 infra/smoke_llm.sh）
 
 ### Security
+- M14-10 生产 Web 安全镜像上产（M14-05 + M14-09 的生产落地，与代码/配置合并
+  分开记录）：代码/配置面已先行合并——M14-05（next 16.3.4）随 **PR #76**
+  （head `539dbe1`、merge `ebbb700`）、M14-09（独立 `AIOS_WEB_IMAGE_TAG` 锚点）
+  随 **PR #81**（feature `321fb50`、merge `433d018`）；2026-09-11 生产 env 补
+  `AIOS_WEB_IMAGE_TAG=m14-05-security`（`AIOS_IMAGE_TAG=m14-03-prod-rehearsal`
+  不变，supervisor 先仓库外备份 gitignored 真实 env，仅此一次非密钥键变更），
+  canonical compose `up -d --no-build --no-deps web` 单独替换 web 容器
+  （m14-03-prod-rehearsal → m14-05-security，运行时自报 Next.js 16.3.4），
+  api/数据面/语音引擎零触碰（api 容器 ID 与启动时间不变；FunASR/CosyVoice
+  owner PID 不变、两次恢复均 untouched，未重启）；升级后 Web `/`、`/login` 与
+  API/FunASR/CosyVoice `/health` 全 200、compose 6/6 healthy；恢复任务 dry-run
+  与真实 `Start-ScheduledTask` 双绿（六键 pin 6/6、`up` 幂等 no-op、语音
+  untouched、LastTaskResult=0）。PR #81 CI run `34582538887` 为外部 0-step
+  形态失败（非代码回归，CI 未运行不隐藏）。回滚锚点：`AIOS_WEB_IMAGE_TAG`
+  改回 `m14-03-prod-rehearsal` 重跑同命令。单机生产栈口径，
+  production_ready=false；证据见 docs/evidence/m14-10-production-web-upgrade/
 - M14-09 Web 镜像 tag 独立发布/回滚锚点：compose web 镜像改读独立
   `AIOS_WEB_IMAGE_TAG`（默认 local，不再跟随 `AIOS_IMAGE_TAG`——只设
   AIOS_IMAGE_TAG 不改变 Web tag，消除 Web-only 升级时同 tag 混用两代镜像/

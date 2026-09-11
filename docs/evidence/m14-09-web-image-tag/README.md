@@ -4,7 +4,11 @@
 - 分支：`fix/m14-09-web-image-tag`（基于本地 `main@539dbe1`（PR #76 树），worktree
   `D:\AI Learning OS\ai-learning-os-worktrees\m14-09-web-image-tag`，本地 git 可验证）
 - 状态：本地实现与验证完成；本 README 记录提交前本地验收快照，远端 PR/CI/合并
-  状态以 PROJECT_STATUS 后续回填为准
+  状态以 PROJECT_STATUS 后续回填为准（回填 2026-09-11：已随 **PR #81** 合并
+  main（feature `321fb50`、merge `433d018`），PR CI run `34582538887` 为外部
+  0-step 形态失败；合并后生产 env 补键与首次 Web-only 升级已完成，见
+  `docs/evidence/m14-10-production-web-upgrade/`——本 README 其余内容维持
+  提交前快照原文，不改写合并前口径）
 - 入库证据：本 README（唯一入库文件）；`.verify/m14-09-web-image-tag/` 为
   gitignored 本机原始输出（如留存）
 - 结论：compose web 镜像改读独立 `AIOS_WEB_IMAGE_TAG`，recovery pin 扩六键，
@@ -70,6 +74,9 @@ recovery pin（env 值与在线 web 镜像漂移 → enforce 拒绝），要么�
   合并后**下一次 recovery enforce 会可见拒绝**（缺必需键，键名-only）。supervisor
   须按当前在线 web 镜像 tag（彩排栈应为 `m14-03-prod-rehearsal`，以
   `docker inspect <web 容器> --format {{.Config.Image}}` 实测为准）补键。
+  （回填 2026-09-11：该补键已随 M14-10 执行——`AIOS_WEB_IMAGE_TAG=m14-05-security`、
+  `AIOS_IMAGE_TAG=m14-03-prod-rehearsal` 不变，首次 enforce 即绿灯；后续事实见
+  `docs/evidence/m14-10-production-web-upgrade/`）
 - 此前以单 `AIOS_IMAGE_TAG` 同滚 api/web 的命令（旧 runbook 形态），合并起
   须显式双变量，否则只影响 api。
 
