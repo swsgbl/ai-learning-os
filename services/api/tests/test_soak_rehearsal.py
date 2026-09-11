@@ -524,6 +524,15 @@ def test_proxy_env_note_records_presence_only(monkeypatch, tmp_path) -> None:
     assert MARK_ENV_PROXY not in report_text  # env 值绝不入档
 
 
+def test_proxy_env_empty_value_key_still_present(monkeypatch, tmp_path) -> None:
+    """R1 回归：键存在但值为空串仍报 present（membership 语义，非值真值）。"""
+    monkeypatch.setenv("HTTP_PROXY", "")
+    rc = sr.main(["--artifact-dir", str(tmp_path)])
+    assert rc == sr.EXIT_OK
+    report_text = next(tmp_path.glob("plan-*.json")).read_text(encoding="utf-8")
+    assert "proxy_env_keys_present=True" in report_text
+
+
 # ---------------------------------------------------------------- main execute 出口（patch transport，零生产流量）
 
 

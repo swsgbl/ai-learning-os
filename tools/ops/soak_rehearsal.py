@@ -597,8 +597,9 @@ def write_report(report: dict[str, object], directory: Path, stem: str) -> tuple
 
 
 def proxy_env_present() -> bool:
-    """仅探测 proxy 环境变量键名是否存在（键名入注记，值绝不读取）。"""
-    return any(os.environ.get(key) for key in PROXY_ENV_KEYS)
+    """仅探测 proxy 环境变量**键名存在性**（键存在即视为 present，即使值为
+    空串——membership 语义；键名入注记，值绝不读取/记录）。"""
+    return any(key in os.environ for key in PROXY_ENV_KEYS)
 
 
 def build_parser() -> argparse.ArgumentParser:

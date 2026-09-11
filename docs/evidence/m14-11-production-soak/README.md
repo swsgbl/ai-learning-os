@@ -2,7 +2,9 @@
 
 - 日期：2026-09-11
 - 分支：`feat/m14-11-production-soak`（基于 `main@3634d90`（PR #82 merge
-  commit，本地 git 可验证））；本回合**只 commit + push 分支，不合并、不开 PR**
+  commit，本地 git 可验证））；流程：Claude 只 commit + push 本分支；
+  supervisor 审查 + 独立验证后经 GitHub REST API 创建并合并 PR
+  （本地 gh/git 桥损坏）——本 README 不宣称任何 PR 已创建/已合并
 - 状态：harness + 聚焦契约测试交付完毕；**有界只读生产 soak 执行明确延后**，
   由 supervisor 在获准窗口运行——本开发回合**未发起任何生产流量**
   （spec 约定：开发回合不得运行负载测试）

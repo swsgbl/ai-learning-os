@@ -9,7 +9,7 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-**M14-11 生产 soak/并发彩排 harness（开发回合，不执行生产负载）**（分支 `feat/m14-11-production-soak`，基于 `main@3634d90`（PR #82 merge commit，本地 git 可验证）；动机：「长稳/并发 soak」是 `production_ready=false` 的既有阻塞项，但直接对生产栈发起负载缺乏安全护栏——本切片先交付**可复用、fail-closed 的只读彩排 harness**，把「能不能安全地打、打多狠、打什么」固化进工具与契约测试；**有界只读生产 soak 执行明确延后**至 supervisor 获准窗口，本回合零生产流量。新增 `tools/ops/soak_rehearsal.py`（单文件纯标准库，与 production_recovery.py 同款纪律：注入式 transport/clock、零第三方依赖）+ `services/api/tests/test_soak_rehearsal.py` + `docs/evidence/m14-11-production-soak/README.md`，更新本文件/ROADMAP/CHANGELOG/`tools/ops/README.md`；不合并、不开 PR）：
+**M14-11 生产 soak/并发彩排 harness（开发回合，不执行生产负载）**（分支 `feat/m14-11-production-soak`，基于 `main@3634d90`（PR #82 merge commit，本地 git 可验证）；动机：「长稳/并发 soak」是 `production_ready=false` 的既有阻塞项，但直接对生产栈发起负载缺乏安全护栏——本切片先交付**可复用、fail-closed 的只读彩排 harness**，把「能不能安全地打、打多狠、打什么」固化进工具与契约测试；**有界只读生产 soak 执行明确延后**至 supervisor 获准窗口，本回合零生产流量。新增 `tools/ops/soak_rehearsal.py`（单文件纯标准库，与 production_recovery.py 同款纪律：注入式 transport/clock、零第三方依赖）+ `services/api/tests/test_soak_rehearsal.py` + `docs/evidence/m14-11-production-soak/README.md`，更新本文件/ROADMAP/CHANGELOG/`tools/ops/README.md`；流程：Claude 只 commit + push 本分支，supervisor 审查 + 独立验证后经 GitHub REST API 创建并合并 PR（本地 gh/git 桥损坏）——本条目不宣称任何 PR 已创建/已合并）：
 
 - **双模式**：默认 **plan**（零网络，打印计划并落 plan 报告）；**execute** 需五要素齐备——`--execute` 旗标 + 精确确认短语 `EXECUTE READ-ONLY LOOPBACK SOAK` + 有界 duration（≤120s）+ 有界 concurrency（≤8）+ 总请求上限（≤2000），缺一即 EXIT_USAGE 零请求；全部限制为保守硬顶，超顶在发起任何请求前可见拒绝（即使五要素齐备）。
 - **目标面固定**（不可经 CLI 注入任意 URL）：Web `http://127.0.0.1:3011/` 与 `/login`、API `http://127.0.0.1:8000/health`；`--include-voice` 才加 FunASR/CosyVoice 低频 GET `/health`（8010/8011，默认每目标 ≥2s，硬顶 ≥1s——绝无音频/推理请求）。
