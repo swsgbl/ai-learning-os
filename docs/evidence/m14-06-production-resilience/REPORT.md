@@ -1,5 +1,23 @@
 # M14-06 Round 1 证据报告：生产恢复编排（compose restart 策略 + 恢复脚本 + env 护栏）
 
+> **Round 3 修正（真实安装回环实证，2026-09-11）**：supervisor 在 canonical
+> 主仓库以**提升令牌**执行 install 成功（任务 `AIOS-Production-Recovery`
+> 已注册），真实回读暴露三处与开发期假设不符的行为——① `schtasks /Create`
+> 仅在 elevated token 下成功（UAC 拒绝非提升）；② `/Query /XML` 管道输出为
+> UTF-16LE **无 BOM**（text-mode `encoding='utf-16'` 在读线程抛 UnicodeError
+> 丢输出 → status 误判 unknown）；③ Task Scheduler **归一化存储**：URI 重写
+> 为 `\AIOS-Production-Recovery`（该形态对任何同名任务都出现，不具归属
+> 区分性）、默认值元素（LogonTrigger/Enabled、Settings/Enabled、Principal/
+> RunLevel）被省略、调度器自行新增 UserId/IdleSettings，Action/Arguments/
+> cwd/Hidden 与非默认设置逐字保留（COM 快照实证）。修复：`Runner.run_raw`
+> 字节面 capture + `decode_schtasks_xml` 鲁棒解码；归属判定改为「URI 两种
+> 形态之一 + Description 持久标记逐字相等 + Command/Arguments/cwd/全部安全
+> 相关设置逐项精确（归一化省略的默认值仅在父节点/触发器类型在场且其余
+> 字段全部精确时条件认可）」；install/create 语义与 uninstall 零删除边界
+> 不变——归一化 URI 单独绝不构成归属凭据，foreign/malformed/unknown 永不
+> `/Delete`。测试 46 → 60 项（FakeSchtasks，零真实 schtasks 写路径）。
+> 详见「Round 3 修正记录」。
+>
 > **Round 2.1 修正（supervisor 评审 5 缺陷，2026-09-11）**：startup task 管理器
 > 五项必修缺陷全部修复——①移除 `--python` 覆盖、preflight/dry-run/install 恒查
 > repo 自带 `.venv`（worktree 无 .venv → dry-run 真实复验 **exit 1 fail-closed**，
@@ -239,5 +257,104 @@ tmp> -q` → **1907 passed, 31 skipped，exit 0**（零回归）。如实录：�
 3. 获准窗口执行 enforce `python tools/ops/production_recovery.py`（一次性重建
    六容器 + 自动受控拉起两语音引擎——engine start 首次含依赖检查，模型缓存
    复用不重下，见 M14-02/03 证据）。
-4. Round 2：隐藏登录自启任务安装器（Task Scheduler + 静默 wrapper +
-   dry-run/uninstall）——本轮按边界未注册任何任务。
+4. Round 2/3：隐藏登录自启任务安装器（Task Scheduler + 静默 wrapper +
+   dry-run/uninstall）——已在 canonical 主仓库以提升令牌安装
+   （`AIOS-Production-Recovery`，R3 实证）；后续维护用 `status` 只读核对、
+   `uninstall` 仅删 exact-owned 任务（R3 归一化感知判定）。
+
+## Round 3 修正记录（真实安装回环，分支 fix/m14-06-startup-task-roundtrip）
+
+**背景**：R2.1 后 supervisor 在 canonical 主仓库（提升的管理令牌）执行
+`python tools/ops/windows_startup_task.py install` 成功创建
+`AIOS-Production-Recovery`；随后的 `status` 回读暴露三处真实行为（本分支
+修复，全程零真实 schtasks 写操作——只读 /Query 复核，全部测试经
+FakeSchtasks 注入）：
+
+1. **UAC**：`schtasks /Create /TN … /XML <tmp>` 仅在 elevated token 下成功。
+2. **编码**：`/Query /XML` 管道输出 UTF-16LE **无 BOM**；原
+   `Runner.run(encoding='utf-16')`（text-mode）在读线程抛 UnicodeError 且
+   输出丢失 → status 误判 unknown（事实不完整）。
+3. **归一化存储**（COM 快照 `task-scheduler-com-normalized.xml`，gitignored
+   本机留存，无 secret）：`RegistrationInfo/URI` 由
+   `urn:aios:m14-06:production-recovery` 重写为 `\AIOS-Production-Recovery`；
+   值恰为 Windows 默认值的元素被省略（`LogonTrigger/Enabled`、
+   `Settings/Enabled`、`Principal/RunLevel`）；调度器自行新增
+   `Principal/UserId`（SID）与 `IdleSettings`；`Description` **逐字保留**；
+   Action `Command/Arguments/WorkingDirectory`、`Hidden` 与全部非默认设置
+   逐字保留。
+
+**修复（`tools/ops/production_recovery.py` + `tools/ops/windows_startup_task.py`）**：
+
+- **字节面 capture**：`Runner` 协议新增 `run_raw`（`RawCommandResult`，
+  stdout/stderr 为 bytes，不预解码）；`RealRunner.run_raw` 与 `run` 同纪律
+  （capture、Windows 恒 CREATE_NO_WINDOW、OSError/超时 → RunnerError）。
+  `run` 默认 UTF-8+replace 语义不变——其他命令解码面零弱化。
+- **鲁棒解码 `decode_schtasks_xml`**：LE BOM → 去 BOM 按 UTF-16LE；BE BOM →
+  去 BOM 按 UTF-16BE（兼容）；无 BOM → UTF-16LE 严格解（奇长度/孤代理 →
+  ValueError）；解码成功但首字符非 `<`（OEM 文案强解乱码）同样 ValueError。
+  `query_task` 对 /XML 一律 `run_raw` + 本函数；任何解码/查询失败 →
+  STATE_UNKNOWN fail-closed（绝不猜编码、绝不弱解）。
+- **归一化感知归属判定（fail-closed 不变）**：
+  - 归属标识 = `RegistrationInfo/URI` ∈ {写入值 `urn:aios:m14-06:
+    production-recovery`，归一化值 `\<TASK_NAME>`} **且**
+    `RegistrationInfo/Description` 与 `TASK_DESCRIPTION` 常量逐字相等
+    （持久标记，COM 实证保留）**且** `Command=wscript.exe`。URI 非两形态
+    之一或 Command 别处 → foreign；归一化 URI 形态对任何同名任务都出现，
+    **单独绝不构成归属凭据**。
+  - 必检字段（无豁免，缺失/漂移按字段名报告）：Description、Arguments、
+    WorkingDirectory、Hidden、MultipleInstancesPolicy、StartWhenAvailable、
+    电池双 false、ExecutionTimeLimit、LogonType、LogonTrigger 节点（触发器
+    类型）。
+  - 归一化省略面（`_DEFAULTABLE_FIELDS`）：`LogonTrigger/Enabled`、
+    `Settings/Enabled`、`Principal/RunLevel` 省略时按 Windows 默认值认可，
+    **仅当**（a）父节点/触发器类型在场、（b）其余必检字段全部精确在场且
+    匹配；显式非默认值（false/HighestAvailable）仍逐项拒绝；其余字段任何
+    缺失/漂移时省略同样计 mismatch（默认值假设永不独立放行）。
+  - 调度器新增元素（UserId/IdleSettings 等）不影响归属（verify 只检必检面）。
+- **语义不变的边界**：install/create 流程与临时 XML（UTF-16 带声明）逐字
+  不变；`/Delete /F` 仍仅在 exact-owned 分支（源码契约 `"/F"` 恰一次）；
+  foreign/malformed/unknown/列表失败/解码失败一律可见拒绝、零删除。
+
+**测试（`test_windows_startup_task.py`，46 → 60 项，全部 FakeSchtasks 注入、
+零真实 schtasks 写路径）**：新增 R3 回归——解码三形态（无 BOM/LE BOM/BE
+BOM）等价；非 XML 字节（ASCII/OEM 乱码/奇数截断/仅 BOM）参数化拒绝；
+query_task 生产形态（无 BOM + 归一化）→ installed；解码失败 → unknown +
+uninstall 零 /Delete；归一化 + 额外元素（UserId/IdleSettings）回环仍
+exact-owned；归一化 URI 单独不构成归属（Description 缺失/漂移 → malformed；
+他人 URI/别处 Command → foreign）；省略默认值的条件性（Hidden 缺失或触发器
+缺失时省略计 mismatch）；归一化无 BOM 形态下 status=0 / uninstall 精确
+`/Delete /F` argv。既有 46 项全部保留通过（RunLevel「缺失即 mismatch」样本
+按 R3 语义改归「归一化省略面」，由新测试正向覆盖；Hidden/Description 缺失
+补入缺失面参数化）。FakeSchtasks 默认回放归一化 + 无 BOM 形态——install
+happy path 的复查步骤即真实回环。
+
+**验证（canonical venv 解释器，2026-09-11，分支 worktree）**：
+
+- 聚焦：`python -m pytest services/api/tests/test_windows_startup_task.py
+  -q --basetemp=<仓库外>` → **60 passed**。
+- 相邻套件（recovery/compose restart/voice control/voice scripts/compose
+  profiles/startup task 六文件）→ **210 passed, 2 skipped**。
+- `ruff check`（3 个变更 Python 文件）→ All checks passed；`py_compile`
+  （同 3 文件）→ OK；`git diff --check` → 干净。
+- 全量：`python -m pytest -q --basetemp=D:/aios-m1406-r3-tmp/full` →
+  **2 failed, 1918 passed, 32 skipped**（pytest exit 1）。两例失败为
+  `test_voice_local_providers.py` 的「配置不可达端点 → 网络错误文案」断言：
+  本机 sing-box 系统代理（registry proxy，进程未停、按边界不得停）拦截
+  127.0.0.1:1 回环请求返回 502，app 文案随之变为「端点返回 HTTP 502」≠
+  期望的连接错误文案。**基线复现**：同一环境在未含 R3 改动的基线提交
+  d107b57（m14-06 worktree）上运行同文件 → 同样 2 failed, 30 passed——
+  纯环境因素，非本分支回归；该文件单独以 `NO_PROXY=127.0.0.1,localhost`
+  运行 → **32 passed**（代理旁路即全绿，sing-box 本身未停止）。
+- 全量（loopback 代理旁路，`NO_PROXY=127.0.0.1,localhost`，
+  `--basetemp=D:/aios-m1406-r3-tmp/full-noproxy`）→
+  **1920 passed, 32 skipped, exit 0**（零失败）。对账：主分支合并态
+  （aef48f6 记录 full pytest **1906 passed/32 skipped**）+ 本轮新增 14 项
+  （startup-task 套件 46 → 60）= **1920 passed/32 skipped，逐数吻合，零回归**。
+  （R2.1 报告曾记 1907/31——差异为 m14-06 worktree 在盘的 gitignored pin
+  env 使「真实 env 文件」护栏测试当时执行并通过；fresh worktree 无该文件，
+  该测试按设计 skip，与代码无关。）
+
+**边界遵守（R3 轮）**：未注册/删除/运行任何真实 schtasks 任务（本分支全部
+schtasks 交互经 FakeSchtasks）；未触碰 Docker/8010/8011/模拟器/代理（sing-box
+保持运行，仅以 NO_PROXY 环境变量旁路回环）；无 secret 入库/入日志（COM
+快照仅结构，gitignored）。
