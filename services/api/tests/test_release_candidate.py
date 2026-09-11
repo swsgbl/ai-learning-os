@@ -902,8 +902,9 @@ def test_build_script_contract_texts() -> None:
     assert '"aios/web:$TAG"' in source
     assert "--build-arg \"NEXT_PUBLIC_API_BASE_URL=$WEB_BUILD_ARG\"" in source
     assert "docker save -o" in source
-    # compose：AIOS_IMAGE_TAG + --no-build + 既有冒烟脚本 + 安全清理
+    # compose：API/Web 同 tag 显式双变量（M14-09）+ --no-build + 既有冒烟脚本 + 安全清理
     assert 'AIOS_IMAGE_TAG="$TAG"' in source
+    assert 'AIOS_WEB_IMAGE_TAG="$TAG"' in source
     assert "up -d --no-build" in source
     assert "smoke_docker.sh" in source
     assert "down --remove-orphans" in source

@@ -26,6 +26,7 @@ REAL_ENV_FILE = "infra/env.production-recovery"
 LONG_RUNNING_SERVICES = ("postgres", "redis", "minio", "api", "livekit", "web")
 PIN_KEYS = (
     "AIOS_IMAGE_TAG",
+    "AIOS_WEB_IMAGE_TAG",
     "AIOS_APP_ENV",
     "AIOS_WEB_PORT",
     "AIOS_AUTH_SECRET",
@@ -82,6 +83,18 @@ def test_static_yaml_every_long_running_service_has_unless_stopped() -> None:
     assert set(services) == set(LONG_RUNNING_SERVICES)
     for name, body in services.items():
         assert body.get("restart") == "unless-stopped", f"{name} 缺 restart: unless-stopped"
+
+
+def test_static_yaml_image_tag_anchors_are_split() -> None:
+    """M14-09 镜像 tag 锚点静态契约：api 只读 AIOS_IMAGE_TAG，web 只读
+    AIOS_WEB_IMAGE_TAG（各自默认 local）——web 不得引用 AIOS_IMAGE_TAG
+    （防 Web-only 升级混用两代镜像/破坏 recovery pin）。"""
+    services = _static_yaml_services()
+    api_image = services["api"]["image"]
+    web_image = services["web"]["image"]
+    assert api_image == "aios/api:${AIOS_IMAGE_TAG:-local}"
+    assert web_image == "aios/web:${AIOS_WEB_IMAGE_TAG:-local}"
+    assert "AIOS_IMAGE_TAG" not in web_image.replace("AIOS_WEB_IMAGE_TAG", "")
 
 
 def test_env_template_exists_with_pin_keys_and_placeholders() -> None:

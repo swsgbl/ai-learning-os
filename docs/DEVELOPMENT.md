@@ -1026,7 +1026,8 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   已存在目录、artifacts/temp 目录本身一律拒绝）；④ 同一源码树构建
   `aios/api:<tag>` 与 `aios/web:<tag>`（web 带
   `NEXT_PUBLIC_API_BASE_URL` build arg）；⑤ `AIOS_IMAGE_TAG=<tag>` +
-  `up -d --no-build` 起 compose local profile（隔离项目名 `aios-rc-<tag>`）跑
+  `AIOS_WEB_IMAGE_TAG=<tag>`（同 tag 显式双变量，M14-09 起 web 不再跟随
+  `AIOS_IMAGE_TAG`）+ `up -d --no-build` 起 compose local profile（隔离项目名 `aios-rc-<tag>`）跑
   冒烟，`trap cleanup EXIT` 保证结束/失败都 `down --remove-orphans`——down 永远
   不带 `-v`，绝不删除任何卷；⑥ `docker save` 两个独立归档写入选定目录；
   ⑦ manifest 助手原子落盘后立即独立 verify，失败即整体失败并清理未完成包目录。

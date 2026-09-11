@@ -13,8 +13,9 @@ Five facets:
    current refuse to run (fail-closed);
 4. db-rollback execution - monkeypatched subprocess asserts the exact
    alembic downgrade argv and state re-query after rollback;
-5. app rollback anchor - compose renders AIOS_IMAGE_TAG into api/web
-   image refs (rollback = old tag + up -d --no-build).
+5. app rollback anchor - compose renders AIOS_IMAGE_TAG into the api
+   image ref and AIOS_WEB_IMAGE_TAG into the web image ref (M14-09:
+   independent anchors; rollback = old tags + up -d --no-build).
 """
 from __future__ import annotations
 
@@ -164,18 +165,19 @@ def _compose_available() -> bool:
 
 @pytest.mark.skipif(not _compose_available(), reason="需要 docker compose CLI")
 def test_compose_renders_image_tag_anchor() -> None:
-    """AIOS_IMAGE_TAG 渲染进 api/web image（应用回滚锚点可插值）。"""
+    """api/web 镜像 tag 独立锚点渲染（M14-09）：api 只随 AIOS_IMAGE_TAG、
+    web 只随 AIOS_WEB_IMAGE_TAG——单设其一不连坐另一服务。"""
     import subprocess
 
-    def render(env_tag: str | None) -> dict:
+    def render(env_updates: dict[str, str] | None) -> dict:
         cmd = ["docker", "compose", "-f", str(COMPOSE_FILE), "config", "--format", "json"]
         import os
 
         env = {**os.environ}
-        if env_tag:
-            env["AIOS_IMAGE_TAG"] = env_tag
-        else:
-            env.pop("AIOS_IMAGE_TAG", None)
+        for key in ("AIOS_IMAGE_TAG", "AIOS_WEB_IMAGE_TAG"):
+            env.pop(key, None)
+        if env_updates:
+            env.update(env_updates)
         proc = subprocess.run(cmd, capture_output=True, text=True, check=True, env=env)
         return json.loads(proc.stdout)
 
@@ -183,9 +185,20 @@ def test_compose_renders_image_tag_anchor() -> None:
     assert model["services"]["api"]["image"] == "aios/api:local"
     assert model["services"]["web"]["image"] == "aios/web:local"
 
-    model_v = render("v0.1.0")
-    assert model_v["services"]["api"]["image"] == "aios/api:v0.1.0"
-    assert model_v["services"]["web"]["image"] == "aios/web:v0.1.0"
+    # M14-09：只设 AIOS_IMAGE_TAG —— api 换 tag、web 保持独立默认（不跟随）
+    model_api_only = render({"AIOS_IMAGE_TAG": "v0.1.0"})
+    assert model_api_only["services"]["api"]["image"] == "aios/api:v0.1.0"
+    assert model_api_only["services"]["web"]["image"] == "aios/web:local"
+
+    # 同 tag 发布/回滚 = 显式同时设置两个变量
+    model_both = render({"AIOS_IMAGE_TAG": "v0.1.0", "AIOS_WEB_IMAGE_TAG": "v0.1.0"})
+    assert model_both["services"]["api"]["image"] == "aios/api:v0.1.0"
+    assert model_both["services"]["web"]["image"] == "aios/web:v0.1.0"
+
+    # Web-only 升级 = 只设 AIOS_WEB_IMAGE_TAG（api 不动）
+    model_web_only = render({"AIOS_WEB_IMAGE_TAG": "m14-09-web"})
+    assert model_web_only["services"]["api"]["image"] == "aios/api:local"
+    assert model_web_only["services"]["web"]["image"] == "aios/web:m14-09-web"
 
 
 def test_readme_documents_rollback_runbook() -> None:

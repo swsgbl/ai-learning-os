@@ -11,7 +11,8 @@
 #   3. 校验输出目录在 gitignore 的 artifacts/ 或 temp/ 内（symlink 组件/
 #      .. 越界/非空已存在目录/artifacts-temp 本身一律拒绝）；
 #   4. 同一源码树构建两个镜像并钉本地 tag（aios/api:<tag>、aios/web:<tag>）；
-#   5. 以 AIOS_IMAGE_TAG=<tag> + --no-build 启动既有 compose local profile
+#   5. 以 AIOS_IMAGE_TAG=<tag> + AIOS_WEB_IMAGE_TAG=<tag>（同 tag 显式双变量，
+#      M14-09 起 web 不再跟随 AIOS_IMAGE_TAG）+ --no-build 启动既有 compose local profile
 #      （隔离项目名 aios-rc-<tag 中的点替换为连字符，如 v0.1.0 ->
 #      aios-rc-v0-1-0），跑 infra/smoke_docker.sh；结束/失败都安全清理
 #      compose 项目（down 不带 -v，绝不删除任何卷）；
@@ -123,7 +124,7 @@ API_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "aios/api:$TAG")"
 WEB_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "aios/web:$TAG")"
 say "image ids: api=$API_IMAGE_ID web=$WEB_IMAGE_ID"
 
-# --- 5. compose 冒烟（--no-build + AIOS_IMAGE_TAG；隔离项目名；安全清理）------
+# --- 5. compose 冒烟（--no-build + API/Web 双 tag 显式；隔离项目名；安全清理）---
 # COMPOSE_PROJECT_NAME 让本脚本与 smoke_docker.sh 共用同一个隔离项目
 # （不占用/不拆除运维自己的 ai-learning-os 项目）；down 永不带 -v——绝不删除卷。
 # compose project name 只允许小写字母数字/下划线/连字符（不允许点），而 tag
@@ -152,9 +153,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-say "启动 compose local profile（AIOS_IMAGE_TAG=$TAG --no-build）"
+say "启动 compose local profile（AIOS_IMAGE_TAG=$TAG AIOS_WEB_IMAGE_TAG=$TAG --no-build）"
 COMPOSE_STARTED=1
-AIOS_IMAGE_TAG="$TAG" "${COMPOSE[@]}" up -d --no-build
+AIOS_IMAGE_TAG="$TAG" AIOS_WEB_IMAGE_TAG="$TAG" "${COMPOSE[@]}" up -d --no-build
 
 say "运行冒烟: $SMOKE_SCRIPT"
 bash "$SMOKE_SCRIPT"

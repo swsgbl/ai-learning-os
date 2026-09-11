@@ -102,7 +102,9 @@ ID 精确集合、无缺行/重复/错行，IO 失败稳定退出码 1 不删库
 不改试卷。报告/导出文件含生产 ID，只能写入 gitignore 的 `artifacts/`、`temp/`
 目录（其他路径退出码 2）。
 
-**应用回滚**：compose 以 `AIOS_IMAGE_TAG` 为镜像锚点，发布时固化 tag，回滚即旧 tag 重启：
+**应用回滚**：compose 镜像锚点 API/Web 独立（M14-09）——api 读 `AIOS_IMAGE_TAG`、
+web 读 `AIOS_WEB_IMAGE_TAG`（各自默认 `local`，互不跟随）；发布时固化 tag，
+回滚即旧 tag 重启（同 tag 发布/回滚 = 显式同时设置两个变量）：
 
 ```bash
 # 发布：build 并固化版本 tag
@@ -110,7 +112,7 @@ docker compose -f infra/docker-compose.yml build
 docker tag aios/api:local aios/api:v0.1.0
 docker tag aios/web:local aios/web:v0.1.0
 # 回滚：旧 tag + --no-build 重启（数据库先按上面 db-rollback/backup 流程处理）
-AIOS_IMAGE_TAG=v0.1.0 docker compose -f infra/docker-compose.yml up -d --no-build
+AIOS_IMAGE_TAG=v0.1.0 AIOS_WEB_IMAGE_TAG=v0.1.0 docker compose -f infra/docker-compose.yml up -d --no-build
 ```
 
 ## 发布门禁 release-check（M7-05 / M11-03）
@@ -191,7 +193,8 @@ bash infra/build_release_candidate.sh --tag v0.1.0 --output-dir artifacts/rc-v0.
 ```
 
 脚本自动完成：tag/VERSION 逐字一致校验 → 记录干净 worktree 的完整 commit SHA →
-同源构建 `aios/api:<tag>`、`aios/web:<tag>` → `AIOS_IMAGE_TAG=<tag>` + `--no-build`
+同源构建 `aios/api:<tag>`、`aios/web:<tag>` → `AIOS_IMAGE_TAG=<tag>` +
+`AIOS_WEB_IMAGE_TAG=<tag>`（同 tag 显式双变量，M14-09）+ `--no-build`
 起 compose local profile 并跑 `infra/smoke_docker.sh`（结束/失败都
 `down --remove-orphans`，绝不带 `-v` 删卷）→ `docker save` 两个独立归档 → 原子写
 `release-manifest.json` + `SHA256SUMS` → 最后独立 verify。

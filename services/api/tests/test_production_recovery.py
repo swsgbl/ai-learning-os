@@ -8,7 +8,8 @@ r"""M14-06 tools/ops/production_recovery.py 契约测试：恢复编排决策与
   DEGRADED；
 - 决策状态空间与 voice_service_control.Inspection.state 的真实取值集合一致
   （交叉契约：构造 Inspection 实例枚举全部状态，编排侧无未覆盖状态）；
-- pin check：env 文件缺失/缺键/与在线容器漂移 → 拒绝（仅报键名，绝不报值）；
+- pin check（M14-09 六键，含独立 AIOS_WEB_IMAGE_TAG）：env 文件缺失/缺键/
+  与在线容器漂移 → 拒绝（仅报键名，绝不报值）；
   在线容器缺失 → 跳过比对放行；全部一致 → 放行；
 - secret 不泄漏：伪 secret 标记值绝不出现在任何日志行/日志文件（防御性
   redact 兜底）；
@@ -59,11 +60,16 @@ voice_module = _load_module(VOICE_SCRIPT, "voice_service_control_for_recovery_te
 # ---------------------------------------------------------------- fakes
 
 class FakeRunner:
-    """伪 Docker/compose 命令面：按 argv 形态回放预制结果，记录全部调用。"""
+    """伪 Docker/compose 命令面：按 argv 形态回放预制结果，记录全部调用。
+
+    M14-09：live_web_image 独立于 live_image——web 容器镜像事实与 api 容器
+    分别回放（各自可独立置 None 模拟事实缺失）。
+    """
 
     def __init__(self, *, engine_ready: bool = True, services: tuple[str, ...] = STACK_SERVICES,
                  ps_health: dict[str, str] | None = None, live_env: str | None = None,
                  live_image: str = "aios/api:m14-03-prod-rehearsal",
+                 live_web_image: str = "aios/web:m14-03-prod-rehearsal",
                  web_port: str = "127.0.0.1:3011", up_rc: int = 0,
                  up_out: str = "Container aios-m14-03-production-rehearsal-api-1  Running\n") -> None:
         self.engine_ready = engine_ready
@@ -71,6 +77,7 @@ class FakeRunner:
         self.ps_health = ps_health if ps_health is not None else {name: "healthy" for name in STACK_SERVICES}
         self.live_env = live_env
         self.live_image = live_image
+        self.live_web_image = live_web_image
         self.web_port = web_port
         self.up_rc = up_rc
         self.up_out = up_out
@@ -93,9 +100,12 @@ class FakeRunner:
                 return pr.CommandResult(argv, 1, "", "Error: No such object")
             return pr.CommandResult(argv, 0, self.live_env, "")
         if argv[:2] == ("docker", "inspect"):
-            if self.live_image is None:  # 模拟「镜像事实探测失败/缺失」
+            # 镜像事实：api 与 web 容器分别回放（M14-09 独立 tag）
+            target = str(argv[-1])
+            image = self.live_web_image if "-web-" in target else self.live_image
+            if image is None:  # 模拟「镜像事实探测失败/缺失」
                 return pr.CommandResult(argv, 1, "", "Error: No such object")
-            return pr.CommandResult(argv, 0, self.live_image + "\n", "")
+            return pr.CommandResult(argv, 0, image + "\n", "")
         if argv[:2] == ("docker", "port"):
             return pr.CommandResult(argv, 0, self.web_port + "\n", "")
         if "ps" in argv and "--format" in argv:
@@ -129,6 +139,7 @@ class FakeVoice:
 def _matching_env_text() -> str:
     return (
         f"AIOS_IMAGE_TAG=m14-03-prod-rehearsal\n"
+        f"AIOS_WEB_IMAGE_TAG=m14-03-prod-rehearsal\n"
         f"AIOS_APP_ENV=production\n"
         f"AIOS_WEB_PORT=3011\n"
         f"AIOS_AUTH_SECRET={MARK_AUTH}\n"
@@ -317,6 +328,38 @@ def test_pin_partial_live_missing_image_fact_refuses(tmp_path: Path) -> None:
     assert report.missing_live_keys == ("AIOS_IMAGE_TAG",)
 
 
+def test_pin_partial_live_missing_web_image_fact_refuses(tmp_path: Path) -> None:
+    """M14-09：web 容器镜像 inspect 失败（AIOS_WEB_IMAGE_TAG 事实独立缺失，
+    api 事实完好）→ ok=False，仅报 AIOS_WEB_IMAGE_TAG（键名可见、值不回显）。"""
+    env_file = tmp_path / "pin.env"
+    env_file.write_text(_matching_env_text(), encoding="utf-8")
+    runner = FakeRunner(live_env=_matching_live_env(), live_web_image=None)
+    log = pr.RunLog(echo=False)
+    report = pr.check_pins(env_file, runner, "proj", log)
+    assert not report.ok
+    assert report.missing_live_keys == ("AIOS_WEB_IMAGE_TAG",)
+    joined = "\n".join(log.lines)
+    assert "AIOS_WEB_IMAGE_TAG" in joined and "事实缺失" in joined
+    _assert_no_marker_leak(log)
+
+
+def test_pin_web_tag_drift_reports_key_independent_of_api(tmp_path: Path) -> None:
+    """M14-09：AIOS_WEB_IMAGE_TAG 与在线 web 镜像漂移（api tag 仍一致）→
+    仅报 AIOS_WEB_IMAGE_TAG 不一致——web tag 独立锚点，不连坐 api。"""
+    env_file = tmp_path / "drift-web.env"
+    env_file.write_text(_matching_env_text().replace(
+        "AIOS_WEB_IMAGE_TAG=m14-03-prod-rehearsal", "AIOS_WEB_IMAGE_TAG=m14-09-web-only"),
+        encoding="utf-8")
+    runner = FakeRunner(live_env=_matching_live_env())
+    log = pr.RunLog(echo=False)
+    report = pr.check_pins(env_file, runner, "proj", log)
+    assert not report.ok
+    assert report.mismatched_keys == ("AIOS_WEB_IMAGE_TAG",)
+    joined = "\n".join(log.lines)
+    assert "AIOS_WEB_IMAGE_TAG" in joined and "拒绝" in joined
+    _assert_no_marker_leak(log)
+
+
 def test_pin_partial_live_missing_secret_fact_refuses(tmp_path: Path) -> None:
     """api 容器 env 缺 AUTH_SECRET 行（事实缺失）→ ok=False（与「值不等」同权重）。"""
     env_file = tmp_path / "pin.env"
@@ -365,6 +408,7 @@ TEMPLATE_SECRET_PLACEHOLDER = "<部署时生成的真实值——绝不提交>"
 def test_placeholder_pin_keys_pure() -> None:
     values = {
         "AIOS_IMAGE_TAG": "m14-03-prod-rehearsal",  # 真实值 → 非占位
+        "AIOS_WEB_IMAGE_TAG": "m14-03-prod-rehearsal",  # M14-09 独立键 → 非占位
         "AIOS_APP_ENV": "production",
         "AIOS_WEB_PORT": "3011",
         "AIOS_AUTH_SECRET": TEMPLATE_SECRET_PLACEHOLDER,  # 模板原文
@@ -379,7 +423,7 @@ def test_pin_placeholder_secrets_refused_with_stack_up(tmp_path: Path) -> None:
     """照抄模板（占位 secret）+ 在线栈存在 → 拒绝；键名可见、占位文本不回显。"""
     env_file = tmp_path / "pin.env"
     env_file.write_text(
-        "AIOS_IMAGE_TAG=m14-03-prod-rehearsal\nAIOS_APP_ENV=production\nAIOS_WEB_PORT=3011\n"
+        "AIOS_IMAGE_TAG=m14-03-prod-rehearsal\nAIOS_WEB_IMAGE_TAG=m14-03-prod-rehearsal\nAIOS_APP_ENV=production\nAIOS_WEB_PORT=3011\n"
         f"AIOS_AUTH_SECRET={TEMPLATE_SECRET_PLACEHOLDER}\n"
         f"AIOS_LIVEKIT_API_SECRET={TEMPLATE_SECRET_PLACEHOLDER}\n",
         encoding="utf-8",
@@ -399,7 +443,7 @@ def test_e2e_placeholder_env_with_stack_down_refuses_up(tmp_path: Path) -> None:
     修正前 ok=True 会用占位值创建容器；修正后 enforce 拒绝 up（键名-only）。"""
     env_file = tmp_path / "pin.env"
     env_file.write_text(
-        "AIOS_IMAGE_TAG=m14-03-prod-rehearsal\nAIOS_APP_ENV=production\nAIOS_WEB_PORT=3011\n"
+        "AIOS_IMAGE_TAG=m14-03-prod-rehearsal\nAIOS_WEB_IMAGE_TAG=m14-03-prod-rehearsal\nAIOS_APP_ENV=production\nAIOS_WEB_PORT=3011\n"
         f"AIOS_AUTH_SECRET={TEMPLATE_SECRET_PLACEHOLDER}\n"
         f"AIOS_LIVEKIT_API_SECRET=<fill-me>\n",
         encoding="utf-8",
