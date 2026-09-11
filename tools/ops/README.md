@@ -211,6 +211,21 @@ python tools/ops/soak_rehearsal.py --execute \
 第一块可控基础；本里程碑**不接外部告警系统**）。开发/排障默认零采集；
 真实采集仅由 supervisor 在获准窗口运行。
 
+状态（回填 2026-09-12）：交付已随 **PR #85** 合并 main（merged_at
+2026-09-11T17:34:05Z，merge `52980c6`、feature `80e599d`，本地 git 可
+验证，远端 feature 分支已删除）；PR CI run `34627846208` 与合并后 main
+push CI run `34628419347` 均全部 5 job（Web/API/Docker/Android/Release
+tools）SUCCESS。**supervisor 已于 2026-09-11T17:39:20Z–17:39:21Z 在
+canonical main 执行一次真实只读生产监控**（gitignored
+`monitor-20260911-173920.json`（14185B）/`.md`（3330B））：compose 六
+服务全部 running healthy、restart_count 全 0，五端点全 200（延迟
+7.088–27.641ms），逐容器日志 error_total 全 0，`partial=false`，
+ok=34/warn=0/critical=0，`overall_status=ok`、`monitoring_ready=true`
+——**单次只读快照全绿 ≠ production_ready；`production_ready=false`
+不变**（持续/定时采集与调度、外部告警接入、指标历史与留存、阈值随时
+间的标定、跨机监控仍未开放）。指标与边界细节见
+`docs/evidence/m14-12-production-monitoring/`。
+
 ```
 python tools/ops/production_monitor.py                # plan（默认：零 subprocess/零网络/零生产读取）
 python tools/ops/production_monitor.py --execute \
