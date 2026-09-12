@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -6,7 +6,9 @@
 承担编排面：等引擎 → 校验 → 幂等 up → 健康核查 → 本地语音受控调和；
 `soak_rehearsal.py`（M14-11）承担只读 soak/并发彩排面（fail-closed 五要素
 门禁，默认 plan 零网络）；`production_monitor.py`（M14-12）承担只读
-监控采集 + 阈值判定 + 证据报告面（默认 plan 零采集，不接外部告警）。
+监控采集 + 阈值判定 + 证据报告面（默认 plan 零采集，不接外部告警）；
+`monitoring_history.py`（M14-13）承担监控历史索引 + 有界留存 + 趋势
+摘要面（只读 M14-12 工件，零墙钟确定性输出）。
 
 ## production_recovery.py
 
@@ -275,3 +277,47 @@ python tools/ops/production_monitor.py --execute \
   2 非法/fail-closed（含确认缺失、阈值超顶、非有限浮点、非法项目名、
   symlink/越界路径）或采集 incomplete 或存在 critical（含证据报告写入
   失败——证据不可失）。
+
+## monitoring_history.py（M14-13）
+
+监控历史索引：M14-12 monitor JSON 工件 → **有界留存 history.jsonl + 趋势
+摘要**（只读源工件，绝不改动/删除任何 M14-12 原始产物）。零子进程/零
+网络/零容器面/零计划任务/零 env 读取/零墙钟。
+
+```
+python tools/ops/monitoring_history.py                 # 默认源/输出目录
+python tools/ops/monitoring_history.py --retention 200
+```
+
+安全性质（契约测试 `services/api/tests/test_monitoring_history.py` 锁定；
+细节见 `docs/evidence/m14-13-monitoring-history/README.md`）：
+
+- **输入面（固定画像）**：默认 gitignored
+  `.verify/artifacts/m14-12-production-monitoring/`（`--source-dir` 可覆
+  盖，只读）。仅发现 `monitor-*.json`；stem 严格白名单
+  `monitor-YYYYMMDD-HHMMSS`（含日历合法性）——glob 命中但 stem 不合规
+  fail-closed 且被拒名不回显；plan-*、md、无关文件忽略。
+- **严格校验（fail-closed，输出零写入）**：schema_version/tool/
+  milestone/mode=execute/project 白名单/双 UTC 时间戳格式与顺序/
+  overall_status∈{ok,warn,critical}（incomplete 拒绝）/partial 恒
+  false/阈值计数/六 compose 服务/六容器事实（RestartCount）/五端点
+  状态+延迟（有限数值）/六日志 error_total；not-json 同拒。
+- **去重/排序/留存**：逐文件 SHA-256；同哈希去重（保留 (collected_at,
+  stem) 最小者，duplicate_count 显式）；同 (project, collected_at) 不同
+  哈希 = conflicting-duplicate 拒绝；唯一样本按 (collected_at, stem)
+  确定性排序；保留最新 N 条（默认 500、硬顶 5000、下限 1，CLI 超界拒
+  绝），显式 omitted_older_count 与 oldest/newest 保留边界；**源文件
+  永不改动/删除**。
+- **输出（默认 gitignored
+  `.verify/artifacts/m14-13-monitoring-history/`，`--output-dir` 为操作
+  者显式自选）**：`history.jsonl`（每行一条紧凑记录：artifact_sha256/
+  source_stem/collected_at/project/overall_status/partial/
+  threshold_counts/compose 服务 health/restart 计数/端点状态+延迟/日志
+  error 总计——**绝无原始日志行/密钥/secret**）+ `history-summary.md`
+  （状态计数/availability/degraded/critical、first/last、逐端点延迟
+  min/p50/p95/max（nearest-rank）、逐服务 restart/日志 error 总计、
+  duplicate/omitted 计数、留存边界）。**生成时间戳取自最新源样本
+  collected_at——零墙钟，输出逐字节可复现**；两文件同目录 tmp+fsync+
+  os.replace 原子落盘（失败清理 tmp）；仅在全部输入校验通过后才写。
+- 路径防御：源文件/源目录/输出路径/输出祖先的 symlink 一律拒绝；
+  退出码 0 成功 / 2 任何拒绝（含零源、源目录缺失、写失败）。

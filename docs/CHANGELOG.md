@@ -6,6 +6,37 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 ## [Unreleased]
 
 ### Added
+- M14-13 监控历史索引 + 有界留存 + 趋势摘要（`tools/ops/monitoring_history.py`，
+  **工具交付、未执行真实历史构建**；本 Claude 开发回合仅做本地 commit，
+  supervisor 审查与 remote 发布在其后进行）：对既有 M14-12 monitor JSON
+  工件（默认 gitignored `.verify/artifacts/m14-12-production-monitoring/`，
+  `--source-dir` 可覆盖）建立**只读**安全索引——仅发现 `monitor-*.json`
+  （stem 严格白名单 `monitor-YYYYMMDD-HHMMSS` 含日历合法性，被拒名不
+  回显）；严格 schema 校验（version/tool/milestone/mode/project 白名单/
+  双 UTC 时间戳格式与顺序/overall_status∈{ok,warn,critical}/partial 恒
+  false/阈值计数类型/六 compose 服务/六容器 RestartCount/五端点状态+
+  延迟（有限数值）/六日志 error_total；incomplete/partial/malformed 一律
+  fail-closed 输出零写入）；SHA-256 逐文件去重（同哈希保留 (collected_at,
+  stem) 最小者，duplicate_count 显式；同 (project, collected_at) 不同
+  哈希 = conflicting-duplicate 拒绝）；(collected_at, stem) 确定性排序；
+  保留最新 N 条（默认 500、硬顶 5000）+ 显式 omitted_older_count 与
+  oldest/newest 边界，**源工件永不改动/删除**；输出原子
+  `history.jsonl`（紧凑记录：hash/stem/collected_at/project/
+  overall_status/partial/threshold_counts/compose health/restart/端点
+  状态+延迟/日志 error 总计——绝无原始日志行/密钥）+
+  `history-summary.md`（状态计数/availability/degraded/critical、
+  first/last、逐端点延迟 min/p50/p95/max（nearest-rank）、逐服务
+  restart/error 总计、duplicate/omitted 计数），**生成时间戳取自最新
+  源样本 collected_at——零墙钟、输出逐字节可复现**；symlink 全路径
+  拒绝（源文件/源目录/输出/祖先）；tmp+fsync+os.replace 原子写（失败
+  清 tmp 零残留）；零子进程/零网络/零容器面/零计划任务/零 env 读取
+  （源码契约锁定）；一切 I/O 经 Store 注入。73 项契约测试 + 组合回归
+  262 passed（M14-12 套件零回归）；开发回合零生产执行、零 canonical
+  `.verify` 写入（全部验证用合成样本临时目录）。**仅闭环历史数据面
+  工具证据——持续/定时采集与调度、外部告警接入、指标时序存储/查询、
+  阈值随时间的标定、跨机监控、真实历史首次构建仍属未决；
+  `production_ready=false` 不变**；证据见
+  docs/evidence/m14-13-monitoring-history/
 - M14-12 生产监控/告警 readiness 开发切片 + 首次真实只读生产监控结果：
   只读采集 + 阈值判定 + 证据
   报告（`tools/ops/production_monitor.py`，**工具交付并合并（PR #85）；
@@ -89,6 +120,29 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 - M8-00 冒烟脚本与 Docker CI 门禁
 - M10-01 LLM 接入：OpenAI 兼容 gateway + rubric LLM judge（fail-closed 进复核，
   默认关闭保持确定性判分；真实端点冒烟脚本 infra/smoke_llm.sh）
+
+### Fixed
+- M14-13 CI R2：MinIO 社区版自 2025-10 起停止分发官方 Docker 镜像
+  （source-only 分发），`minio/minio:latest` 拉取失败使 CI docker job 在项目
+  构建之前即挂——改为本地自建官方 pin 源码镜像：新增 `infra/minio/Dockerfile`
+  （源码 = codeload 官方不可变 commit URL
+  `…/tar.gz/9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a`（= tag
+  `RELEASE.2025-10-15T17-29-55Z`）、builder
+  `golang:1.24.8-alpine3.22@sha256:3d78beb1…cc0ae5`、runtime
+  `alpine:3.22@sha256:14358309…5dce` 全 digest pin；`CGO_ENABLED=0` +
+  kqueue/trimpath + 显式 release/commit ldflags；依赖完整性只靠源码树内官方
+  go.sum（`-mod=readonly`、GOSUMDB 默认开，零 bypass）；`GOTOOLCHAIN=local`；
+  全文件零 `apk add`（BusyBox wget/tar 取源）；非 root（minio 1000:1000）+
+  可写 /data；runtime 只含 minio 二进制）；compose minio 切到该本地构建
+  （服务名/端口/env/卷/restart 不变，镜像锚点
+  `aios/minio:RELEASE.2025-10-15T17-29-55Z`），healthcheck 由 `mc ready local`
+  换 BusyBox wget 探 `/minio/health/cluster`（`mc ready` 消费的同一就绪信号
+  源）；api depends_on minio healthy 与六服务集合不变。21 项静态契约测试
+  （`services/api/tests/test_minio_selfbuild.py`）+ 邻居 compose 契约套件零回归
+  （265 passed / 6 skipped）。本回合零镜像构建/零上游工件下载/零容器操作/
+  零生产触碰（镜像首次真实构建在下一次 CI），production_ready=false 不变；
+  供应链 rationale/pins/limitations/长期替代见
+  docs/evidence/m14-13-minio-selfbuild/README.md
 
 ### Security
 - M14-10 生产 Web 安全镜像上产（M14-05 + M14-09 的生产落地，与代码/配置合并
