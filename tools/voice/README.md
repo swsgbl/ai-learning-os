@@ -162,19 +162,42 @@ matplotlib 等训练链包。若最小清单在实际部署中不足：`COSYVOIC
 REQUIREMENTS=1` 回退官方完整 requirements（剔除 torch pin），并把缺失包报回
 仓库修正清单。
 
-**清单装完后的终局同源回写 + 运行期一致性探针（M14-16 生产冷启动实证修复）**：
-清单分支（最小/官方完整回退）按 PyPI 解析时，官方 pin 链（`lightning==2.2.4`
-等）会把已装 torch 降级（生产实证降到 2.3.1）而留下预装 torchaudio
-2.11.0+cu128——cu128 轮 METADATA 不声明 torch 约束，**`pip check` 对该混合
-ABI 报「No broken requirements found」，不能作为一致性依据**，导入才在
-torchaudio `_extension` 崩（`OSError: ... undefined symbol:
-aoti_torch_abi_version`）。bootstrap 在清单分支后从同一 cu128 index 以
-`--no-deps` 显式回写本机已验证三件套（`torch==2.11.0+cu128` /
-`torchaudio==2.11.0+cu128` / `torchcodec==0.11.1+cu128`——pin 已满足即
-no-op，不做 force-reinstall 全量重写），再做运行期一致性探针（torch/
-torchaudio 基础版本一致 + 双 `+cu128` 同源 + torchcodec 可导入，任一不满足
-即 FAIL 点名），其后才是 CosyVoice import/WAV 探针——顺序由契约测试锁定
-（`test_bootstrap_torch_reconciliation_order_contract`）。
+**清单装完后的终局 CUDA 闭包恢复 + pip check 门禁 + 运行期一致性探针
+（M14-16/M14-17 生产实证修复）**：清单分支（最小/官方完整回退）按 PyPI
+解析时，官方 pin 链（`lightning==2.2.4` 等）会把已装 torch 降级（生产实证
+降到 2.3.1）且**连带降级其 CUDA 闭包**，而 cu128 轮 METADATA 不声明 torch
+约束——混合 ABI 状态下 `pip check` 报「No broken requirements found」，
+导入才在 torchaudio `_extension` 崩（`OSError: ... undefined symbol:
+aoti_torch_abi_version`）。M14-16 曾以 `--no-deps` 只回写三件套主轮，
+2026-09-13 生产复验证伪：主轮虽已 cu128，闭包仍是被连带降级的 12.1 系列
+（`pip check` 实证：nvidia-cudnn-cu12 8.9.2.26 需 ==9.19.0.56、
+nvidia-nccl-cu12 2.20.5 需 ==2.28.9、triton 2.3.1 需 ==3.6.0），
+`import torch` 失败缺 `libcudnn.so.9`。M14-17 终局改为**完整依赖解析**
+（同一 cu128 index，无 `--no-deps`）：三件套精确 pin + `torch 2.11.0+cu128`
+METADATA（Linux 段，2026-09-13 自生产 venv 真实 wheel metadata 导出，非
+记忆推导）声明的闭包成员——`cuda-toolkit[cublas,cudart,cufft,cufile,cupti,
+curand,cusolver,cusparse,nvjitlink,nvrtc,nvtx]==12.8.1`（12.8 系列 nvidia
+runtime 的 meta-extras）、`cuda-bindings>=12.9.4,<13`、
+`nvidia-cudnn-cu12==9.19.0.56`、`nvidia-nccl-cu12==2.28.9`、
+`nvidia-cusparselt-cu12==0.7.1`、`nvidia-nvshmem-cu12==3.4.5`、
+`triton==3.6.0`。精确 pin 使 PyPI 清单分支无从再降级任一轮；成员 pin 不满足
+即强制解析安装（**即便三件套 pin 已满足，被降级的闭包仍会被修复**——可
+自愈 2026-09-13 的存量破损态），全部满足即 no-op（不 force-reinstall）。
+闭包成员同 index 可解析（生产 venv 初始安装实证：cuda-toolkit 12.8.1 /
+cuda-bindings 12.9.7 / nvidia-nvjitlink 12.8.93 等均来自该 index 同一
+解析）。其后 `pip check` **附加门禁**（fail-closed，文案指向「CUDA closure
+未恢复」）+ 运行期一致性探针（**CUDA closure 契约表**逐项锁定 18 个闭包
+成员：METADATA `==` pin 项精确相等、cuda-toolkit extras 的 11 个 nvidia
+runtime 按通配前缀匹配、cuda-bindings 范围校验 + torch/torchaudio 基础
+版本一致 + 双 `+cu128` 同源 + torchcodec 可导入，任一不满足即 FAIL 点名），
+其后才是 CosyVoice import/WAV 探针——顺序由契约测试锁定
+（`test_bootstrap_torch_reconciliation_order_contract` /
+`test_bootstrap_cuda_closure_contract`）。注意 **`pip check` 只是附加门禁，
+不能替代真实 import/运行探针**：它看不见混合 ABI（M14-16 实证报
+「No broken requirements」），也看不见 extras 门控的 12.8 系列 nvidia
+runtime 错配（2026-09-13 生产 venv 实证：cuda-toolkit 12.8.1 extras 要求
+nvidia-cublas-cu12==12.8.4.1.* 而实为 12.1.3.1，`pip check` 只报三个
+`==` pin）。
 
 ## 幂等与固定版本
 
@@ -200,9 +223,10 @@ torchaudio 基础版本一致 + 双 `+cu128` 同源 + torchcodec 可导入，任
   `074ca6dc9e80a2f424f1f74b48bdd7d3fea531cc`（2026-05-25 main HEAD，含
   Fun-CosyVoice3 支持）；两者可分别用 `FUNASR_VERSION` / `COSYVOICE_COMMIT`
   覆盖。FunASR 侧 torch 不 pin（CPU 轮子随官方索引更新）；CosyVoice 侧初始
-  安装不 pin、但清单装完后终局回写固定已验证三件套 pin（M14-16，见上节）——
-  最终 torch/torchaudio/torchcodec 恒为已验证 cu128 组合，脚本结尾打印实际
-  安装版本供留档。
+  安装不 pin、但清单装完后终局闭包恢复固定三件套 + CUDA 闭包成员 pin
+  （M14-16/M14-17，见上节）——最终 torch/torchaudio/torchcodec 恒为已验证
+  cu128 组合且 CUDA 闭包与 torch metadata 一致，脚本结尾打印实际安装版本
+  供留档。
 - `checkout -f` 会丢弃克隆目录内的本地改动——工具目录本就不应手改。
 
 ## API 测试证据（可复现命令）

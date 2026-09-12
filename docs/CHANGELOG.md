@@ -234,6 +234,44 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   默认关闭保持确定性判分；真实端点冒烟脚本 infra/smoke_llm.sh）
 
 ### Fixed
+- M14-17 CosyVoice bootstrap CUDA 闭包终局修复（真实生产 venv 只读取证，本地
+  commit 待 supervisor 审查发布）：M14-16 的终局 `--no-deps` 回写只恢复三个
+  主轮——生产 venv 实证（2026-09-13 `pip check`）torch/torchaudio/torchcodec
+  均已 cu128，但 nvidia-cudnn-cu12 8.9.2.26（torch metadata 需
+  `==9.19.0.56`）、nvidia-nccl-cu12 2.20.5（需 `==2.28.9`）、triton 2.3.1
+  （需 `==3.6.0`），多数 CUDA runtime 仍是 12.1 系列（清单分支装 torch
+  2.3.1 时连带降级的闭包），`import torch` 失败缺 `libcudnn.so.9`。根因：
+  `--no-deps` 不恢复 torch metadata 声明的 Linux CUDA 依赖闭包。
+  `bootstrap_cosyvoice_wsl.sh` 修法：① 终局改为**完整依赖解析**（同一
+  cu128 index，无 `--no-deps`）——三件套精确 pin + torch `2.11.0+cu128`
+  真实 METADATA（Linux 段，自生产 venv `torch-2.11.0+cu128.dist-info/
+  METADATA` 导出）声明的闭包成员：`cuda-toolkit[cublas,cudart,cufft,
+  cufile,cupti,curand,cusolver,cusparse,nvjitlink,nvrtc,nvtx]==12.8.1`、
+  `cuda-bindings>=12.9.4,<13`、`nvidia-cudnn-cu12==9.19.0.56`、
+  `nvidia-nccl-cu12==2.28.9`、`nvidia-cusparselt-cu12==0.7.1`、
+  `nvidia-nvshmem-cu12==3.4.5`、`triton==3.6.0`——精确 pin 使 PyPI 清单
+  分支无从再降级，成员 pin 不满足即强制解析（三件套已满足也能修复被降级
+  的闭包，自愈存量破损态），全部满足即 no-op；② 闭包恢复后新增
+  `pip check` **附加门禁**（fail-closed，文案指向「CUDA closure 未恢复」；
+  注释/测试明确它只是附加门禁——实证两盲区：混合 ABI 报「No broken
+  requirements」、extras 门控的 12.8 系列 nvidia runtime 错配不报，
+  **不能替代真实 import/运行探针**）；③ 一致性探针（M14-16 契约保留、
+  顺序不变）扩展 **18 项 CUDA closure 契约表**（`==` pin 精确相等 /
+  cuda-toolkit extras 通配前缀段边界匹配 / cuda-bindings 范围），任一不符
+  即 FAIL 点名。契约测试：改写 `test_bootstrap_torch_reconciliation_order_
+  contract`（无 `--no-deps` + 闭包成员 pin + pip check 门禁顺序锁定）、
+  新增 `test_bootstrap_cuda_closure_contract`（18 项逐字锁定 + 生效代码无
+  `--no-deps` + cu128 index 恰两处/清单分支恒 PyPI）、
+  `test_bootstrap_torchcodec_pinned_on_cu128_install_line` 改以完整初始
+  安装形态锁定、`test_runtime_requirements_contract` 扩展排除闭包成员前缀。
+  验证（TDD RED 先行后 GREEN）：聚焦 + 回归合并 **96 passed**（32+64，
+  exit 0）+ ruff + `bash -n` + `git diff --check` 全过（canonical venv 解释
+  器仅执行，零 canonical 检出改动）；探针已在生产 venv **只读实跑**验证
+  fail-closed 精确点名（`nvidia-cudnn-cu12 8.9.2.26 != 9.19.0.56`，先于
+  torch import 触发），通配/范围辅助函数另以隔离单测验证。**本切片只修复
+  可复现 bootstrap 契约：未重跑 bootstrap、未装任何依赖、未启停任何进程/
+  容器/监控任务，不构成生产运行恢复宣称——生产 venv 实际修复与冷启动复验
+  由 supervisor 合并后受控执行；`production_ready=false` 不变**。
 - M14-16 CosyVoice bootstrap 依赖解析降级回归（真实生产冷启动实证，本地
   commit 待 supervisor 审查发布）：最小运行时清单的 PyPI 依赖解析
   （`lightning==2.2.4` 官方 pin 链）把 torch 降级到 2.3.1 而留下预装

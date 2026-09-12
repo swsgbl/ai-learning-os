@@ -433,33 +433,37 @@ def test_bootstrap_python_missing_hints_are_actionable() -> None:
 
 
 def test_bootstrap_torchcodec_pinned_on_cu128_install_line() -> None:
-    """torchcodec 确定性回归：pin 必须落在与 torch/torchaudio 同一条 cu128 index
-    安装命令上——torchaudio 2.11 后端探测需要 torchcodec，而 0.11.1+cu128 本地
-    版本轮只存在于 download.pytorch.org/whl/cu128（PyPI 解析拿不到），也不能挪进
-    cosyvoice-runtime-requirements.txt（该文件按 PyPI 安装）。
-
-    注：终局回写命令（M14-16）以 --no-deps 前缀区分，不匹配
-    ``pip" install torch `` 形态——「torch 安装命令唯一」契约保持指初始安装行。"""
+    """torchcodec 确定性回归：初始 cu128 安装命令必须一次性带上
+    torch/torchaudio/torchcodec==0.11.1+cu128——torchaudio 2.11 后端探测需要
+    torchcodec，而 0.11.1+cu128 本地版本轮只存在于 download.pytorch.org/whl/
+    cu128（PyPI 解析拿不到），也不能挪进 cosyvoice-runtime-requirements.txt
+    （该文件按 PyPI 安装）。形态锁定为「不 pin torch/torchaudio 的初始安装行」
+    全串（M14-17 起终局闭包恢复行以 torch==2.11.0+cu128 精确 pin 区分——
+    --no-deps 前缀已随 M14-17 移除，不能再作区分依据）。"""
     text = BOOTSTRAP_COSYVOICE.read_text(encoding="utf-8")
-    install_lines = [line for line in text.splitlines() if 'pip" install torch ' in line]
-    assert install_lines, "bootstrap 应有 torch 安装命令行"
-    assert len(install_lines) == 1, "torch 安装命令应唯一（便于 cu128 同源解析）"
+    initial = 'pip" install torch torchaudio torchcodec==0.11.1+cu128'
+    install_lines = [line for line in text.splitlines() if initial in line]
+    assert install_lines, "bootstrap 应有不 pin torch 的初始 cu128 安装命令行"
+    assert len(install_lines) == 1, "初始 torch 安装命令应唯一（便于 cu128 同源解析）"
     line = install_lines[0]
-    assert "torchcodec==0.11.1+cu128" in line
     assert "--index-url https://download.pytorch.org/whl/cu128" in line
+    assert "--no-deps" not in line
 
 
 def test_bootstrap_torch_reconciliation_order_contract() -> None:
-    """M14-16 生产冷启动实证回归（2026-09-12）：最小运行时清单的 PyPI 依赖
-    解析（lightning==2.2.4 官方 pin 链）把 torch 降级到 2.3.1 而留下预装
-    torchaudio 2.11.0+cu128——cu128 torchaudio 轮 METADATA 不声明 torch 约束，
-    ``pip check`` 对该混合 ABI 报「No broken requirements found」，导入才在
-    torchaudio _extension 崩（OSError: undefined symbol: aoti_torch_abi_version）。
-    契约（顺序锁定）：初始 cu128 同命令安装 → 最小/完整清单分支 → 终局同源
-    回写（--no-deps + 已验证三件套精确 pin + 同一 cu128 index，禁止
-    force-reinstall 全量重写）→ 运行期一致性探针（torch/torchaudio 基础
-    版本一致 + 同为 +cu128 + torchcodec 可导入，fail-closed）→ CosyVoice
-    import 探针 → WAV 加载探针。"""
+    """M14-17 生产实证回归（2026-09-13）：M14-16 的终局 --no-deps 三件套回写
+    不充分——生产 venv 实证 torch/torchaudio/torchcodec 均已 cu128，但
+    nvidia-cudnn-cu12 8.9.2.26（torch metadata 需 ==9.19.0.56）、
+    nvidia-nccl-cu12 2.20.5（需 ==2.28.9）、triton 2.3.1（需 ==3.6.0），多数
+    CUDA runtime 仍是 12.1 系列（清单分支装 torch 2.3.1 时连带降级的闭包），
+    import torch 失败缺 libcudnn.so.9——pip check 恰报出这三个 == pin 冲突。
+    根因：--no-deps 只回写三个主轮，不恢复 torch metadata 声明的依赖闭包。
+    契约（顺序锁定）：初始 cu128 同命令安装 → 最小/完整清单分支 → 终局
+    CUDA 闭包恢复（三件套精确 pin + 闭包成员 pin/extras，**完整依赖解析、
+    无 --no-deps**、同一 cu128 index，禁止 force-reinstall 全量重写）→
+    pip check 附加门禁（fail-closed 指向 CUDA closure 未恢复）→ 运行期
+    一致性探针（CUDA closure 契约表 + torch/torchaudio 基础版本一致 + 同为
+    +cu128 + torchcodec 可导入）→ CosyVoice import 探针 → WAV 加载探针。"""
     text = BOOTSTRAP_COSYVOICE.read_text(encoding="utf-8")
     lines = text.splitlines()
 
@@ -468,33 +472,58 @@ def test_bootstrap_torch_reconciliation_order_contract() -> None:
         assert len(hits) == 1, f"契约锚点应恰好出现一次: {marker!r}（实际 {len(hits)} 次）"
         return hits[0]
 
-    initial_install = sole_line('pip" install torch ')
+    initial_install = sole_line('pip" install torch torchaudio torchcodec==0.11.1+cu128')
     minimal_reqs = sole_line('install -r "$REPO_ROOT/tools/voice/cosyvoice-runtime-requirements.txt"')
     full_reqs = sole_line('install -r "$ARTIFACTS/cosyvoice/requirements.full.txt"')
-    reconciliation = sole_line('pip" install --no-deps torch==2.11.0+cu128')
+    closure_restore = sole_line('pip" install torch==2.11.0+cu128')
+    pip_check_gate = sole_line('pip" check')
     consistency_probe = sole_line('say "运行期一致性探针')
     import_probe = sole_line('say "验证导入闭包')
     wav_probe = sole_line("torchaudio.load(sys.argv[1]")
 
-    # 顺序：初始安装 → 两个清单分支（先于回写）→ 终局回写 → 一致性探针 →
-    # CosyVoice import/WAV 探针殿后
-    assert initial_install < minimal_reqs < reconciliation
-    assert initial_install < full_reqs < reconciliation
-    assert reconciliation < consistency_probe < import_probe < wav_probe
+    # 顺序：初始安装 → 两个清单分支（先于闭包恢复）→ 终局闭包恢复 →
+    # pip check 附加门禁 → 一致性探针 → CosyVoice import/WAV 探针殿后
+    assert initial_install < minimal_reqs < closure_restore
+    assert initial_install < full_reqs < closure_restore
+    assert closure_restore < pip_check_gate < consistency_probe < import_probe < wav_probe
 
-    # 终局回写内容：三件套精确 pin + --no-deps + 同一 cu128 index；禁止
-    # force-reinstall/ignore-installed 全量重写（pin 已满足时 pip no-op）
-    recon_line = lines[reconciliation]
-    for pin in ("torch==2.11.0+cu128", "torchaudio==2.11.0+cu128", "torchcodec==0.11.1+cu128"):
-        assert pin in recon_line, pin
-    assert "--no-deps" in recon_line
-    assert "--index-url https://download.pytorch.org/whl/cu128" in recon_line
-    assert "--force-reinstall" not in recon_line
-    assert "--ignore-installed" not in recon_line
+    # 终局闭包恢复内容：三件套精确 pin + torch 2.11.0+cu128 METADATA（Linux
+    # 段）声明的 CUDA 闭包成员 + 同一 cu128 index；完整依赖解析（绝无
+    # --no-deps——只回写主轮会留下 12.1 系列闭包，import torch 缺
+    # libcudnn.so.9）；禁止 force-reinstall/ignore-installed 全量重写
+    # （pin 已满足时 pip no-op）
+    restore_line = lines[closure_restore]
+    for pin in (
+        "torch==2.11.0+cu128", "torchaudio==2.11.0+cu128", "torchcodec==0.11.1+cu128",
+        # torch 2.11.0+cu128 METADATA（Linux 段）直接声明的 == pin 项
+        "nvidia-cudnn-cu12==9.19.0.56", "nvidia-nccl-cu12==2.28.9",
+        "nvidia-cusparselt-cu12==0.7.1", "nvidia-nvshmem-cu12==3.4.5", "triton==3.6.0",
+        # cuda-toolkit extras==12.8.1（12.8 系列 nvidia runtime）+ cuda-bindings 范围
+        "cuda-toolkit[cublas,cudart,cufft,cufile,cupti,curand,cusolver,cusparse,nvjitlink,nvrtc,nvtx]==12.8.1",
+        "cuda-bindings>=12.9.4,<13",
+    ):
+        assert pin in restore_line, pin
+    assert "--no-deps" not in restore_line
+    assert "--index-url https://download.pytorch.org/whl/cu128" in restore_line
+    assert "--force-reinstall" not in restore_line
+    assert "--ignore-installed" not in restore_line
 
-    # 一致性探针内容（回写行与 import 探针之间的探针段）：基础版本一致 +
-    # 同 +cu128 + torchcodec 可导入；失败文案必须点名 pip check 不可见
-    probe_body = "\n".join(lines[reconciliation:import_probe])
+    # pip check 附加门禁（闭包恢复与一致性探针之间）：fail-closed，失败文案
+    # 指向 CUDA closure 未恢复；注释必须说明它只是附加门禁、不能替代真实
+    # import/运行探针（两个实证盲区：混合 ABI 报 No broken requirements、
+    # extras 门控的 12.8 系列 runtime 错配不报）
+    gate_body = "\n".join(lines[closure_restore:consistency_probe])
+    for anchor in (
+        "CUDA closure 未恢复",
+        "附加门禁",
+        "不能替代",
+    ):
+        assert anchor in gate_body, anchor
+
+    # 一致性探针内容（闭包恢复行与 import 探针之间的探针段）：CUDA closure
+    # 契约 + 基础版本一致 + 同 +cu128 + torchcodec 可导入；失败文案点名
+    # pip check 不可见
+    probe_body = "\n".join(lines[closure_restore:import_probe])
     for anchor in (
         "_base_version(torch_version) != _base_version(torchaudio_version)",
         '"+cu128" not in torch_version or "+cu128" not in torchaudio_version',
@@ -503,6 +532,64 @@ def test_bootstrap_torch_reconciliation_order_contract() -> None:
         "运行期一致性探针失败",
     ):
         assert anchor in probe_body, anchor
+
+
+def test_bootstrap_cuda_closure_contract() -> None:
+    """M14-17 CUDA closure 契约表锁定——来源为生产 venv 真实 wheel metadata
+    （2026-09-13 自 torch-2.11.0+cu128.dist-info/METADATA 与 cuda-toolkit
+    12.8.1 extras 导出，非记忆推导）。一致性探针内的 CUDA_CLOSURE 表必须
+    逐项锁定：torch 2.11.0+cu128 Linux 段直接声明的 == pin 项（cudnn/nccl/
+    cusparselt/nvshmem/triton/cuda-toolkit）+ cuda-toolkit 12.8.1 extras 的
+    11 个 nvidia runtime（" *" 通配前缀匹配）+ cuda-bindings 范围
+    （>=12.9.4,<13）；失败文案点名「CUDA closure 未恢复」并指引报回仓库。
+    结构契约：生效代码（非注释行）绝无 --no-deps（M14-16 只回写主轮的根因
+    形态）；cu128 index 恰用于两处（初始安装 + 终局闭包恢复），清单分支
+    install -r 行恒按 PyPI 解析（不带 pytorch index——PyPI-only 依赖正确
+    解析的前提）。"""
+    text = BOOTSTRAP_COSYVOICE.read_text(encoding="utf-8")
+    active_lines = [line for line in text.splitlines()
+                    if line.strip() and not line.strip().startswith("#")]
+
+    # 契约表逐项锁定（成员: 期望版本，与真实 METADATA 逐字一致）
+    for member in (
+        '"nvidia-cudnn-cu12": "9.19.0.56"',
+        '"nvidia-nccl-cu12": "2.28.9"',
+        '"nvidia-cusparselt-cu12": "0.7.1"',
+        '"nvidia-nvshmem-cu12": "3.4.5"',
+        '"triton": "3.6.0"',
+        '"cuda-toolkit": "12.8.1"',
+        '"nvidia-cublas-cu12": "12.8.4.1.*"',
+        '"nvidia-cuda-runtime-cu12": "12.8.90.*"',
+        '"nvidia-cuda-cupti-cu12": "12.8.90.*"',
+        '"nvidia-cuda-nvrtc-cu12": "12.8.93.*"',
+        '"nvidia-cufft-cu12": "11.3.3.83.*"',
+        '"nvidia-cufile-cu12": "1.13.1.3.*"',
+        '"nvidia-curand-cu12": "10.3.9.90.*"',
+        '"nvidia-cusolver-cu12": "11.7.3.90.*"',
+        '"nvidia-cusparse-cu12": "12.5.8.93.*"',
+        '"nvidia-nvjitlink-cu12": "12.8.93.*"',
+        '"nvidia-nvtx-cu12": "12.8.90.*"',
+    ):
+        assert member in text, member
+    # cuda-bindings 范围契约（torch metadata 声明 >=12.9.4,<13）与通配匹配实现
+    assert 'CUDA_BINDINGS_MIN = "12.9.4"' in text
+    assert 'CUDA_BINDINGS_MAX = "13"' in text
+    assert 'endswith(".*")' in text
+    # 契约校验失败必须点名 CUDA closure 未恢复（缺失/版本不符两条路径）
+    assert text.count("CUDA closure 未恢复") >= 3
+    # 生效代码绝无 --no-deps（注释中的历史叙述不算）
+    assert not any("--no-deps" in line for line in active_lines), (
+        "生效代码不得出现 --no-deps（M14-16 实证：只回写主轮会留下 12.1 系列 CUDA 闭包）"
+    )
+    # index 语义：cu128 index 恰两处（初始安装 + 终局闭包恢复）；
+    # 清单分支恒按 PyPI 解析（不带 pytorch index）
+    cu128_lines = [line for line in active_lines
+                   if "--index-url https://download.pytorch.org/whl/cu128" in line]
+    assert len(cu128_lines) == 2, "cu128 index 应恰用于初始安装与终局闭包恢复"
+    for req_line in (line for line in active_lines if "install -r " in line):
+        assert "download.pytorch.org" not in req_line, (
+            "清单分支 install -r 恒按 PyPI 解析（cu128 闭包由终局恢复统一负责）"
+        )
 
 
 def test_bootstrap_cosyvoice_self_snapshot_contract() -> None:
@@ -652,10 +739,16 @@ def test_runtime_requirements_contract() -> None:
     # pydantic 保持 fastapi 间接依赖（不直接 pin）——防止无理由显式 pin 回归
     assert not any(line.startswith("pydantic") for line in active)
     # cu128 轮子（torch/torchaudio/torchcodec）只存在于 pytorch cu128 index——
-    # 本清单按 PyPI 安装拿不到 +cu128 本地版本轮，必须留在 bootstrap 侧安装
+    # 本清单按 PyPI 安装拿不到 +cu128 本地版本轮，必须留在 bootstrap 侧安装；
+    # M14-17：CUDA 闭包成员（nvidia-*/triton/cuda-toolkit/cuda-bindings）同样
+    # 由 bootstrap 侧 cu128 index 终局闭包恢复统一解析——进入本清单会把闭包
+    # 成员交回 PyPI 解析（可能装出错误版本，再被清单分支连带降级）
     assert not any(
-        line.startswith(("torch==", "torchaudio==", "torchcodec")) for line in active
-    ), "cu128 轮子不得进入 PyPI 解析的最小清单"
+        line.startswith((
+            "torch==", "torchaudio==", "torchcodec",
+            "nvidia-", "triton", "cuda-toolkit", "cuda-bindings",
+        )) for line in active
+    ), "cu128 主轮/闭包成员不得进入 PyPI 解析的最小清单"
     for excluded in (
         # M14-02 修正：librosa/lightning/pyworld/matplotlib/gdown/diffusers 曾列
         # 排除（静态闭包"零引用"），被真实 AutoModel 加载证伪——已移入上方必需

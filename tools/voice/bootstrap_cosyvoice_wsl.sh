@@ -30,6 +30,22 @@
 #   pin（torch/torchaudio 2.11.0+cu128 + torchcodec 0.11.1+cu128），再做
 #   运行期一致校验探针（torch/torchaudio 基础版本一致 + 同 +cu128 +
 #   torchcodec 可导入，fail-closed），其后才是 CosyVoice import/WAV 探针。
+# - M14-17（终局 CUDA 闭包修复）：M14-16 的 --no-deps 三件套回写不充分——
+#   2026-09-13 生产 venv 实证（pip check）：torch/torchaudio/torchcodec 已全
+#   部回写为 cu128 组合，但 nvidia-cudnn-cu12 8.9.2.26（torch metadata 需
+#   ==9.19.0.56）、nvidia-nccl-cu12 2.20.5（需 ==2.28.9）、triton 2.3.1（需
+#   ==3.6.0），且多数 CUDA runtime 仍是 12.1 系列（清单分支装 torch 2.3.1 时
+#   连带降级的闭包），import torch 失败缺 libcudnn.so.9。根因：--no-deps 只
+#   回写三个主轮，不恢复 torch metadata 声明的 Linux CUDA 依赖闭包。修法：
+#   终局改为精确 pin 三件套 + 闭包成员（cuda-toolkit[...]extras==12.8.1、
+#   cuda-bindings>=12.9.4,<13、nvidia-cudnn==9.19.0.56、nvidia-nccl==2.28.9、
+#   nvidia-cusparselt==0.7.1、nvidia-nvshmem==3.4.5、triton==3.6.0）的完整
+#   依赖解析（同一 cu128 index）——精确 pin 使 PyPI 清单分支无从再降级，
+#   闭包随解析恢复；其后加 pip check 附加门禁（fail-closed 指向 CUDA
+#   closure 未恢复）与 CUDA closure 契约探针。注意 pip check 只是附加门禁：
+#   它看不见混合 ABI（M14-16 实证报 No broken requirements），也看不见
+#   extras 门控的 12.8 系列 runtime 错配（2026-09-13 实证只报三个 == pin）
+#   ——不能替代真实 import/运行探针。
 #
 # 用途：Python 3.10 独立 venv 内克隆官方仓库、装 cu128 torch + 最小运行时依赖、
 #   下载 Fun-CosyVoice3-0.5B-2512 到 gitignored artifacts，然后在 127.0.0.1:8011
@@ -149,8 +165,9 @@ say "venv Python: $("$VENV_DIR/bin/python" --version 2>&1)"
 # torchcodec 必须与 torch/torchaudio 同一条 cu128 index 命令安装：torchaudio 2.11
 # 后端探测需要它；+cu128 本地版本轮只在 pytorch cu128 index（PyPI 解析拿不到）；
 # torchcodec METADATA 不约束 torch 版本，不会替换/重解 torch 依赖。
-# 清单分支会反向降级 torch（M14-16 生产实证）——装完后必须终局同源回写 +
-# 一致性探针（见下方 M14-16 段），顺序不可调换。
+# 清单分支会反向降级 torch 及其 CUDA 闭包（M14-16/M14-17 生产实证）——
+# 装完后必须终局 CUDA 闭包恢复（完整解析，无 --no-deps）+ pip check 附加
+# 门禁 + 一致性探针（见下方 M14-17 段），顺序不可调换。
 say "安装 cu128 torch/torchaudio/torchcodec==0.11.1+cu128（RTX 5070 Ti/Blackwell；网络受限时需代理）"
 "$VENV_DIR/bin/pip" install --upgrade pip
 "$VENV_DIR/bin/pip" install torch torchaudio torchcodec==0.11.1+cu128 --index-url https://download.pytorch.org/whl/cu128
@@ -163,27 +180,47 @@ else
   "$VENV_DIR/bin/pip" install -r "$REPO_ROOT/tools/voice/cosyvoice-runtime-requirements.txt"
 fi
 
-# ---- 终局同源回写（M14-16 生产冷启动实证修复）：恢复已验证 cu128 三件套 ----
-# 2026-09-12 生产冷启动实证：上方任一清单分支按 PyPI 解析时，官方 pin 链
-# （lightning==2.2.4 等）会把已装 torch 降级（实证降到 2.3.1）而留下预装
-# torchaudio 2.11.0+cu128 二进制——cu128 轮 METADATA 不声明 torch 约束，
-# `pip check` 对该混合 ABI 报「No broken requirements found」，导入才在
-# torchaudio _extension 崩（OSError: ... aoti_torch_abi_version）。故两分支
-# 汇合后从同一 cu128 index 以 --no-deps 显式回写本机已验证组合（2026-09-10
-# 实证：torch 2.11.0+cu128 / torchaudio 2.11.0+cu128 / torchcodec
-# 0.11.1+cu128 import 与 WAV 读写均通过）——--no-deps 不让 PyPI 约束再参与
-# 解析、无从降级任一轮；精确 pin 已满足时 pip no-op（不做 force-reinstall
-# 全量重写环境）。
-say "终局回写已验证 cu128 三件套（--no-deps 精确 pin；清单分支的 PyPI 解析可能降级 torch——pip check 对该混合 ABI 不可见）"
-"$VENV_DIR/bin/pip" install --no-deps torch==2.11.0+cu128 torchaudio==2.11.0+cu128 torchcodec==0.11.1+cu128 --index-url https://download.pytorch.org/whl/cu128
+# ---- 终局 CUDA 闭包恢复（M14-17 生产实证修复）：三件套 + torch metadata 闭包 ----
+# 2026-09-13 生产实证：M14-16 的 --no-deps 只回写三个主轮——torch/torchaudio/
+# torchcodec 虽已是 cu128 组合，但 CUDA 闭包仍是被清单分支连带降级的 12.1
+# 系列（pip check 实证：nvidia-cudnn-cu12 8.9.2.26 需 ==9.19.0.56、
+# nvidia-nccl-cu12 2.20.5 需 ==2.28.9、triton 2.3.1 需 ==3.6.0），import
+# torch 失败缺 libcudnn.so.9。故两分支汇合后以完整依赖解析（同一 cu128
+# index）恢复闭包：三件套精确 pin + torch 2.11.0+cu128 METADATA（Linux 段，
+# 2026-09-13 自生产 venv 真实 wheel metadata 导出）声明的闭包成员——精确
+# == pin 使 PyPI 清单分支无从再降级任一轮；成员 pin 不满足即强制解析安装
+# （即便三件套 pin 已满足，被降级的闭包仍会被修复），已满足即 pip no-op
+# （不做 force-reinstall 全量重写）。cu128 本地版本轮只在该 index（PyPI
+# 解析拿不到）；CUDA 闭包成员（cuda-toolkit/cuda-bindings/nvidia-*/triton）
+# 同 index 可解析——生产 venv 初始安装实证（cuda-toolkit 12.8.1 /
+# cuda-bindings 12.9.7 / nvidia-nvjitlink 12.8.93 / nvidia-nvshmem 3.4.5 /
+# nvidia-cusparselt 0.7.1 均来自该 index 的同一解析，非 PyPI 清单链产物）。
+say "终局 CUDA 闭包恢复：三件套精确 pin + torch 2.11.0+cu128 metadata 闭包成员（完整依赖解析；清单分支可能已降级 torch 与 CUDA 闭包）"
+"$VENV_DIR/bin/pip" install torch==2.11.0+cu128 torchaudio==2.11.0+cu128 torchcodec==0.11.1+cu128 nvidia-cudnn-cu12==9.19.0.56 nvidia-nccl-cu12==2.28.9 nvidia-cusparselt-cu12==0.7.1 nvidia-nvshmem-cu12==3.4.5 triton==3.6.0 "cuda-toolkit[cublas,cudart,cufft,cufile,cupti,curand,cusolver,cusparse,nvjitlink,nvrtc,nvtx]==12.8.1" "cuda-bindings>=12.9.4,<13" --index-url https://download.pytorch.org/whl/cu128
 
-# ---- 运行期一致性探针（M14-16）：pip check 不可见的混合 ABI 防线 ----
-# torch/torchaudio/torchcodec 真实导入 + 同源校验：基础版本一致、同为 +cu128、
-# torchcodec 可导入——任一不满足即 fail-closed（清单依赖链再降级在此点名，
-# 而不是拖到 CosyVoice 导入栈里炸成难定位的 undefined symbol）。
-say "运行期一致性探针：torch/torchaudio 同基础版本 + 同源 cu128 + torchcodec 可导入"
+# ---- pip check 附加门禁（M14-17）：闭包恢复的元数据级校验，fail-closed ----
+# pip check 只是附加门禁，不能替代真实 import/运行探针——两个实证盲区：
+# (a) M14-16 实证：混合 ABI（torch 2.3.1 + torchaudio 2.11.0+cu128）时它
+#     报「No broken requirements found」（cu128 轮 METADATA 不声明 torch
+#     约束）；
+# (b) 2026-09-13 生产 venv 实证：extras 门控的 nvidia runtime 错配
+#     （cuda-toolkit 12.8.1 extras 要求 nvidia-cublas-cu12==12.8.4.1.* 而
+#     实为 12.1.3.1）它不报——只报 cudnn/nccl/triton 三个 == pin。
+# 真实防线是下方 CUDA closure 契约探针 + torch import 探针。
+say "pip check 附加门禁（CUDA closure 元数据一致性；不替代 import/运行探针）"
+if ! "$VENV_DIR/bin/pip" check; then
+  fail "pip check 失败——CUDA closure 未恢复（torch 2.11.0+cu128 metadata 声明的依赖闭包与已装版本冲突，逐项见上方输出）：重跑本脚本走终局闭包恢复；仍失败则把实际版本报回仓库修正恢复命令与契约表"
+fi
+
+# ---- 运行期一致性探针（M14-16/M14-17）：pip check 不可见的闭包错配与混合 ABI 防线 ----
+# CUDA closure 契约（M14-17）+ torch/torchaudio/torchcodec 真实导入 + 同源
+# 校验：任一不满足即 fail-closed（清单依赖链再降级在此点名，而不是拖到
+# CosyVoice 导入栈里炸成难定位的 undefined symbol）。
+say "运行期一致性探针：CUDA closure 契约 + torch/torchaudio 同基础版本 + 同源 cu128 + torchcodec 可导入"
 if ! "$VENV_DIR/bin/python" - <<'PYEOF'
 import sys
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as _dist_version
 
 
 def _die(message):
@@ -194,6 +231,64 @@ def _die(message):
 def _base_version(version):
     return version.split("+", 1)[0]
 
+
+def _vkey(version):
+    parts = []
+    for piece in version.split("+", 1)[0].split("."):
+        if not piece.isdigit():
+            break
+        parts.append(int(piece))
+    return tuple(parts)
+
+
+# CUDA closure 契约：torch 2.11.0+cu128 METADATA（Linux 段）+ cuda-toolkit
+# 12.8.1 extras 声明的完整 CUDA 依赖闭包，2026-09-13 自生产 venv 真实
+# wheel metadata 导出（torch-2.11.0+cu128.dist-info/METADATA）。以 ".*"
+# 结尾的项 = metadata 通配 pin（前缀匹配）。torch 版本升级时必须重导本表
+# ——本探针逐项点名差异。
+CUDA_CLOSURE = {
+    "nvidia-cudnn-cu12": "9.19.0.56",
+    "nvidia-nccl-cu12": "2.28.9",
+    "nvidia-cusparselt-cu12": "0.7.1",
+    "nvidia-nvshmem-cu12": "3.4.5",
+    "triton": "3.6.0",
+    "cuda-toolkit": "12.8.1",
+    "nvidia-cublas-cu12": "12.8.4.1.*",
+    "nvidia-cuda-runtime-cu12": "12.8.90.*",
+    "nvidia-cuda-cupti-cu12": "12.8.90.*",
+    "nvidia-cuda-nvrtc-cu12": "12.8.93.*",
+    "nvidia-cufft-cu12": "11.3.3.83.*",
+    "nvidia-cufile-cu12": "1.13.1.3.*",
+    "nvidia-curand-cu12": "10.3.9.90.*",
+    "nvidia-cusolver-cu12": "11.7.3.90.*",
+    "nvidia-cusparse-cu12": "12.5.8.93.*",
+    "nvidia-nvjitlink-cu12": "12.8.93.*",
+    "nvidia-nvtx-cu12": "12.8.90.*",
+}
+CUDA_BINDINGS_MIN = "12.9.4"  # torch metadata: cuda-bindings>=12.9.4,<13
+CUDA_BINDINGS_MAX = "13"  # 上界不含
+
+
+def _closure_ok(installed, expected):
+    if expected.endswith(".*"):
+        base = expected[:-2]
+        return installed == base or installed.startswith(base + ".")
+    return installed == expected
+
+
+for name, expected in CUDA_CLOSURE.items():
+    try:
+        installed = _dist_version(name)
+    except PackageNotFoundError:
+        _die(f"CUDA closure 未恢复：{name} 缺失（torch 2.11.0+cu128 metadata 声明的 Linux 闭包成员）——重跑 bootstrap 终局闭包恢复，仍缺失则把缺项报回仓库修正恢复命令")
+    if not _closure_ok(installed, expected):
+        _die(f"CUDA closure 未恢复：{name} {installed} != {expected}（torch 2.11.0+cu128 metadata 契约，疑似清单分支降级残留）——重跑 bootstrap 终局闭包恢复，仍失败则把实际版本报回仓库修正恢复命令与契约表")
+try:
+    cuda_bindings = _dist_version("cuda-bindings")
+except PackageNotFoundError:
+    _die("CUDA closure 未恢复：cuda-bindings 缺失（torch 2.11.0+cu128 metadata 声明 >=12.9.4,<13）")
+if not _vkey(CUDA_BINDINGS_MIN) <= _vkey(cuda_bindings) < _vkey(CUDA_BINDINGS_MAX):
+    _die(f"CUDA closure 未恢复：cuda-bindings {cuda_bindings} 不在 >=12.9.4,<13（torch 2.11.0+cu128 metadata 契约）")
 
 try:
     import torch
@@ -208,10 +303,10 @@ if _base_version(torch_version) != _base_version(torchaudio_version):
     _die(f"torch {torch_version} 与 torchaudio {torchaudio_version} 基础版本不一致（混合 ABI；cu128 轮 METADATA 不声明 torch 约束，pip check 不可见）")
 if "+cu128" not in torch_version or "+cu128" not in torchaudio_version:
     _die(f"torch {torch_version} / torchaudio {torchaudio_version} 非同源 cu128 轮（RTX 5070 Ti/Blackwell 需 CUDA 12.8 组合）")
-print(f"[bootstrap-cosyvoice] 运行期一致: torch {torch_version} / torchaudio {torchaudio_version} / torchcodec 可导入")
+print(f"[bootstrap-cosyvoice] 运行期一致: torch {torch_version} / torchaudio {torchaudio_version} / torchcodec 可导入 / CUDA closure 契约 {len(CUDA_CLOSURE) + 1} 项符合")
 PYEOF
 then
-  fail "运行期一致性探针失败（见上）——终局回写后仍不一致即脚本缺陷：把 torch/torchaudio/torchcodec 实际版本报回仓库修正回写 pin"
+  fail "运行期一致性探针失败（见上）——CUDA 闭包/三件套仍不一致即脚本缺陷：把实际版本报回仓库修正恢复命令与契约表"
 fi
 
 # ---- 安装即验证：真实 import 官方入口（不下载模型；缺失点名失败）----
@@ -348,7 +443,7 @@ PYEOF
 fi
 
 say "依赖就绪，已安装版本（记录用）："
-"$VENV_DIR/bin/pip" freeze | grep -E '^(torch|torchaudio|torchcodec|modelscope|transformers)=' || true
+"$VENV_DIR/bin/pip" freeze | grep -E '^(torch|torchaudio|torchcodec|triton|nvidia-cudnn-cu12|nvidia-nccl-cu12|nvidia-cublas-cu12|cuda-toolkit|cuda-bindings|modelscope|transformers)=' || true
 say "启动 OpenAI 兼容 bridge: http://$HOST:$PORT/v1/audio/speech（wav；key 可选）"
 say "模型在 bridge 启动后后台加载——/health 返回 200 才 ready（期间 503）"
 
