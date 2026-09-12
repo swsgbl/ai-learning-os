@@ -6,6 +6,63 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 ## [Unreleased]
 
 ### Added
+- M14-14 持续/定时监控采集 + 历史管道 readiness（`tools/ops/monitoring_pipeline.py`
+  + `tools/ops/monitoring_pipeline_task.py` +
+  `tools/ops/run_monitoring_pipeline_silent.vbs`；本 Claude 开发回合仅做本地
+  commit，supervisor 审查与 remote 发布在其后进行；**开发回合零真实管道
+  执行（execute 模式从未运行）、零计划任务注册/改动、零 Docker/零生产
+  HTTP/零 env 读取——交付的是 readiness，不证明持续运行**）。管道把既有
+  M14-12 `production_monitor.py` 与 M14-13 `monitoring_history.py` 安全组合
+  为单次执行：默认 **plan 完全惰性**（零 subprocess/零网络/零生产读取/零
+  调度器改动，Runner 零构造）；**execute** 需 `--execute` + 精确确认短语
+  `EXECUTE READ-ONLY MONITORING PIPELINE`（一字不差），缺一/近似即 EXIT 2
+  且零 Runner 构造/调用（fail-closed）；**固定命令白名单门（结构性）**——
+  仅两个精确固定形态（monitor `--execute --confirm "EXECUTE READ-ONLY
+  PRODUCTION MONITORING"`（与 monitor 自身短语逐字一致，回归测试锁定）；
+  history 全默认参数），任何其它 argv 在执行之前拒绝，无 shell=True、无
+  用户可注入命令/URL/env 展开，子进程输出只取 returncode（stdout/stderr
+  绝不持久化/回显）；**序列** monitor → history——history 仅在 monitor
+  exit 0 后运行，失败如实保留绝不遮蔽；有界超时（monitor 60–540s 默认
+  480s、history 10–120s 默认 45s；硬顶之和 660s < 计划任务执行时限
+  PT12M=720s < 重复间隔 PT15M——调度器绝不先于内部超时杀整任务）；
+  **fail-closed 重叠锁** `pipeline.lock`（O_CREAT|O_EXCL；本轮零
+  stale-lock 清理）；schema v1 JSON+MD **原子报告**仅安全事实（状态/退出
+  码/时长/固定命令身份（无绝对本机路径）/脱敏错误类别类名/产物名+
+  SHA-256+字节数（差集发现、每步 ≤8 个 hash、超界记数）），写前
+  redact_secrets 终防线。计划任务 readiness 管理器：固定身份
+  `AIOS-Monitoring-Pipeline`/`urn:aios:m14-14:monitoring-pipeline`（与
+  M14-06 恢复任务零身份冲突）+ PT15M 保守重复间隔（无 Duration=无限期）
+  + IgnoreNew/Hidden/InteractiveToken/LeastPrivilege/电池不禁启不停；
+  plan/generate/status/install/uninstall 五子命令，**install/uninstall 各
+  自需精确短语 `EXECUTE MONITORING SCHEDULER CHANGE`**（缺一即零
+  schtasks 调用）；结构性 schtasks 白名单门（读路径恒零 mutation，仅两
+  查询形态；mutation 仅 `/Create /TN <固定名> /XML <单个 .xml>` 与
+  `/Delete /TN <固定名> /F` 两精确形态——create 绝不 /F）；绝不覆盖同名
+  任务（双重存在性确认）；uninstall 仅 exact-owned 才删除；归属判定适配
+  M14-06 实证归一化 + /XML 字节形态四形态解码 + DOCTYPE/ENTITY 解析前
+  拒绝（XXE 加固）+ XML 生成侧转义；**实际注册 supervisor-only（提升
+  令牌）——本回合零安装/零卸载/零注册**。静默 VBS 入口：仓库根自脚本位置
+  推导、隐藏窗口 Run(...,0,True)、退出码透传、恒调 repo 自带
+  `.venv\Scripts\python.exe` 携带管道门禁旗标。**supervisor R2 阻断缺陷
+  修正（同分支 amend）**：`cmd_generate` 旧以 UTF-8 写出声明 UTF-16 的
+  任务 XML——外部解析器（System.Xml `XmlDocument.Load`）报「no Unicode
+  byte order mark」拒载；修正为 **UTF-16 with BOM 字节**（与 XML 声明及
+  install 临时文件字节完全一致）+ 落盘后回读原始字节经字节形态解码与
+  归属校验复核，并新增逐字节契约测试（UTF-16 BOM 起始 + 声明一致 +
+  解码/归属校验通过——旧 UTF-8 字节形态必失败，纯文本 round-trip 不足
+  以锁定）。契约测试
+  `test_monitoring_pipeline.py` **52 项** + `test_monitoring_pipeline_task.py`
+  **79 项**（FakeRunner/FakeSchtasks/临时目录，含 monitor/history/
+  startup-task 既有契约回归 pin、VBS 契约与上述 R2 字节级回归）；邻居回归
+  `test_monitoring_history.py` **74** / `test_production_monitor.py` **189** /
+  `test_windows_startup_task.py` **66** 全 passed（五套件合并 **460
+  passed**）；ruff/py_compile/`git diff --check` 过。**诚实边界：
+  readiness ≠ 持续运行证明；管道真实首跑与计划任务首次注册均待
+  supervisor 获准窗口；TimeTrigger/Repetition/StartBoundary 注册后归一化
+  未经真实安装实证（首注册若漂移按 malformed fail-closed）；stale-lock
+  清理本轮零实现（外部强杀留锁 → 下次可见拒绝，操作者人工删）；
+  `production_ready=false` 不变**；详见
+  `docs/evidence/m14-14-monitoring-pipeline/README.md`。
 - M14-13 监控历史索引 + 有界留存 + 趋势摘要 + 首次真实历史构建结果
   （`tools/ops/monitoring_history.py`，**工具交付并合并（PR #87）；
   开发回合未执行真实历史构建——结果回填回合已从 canonical main
