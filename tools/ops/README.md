@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -8,7 +8,11 @@
 门禁，默认 plan 零网络）；`production_monitor.py`（M14-12）承担只读
 监控采集 + 阈值判定 + 证据报告面（默认 plan 零采集，不接外部告警）；
 `monitoring_history.py`（M14-13）承担监控历史索引 + 有界留存 + 趋势
-摘要面（只读 M14-12 工件，零墙钟确定性输出）。
+摘要面（只读 M14-12 工件，零墙钟确定性输出）；`monitoring_pipeline.py` +
+`monitoring_pipeline_task.py` + `run_monitoring_pipeline_silent.vbs`
+（M14-14）承担持续/定时采集的**组合管道与调度 readiness** 面（单次
+monitor → history 组合 + 计划任务管理器；开发回合零真实执行、零注册，
+`production_ready=false` 不变）。
 
 ## production_recovery.py
 
@@ -338,3 +342,87 @@ python tools/ops/monitoring_history.py --retention 200
   os.replace 原子落盘（失败清理 tmp）；仅在全部输入校验通过后才写。
 - 路径防御：源文件/源目录/输出路径/输出祖先的 symlink 一律拒绝；
   退出码 0 成功 / 2 任何拒绝（含零源、源目录缺失、写失败）。
+
+## monitoring_pipeline.py（M14-14）
+
+持续/定时监控采集管道 readiness：**单次组合** M14-12 monitor → M14-13
+history（history 仅在 monitor exit 0 后运行，失败如实保留绝不遮蔽）。
+开发/排障默认零执行；真实执行仅由 supervisor 在获准窗口运行。
+
+```
+python tools/ops/monitoring_pipeline.py                        # plan（默认，零执行）
+python tools/ops/monitoring_pipeline.py --execute \
+    --confirm "EXECUTE READ-ONLY MONITORING PIPELINE"          # execute（单次组合）
+```
+
+安全性质（契约测试 `services/api/tests/test_monitoring_pipeline.py` 52 项
+锁定；细节见脚本头注释与 `docs/evidence/m14-14-monitoring-pipeline/README.md`）：
+
+- **双模式门禁**：默认 plan 完全惰性（零 subprocess/零网络/零生产读取/
+  零调度器改动，Runner 零构造——计数工厂测试锁定）；execute 需
+  `--execute` + 精确确认短语 `EXECUTE READ-ONLY MONITORING PIPELINE`
+  （一字不差），缺一/近似即 EXIT 2 且零 Runner 构造/调用；两步超时
+  非有限浮点/超硬顶同样拒绝（plan 同样校验）。
+- **固定命令白名单门（结构性）**：仅两个精确固定形态——
+  `<python> production_monitor.py --execute --confirm "EXECUTE READ-ONLY
+  PRODUCTION MONITORING"`（与 monitor 自身短语逐字一致，回归测试锁定）与
+  `<python> monitoring_history.py`（全默认参数）；任何其它 argv 在执行
+  之前拒绝；无 shell=True、无用户可注入命令/URL/env 展开；子进程输出只取
+  returncode，stdout/stderr 绝不持久化/回显。
+- **超时预算**：monitor 60–540s（默认 480s，覆盖 monitor 内部最坏 ~445s）、
+  history 10–120s（默认 45s）；硬顶之和 660s < 计划任务执行时限
+  PT12M=720s < 重复间隔 PT15M——调度器绝不先于内部超时杀整任务。
+- **重叠保护**：gitignored 工件目录内 `pipeline.lock`（O_CREAT|O_EXCL）；
+  已存在即可见拒绝零执行；**本轮零 stale-lock 清理**（陈旧锁操作者人工
+  处置）；锁体仅安全事实；symlink 全路径拒绝。
+- **报告**：schema v1 JSON+MD 原子写（tmp+fsync+os.replace），仅安全事实
+  （状态/退出码/时长/固定命令身份（无绝对本机路径）/脱敏错误类别类名/
+  产物名+SHA-256+字节数（差集发现、每步 ≤8 个 hash、超界记数））；
+  报告写入失败 = 证据不可失 → EXIT 2。
+- 退出码：0 plan 成功 / execute 两步全 ok；1 execute 已执行但有可见失败；
+ 2 门禁/数值/锁/路径/报告写入拒绝。
+
+## monitoring_pipeline_task.py + run_monitoring_pipeline_silent.vbs（M14-14）
+
+隐藏周期计划任务 readiness 管理器 + 静默执行入口（把上面的管道按固定间隔
+挂到 Task Scheduler）。**install 需提升令牌（M14-06 生产实证）+ 精确确认
+短语；实际注册 supervisor-only——开发回合零安装/零卸载/零注册。**
+
+```
+python tools/ops/monitoring_pipeline_task.py plan      # 只读预检 + 注册计划（零写）
+python tools/ops/monitoring_pipeline_task.py generate  # 导出任务 XML（UTF-16 with BOM，外部解析器可直接加载；零调度器改动）
+python tools/ops/monitoring_pipeline_task.py status    # 只读五态（0/1/2/3/4）
+python tools/ops/monitoring_pipeline_task.py install   --confirm "EXECUTE MONITORING SCHEDULER CHANGE"
+python tools/ops/monitoring_pipeline_task.py uninstall --confirm "EXECUTE MONITORING SCHEDULER CHANGE"
+```
+
+安全性质（契约测试 `services/api/tests/test_monitoring_pipeline_task.py`
+79 项锁定，含 VBS wrapper 契约、M14-06 任务身份不冲突 pin 与 generate
+产物 UTF-16 BOM 字节级回归——supervisor R2 修正：旧实现以 UTF-8 写出声明
+UTF-16 的 XML 致 System.Xml 拒载，现与声明及 install 临时字节一致）：
+
+- 固定任务身份 `AIOS-Monitoring-Pipeline` /
+  `urn:aios:m14-14:monitoring-pipeline` + Description 持久归属标记；保守
+  重复间隔 **PT15M**（无 Duration=无限期，每小时 4 次只读采集）+
+  ExecutionTimeLimit PT12M + IgnoreNew + Hidden + InteractiveToken/
+  LeastPrivilege + 电池不禁启不停；Action=
+  `wscript.exe //B //Nologo "<repo>\tools\ops\run_monitoring_pipeline_silent.vbs"`；
+  WorkingDirectory=repo。与 M14-06 `AIOS-Production-Recovery` 零身份冲突。
+- **结构性 schtasks 白名单门**：读路径恒零 mutation（仅两查询形态放行，
+  /Run//Change//End 一律拒绝）；mutation 仅放行 `/Create /TN <固定名> /XML
+  <单个 .xml>` 与 `/Delete /TN <固定名> /F` 两精确形态（create 绝不 /F；/XML 后唯一 token 是值位置——POSIX tempfile 绝对路径放行，旗标形态仍拒）。
+  install/uninstall 各自需精确短语 `EXECUTE MONITORING SCHEDULER CHANGE`，
+  缺一即零 schtasks 调用。
+- 绝不覆盖同名任务（双重存在性确认）；uninstall 仅 exact-owned 才
+  `/Delete /F`；归属判定适配 M14-06 实证归一化（URI 两形态 + Description
+  逐字 + 全字段精确 + 条件认可省略的默认值）；/XML 按字节形态严格解码
+  四形态；DOCTYPE/ENTITY 解析前拒绝（XXE 加固）；XML 生成侧路径转义。
+  **诚实边界**：TimeTrigger/Repetition/StartBoundary 的注册后归一化未经
+  真实安装实证——首次注册若暴露漂移按 malformed fail-closed，走 M14-06
+  R3 同款修正回合。
+- 静默 VBS：仓库根自脚本位置推导（无盘符硬编码）；隐藏窗口
+  `Run(..., 0, True)` + 退出码透传；调用目标恒 repo 自带
+  `.venv\Scripts\python.exe`（无覆盖面，preflight 恒查）；携带
+  `--execute --confirm "EXECUTE READ-ONLY MONITORING PIPELINE"`（公开门禁
+  常量，非 secret）。
+- **readiness ≠ 持续运行证明；`production_ready=false` 不变。**
