@@ -46,6 +46,21 @@
 #   它看不见混合 ABI（M14-16 实证报 No broken requirements），也看不见
 #   extras 门控的 12.8 系列 runtime 错配（2026-09-13 实证只报三个 == pin）
 #   ——不能替代真实 import/运行探针。
+# - M14-18（openai-whisper triton 元数据冲突修复）：M14-17 终局 CUDA 闭包
+#   恢复本身已成功（2026-09-13 生产 service.log 实证：torch 2.11.0+cu128 /
+#   triton 3.6.0 及全部闭包成员就位），但最小运行时清单的 openai-whisper
+#   20231117 METADATA 声明 triton<3,>=2.0.0（无环境标记）——pip check 附加
+#   门禁被「openai-whisper 20231117 has requirement triton<3,>=2.0.0, but
+#   you have triton 3.6.0」卡死 FAIL；且清单分支装 20231117 时该约束触发
+#   pip 回溯把 torch 一路降级（实证 2.14.0→…→2.3.1）再连带降级 CUDA 闭包。
+#   修法 = 最小清单 openai-whisper 升 20250625（METADATA 声明 triton>=2，
+#   x86_64/linux 环境标记、无上界——与 cu128 闭包共存；运行时依赖集合与
+#   20231117 完全一致，不替换 torch/CUDA 包；CosyVoice 固定 commit 用到的
+#   whisper.log_mel_spectrogram(audio, n_mels=128) 与 whisper.tokenizer.
+#   Tokenizer 两 API 在两版间源码级不变，2026-09-13 以生产 venv 已装源码
+#   与 PyPI sdist 逐字 diff 实证）。门禁与闭包契约一字不动：禁止以 --no-deps
+#   装清单、强制降级 triton、改写已装 dist-info 或弱化 pip check 绕过——
+#   冲突根因在依赖元数据，绕过门禁只会把冲突藏进运行期。
 #
 # 用途：Python 3.10 独立 venv 内克隆官方仓库、装 cu128 torch + 最小运行时依赖、
 #   下载 Fun-CosyVoice3-0.5B-2512 到 gitignored artifacts，然后在 127.0.0.1:8011
@@ -443,7 +458,7 @@ PYEOF
 fi
 
 say "依赖就绪，已安装版本（记录用）："
-"$VENV_DIR/bin/pip" freeze | grep -E '^(torch|torchaudio|torchcodec|triton|nvidia-cudnn-cu12|nvidia-nccl-cu12|nvidia-cublas-cu12|cuda-toolkit|cuda-bindings|modelscope|transformers)=' || true
+"$VENV_DIR/bin/pip" freeze | grep -E '^(torch|torchaudio|torchcodec|triton|nvidia-cudnn-cu12|nvidia-nccl-cu12|nvidia-cublas-cu12|cuda-toolkit|cuda-bindings|modelscope|transformers|openai-whisper)=' || true
 say "启动 OpenAI 兼容 bridge: http://$HOST:$PORT/v1/audio/speech（wav；key 可选）"
 say "模型在 bridge 启动后后台加载——/health 返回 200 才 ready（期间 503）"
 

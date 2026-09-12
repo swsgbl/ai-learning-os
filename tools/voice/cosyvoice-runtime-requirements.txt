@@ -14,7 +14,9 @@
 # torchcodec；+cu128 本地版本轮 PyPI 没有，本清单按 PyPI 解析装不到），再装本清单；
 # 官方 requirements.txt 的 torch==2.3.1/cu121 pin 被有意覆盖。
 # 版本策略：官方 requirements.txt 已 pin 的沿用其 pin（保持官方验证组合），
-# 未 pin 的（官方依赖链间接引入或官方缺口）不 pin。
+# 未 pin 的（官方依赖链间接引入或官方缺口）不 pin。例外（M14-18）：
+# openai-whisper 官方 pin 20231117 的 triton<3 元数据与 cu128 CUDA 闭包
+# 冲突，有意升到 20250625（依据见下方该条目注释）。
 #
 # 明确排除（均验证为非必需，证据为 commit 内源码）：
 # - deepspeed：运行时闭包零引用（仅训练脚本使用）
@@ -40,8 +42,26 @@ omegaconf==2.3.0
 transformers==4.51.3
 # tokenizer.py 顶层 `import tiktoken`——官方 requirements 未列（缺口），此处补上
 tiktoken
-# tokenizer.py 顶层 `from whisper.tokenizer import Tokenizer`
-openai-whisper==20231117
+# tokenizer.py 顶层 `from whisper.tokenizer import Tokenizer`；cli/frontend.py:98
+# 与 dataset/processor.py:196 用 `whisper.log_mel_spectrogram(audio, n_mels=128)`
+# （M14-18：20231117 → 20250625）20231117 METADATA 声明 triton<3,>=2.0.0（无
+# 环境标记）——与 torch 2.11.0+cu128 CUDA 闭包的 triton==3.6.0 冲突：2026-09-13
+# 生产 bootstrap 实证（service.log）M14-17 终局闭包恢复已成功（torch
+# 2.11.0+cu128 / triton 3.6.0 就位），pip check 附加门禁仍被「openai-whisper
+# 20231117 has requirement triton<3,>=2.0.0, but you have triton 3.6.0」卡死；
+# 且清单分支装 20231117 时该约束触发 pip 回溯把 torch 一路降级到 2.3.1
+# （service.log 实证 2.14.0→2.3.1 回溯）。20250625 METADATA 声明 triton>=2
+# （x86_64/linux 环境标记，无上界）——与 cu128 闭包共存，运行时依赖集合与
+# 20231117 完全一致（more-itertools/numba/numpy/tiktoken/torch/tqdm，torch
+# 无版本约束，不替换 CUDA 包；supervisor 只读 dry-run 确认 + 2026-09-13
+# PyPI sdist PKG-INFO 直读复核）。两版对 CosyVoice 用到的 API 源码级不变
+# （20231117 生产 venv 已装源码 vs 20250625 sdist 逐字 diff：tokenizer.py 无
+# 差异、log_mel_spectrogram 仅 docstring 更新且明确支持 n_mels=128）。官方
+# requirements.txt 在固定 commit 仍 pin 20231117——本清单有意偏离官方 pin
+# （沿用官方 pin 的策略让位于 CUDA 闭包一致性）；禁止以 --no-deps 装本清单、
+# 强制降级 triton 或改写已装 dist-info 绕过 pip check 门禁。20250625 在 PyPI
+# 仅 sdist（无 wheel），pip 从源码构建（纯 Python 包，仅需 setuptools）。
+openai-whisper==20250625
 # frontend.py 顶层 import（cam++/speech-tokenizer ONNX，CPUExecutionProvider）
 onnxruntime
 einops

@@ -199,6 +199,38 @@ runtime 错配（2026-09-13 生产 venv 实证：cuda-toolkit 12.8.1 extras 要�
 nvidia-cublas-cu12==12.8.4.1.* 而实为 12.1.3.1，`pip check` 只报三个
 `==` pin）。
 
+**M14-18 openai-whisper triton 元数据冲突修复（2026-09-13 生产实证）**：
+M14-17 的终局 CUDA 闭包恢复本身已成功（service.log 实证 torch
+`2.11.0+cu128` / triton `3.6.0` 及全部闭包成员就位），但最小运行时清单的
+`openai-whisper==20231117` METADATA 声明 `triton<3,>=2.0.0`（无环境标记）
+——与闭包的 `triton==3.6.0` 冲突，`pip check` 附加门禁被「openai-whisper
+20231117 has requirement triton<3,>=2.0.0, but you have triton 3.6.0」卡死
+FAIL；且清单分支装 20231117 时该约束会触发 pip 回溯把 torch 一路降级
+（实证 2.14.0→…→2.3.1）再连带降级 CUDA 闭包。修法 = 最小清单升级
+`openai-whisper==20250625`（METADATA 声明 `triton>=2`，x86_64/linux 环境
+标记、无上界，与 cu128 闭包共存；运行时依赖集合与 20231117 完全一致——
+more-itertools/numba/numpy/tiktoken/torch/tqdm，torch 无版本约束，不替换
+torch/CUDA 包；supervisor 只读 dry-run 确认 + 2026-09-13 PyPI sdist
+PKG-INFO 直读复核）。**为什么升级而不是绕过门禁**：冲突根因在第三方依赖
+元数据而非门禁本身——`--no-deps` 装清单、强制降级 triton（破坏 torch
+metadata 闭包，M14-17 已证 `import torch` 失败）或改写已装 dist-info 都
+只是把元数据冲突藏进运行期；升级 pin 让门禁真实通过。CosyVoice 固定
+commit `074ca6d` 实际用到的两个 whisper API（`whisper.log_mel_spectrogram
+(audio, n_mels=128)`（cli/frontend.py:98、dataset/processor.py:196）与
+`whisper.tokenizer.Tokenizer(encoding=…, num_languages=…, language=…,
+task=…)`（tokenizer/tokenizer.py:7,236））在两版间**源码级不变**——
+20231117（生产 venv 已装源码）与 20250625（PyPI sdist）逐字 diff：tokenizer.py
+无差异、log_mel_spectrogram 仅 docstring 更新且明确支持 n_mels=128；生产
+venv 只读探针（import + 签名）实证通过。官方 requirements.txt 在固定
+commit 仍 pin 20231117——本清单**有意偏离**官方 pin（沿用官方 pin 的策略
+让位于 CUDA 闭包一致性）。注意 20250625 在 PyPI 仅 sdist（无 wheel），pip
+从源码构建（纯 Python 包）。契约测试：`test_openai_whisper_pin_bump_
+contract`（pin + 升级依据锚点）、`test_openai_whisper_triton_no_bypass_
+contract`（全生效行禁 `--no-deps`/`--force-reinstall`/`--ignore-installed`
+/triton 降级 pin/dist-info 改写 + pip check 门禁保持 `if !` fail-closed
+形态）、`test_whisper_api_compat_contract_when_installed`（whisper 可导入
+环境的两 API 签名回归，canonical venv 无 whisper 时显式 skip）。
+
 ## 幂等与固定版本
 
 - venv/克隆/模型已存在即复用或断点续传；`pip install` 满足即 no-op；uv venv
@@ -225,8 +257,10 @@ nvidia-cublas-cu12==12.8.4.1.* 而实为 12.1.3.1，`pip check` 只报三个
   覆盖。FunASR 侧 torch 不 pin（CPU 轮子随官方索引更新）；CosyVoice 侧初始
   安装不 pin、但清单装完后终局闭包恢复固定三件套 + CUDA 闭包成员 pin
   （M14-16/M14-17，见上节）——最终 torch/torchaudio/torchcodec 恒为已验证
-  cu128 组合且 CUDA 闭包与 torch metadata 一致，脚本结尾打印实际安装版本
-  供留档。
+  cu128 组合且 CUDA 闭包与 torch metadata 一致；最小清单 `openai-whisper`
+  固定 `20250625`（M14-18：triton>=2 元数据与 cu128 闭包共存，有意偏离
+  官方 20231117 pin，见上节）。脚本结尾打印实际安装版本（含
+  openai-whisper）供留档。
 - `checkout -f` 会丢弃克隆目录内的本地改动——工具目录本就不应手改。
 
 ## API 测试证据（可复现命令）
