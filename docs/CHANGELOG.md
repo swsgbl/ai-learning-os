@@ -121,6 +121,29 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 - M10-01 LLM 接入：OpenAI 兼容 gateway + rubric LLM judge（fail-closed 进复核，
   默认关闭保持确定性判分；真实端点冒烟脚本 infra/smoke_llm.sh）
 
+### Fixed
+- M14-13 CI R2：MinIO 社区版自 2025-10 起停止分发官方 Docker 镜像
+  （source-only 分发），`minio/minio:latest` 拉取失败使 CI docker job 在项目
+  构建之前即挂——改为本地自建官方 pin 源码镜像：新增 `infra/minio/Dockerfile`
+  （源码 = codeload 官方不可变 commit URL
+  `…/tar.gz/9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a`（= tag
+  `RELEASE.2025-10-15T17-29-55Z`）、builder
+  `golang:1.24.8-alpine3.22@sha256:3d78beb1…cc0ae5`、runtime
+  `alpine:3.22@sha256:14358309…5dce` 全 digest pin；`CGO_ENABLED=0` +
+  kqueue/trimpath + 显式 release/commit ldflags；依赖完整性只靠源码树内官方
+  go.sum（`-mod=readonly`、GOSUMDB 默认开，零 bypass）；`GOTOOLCHAIN=local`；
+  全文件零 `apk add`（BusyBox wget/tar 取源）；非 root（minio 1000:1000）+
+  可写 /data；runtime 只含 minio 二进制）；compose minio 切到该本地构建
+  （服务名/端口/env/卷/restart 不变，镜像锚点
+  `aios/minio:RELEASE.2025-10-15T17-29-55Z`），healthcheck 由 `mc ready local`
+  换 BusyBox wget 探 `/minio/health/cluster`（`mc ready` 消费的同一就绪信号
+  源）；api depends_on minio healthy 与六服务集合不变。21 项静态契约测试
+  （`services/api/tests/test_minio_selfbuild.py`）+ 邻居 compose 契约套件零回归
+  （265 passed / 6 skipped）。本回合零镜像构建/零上游工件下载/零容器操作/
+  零生产触碰（镜像首次真实构建在下一次 CI），production_ready=false 不变；
+  供应链 rationale/pins/limitations/长期替代见
+  docs/evidence/m14-13-minio-selfbuild/README.md
+
 ### Security
 - M14-10 生产 Web 安全镜像上产（M14-05 + M14-09 的生产落地，与代码/配置合并
   分开记录）：代码/配置面已先行合并——M14-05（next 16.3.4）随 **PR #76**

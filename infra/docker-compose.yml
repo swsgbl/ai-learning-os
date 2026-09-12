@@ -41,7 +41,18 @@ services:
       retries: 5
 
   minio:
-    image: minio/minio:latest
+    # M14-13 CI R2: MinIO 社区版自 2025-10 起停止分发官方 Docker 镜像
+    # （source-only 分发），minio/minio:latest 拉取使 Docker CI 在项目构建前即
+    # 失败。改为本地自建官方源码（infra/minio/Dockerfile）：上游 tag+commit 与
+    # builder/runtime 基镜像 digest 全部 pin（supervisor 核验），供应链
+    # rationale/pins/limitations/长期替代见 docs/evidence/m14-13-minio-selfbuild/。
+    # 服务接口（名称/端口/env/卷/restart）保持不变；生产已有 root 属主卷的
+    # 一次性迁移在采纳时由 supervisor 执行（README 采纳注记）。
+    build:
+      context: ./minio
+    # 自建镜像锚点（与 api/web 同款回滚约定）——tag 即上游 RELEASE，升版 =
+    # 显式改此 tag + Dockerfile ARG（无浮动 tag 漂移面）
+    image: aios/minio:RELEASE.2025-10-15T17-29-55Z
     restart: unless-stopped
     command: server /data --console-address ":9001"
     environment:
@@ -53,7 +64,10 @@ services:
     volumes:
       - minio-data:/data
     healthcheck:
-      test: ["CMD", "mc", "ready", "local"]
+      # 自建 runtime 只含 minio 二进制（无 mc）——用 Alpine 自带 BusyBox wget
+      # 探官方就绪端点 /minio/health/cluster（`mc ready` 消费的同一信号源；
+      # 与 web/livekit 健康检查同款命令面）
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9000/minio/health/cluster || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
