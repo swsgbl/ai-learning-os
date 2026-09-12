@@ -6,9 +6,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 ## [Unreleased]
 
 ### Added
-- M14-13 监控历史索引 + 有界留存 + 趋势摘要（`tools/ops/monitoring_history.py`，
-  **工具交付、未执行真实历史构建**；本 Claude 开发回合仅做本地 commit，
-  supervisor 审查与 remote 发布在其后进行）：对既有 M14-12 monitor JSON
+- M14-13 监控历史索引 + 有界留存 + 趋势摘要 + 首次真实历史构建结果
+  （`tools/ops/monitoring_history.py`，**工具交付并合并（PR #87）；
+  开发回合未执行真实历史构建——结果回填回合已从 canonical main
+  独立执行首次真实构建（见本条末尾结果）**；本 Claude 开发回合仅做本地
+  commit，supervisor 审查与 remote 发布在其后进行）：对既有 M14-12 monitor JSON
   工件（默认 gitignored `.verify/artifacts/m14-12-production-monitoring/`，
   `--source-dir` 可覆盖）建立**只读**安全索引——仅发现 `monitor-*.json`
   （stem 严格白名单 `monitor-YYYYMMDD-HHMMSS` 含日历合法性，被拒名不
@@ -32,10 +34,28 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   清 tmp 零残留）；零子进程/零网络/零容器面/零计划任务/零 env 读取
   （源码契约锁定）；一切 I/O 经 Store 注入。73 项契约测试 + 组合回归
   262 passed（M14-12 套件零回归）；开发回合零生产执行、零 canonical
-  `.verify` 写入（全部验证用合成样本临时目录）。**仅闭环历史数据面
-  工具证据——持续/定时采集与调度、外部告警接入、指标时序存储/查询、
-  阈值随时间的标定、跨机监控、真实历史首次构建仍属未决；
-  `production_ready=false` 不变**；证据见
+  `.verify` 写入（全部验证用合成样本临时目录）。交付随 **PR #87**
+  合并 main（merged_at 2026-09-12T08:13:50Z，merge commit
+  `d2ffc49b2770891227b52aea0307fb969969c7e2`，feature head
+  `b1201d6d041ae3ea492ee918d4572584a6c47b02`，远端 feature 分支已删除；
+  PR CI run `34682507203` 与合并后 main push CI run `34682734884` 均全部
+  5 job（Web/API/Docker/Android/Release tools）SUCCESS）。**首次真实
+  历史构建（2026-09-12，结果回填回合从 canonical main `d2ffc49` 独立
+  执行，`py -X utf8` 连跑两遍）**：源 canonical
+  `monitor-20260911-173920.json`（SHA-256
+  `740c031eb3cd452a98ef0e0b70be92f0a2a8bc33d417ff0c72436ee25ed4a458`，
+  两次运行前后逐字节不变）→ gitignored
+  `history.jsonl`（SHA-256
+  `a71ff7e2816e55b1a2c964024cdeb8b00ba4fff6de482b3165ae86556dac5ae0`）
+  与 `history-summary.md`（SHA-256
+  `80535c3a41699137bd52fdb37ed06b2c5c57f3cd1bbdafdab7bb306c351a7be`，
+  两文件两遍输出 `cmp` 逐字节相同，均与 supervisor 给定期望值一致）；
+  恰 1 行合法 JSON：`overall_status=ok`、`partial=false`、行内
+  `artifact_sha256` 与源哈希匹配、ok=34/warn=0/critical=0、六服务
+  healthy+restart 0、五端点全 200（7.088–27.641ms）、日志 error 全 0。
+  **仅闭环历史数据面工具证据 + 单样本首次真实构建——持续/定时采集与
+  调度、外部告警接入、指标时序存储/查询、阈值随时间的标定、跨机监控
+  仍属未决；`production_ready=false` 不变**；证据见
   docs/evidence/m14-13-monitoring-history/
 - M14-12 生产监控/告警 readiness 开发切片 + 首次真实只读生产监控结果：
   只读采集 + 阈值判定 + 证据
