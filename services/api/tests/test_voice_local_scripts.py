@@ -761,6 +761,117 @@ def test_runtime_requirements_contract() -> None:
         assert not any(line.startswith(excluded) for line in active), excluded
 
 
+def test_openai_whisper_pin_bump_contract() -> None:
+    """M14-18 openai-whisper 20231117 → 20250625 pin 契约（生产实证修复）：
+    20231117 的 METADATA 声明 `triton<3,>=2.0.0`（无环境标记）——与 torch
+    2.11.0+cu128 闭包的 `triton==3.6.0` 直接冲突：2026-09-13 生产 bootstrap
+    实证（service.log）M14-17 终局闭包恢复已成功（torch 2.11.0+cu128 /
+    triton 3.6.0 就位），pip check 附加门禁仍被「openai-whisper 20231117
+    has requirement triton<3,>=2.0.0, but you have triton 3.6.0」卡死 FAIL；
+    且清单分支装 20231117 时该约束触发 pip 回溯把 torch 一路降级到 2.3.1
+    （实证 2.14.0→2.3.1 回溯）。20250625 METADATA 声明 `triton>=2`
+    （x86_64/linux 环境标记，无上界）——与 cu128 闭包共存、运行时依赖集合
+    与 20231117 完全一致（supervisor 只读 dry-run 确认不替换 torch/CUDA 包；
+    2026-09-13 sdist PKG-INFO 直读复核）。修法 = 升级 pin 而非绕过门禁；
+    官方 requirements.txt 在固定 commit 仍 pin 20231117——本清单**有意偏离**
+    官方 pin（沿用官方 pin 的策略在此处让位于 CUDA 闭包一致性）。"""
+    text = RUNTIME_REQUIREMENTS.read_text(encoding="utf-8")
+    active = [line.strip() for line in text.splitlines()
+              if line.strip() and not line.strip().startswith("#")]
+    pins = [line for line in active if line.startswith("openai-whisper==")]
+    assert pins == ["openai-whisper==20250625"], (
+        "openai-whisper 应唯一精确 pin 20250625（20231117 的 triton<3 元数据"
+        "与 cu128 闭包的 triton==3.6.0 冲突，pip check 门禁实证失败）"
+    )
+    # 升级依据必须留档在清单注释（证据锚点：旧约束 / 新约束 / 门禁实证）
+    for anchor in (
+        "triton<3,>=2.0.0",  # 20231117 METADATA 旧约束（生产实证卡门禁）
+        "triton>=2",  # 20250625 METADATA 新约束（与 cu128 闭包共存）
+        "triton==3.6.0",  # M14-17 CUDA 闭包契约（whisper 不得迫使降级）
+        "pip check",  # 门禁实证出处
+        "20250625",  # 新 pin
+    ):
+        assert anchor in text, anchor
+
+
+def test_openai_whisper_triton_no_bypass_contract() -> None:
+    """M14-18 反绕过契约：升级 pin 是唯一允许的修复路径——绝不允许
+    ① 忽略/弱化 pip check 门禁；② 清单分支 --no-deps（会让 whisper 的
+    triton<3 约束（若回归）不再被解析，掩盖而非修复冲突）；③ 强制降级
+    triton 到 <3（破坏 torch 2.11.0+cu128 metadata 闭包，M14-17 已证
+    import torch 失败）；④ 改写已装 dist-info 元数据（伪造 pip check 通过）。
+    生效行级断言（注释中的历史叙述不算）。"""
+    for path in (RUNTIME_REQUIREMENTS, BOOTSTRAP_COSYVOICE):
+        text = path.read_text(encoding="utf-8")
+        active_lines = [line for line in text.splitlines()
+                        if line.strip() and not line.strip().startswith("#")]
+        # 反绕过 ②③：生效行绝不出现 triton 降级 pin / --no-deps /
+        # --force-reinstall / --ignore-installed（M14-17 已禁 --no-deps，
+        # 此处对全生效行扩展到其余 pip 绕过旗标）
+        for line in active_lines:
+            for banned in ("--no-deps", "--force-reinstall", "--ignore-installed"):
+                assert banned not in line, f"{path.name} 生效行不得含 {banned}: {line.strip()}"
+        assert not any(
+            ("triton<" in line) or ("triton==" in line and "3.6.0" not in line)
+            for line in active_lines
+        ), (
+            f"{path.name} 生效行不得 pin/降级 triton（CUDA 闭包成员由 bootstrap "
+            "cu128 index 终局恢复统一解析，triton==3.6.0 契约见 M14-17）"
+        )
+        # 反绕过 ④：生效行绝不触碰已装 dist-info（改 METADATA 伪造 pip check）
+        assert not any("dist-info" in line for line in active_lines), (
+            f"{path.name} 生效行不得改写已装 dist-info 元数据"
+        )
+    # 反绕过 ①：pip check 门禁保持 fail-closed 形态（if ! ... check; then fail）
+    bootstrap = BOOTSTRAP_COSYVOICE.read_text(encoding="utf-8")
+    gate_lines = [line for line in bootstrap.splitlines()
+                  if "pip\" check" in line and not line.strip().startswith("#")]
+    assert len(gate_lines) == 1, "pip check 门禁应恰一处"
+    gate_line = gate_lines[0]
+    assert gate_line.strip().startswith("if !"), "门禁必须 if ! 形态（非零退出即 FAIL）"
+    assert "|| true" not in gate_line and "|| :" not in gate_line, "门禁不得被短路绕过"
+
+
+def test_whisper_api_compat_contract_when_installed() -> None:
+    """M14-18 CosyVoice 固定 commit 074ca6d 实际用到的两个 whisper API 的
+    签名级回归（whisper 可导入的环境执行；canonical 测试 venv 无 whisper 时
+    跳过——真实验证面 = CosyVoice artifacts venv / 任一装了 openai-whisper 的
+    环境）。CosyVoice 调用点（固定 commit 源码）：
+    - cosyvoice/cli/frontend.py:98 与 cosyvoice/dataset/processor.py:196：
+      `whisper.log_mel_spectrogram(audio_tensor, n_mels=128)`（位置参数 +
+      n_mels 关键字）；
+    - cosyvoice/tokenizer/tokenizer.py:7,236：`from whisper.tokenizer
+      import Tokenizer` + `Tokenizer(encoding=..., num_languages=...,
+      language=..., task=...)`。
+    2026-09-13 已以 20231117（生产 venv 已装源码）与 20250625（PyPI sdist）
+    逐字 diff 实证：两 API 在两版间源码级不变（audio.py 仅 docstring 更新，
+    tokenizer.py 无差异）。"""
+    if importlib.util.find_spec("whisper") is None:
+        pytest.skip("本环境未安装 openai-whisper（canonical venv 无 whisper；"
+                    "签名回归在装有 openai-whisper 的环境（如 CosyVoice "
+                    "artifacts venv）执行）")
+    import inspect
+
+    import whisper
+
+    sig = inspect.signature(whisper.log_mel_spectrogram)
+    assert "audio" in sig.parameters, "log_mel_spectrogram 必须接受位置参数 audio"
+    assert "n_mels" in sig.parameters, "log_mel_spectrogram 必须接受 n_mels 关键字（CosyVoice 传 n_mels=128）"
+    # n_mels 必须可按关键字传入（cosyvoice 调用形态 n_mels=128）
+    assert sig.parameters["n_mels"].kind in (
+        inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY,
+    )
+
+    from whisper import tokenizer as whisper_tokenizer
+
+    tokenizer_params = set(inspect.signature(whisper_tokenizer.Tokenizer).parameters)
+    for kwarg in ("encoding", "num_languages", "language", "task"):
+        assert kwarg in tokenizer_params, (
+            f"whisper.tokenizer.Tokenizer 必须接受 {kwarg} 构造 kwarg"
+            "（CosyVoice tokenizer.py get_tokenizer 以该形态构造）"
+        )
+
+
 def test_reachability_script_contract() -> None:
     """可达性检查脚本：host.docker.internal 探测 + 恒绑 127.0.0.1 + setsid 存活修复
     + 精确清理（复审修正：唯一 PID 文件 + /proc cmdline 核验，绝不 pkill 广撒网）。"""

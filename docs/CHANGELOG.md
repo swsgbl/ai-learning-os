@@ -234,6 +234,43 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   默认关闭保持确定性判分；真实端点冒烟脚本 infra/smoke_llm.sh）
 
 ### Fixed
+- M14-18 CosyVoice 最小运行时 openai-whisper triton 元数据冲突修复（生产
+  bootstrap 实证，本地 commit 待 supervisor 审查发布）：M14-17 终局 CUDA
+  闭包恢复已成功（2026-09-13 生产 service.log：torch `2.11.0+cu128` /
+  triton `3.6.0` 及全部闭包成员就位），但 `cosyvoice-runtime-requirements.txt`
+  的 `openai-whisper==20231117` METADATA 声明 `triton<3,>=2.0.0`（无环境
+  标记）——与闭包 `triton==3.6.0` 冲突，`pip check` 附加门禁被「openai-
+  whisper 20231117 has requirement triton<3,>=2.0.0, but you have triton
+  3.6.0」卡死 FAIL；且清单分支装 20231117 时该约束触发 pip 回溯把 torch
+  一路降级（实证 2.14.0→…→2.3.1）再连带降级 CUDA 闭包。修法 = **升级 pin
+  而非绕过门禁**：`openai-whisper==20250625`（METADATA `triton>=2`，
+  x86_64/linux 环境标记、无上界）与 cu128 闭包共存，运行时依赖集合与
+  20231117 完全一致（more-itertools/numba/numpy/tiktoken/torch/tqdm，torch
+  无版本约束，不替换 torch/CUDA 包；supervisor 只读 dry-run 确认 + PyPI
+  sdist PKG-INFO 直读复核）；CosyVoice 固定 commit `074ca6d` 用到的两个
+  API（`whisper.log_mel_spectrogram(audio, n_mels=128)` 与
+  `whisper.tokenizer.Tokenizer(encoding=…, num_languages=…, language=…,
+  task=…)`）经 20231117（生产 venv 已装源码）vs 20250625（sdist）逐字 diff
+  实证**源码级不变**（tokenizer.py 无差异、log_mel_spectrogram 仅
+  docstring 更新且明确支持 n_mels=128；生产 venv 只读探针 import + 签名
+  实跑通过）。禁止以 `--no-deps` 装清单、强制降级 triton、改写已装
+  dist-info 或弱化 pip check 绕过（M14-17 门禁/闭包契约/一致性探针一字
+  不动）；官方 requirements.txt 在固定 commit 仍 pin 20231117——本清单
+  **有意偏离**官方 pin。注意 20250625 在 PyPI 仅 sdist（无 wheel），pip
+  从源码构建（纯 Python 包）。契约测试新增 3 项：
+  `test_openai_whisper_pin_bump_contract`（唯一精确 pin + 升级依据证据
+  锚点）、`test_openai_whisper_triton_no_bypass_contract`（两文件全生效行
+  禁 `--no-deps`/`--force-reinstall`/`--ignore-installed`/triton 降级 pin/
+  dist-info 改写 + pip check 门禁保持 `if !` fail-closed 形态）、
+  `test_whisper_api_compat_contract_when_installed`（whisper 可导入环境的
+  两 API 签名回归；canonical venv 无 whisper 显式 skip）。验证：聚焦
+  `test_voice_local_scripts.py` **34 passed + 1 skipped** + `test_voice_
+  service_control.py` 回归 **64 passed** + ruff + `bash -n` +
+  `git diff --check` 全过（canonical venv 解释器仅执行，零 canonical 检出
+  改动）。**本切片只修复可复现清单/bootstrap 契约与文档：未重跑 bootstrap、
+  未向任何 venv 装依赖、未启停任何进程/容器（生产 venv 仅只读探针），
+  生产实际升级与冷启动复验由 supervisor 合并后受控执行；
+  `production_ready=false` 不变**。
 - M14-17 CosyVoice bootstrap CUDA 闭包终局修复（真实生产 venv 只读取证，本地
   commit 待 supervisor 审查发布）：M14-16 的终局 `--no-deps` 回写只恢复三个
   主轮——生产 venv 实证（2026-09-13 `pip check`）torch/torchaudio/torchcodec
