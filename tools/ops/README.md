@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -12,6 +12,9 @@
 `monitoring_pipeline_task.py` + `run_monitoring_pipeline_silent.vbs`
 （M14-14）承担持续/定时采集的**组合管道与调度 readiness** 面（单次
 monitor → history 组合 + 计划任务管理器；开发回合零真实执行、零注册，
+`production_ready=false` 不变）；`monitoring_insights.py`（M14-15）承担
+监控历史**洞察/告警摘要**面（只读 M14-13 history.jsonl 或 M14-12 monitor
+工件目录 → 安全 JSON+MD 摘要；仅本地工件洞察，不接外部告警，
 `production_ready=false` 不变）。
 
 ## production_recovery.py
@@ -426,3 +429,53 @@ UTF-16 的 XML 致 System.Xml 拒载，现与声明及 install 临时字节一�
   `--execute --confirm "EXECUTE READ-ONLY MONITORING PIPELINE"`（公开门禁
   常量，非 secret）。
 - **readiness ≠ 持续运行证明；`production_ready=false` 不变。**
+
+## monitoring_insights.py（M14-15）
+
+监控历史洞察/告警摘要第 1 切片：M14-13 `history.jsonl`（或 M14-12
+monitor 工件目录）→ **安全 JSON+MD 洞察摘要**（只读输入，绝不改动/删除
+任何输入工件）。零子进程/零网络/零容器面/零计划任务/零 env 读取/零墙钟；
+**仅本地工件洞察——不接外部告警系统，不构成 production readiness 宣称**。
+
+```
+python tools/ops/monitoring_insights.py                 # plan（默认，零读取/零写入）
+python tools/ops/monitoring_insights.py --execute \
+    --confirm "EXECUTE READ-ONLY MONITORING INSIGHTS"   # execute（只读洞察）
+```
+
+安全性质（契约测试 `services/api/tests/test_monitoring_insights.py` 锁定；
+细节见 `docs/evidence/m14-15-monitoring-insights/README.md`）：
+
+- **双模式门禁**：默认 plan 完全惰性（零读取/零写入/零 Store 构造）；
+  execute 需 `--execute` + 精确确认短语 `EXECUTE READ-ONLY MONITORING
+  INSIGHTS`（一字不差），缺一/近似即 EXIT 2 且零读取；`--event-limit`
+  （默认 50、1–500）超界 plan/execute 同样拒绝。
+- **输入三形态（固定画像）**：`--source` 可为 ① `history.jsonl` 文件本体；
+  ② 含它的目录（默认 gitignored
+  `.verify/artifacts/m14-13-monitor-history-retention/`）；③ M14-12 monitor
+  工件目录（发现/严格校验/去重/排序**委托同仓 M14-13
+  `monitoring_history.py` 已测函数**——schema 单一事实源，拒绝原因固定
+  词汇透传）。同目录混入两形态 → mixed-inputs 拒绝；空目录/缺源/非
+  history.jsonl 文件名拒绝；symlink（源文件/源目录/输出/祖先）一律拒绝。
+- **严格校验（fail-closed，输出零写入）**：history 行必须为 M14-13 记录
+  schema（schema_version/artifact_sha256 64 位十六进制/stem 白名单/UTC
+  时间戳/project 白名单/overall_status（incomplete 拒绝）/partial 恒
+  false/阈值计数/六服务 health+restart/五端点 http_status+**有限非负**
+  延迟/六日志 error_total）；行序严格递增 (collected_at, source_stem)——
+  **时间乱序/重复行拒绝**；跨 project 混档拒绝；样本数 1–5000（超界
+  拒绝，绝不静默截断）。
+- **洞察最小集**：时间范围+样本数+时长、overall_status 计数、
+  availability（计数+比率）、degraded/critical 事件列表（有界，超界截断
+  计数显式、保最新 N 条）、逐端点延迟 min/p50/p95/max（nearest-rank）
+  +非 200 计数、逐服务 restart/日志 error 总计+非 healthy 样本数、连续
+  失败/恢复（当前连胜/最长 non-ok 连败区间/失败恢复转移计数+时间戳/
+  逐端点当前连续失败）、最近样本状态。
+- **输出（默认 gitignored
+  `.verify/artifacts/m14-15-monitoring-insights/`，`--output-dir` 为操作者
+  显式自选）**：`insights.json` + `insights-summary.md`；同目录 tmp+fsync+
+  os.replace 原子落盘；仅在全部输入校验通过后才写。生成时间戳取自最新
+  样本 collected_at——**零墙钟，两次运行逐字节相同**。报告卫生：
+  stdout/输出**绝无绝对本机路径**（路径显示恒为仓库相对或纯名）、原始
+  日志行、密钥/secret、生产容器 ID；被拒值不回显。
+- 退出码：0 plan 成功 / execute 成功；2 任何拒绝（门禁、参数超界、源
+  缺失/symlink、零样本、malformed、乱序、混档、超 5000、写失败）。

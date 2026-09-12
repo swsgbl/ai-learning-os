@@ -6,6 +6,41 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 ## [Unreleased]
 
 ### Added
+- M14-15 监控历史洞察/告警摘要第 1 切片（`tools/ops/monitoring_insights.py` +
+  `services/api/tests/test_monitoring_insights.py` 90 项契约测试；本 Claude
+  开发回合仅做本地 commit，supervisor 审查与 remote 发布在其后进行；
+  **开发回合零生产执行、零 canonical 仓库/`.verify` 触碰——全部验证用
+  合成样本，不等于外部告警接入，`production_ready=false` 不变**）。本地
+  只读工件 → 安全 JSON+MD 洞察摘要：输入三形态（`history.jsonl` 文件 /
+  含它的目录（默认 gitignored
+  `.verify/artifacts/m14-13-monitor-history-retention/`——本切片指定新
+  输入位，仓库现有工具尚无写入者）/ M14-12 monitor 工件目录——校验/
+  去重/排序**委托同仓 M14-13 `monitoring_history.py` 已测函数**，schema
+  单一事实源，固定词汇拒绝原因透传）；洞察最小集（时间范围+样本数+
+  时长、overall_status 计数、availability 计数+比率、degraded/critical
+  事件列表（非 healthy 服务+非 200 端点明细，`--event-limit` 默认 50、
+  1–500，超界截断计数显式保最新）、逐端点延迟 min/p50/p95/max
+  （nearest-rank）+非 200 计数、逐服务 restart/日志 error/非 healthy
+  样本汇总、连续失败/恢复（当前连胜+当前连续 non-ok、最长 non-ok 连败
+  区间、失败/恢复转移计数+有界时间戳、逐端点当前连续失败）、最近样本
+  状态）；**fail-closed**——行序非严格递增（乱序/重复/同时间戳逆序）、
+  跨 project 混档、样本数超 5000、schema 不完整、partial/incomplete、
+  非有限非负延迟一律拒绝且**输出零写入**；默认 **plan 完全惰性**（零
+  读取/零写入/零 Store 构造），**execute** 需 `--execute` + 精确确认短语
+  `EXECUTE READ-ONLY MONITORING INSIGHTS`（一字不差），缺一/近似即
+  EXIT 2 零读取；输出 `insights.json` + `insights-summary.md` 同目录
+  tmp+fsync+os.replace **原子写**（仅校验全过后才写、零 tmp 残留、
+  symlink 全路径拒绝含 mkdir 穿越防御）；**零墙钟**（生成时间戳取自
+  最新样本，两遍逐字节相同）；**报告卫生：stdout/输出绝无绝对本机路径
+  （恒仓库相对或纯名）/原始日志行/密钥/secret/生产容器 ID，被拒值不
+  回显**；零子进程/零网络/零容器面/零计划任务/零 env 读取（源码契约
+  token 锁定 + socket/subprocess 双阻断端到端）。验证：聚焦 **90
+  passed**；M14-13 回归 **164 passed** 零回归；监控全家族五套件合并
+  **484 passed**；ruff/py_compile/`git diff --check` 全过；合成数据端到
+  端演示（M14-13 → 默认源位 → 全默认 plan+execute，exit 0、确定性逐
+  字节相同）。诚实边界：仅本地工件洞察，不接外部告警（无发送/通知/
+  webhook），canonical 真实历史当前仍单样本（趋势列单点值如实呈现）；
+  证据见 `docs/evidence/m14-15-monitoring-insights/`。
 - M14-14 持续/定时监控采集 + 历史管道 readiness（`tools/ops/monitoring_pipeline.py`
   + `tools/ops/monitoring_pipeline_task.py` +
   `tools/ops/run_monitoring_pipeline_silent.vbs`；本 Claude 开发回合仅做本地
