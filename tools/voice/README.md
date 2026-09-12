@@ -162,6 +162,20 @@ matplotlib 等训练链包。若最小清单在实际部署中不足：`COSYVOIC
 REQUIREMENTS=1` 回退官方完整 requirements（剔除 torch pin），并把缺失包报回
 仓库修正清单。
 
+**清单装完后的终局同源回写 + 运行期一致性探针（M14-16 生产冷启动实证修复）**：
+清单分支（最小/官方完整回退）按 PyPI 解析时，官方 pin 链（`lightning==2.2.4`
+等）会把已装 torch 降级（生产实证降到 2.3.1）而留下预装 torchaudio
+2.11.0+cu128——cu128 轮 METADATA 不声明 torch 约束，**`pip check` 对该混合
+ABI 报「No broken requirements found」，不能作为一致性依据**，导入才在
+torchaudio `_extension` 崩（`OSError: ... undefined symbol:
+aoti_torch_abi_version`）。bootstrap 在清单分支后从同一 cu128 index 以
+`--no-deps` 显式回写本机已验证三件套（`torch==2.11.0+cu128` /
+`torchaudio==2.11.0+cu128` / `torchcodec==0.11.1+cu128`——pin 已满足即
+no-op，不做 force-reinstall 全量重写），再做运行期一致性探针（torch/
+torchaudio 基础版本一致 + 双 `+cu128` 同源 + torchcodec 可导入，任一不满足
+即 FAIL 点名），其后才是 CosyVoice import/WAV 探针——顺序由契约测试锁定
+（`test_bootstrap_torch_reconciliation_order_contract`）。
+
 ## 幂等与固定版本
 
 - venv/克隆/模型已存在即复用或断点续传；`pip install` 满足即 no-op；uv venv
@@ -185,8 +199,10 @@ REQUIREMENTS=1` 回退官方完整 requirements（剔除 torch pin），并把�
   `/v1/audio/transcriptions`）；CosyVoice 官方仓库固定 commit
   `074ca6dc9e80a2f424f1f74b48bdd7d3fea531cc`（2026-05-25 main HEAD，含
   Fun-CosyVoice3 支持）；两者可分别用 `FUNASR_VERSION` / `COSYVOICE_COMMIT`
-  覆盖。torch 版本不 pin（CPU/cu128 轮子随官方索引更新），脚本结尾打印
-  实际安装版本供留档。
+  覆盖。FunASR 侧 torch 不 pin（CPU 轮子随官方索引更新）；CosyVoice 侧初始
+  安装不 pin、但清单装完后终局回写固定已验证三件套 pin（M14-16，见上节）——
+  最终 torch/torchaudio/torchcodec 恒为已验证 cu128 组合，脚本结尾打印实际
+  安装版本供留档。
 - `checkout -f` 会丢弃克隆目录内的本地改动——工具目录本就不应手改。
 
 ## API 测试证据（可复现命令）

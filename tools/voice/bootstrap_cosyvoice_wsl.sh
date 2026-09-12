@@ -21,6 +21,15 @@
 #   torchcodec 0.11.1+cu128 import 与 WAV 读写均通过）。+cu128 本地版本轮
 #   只存在于 pytorch cu128 index（PyPI 无），且其 METADATA 不 pin torch——
 #   同命令安装不替换、不重解 torch 依赖。
+# - M14-16（生产冷启动实证修复）：最小/完整清单分支按 PyPI 解析时，官方 pin
+#   链（lightning==2.2.4 一类）会把 torch 降级（实证降到 2.3.1）而留下预装
+#   torchaudio 2.11.0+cu128——cu128 轮 METADATA 不声明 torch 约束，pip check
+#   对该混合 ABI 报「No broken requirements found」，导入才在 torchaudio
+#   _extension 崩（OSError: ... undefined symbol: aoti_torch_abi_version）。
+#   修法：清单装完后从同一 cu128 index 以 --no-deps 显式回写已验证三件套
+#   pin（torch/torchaudio 2.11.0+cu128 + torchcodec 0.11.1+cu128），再做
+#   运行期一致校验探针（torch/torchaudio 基础版本一致 + 同 +cu128 +
+#   torchcodec 可导入，fail-closed），其后才是 CosyVoice import/WAV 探针。
 #
 # 用途：Python 3.10 独立 venv 内克隆官方仓库、装 cu128 torch + 最小运行时依赖、
 #   下载 Fun-CosyVoice3-0.5B-2512 到 gitignored artifacts，然后在 127.0.0.1:8011
@@ -140,6 +149,8 @@ say "venv Python: $("$VENV_DIR/bin/python" --version 2>&1)"
 # torchcodec 必须与 torch/torchaudio 同一条 cu128 index 命令安装：torchaudio 2.11
 # 后端探测需要它；+cu128 本地版本轮只在 pytorch cu128 index（PyPI 解析拿不到）；
 # torchcodec METADATA 不约束 torch 版本，不会替换/重解 torch 依赖。
+# 清单分支会反向降级 torch（M14-16 生产实证）——装完后必须终局同源回写 +
+# 一致性探针（见下方 M14-16 段），顺序不可调换。
 say "安装 cu128 torch/torchaudio/torchcodec==0.11.1+cu128（RTX 5070 Ti/Blackwell；网络受限时需代理）"
 "$VENV_DIR/bin/pip" install --upgrade pip
 "$VENV_DIR/bin/pip" install torch torchaudio torchcodec==0.11.1+cu128 --index-url https://download.pytorch.org/whl/cu128
@@ -150,6 +161,57 @@ if [ "${COSYVOICE_FULL_REQUIREMENTS:-0}" = "1" ]; then
 else
   say "安装最小运行时依赖（tools/voice/cosyvoice-runtime-requirements.txt，导入闭包推导）"
   "$VENV_DIR/bin/pip" install -r "$REPO_ROOT/tools/voice/cosyvoice-runtime-requirements.txt"
+fi
+
+# ---- 终局同源回写（M14-16 生产冷启动实证修复）：恢复已验证 cu128 三件套 ----
+# 2026-09-12 生产冷启动实证：上方任一清单分支按 PyPI 解析时，官方 pin 链
+# （lightning==2.2.4 等）会把已装 torch 降级（实证降到 2.3.1）而留下预装
+# torchaudio 2.11.0+cu128 二进制——cu128 轮 METADATA 不声明 torch 约束，
+# `pip check` 对该混合 ABI 报「No broken requirements found」，导入才在
+# torchaudio _extension 崩（OSError: ... aoti_torch_abi_version）。故两分支
+# 汇合后从同一 cu128 index 以 --no-deps 显式回写本机已验证组合（2026-09-10
+# 实证：torch 2.11.0+cu128 / torchaudio 2.11.0+cu128 / torchcodec
+# 0.11.1+cu128 import 与 WAV 读写均通过）——--no-deps 不让 PyPI 约束再参与
+# 解析、无从降级任一轮；精确 pin 已满足时 pip no-op（不做 force-reinstall
+# 全量重写环境）。
+say "终局回写已验证 cu128 三件套（--no-deps 精确 pin；清单分支的 PyPI 解析可能降级 torch——pip check 对该混合 ABI 不可见）"
+"$VENV_DIR/bin/pip" install --no-deps torch==2.11.0+cu128 torchaudio==2.11.0+cu128 torchcodec==0.11.1+cu128 --index-url https://download.pytorch.org/whl/cu128
+
+# ---- 运行期一致性探针（M14-16）：pip check 不可见的混合 ABI 防线 ----
+# torch/torchaudio/torchcodec 真实导入 + 同源校验：基础版本一致、同为 +cu128、
+# torchcodec 可导入——任一不满足即 fail-closed（清单依赖链再降级在此点名，
+# 而不是拖到 CosyVoice 导入栈里炸成难定位的 undefined symbol）。
+say "运行期一致性探针：torch/torchaudio 同基础版本 + 同源 cu128 + torchcodec 可导入"
+if ! "$VENV_DIR/bin/python" - <<'PYEOF'
+import sys
+
+
+def _die(message):
+    print(f"[bootstrap-cosyvoice] FAIL: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+def _base_version(version):
+    return version.split("+", 1)[0]
+
+
+try:
+    import torch
+    import torchaudio  # 混合 ABI（如 torch 2.3.1 + torchaudio 2.11）在此直接崩
+    import torchcodec  # noqa: F401 —— torchaudio 2.11 后端探测需要
+except Exception as cause:  # noqa: BLE001 —— 任何导入失败都 fail-closed
+    _die(f"torch/torchaudio/torchcodec 导入失败（疑似混合 ABI——清单依赖链降级了 cu128 组合；pip check 对此不可见）: {cause}")
+
+torch_version = torch.__version__
+torchaudio_version = torchaudio.__version__
+if _base_version(torch_version) != _base_version(torchaudio_version):
+    _die(f"torch {torch_version} 与 torchaudio {torchaudio_version} 基础版本不一致（混合 ABI；cu128 轮 METADATA 不声明 torch 约束，pip check 不可见）")
+if "+cu128" not in torch_version or "+cu128" not in torchaudio_version:
+    _die(f"torch {torch_version} / torchaudio {torchaudio_version} 非同源 cu128 轮（RTX 5070 Ti/Blackwell 需 CUDA 12.8 组合）")
+print(f"[bootstrap-cosyvoice] 运行期一致: torch {torch_version} / torchaudio {torchaudio_version} / torchcodec 可导入")
+PYEOF
+then
+  fail "运行期一致性探针失败（见上）——终局回写后仍不一致即脚本缺陷：把 torch/torchaudio/torchcodec 实际版本报回仓库修正回写 pin"
 fi
 
 # ---- 安装即验证：真实 import 官方入口（不下载模型；缺失点名失败）----
