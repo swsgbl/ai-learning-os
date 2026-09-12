@@ -234,6 +234,29 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   默认关闭保持确定性判分；真实端点冒烟脚本 infra/smoke_llm.sh）
 
 ### Fixed
+- M14-16 CosyVoice bootstrap 依赖解析降级回归（真实生产冷启动实证，本地
+  commit 待 supervisor 审查发布）：最小运行时清单的 PyPI 依赖解析
+  （`lightning==2.2.4` 官方 pin 链）把 torch 降级到 2.3.1 而留下预装
+  torchaudio 2.11.0+cu128——cu128 轮 METADATA 不声明 torch 约束，**`pip
+  check` 对该混合 ABI 报「No broken requirements found」，不能作为一致性
+  依据**，导入才在 torchaudio `_extension` 崩（`OSError: ... undefined
+  symbol: aoti_torch_abi_version`）。`bootstrap_cosyvoice_wsl.sh` 修法：
+  ① 清单分支（最小/官方完整回退）后从同一 cu128 index 以 `--no-deps`
+  显式回写已验证三件套（`torch==2.11.0+cu128` / `torchaudio==2.11.0+cu128`
+  / `torchcodec==0.11.1+cu128`——pin 已满足即 no-op，不做 force-reinstall
+  全量重写环境）；② 回写后、CosyVoice import 探针前新增运行期一致性探针
+  （torch/torchaudio 基础版本一致 + 双 `+cu128` 同源 + torchcodec 可导入，
+  fail-closed 点名失败——**pip check 在此混合 ABI 状态下不可信**，不得回退
+  为依赖它做门禁）；契约测试新增顺序锁定（初始 cu128 同命令安装 → 清单
+  分支 → 终局回写 → 一致性探针 → import/WAV 探针，见
+  `test_bootstrap_torch_reconciliation_order_contract`），既有「torch 安装
+  命令唯一」契约经 `--no-deps` 前缀区分保持指初始安装行。验证：聚焦
+  `test_voice_local_scripts.py` **31 passed** + `test_voice_service_control.py`
+  回归 **64 passed** + ruff + `bash -n` + `git diff --check` 全过（canonical
+  venv 解释器仅执行，零 canonical 检出改动）。**本切片只修复可复现
+  bootstrap 契约：未重跑 bootstrap、未改生产 venv/进程/模型缓存，不构成
+  生产运行恢复宣称——受控部署验证由 supervisor 合并后执行；
+  `production_ready=false` 不变**。
 - M14-13 CI R2：MinIO 社区版自 2025-10 起停止分发官方 Docker 镜像
   （source-only 分发），`minio/minio:latest` 拉取失败使 CI docker job 在项目
   构建之前即挂——改为本地自建官方 pin 源码镜像：新增 `infra/minio/Dockerfile`

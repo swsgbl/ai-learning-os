@@ -436,7 +436,10 @@ def test_bootstrap_torchcodec_pinned_on_cu128_install_line() -> None:
     """torchcodec 确定性回归：pin 必须落在与 torch/torchaudio 同一条 cu128 index
     安装命令上——torchaudio 2.11 后端探测需要 torchcodec，而 0.11.1+cu128 本地
     版本轮只存在于 download.pytorch.org/whl/cu128（PyPI 解析拿不到），也不能挪进
-    cosyvoice-runtime-requirements.txt（该文件按 PyPI 安装）。"""
+    cosyvoice-runtime-requirements.txt（该文件按 PyPI 安装）。
+
+    注：终局回写命令（M14-16）以 --no-deps 前缀区分，不匹配
+    ``pip" install torch `` 形态——「torch 安装命令唯一」契约保持指初始安装行。"""
     text = BOOTSTRAP_COSYVOICE.read_text(encoding="utf-8")
     install_lines = [line for line in text.splitlines() if 'pip" install torch ' in line]
     assert install_lines, "bootstrap 应有 torch 安装命令行"
@@ -444,6 +447,62 @@ def test_bootstrap_torchcodec_pinned_on_cu128_install_line() -> None:
     line = install_lines[0]
     assert "torchcodec==0.11.1+cu128" in line
     assert "--index-url https://download.pytorch.org/whl/cu128" in line
+
+
+def test_bootstrap_torch_reconciliation_order_contract() -> None:
+    """M14-16 生产冷启动实证回归（2026-09-12）：最小运行时清单的 PyPI 依赖
+    解析（lightning==2.2.4 官方 pin 链）把 torch 降级到 2.3.1 而留下预装
+    torchaudio 2.11.0+cu128——cu128 torchaudio 轮 METADATA 不声明 torch 约束，
+    ``pip check`` 对该混合 ABI 报「No broken requirements found」，导入才在
+    torchaudio _extension 崩（OSError: undefined symbol: aoti_torch_abi_version）。
+    契约（顺序锁定）：初始 cu128 同命令安装 → 最小/完整清单分支 → 终局同源
+    回写（--no-deps + 已验证三件套精确 pin + 同一 cu128 index，禁止
+    force-reinstall 全量重写）→ 运行期一致性探针（torch/torchaudio 基础
+    版本一致 + 同为 +cu128 + torchcodec 可导入，fail-closed）→ CosyVoice
+    import 探针 → WAV 加载探针。"""
+    text = BOOTSTRAP_COSYVOICE.read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    def sole_line(marker: str) -> int:
+        hits = [i for i, line in enumerate(lines) if marker in line]
+        assert len(hits) == 1, f"契约锚点应恰好出现一次: {marker!r}（实际 {len(hits)} 次）"
+        return hits[0]
+
+    initial_install = sole_line('pip" install torch ')
+    minimal_reqs = sole_line('install -r "$REPO_ROOT/tools/voice/cosyvoice-runtime-requirements.txt"')
+    full_reqs = sole_line('install -r "$ARTIFACTS/cosyvoice/requirements.full.txt"')
+    reconciliation = sole_line('pip" install --no-deps torch==2.11.0+cu128')
+    consistency_probe = sole_line('say "运行期一致性探针')
+    import_probe = sole_line('say "验证导入闭包')
+    wav_probe = sole_line("torchaudio.load(sys.argv[1]")
+
+    # 顺序：初始安装 → 两个清单分支（先于回写）→ 终局回写 → 一致性探针 →
+    # CosyVoice import/WAV 探针殿后
+    assert initial_install < minimal_reqs < reconciliation
+    assert initial_install < full_reqs < reconciliation
+    assert reconciliation < consistency_probe < import_probe < wav_probe
+
+    # 终局回写内容：三件套精确 pin + --no-deps + 同一 cu128 index；禁止
+    # force-reinstall/ignore-installed 全量重写（pin 已满足时 pip no-op）
+    recon_line = lines[reconciliation]
+    for pin in ("torch==2.11.0+cu128", "torchaudio==2.11.0+cu128", "torchcodec==0.11.1+cu128"):
+        assert pin in recon_line, pin
+    assert "--no-deps" in recon_line
+    assert "--index-url https://download.pytorch.org/whl/cu128" in recon_line
+    assert "--force-reinstall" not in recon_line
+    assert "--ignore-installed" not in recon_line
+
+    # 一致性探针内容（回写行与 import 探针之间的探针段）：基础版本一致 +
+    # 同 +cu128 + torchcodec 可导入；失败文案必须点名 pip check 不可见
+    probe_body = "\n".join(lines[reconciliation:import_probe])
+    for anchor in (
+        "_base_version(torch_version) != _base_version(torchaudio_version)",
+        '"+cu128" not in torch_version or "+cu128" not in torchaudio_version',
+        "import torchcodec",
+        "pip check",
+        "运行期一致性探针失败",
+    ):
+        assert anchor in probe_body, anchor
 
 
 def test_bootstrap_cosyvoice_self_snapshot_contract() -> None:
