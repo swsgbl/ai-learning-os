@@ -458,6 +458,28 @@ def test_monitor_dir_duplicate_count_explicit(tmp_path) -> None:
     assert data["sample_count"] == 1
 
 
+def test_monitor_dir_historical_incomplete_skipped_via_delegation(tmp_path) -> None:
+    """M14-20 回归：monitor 工件目录混有历史 incomplete 工件（M14-12 采集
+    不完整时期，partial=true + overall_status=incomplete 共现）时，经
+    M14-13 委托管道同样跳过不入档——完整 warn 样本照常产出洞察。"""
+    source = tmp_path / "src"
+    source.mkdir()
+    incomplete = _report("2026-09-12T17:37:46Z")
+    incomplete["partial"] = True
+    incomplete["overall_status"] = "incomplete"
+    incomplete["monitoring_ready"] = False
+    (source / "monitor-20260912-173746.json").write_text(
+        json.dumps(incomplete), encoding="utf-8")
+    (source / "monitor-20260913-010414.json").write_text(
+        json.dumps(_report("2026-09-13T01:04:14Z", overall="warn")), encoding="utf-8")
+    rc = _execute(source, tmp_path / "out")
+    assert rc == mi.EXIT_OK
+    data = _insights(tmp_path / "out")
+    assert data["source_kind"] == "monitor-artifacts"
+    assert data["sample_count"] == 1
+    assert data["status_counts"] == {"ok": 0, "warn": 1, "critical": 0}
+
+
 # ---------------------------------------------------------------- symlink / 路径防御
 
 
