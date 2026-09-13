@@ -1,5 +1,77 @@
 # M13-14 Harmony Governance Refresh Control Hardening
 
+# M13-14 Harmony Governance Refresh Control Hardening
+
+## Refresh (2026-09-13, base `42653b7`, PR #75 retargeted to main)
+
+PR #75 (`feature/m13-14-harmony-governance-controls`) was retargeted to `main`
+after PR #73 / M13-11 (`e844315`, base `42653b7`) was merged. The previous
+branch head carried duplicate M13-11 commits (`e117bd6`, `dfcc3d1`) plus a
+stale pre-M13-11 base, so the PR was `CONFLICTING` and its diff included
+phantom reversions of merged M14 slices.
+
+Replay performed in this refresh:
+
+- `git reset --hard origin/main` (`42653b7`), then
+  `git cherry-pick 678a2ea 2a9ead7` — both M13-14 commits replayed **cleanly
+  with zero conflicts** onto current main:
+  - `6b99d4c` feat(harmony): guard governance refresh controls
+  - `67b6ddb` fix(harmony): keep governance controls reachable
+- M13-11 dedup check: `git diff e844315 dfcc3d1 -- GovernancePane.ets Index.ets`
+  is **empty** → the M13-11 pane content merged on main is byte-identical to the
+  branch's old copy, so the replay is lossless and the final PR diff contains no
+  M13-11 duplication.
+- Final PR diff (`git diff main HEAD`): exactly 2 files —
+  `apps/harmony/entry/src/main/ets/components/GovernancePane.ets`
+  (+292/−185) and `docs/evidence/m13-14-harmony-governance-controls/README.md`
+  (+82). No other file touched; no production service modified.
+
+### Is the fix still needed on main? — yes
+
+`main`'s merged M13-11 `GovernancePane.ets` still places the header (治理(只读) /
+整体刷新 / service URL / boundary notice / context error) **inside** the Scroll,
+so the scroll-offset-unreachable defect documented below still applies to main.
+The M13-14 structural fix (header outside the Scroll) and the loading-disabled
+refresh guards remain required behavior on main. No part of the M13-14 increment
+was obsolete; nothing was reduced.
+
+### Verification executed in this refresh (2026-09-13, head `67b6ddb`)
+
+Commands all run from this worktree, canonical venv
+`D:/AI Learning OS/ai-learning-os/.venv` (Python 3.11.15):
+
+- `python tools/harmony_mock/test_contract.py` → **54/54 passed, 0 failed**.
+- `python -m pytest tests/harmony_release -q --basetemp=%TEMP%\m1314-basetemp`
+  → **35 passed, 1 warning** (the Harmony gate suite main CI runs).
+- `python -m pytest tests/android_smoke/test_mock_contract.py tests/android_smoke/test_server.py -q --basetemp=%TEMP%\m1314-basetemp`
+  → **36 passed, 1 warning**.
+  (Note: the first `tests/harmony_release` run hit a benign Windows
+  `PermissionError` during pytest tmp-dir teardown on `pytest-current`; the
+  tests themselves had completed 35/35. Rerun with an explicit `--basetemp`
+  exits cleanly. No test failure ever occurred.)
+- DevEco build (hvigorw at `C:\DevEco-Studio\tools\hvigor\bin\hvigorw.bat`,
+  `DEVECO_SDK_HOME=C:\DevEco-Studio\sdk`, from `apps/harmony`):
+  - `hvigorw.bat clean --no-daemon` → exit 0, `BUILD SUCCESSFUL in 1 s 649 ms`.
+  - `hvigorw.bat assembleHap --mode module -p product=default -p buildMode=debug --no-daemon`
+    → exit 0, `BUILD SUCCESSFUL in 9 s 85 ms`; exactly 1 warning:
+    `WARN: No signingConfig found for product default`.
+- `git diff main HEAD --check` → passed (no whitespace errors).
+- Refresh HAP: `apps/harmony/entry/build/default/outputs/default/entry-default-unsigned.hap`,
+  **515871 bytes**, SHA256
+  **`088dbd1e983930a623139a86d184aeae961feec0b511c2ddcc28fac02c685f94`**
+  (same byte size as the prior structural-fix build; hash differs because HAP
+  archives embed build timestamps — same effect the M13-11 refresh documented).
+
+### Refresh non-claims
+
+- No emulator/device runtime validation in this refresh. The scroll-reachability
+  failure evidence and the structural-fix source argument below are from the
+  original session (2026-09-09/09-10); they were not re-run.
+- CI has not run on the refreshed head at the time of this README; PR #75 stays
+  open for supervisor review and CI.
+- No install/sign/AGC/production-backend access; `production_ready` remains false.
+- Push performed with `--force-with-lease`; PR #75 not merged (per refresh scope).
+
 ## Behavior
 
 The governance pane disables refresh controls while their requests are in flight:
