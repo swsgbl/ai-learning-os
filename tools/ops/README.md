@@ -245,9 +245,14 @@ python tools/ops/production_monitor.py --execute \
     --confirm "EXECUTE READ-ONLY PRODUCTION MONITORING"   # execute（旗标+精确短语齐备才放行）
 ```
 
-**状态（M14-23 restart 增量语义，2026-09-13 开发切片（含 supervisor R1
-加固）——本地 commit 待 supervisor 审查与 remote 发布（push/PR/合并）
-在其后进行；真实计划任务调度下的新语义验证尚未运行）**：
+**状态（M14-23 restart 增量语义，✅ 2026-09-13 已随 PR #100 合并 main
+（merge `6efcdfd`，feature head `5926172` 含 supervisor R1 加固）并经
+真实计划任务自然调度两轮验收——18:00 与 18:15（+08:00）均 Last
+Result=0、三步全 ok，**37 连 warn 在新代码首轮按设计恢复 ok（api 累计
+restart_count=1 不变、同容器实例 → 当轮增量 0、基线取自 17:45 旧 v1
+工件）并在第二轮保持**；证据
+`docs/evidence/m14-23-restart-delta-production-acceptance/`；两轮验证恢复
+语义与短期稳定性，不构成 production readiness 宣称）**：
 `container-restarts` 阈值判定由静态累计 RestartCount 改为**当轮新增增量**
 （当前累计 − 基线累计）。基线 = 本轮工件目录内**最新合法的 prior 完整**
 monitor JSON 工件（R1 加固后的合法身份 = schema/tool/**milestone**/mode
@@ -358,9 +363,12 @@ python tools/ops/monitoring_history.py                 # 默认源/输出目录
 python tools/ops/monitoring_history.py --retention 200
 ```
 
-**状态（M14-23，2026-09-13 开发切片（含 supervisor R1 加固）——本地
-commit 待 supervisor 审查与 remote 发布；真实管道运行下的新字段验证尚未
-运行）**：入档 monitor 加法字段 `threshold_results.restart_evaluation`——
+**状态（M14-23，✅ 2026-09-13 已随 PR #100 合并 main 并经真实计划任务
+两轮验收——18:15 刷新后 history 40 样本（ok=3/warn=37），最新行携带
+restart_evaluation（api state ok / reason stable / delta 0，与累计
+restart_counts=1 同档并存）；证据
+`docs/evidence/m14-23-restart-delta-production-acceptance/`）**：入档
+monitor 加法字段 `threshold_results.restart_evaluation`——
 缺省 = v1 旧工件（合法入档，记录不带新键，旧记录/旧消费者零破坏）；在场
 即严格校验（固定词汇 state/reason/baseline status、六服务全集、delta 为
 int≥0 或 None、baseline_source_stem stem 白名单、baseline_collected_at
@@ -431,7 +439,12 @@ supervisor 在获准窗口运行。
 端验收——两轮成功证明重复调度执行，不构成长期稳定性证明。两轮 monitor
 步 `overall_status=warn`——6/6 服务 healthy、5/5 端点 200，**唯一告警 =
 api 容器静态累计 restart_count=1 达 restart_warn=1**（两轮同一静态累计
-值；阈值语义问题而非栈故障；语义修复建议 M14-23）。事实与工件安全
+值；阈值语义问题而非栈故障；语义修复建议 M14-23——**已由 M14-23 交付
+并闭环：PR #100 合并后 2026-09-13 18:00/18:15 两轮自然调度均 Last
+Result=0、三步全 ok（monitor 4.068/4.947s、history 0.364/0.31s、
+insights 0.282/0.201s），37 连 warn 首轮恢复 ok 并保持，证据
+`docs/evidence/m14-23-restart-delta-production-acceptance/README.md`**）。
+事实与工件安全
 摘要见
 `docs/evidence/m14-22-monitoring-pipeline-production-acceptance/README.md`。
 
@@ -538,7 +551,10 @@ monitor 工件目录）→ **安全 JSON+MD 洞察摘要**（只读输入，绝�
 `docs/evidence/m14-22-monitoring-pipeline-production-acceptance/README.md`）；
 当前历史（12:45 刷新后）18 样本 ok=1/warn=17/critical=0、warn 连续
 17 条——唯一告警为 api 容器 restart_count=1 静态阈值（服务全 healthy、
-端点全 200），告警语义修复建议 M14-23。
+端点全 200），告警语义修复建议 M14-23——**已闭环：M14-23 合并后
+（PR #100）18:00/18:15 两轮自然调度，warn 连（终值 37）首轮恢复 ok、
+insights 刷新至 40 样本 ok=3 / 当前 ok 连胜 ×2（见下方 M14-23 状态与
+`docs/evidence/m14-23-restart-delta-production-acceptance/`）**。
 
 ```
 python tools/ops/monitoring_insights.py                 # plan（默认，零读取/零写入）
@@ -546,12 +562,16 @@ python tools/ops/monitoring_insights.py --execute \
     --confirm "EXECUTE READ-ONLY MONITORING INSIGHTS"   # execute（只读洞察）
 ```
 
-**状态（M14-23，2026-09-13 开发切片（含 supervisor R1 加固）——本地
-commit 待 supervisor 审查与 remote 发布；真实管道产出下的新洞察字段验证
-尚未运行）**：行级可选加法字段 `restart_evaluation`（缺省 = 旧 history
-行，照常可读——增量键在场为 0，诚实区分「无数据」与「测得为零」；在场
-即严格校验，词汇/形态与 monitoring_history 单一事实源一致——**含 R1
-baseline 元数据一致性联动校验**）。`service_summary` 逐服务区分**累计**
+**状态（M14-23，✅ 2026-09-13 已随 PR #100 合并 main 并经真实计划任务
+两轮验收——18:15 刷新后 insights 40 样本 ok=3、当前 ok 连胜 ×2、最长
+non-ok 连败 37 恰终止于旧语义最后一轮（09:45:02Z）、恢复转移恰 1 次
+@ 10:00:02Z，api 增量/事件/恢复计数全 0（累计 restart_total=39 与增量
+口径并存）；证据
+`docs/evidence/m14-23-restart-delta-production-acceptance/`）**：行级可选
+加法字段 `restart_evaluation`（缺省 = 旧 history 行，照常可读——增量键
+在场为 0，诚实区分「无数据」与「测得为零」；在场即严格校验，词汇/形态
+与 monitoring_history 单一事实源一致——**含 R1 baseline 元数据一致性
+联动校验**）。`service_summary` 逐服务区分**累计**
 `restart_total`（容器累计 RestartCount 求和，口径不变）与当轮
 `restart_delta_total`（增量求和，不可比 None 不计）/
 `restart_delta_samples` / `restart_event_count`（当轮增量评估非 ok 的
