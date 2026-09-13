@@ -34,6 +34,16 @@ Store 注入，测试注入 FakeStore；本工具只读输入面、只写输出�
   restart/日志 error 总计+非 healthy 样本数、连续失败/恢复（当前连胜、
   最长 non-ok 连败区间、失败/恢复转移计数+有界时间戳列表、逐端点当前
   连续失败）、最近样本状态。
+- restart 增量/事件/恢复语义（M14-23）：``restart_evaluation`` 为行级
+  **可选加法字段**（缺省 = 旧 history 行，照常可读——增量键在场为 0，
+  诚实区分「无数据」与「测得为零」；在场即严格校验，词汇/形态与
+  monitoring_history 单一事实源一致）。逐服务区分**累计**
+  ``restart_total``（容器累计 RestartCount 求和，口径不变）与当轮
+  ``restart_delta_total``（增量求和，不可比 None 不计）、
+  ``restart_event_count``（当轮增量评估非 ok 的样本数——增量告警/
+  重建/重置/baseline-missing）、``restart_recovery_count``（事件→
+  非事件转移数；legacy 行后转移不可证不计）；Markdown 服务表分列
+  渲染并附口径注记。**不构成 production readiness 宣称。**
 - 输出（默认 gitignored ``.verify/artifacts/m14-15-monitoring-insights/``，
   ``--output-dir`` 为操作者显式自选）：``insights.json`` +
   ``insights-summary.md``；同目录 tmp+fsync+os.replace 原子落盘；symlink
@@ -266,11 +276,95 @@ def validate_history_row(data: object) -> dict[str, object]:
         if not _is_int(value) or value < 0:
             raise InsightsError("log-error-totals")
         log_errors[service] = value
-    return {
+    fields: dict[str, object] = {
         "stem": stem, "collected_at": collected_at, "collected_dt": collected_dt,
         "project": project, "overall_status": overall, "counts": counts,
         "healths": healths, "restarts": restarts, "endpoints": endpoints,
         "log_errors": log_errors,
+    }
+    restart_evaluation = _parse_restart_evaluation_row(row.get("restart_evaluation"))
+    if restart_evaluation is not None:  # M14-23：旧行不带该键照常可读
+        fields["restart_evaluation"] = restart_evaluation
+    return fields
+
+
+def _parse_restart_evaluation_row(raw: object) -> dict[str, object] | None:
+    """M14-23：行级可选 ``restart_evaluation``——缺省（None）= 旧 history
+    行（合法）；在场即严格校验（词汇单一事实源 = 同仓 monitoring_history）
+    并按原形态透传。违规抛 InsightsError("restart-evaluation")。"""
+    if raw is None:
+        return None
+    evaluation = raw if isinstance(raw, dict) else None
+    if evaluation is None:
+        raise InsightsError("restart-evaluation")
+    baseline_status = evaluation.get("baseline_status")
+    if not isinstance(baseline_status, str) or baseline_status not in (
+            _history.RESTART_EVALUATION_BASELINE_STATUSES):
+        raise InsightsError("restart-evaluation")
+    baseline_reason = evaluation.get("baseline_reason")
+    if baseline_reason is not None and not isinstance(baseline_reason, str):
+        raise InsightsError("restart-evaluation")
+    baseline_stem = evaluation.get("baseline_source_stem")
+    if baseline_stem is not None and (not isinstance(baseline_stem, str)
+                                      or ARTIFACT_STEM_RE.match(baseline_stem) is None):
+        raise InsightsError("restart-evaluation")
+    baseline_collected = evaluation.get("baseline_collected_at")
+    if baseline_collected is not None:
+        if not isinstance(baseline_collected, str):
+            raise InsightsError("restart-evaluation")
+        try:
+            _history.parse_timestamp(baseline_collected)
+        except _history.HistoryError:
+            raise InsightsError("restart-evaluation") from None
+    # supervisor R1：baseline 元数据一致性（词汇单一事实源 = monitoring_history）
+    if baseline_status == "ok":
+        if baseline_reason is not None or baseline_stem is None or baseline_collected is None:
+            raise InsightsError("restart-evaluation")
+    elif baseline_status == "missing":
+        if (not isinstance(baseline_reason, str)
+                or baseline_reason not in (
+                    _history.RESTART_EVALUATION_BASELINE_REASONS_MISSING)):
+            raise InsightsError("restart-evaluation")
+        if baseline_stem is not None or baseline_collected is not None:
+            raise InsightsError("restart-evaluation")
+    else:  # unusable
+        if baseline_reason != _history.RESTART_EVALUATION_BASELINE_REASON_UNUSABLE:
+            raise InsightsError("restart-evaluation")
+        if baseline_stem is not None or baseline_collected is not None:
+            raise InsightsError("restart-evaluation")
+    invalid_skipped = evaluation.get("baseline_invalid_skipped_count")
+    if not _is_int(invalid_skipped) or invalid_skipped < 0:
+        raise InsightsError("restart-evaluation")
+    sections: dict[str, dict[str, object]] = {}
+    for key in ("states", "reasons", "deltas"):
+        section_raw = evaluation.get(key)
+        if not isinstance(section_raw, dict):
+            raise InsightsError("restart-evaluation")
+        section: dict[str, object] = {}
+        for service in STACK_SERVICES:
+            value = section_raw.get(service)
+            if key == "states":
+                if not isinstance(value, str) or value not in (
+                        _history.RESTART_EVALUATION_STATES):
+                    raise InsightsError("restart-evaluation")
+            elif key == "reasons":
+                if not isinstance(value, str) or value not in (
+                        _history.RESTART_EVALUATION_REASONS):
+                    raise InsightsError("restart-evaluation")
+            else:  # deltas：int ≥ 0 或 None（不可比增量绝不静默归零）
+                if value is not None and (not _is_int(value) or value < 0):
+                    raise InsightsError("restart-evaluation")
+            section[service] = value
+        sections[key] = section
+    return {
+        "baseline_status": baseline_status,
+        "baseline_reason": baseline_reason,
+        "baseline_source_stem": baseline_stem,
+        "baseline_collected_at": baseline_collected,
+        "baseline_invalid_skipped_count": invalid_skipped,
+        "states": sections["states"],
+        "reasons": sections["reasons"],
+        "deltas": sections["deltas"],
     }
 
 
@@ -461,12 +555,44 @@ def build_insights(rows: list[dict[str, object]], *, source_kind: str,
             "min": values[0], "p50": _percentile(values, 0.50),
             "p95": _percentile(values, 0.95), "max": values[-1],
         }
-    service_summary = {service: {
-        "restart_total": sum(row["restarts"][service] for row in rows),  # type: ignore[index]
-        "log_error_total": sum(row["log_errors"][service] for row in rows),  # type: ignore[index]
-        "unhealthy_samples": sum(1 for row in rows
-                                 if row["healths"][service] != "healthy"),  # type: ignore[index]
-    } for service in STACK_SERVICES}
+    service_summary: dict[str, dict[str, object]] = {}
+    for service in STACK_SERVICES:
+        # M14-23：累计口径（不变）与当轮增量/事件/恢复口径分列；legacy 行
+        # （无 restart_evaluation）不计增量样本——转移不可证不计恢复
+        delta_total = 0
+        delta_samples = 0
+        event_count = 0
+        recovery_count = 0
+        previous_event: bool | None = None  # None = 该行无评估数据（legacy）
+        for row in rows:
+            evaluation = row.get("restart_evaluation")
+            if not isinstance(evaluation, dict):
+                previous_event = None
+                continue
+            delta_samples += 1
+            deltas = evaluation["deltas"]
+            assert isinstance(deltas, dict)
+            delta = deltas.get(service)
+            if isinstance(delta, int):
+                delta_total += delta
+            states = evaluation["states"]
+            assert isinstance(states, dict)
+            is_event = states.get(service) != "ok"
+            if is_event:
+                event_count += 1
+            if previous_event is True and not is_event:
+                recovery_count += 1
+            previous_event = is_event
+        service_summary[service] = {
+            "restart_total": sum(row["restarts"][service] for row in rows),  # type: ignore[index]
+            "log_error_total": sum(row["log_errors"][service] for row in rows),  # type: ignore[index]
+            "unhealthy_samples": sum(1 for row in rows
+                                     if row["healths"][service] != "healthy"),  # type: ignore[index]
+            "restart_delta_total": delta_total,
+            "restart_delta_samples": delta_samples,
+            "restart_event_count": event_count,
+            "restart_recovery_count": recovery_count,
+        }
     duration = int((newest["collected_dt"] - oldest["collected_dt"]).total_seconds())  # type: ignore[operator]
     return {
         "schema_version": INSIGHTS_SCHEMA_VERSION,
@@ -567,13 +693,25 @@ def render_summary_markdown(insights: dict[str, object]) -> str:
         lines.append(f"| {endpoint_id} | {stats['samples']} | {stats['non_ok_count']} "
                      f"| {_fmt_ms(stats['min'])} | {_fmt_ms(stats['p50'])} "
                      f"| {_fmt_ms(stats['p95'])} | {_fmt_ms(stats['max'])} |")
-    lines += ["", "## 服务汇总", "", "| 服务 | restart 总计 | 日志 error 总计 | 非 healthy 样本 |",
-              "|---|---:|---:|---:|"]
+    lines += ["", "## 服务汇总", "",
+              ("| 服务 | restart 总计（累计） | restart 增量 | restart 事件 | restart 恢复"
+               " | 日志 error 总计 | 非 healthy 样本 |"),
+              "|---|---:|---:|---:|---:|---:|---:|"]
     for service in STACK_SERVICES:
         stats = services[service]
         assert isinstance(stats, dict)
-        lines.append(f"| {service} | {stats['restart_total']} | {stats['log_error_total']} "
-                     f"| {stats['unhealthy_samples']} |")
+        lines.append(f"| {service} | {stats['restart_total']} | {stats['restart_delta_total']} "
+                     f"| {stats['restart_event_count']} | {stats['restart_recovery_count']} "
+                     f"| {stats['log_error_total']} | {stats['unhealthy_samples']} |")
+    lines += [
+        "",
+        (
+            "- restart 口径（M14-23）：总计=容器累计 RestartCount 求和（含历史存量）；"
+            "增量=当轮新增求和（阈值评此口径，重建/重置样本不可比不计）；"
+            "事件=当轮增量评估非 ok 的样本数；恢复=事件→非事件转移数（legacy 行"
+            "后转移不可证不计）"
+        ),
+    ]
     current = streaks["current"]
     assert isinstance(current, dict)
     longest = streaks["longest_non_ok"]

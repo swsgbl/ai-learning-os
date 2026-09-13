@@ -41,6 +41,19 @@ HTTP/零计划任务，全部行为用 fake/stub 测试锁定；真实采集仅�
   逐项 alert 与 ``monitoring_ready``（仅采集完整且无 critical/warn 时
   true）。``monitoring_ready`` ≠ production ready——本工具绝不宣称生产
   就绪。
+- restart 增量语义（M14-23）：容器 ``RestartCount`` 是 Docker 的**累计**
+  事实（照实入档不动）；阈值判定改用**当轮新增增量** = 当前累计 − 基线
+  累计，基线 = 本轮工件目录内**最新合法的 prior 完整** monitor JSON 工件
+  （纯本地只读 fail-safe 解析：零 shell/零网络/零写盘；非法候选显式计数
+  ``invalid_skipped_count``，绝不静默当作零基线）。同容器实例
+  （started_at 一致）且增量 0 → ok——健康栈不再因历史存量累计值永久
+  warn；``started_at`` 变化 = 容器重建、累计下降 = 计数重置，各发**一轮
+  可见 warn**（负增量绝不静默映射为零），下一稳定轮即恢复；无基线时
+  count 0 → ok、达 warn/critical → 一次性 baseline-missing 可见告警（下一
+  轮以本轮工件为基线即恢复）。报告加法字段
+  ``threshold_results.restart_evaluation``（baseline 元数据 + 逐服务
+  state/reason/delta）；check_id 仍为 ``container-restarts``，schema 向后
+  兼容（v1 旧工件照常作基线与入档）。
 - 报告：schema 版本化 JSON + Markdown **原子写入**（同目录 tmp +
   os.replace）；默认目录 ``REPO_ROOT/.verify/artifacts/m14-12-production-monitoring``
   **gitignored**，``--artifact-dir`` 自定义路径为**操作者显式自选覆盖**
@@ -746,6 +759,193 @@ def snapshot_partial(collectors: dict[str, object]) -> bool:
     return any(collector.get("status") != "ok" for collector in collectors.values())
 
 
+# ---------------------------------------------------------------- restart 增量基线（M14-23）
+
+#: 基线候选工件 stem 白名单（与 monitoring_history 同款严格形态）
+BASELINE_STEM_RE = re.compile(r"^monitor-[0-9]{8}-[0-9]{6}$")
+
+#: canonical 时间戳形态（与 RealClock.utc_now_iso / monitoring_history 对齐）
+TIMESTAMP_FORMAT = "%Y-%m-%dT%H:%M:%SZ"
+
+#: restart 评估 reason 固定词汇（schema 面；绝不携带采集原文）
+RESTART_REASONS: tuple[str, ...] = (
+    "stable",                # 同实例、增量 0 → ok
+    "delta",                 # 同实例、增量 > 0（达阈值）
+    "baseline-missing",      # 无可用基线（一次性可见语义）
+    "container-recreated",   # started_at 变化（一轮可见 warn）
+    "counter-reset",         # 累计值下降（一轮可见 warn；负增量绝不静默归零）
+    "facts-missing",         # 容器事实采集失败（恒 critical）
+)
+
+
+def _valid_canonical_timestamp(value: object) -> bool:
+    """canonical 时间戳校验（``%Y-%m-%dT%H:%M:%SZ`` 且日历合法；supervisor
+    R1——畸形/缺失值绝不复制进 baseline.collected_at）。"""
+    if not isinstance(value, str):
+        return False
+    try:
+        datetime.strptime(value, TIMESTAMP_FORMAT).replace(tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    return True
+
+
+def _valid_baseline_calendar(stem: str) -> bool:
+    """stem 时间段日历合法性（monitor-YYYYMMDD-HHMMSS；与 history 同款）。"""
+    try:
+        datetime.strptime(stem[len("monitor-"):], "%Y%m%d-%H%M%S").replace(
+            tzinfo=timezone.utc)
+    except ValueError:
+        return False
+    return True
+
+
+@dataclass(frozen=True)
+class RestartBaseline:
+    """M14-23 restart 增量基线：最新合法 prior 完整 monitor 工件的六容器
+    累计/started 事实。status：ok=可用；missing=无候选（含目录缺失/不可
+    读）；unusable=有候选但全部不可用。invalid_skipped_count 显式记录被
+    跳过的非法/不可用候选——绝不静默当作零基线。"""
+
+    status: str
+    reason: str | None
+    source_stem: str | None
+    collected_at: str | None
+    restart_counts: dict[str, int]
+    started_ats: dict[str, str]
+    invalid_skipped_count: int
+
+    def as_report_dict(self) -> dict[str, object]:
+        """报告面安全元数据（固定词汇/白名单 stem，无任何采集原文）。"""
+        return {
+            "status": self.status,
+            "reason": self.reason,
+            "source_stem": self.source_stem,
+            "collected_at": self.collected_at,
+            "invalid_skipped_count": self.invalid_skipped_count,
+        }
+
+
+def parse_baseline_facts(data: object) -> dict[str, object] | None:
+    """纯函数：monitor 报告对象 → 六容器 restart/started 基线事实；身份
+    不符（schema/tool/**milestone**/mode）、**非完整工件**（partial 恒须为
+    布尔 False——True/字符串/整数/缺失一律不可作基线）、started_at_utc
+    非 canonical 时间戳（``%Y-%m-%dT%H:%M:%SZ`` 且日历合法——supervisor
+    R1：畸形/缺失值绝不复制进 baseline.collected_at）、容器事实缺失或非法
+    → None（该工件不可作基线）。v1 旧工件（无 restart_evaluation）同样
+    合法——基线只依赖采集事实，不依赖评估字段。"""
+    if not isinstance(data, dict):
+        return None
+    if data.get("schema_version") != REPORT_SCHEMA_VERSION:
+        return None
+    if data.get("tool") != TOOL_NAME or data.get("mode") != "execute":
+        return None
+    if data.get("milestone") != MILESTONE:
+        return None
+    if data.get("partial") is not False:  # 真正完整的 execute 工件才可作基线
+        return None
+    collected = data.get("started_at_utc")
+    if not _valid_canonical_timestamp(collected):
+        return None
+    collectors = data.get("collectors")
+    if not isinstance(collectors, dict):
+        return None
+    containers = collectors.get("containers")
+    if not isinstance(containers, dict):
+        return None
+    per_service = containers.get("per_service")
+    if not isinstance(per_service, dict):
+        return None
+    restart_counts: dict[str, int] = {}
+    started_ats: dict[str, str] = {}
+    for service in STACK_SERVICES:
+        item = per_service.get(service)
+        if not isinstance(item, dict) or item.get("status") != "ok":
+            return None
+        restart = item.get("restart_count")
+        started = item.get("started_at")
+        if not isinstance(restart, int) or isinstance(restart, bool) or restart < 0:
+            return None
+        if not isinstance(started, str) or not started:
+            return None
+        restart_counts[service] = restart
+        started_ats[service] = started
+    return {
+        "collected_at": collected,
+        "restart_counts": restart_counts,
+        "started_ats": started_ats,
+    }
+
+
+def _artifact_dir_unsafe(directory: Path) -> bool:
+    """symlink 防御（supervisor R1）：目录自身或任一现存祖先为 symlink 即
+    视为不可读（固定词汇拒绝，绝不跟随——与写盘面 _reject_symlinks 同族
+    纪律；is_symlink 探测自身异常同样按不安全处理）。"""
+    try:
+        if directory.is_symlink():
+            return True
+        for ancestor in directory.parents:
+            if ancestor.exists() and ancestor.is_symlink():
+                return True
+    except OSError:
+        return True
+    return False
+
+
+def resolve_restart_baseline(directory: Path) -> RestartBaseline:
+    """从工件目录解析 restart 增量基线（最新合法 prior 完整工件）。
+
+    纯本地只读 fail-safe：仅 os.listdir + 单文件 read_bytes + json 解析，
+    零 shell=True/零网络/零写盘；symlinked 目录/祖先 → missing/
+    artifact-dir-unreadable（绝不跟随）；目录缺失 → missing/
+    artifact-dir-missing；目录不可读（含路径是文件）→ missing/
+    artifact-dir-unreadable；任何读取/解析异常都只推进
+    invalid_skipped_count，symlinked 候选文件同样计 invalid 而不跟随。
+    候选按文件名降序（stem 形态保证字典序即时间序）取首个可解析合法件；
+    全部不可用 → unusable（no-usable-prior-artifacts）——绝不静默回退为
+    零基线。"""
+    if _artifact_dir_unsafe(directory):
+        return RestartBaseline("missing", "artifact-dir-unreadable", None, None, {}, {}, 0)
+    try:
+        names = sorted(os.listdir(directory), reverse=True)
+    except FileNotFoundError:
+        return RestartBaseline("missing", "artifact-dir-missing", None, None, {}, {}, 0)
+    except OSError:
+        return RestartBaseline("missing", "artifact-dir-unreadable", None, None, {}, {}, 0)
+    candidates = [name for name in names
+                  if name.startswith("monitor-") and name.endswith(".json")]
+    invalid_skipped = 0
+    for name in candidates:  # 降序：最新在前
+        stem = name[: -len(".json")]
+        if BASELINE_STEM_RE.match(stem) is None or not _valid_baseline_calendar(stem):
+            invalid_skipped += 1
+            continue
+        path = directory / name
+        try:
+            if path.is_symlink():  # 候选 symlink：计 invalid，绝不跟随
+                invalid_skipped += 1
+                continue
+            data = json.loads(path.read_bytes().decode("utf-8"))
+        except (OSError, ValueError, UnicodeDecodeError):
+            invalid_skipped += 1
+            continue
+        facts = parse_baseline_facts(data)
+        if facts is None:
+            invalid_skipped += 1
+            continue
+        return RestartBaseline(
+            status="ok", reason=None, source_stem=stem,
+            collected_at=facts["collected_at"],  # type: ignore[arg-type]
+            restart_counts=facts["restart_counts"],  # type: ignore[arg-type]
+            started_ats=facts["started_ats"],  # type: ignore[arg-type]
+            invalid_skipped_count=invalid_skipped,
+        )
+    if candidates:
+        return RestartBaseline("unusable", "no-usable-prior-artifacts", None, None,
+                               {}, {}, invalid_skipped)
+    return RestartBaseline("missing", "no-prior-artifacts", None, None, {}, {}, 0)
+
+
 # ---------------------------------------------------------------- 阈值判定（纯）
 
 
@@ -753,12 +953,80 @@ def _check(check_id: str, subject: str, severity: str, detail: str) -> dict[str,
     return {"check_id": check_id, "subject": subject, "severity": severity, "detail": detail}
 
 
+def evaluate_restart_state(service: str, item: dict[str, object],
+                           baseline: RestartBaseline | None,
+                           thresholds: Thresholds) -> dict[str, object]:
+    """纯函数（M14-23）：单服务 restart 增量评估 → {state, reason, delta}。
+
+    - 基线可用（status=ok）：
+      · ``started_at`` 与基线不一致 → container-recreated（一轮可见 warn，
+        增量不可比，delta=None）；
+      · 当前累计 < 基线累计（同 started_at）→ counter-reset（一轮可见
+        warn——**负增量绝不静默映射为零**，delta=None）；
+      · 否则 delta = 当前累计 − 基线累计，阈值含边界（delta≥critical →
+        critical；≥warn → warn；否则 ok）。
+    - 基线缺失/不可用（或该服务无基线事实）：count 0 → ok；count 达
+      warn/critical → 一次性 baseline-missing 可见告警（下一轮以本轮工件
+      为基线、count 不变即恢复 ok）。"""
+    current = int(item.get("restart_count") or 0)
+    started = str(item.get("started_at") or "")
+    if (baseline is None or baseline.status != "ok"
+            or service not in baseline.restart_counts):
+        if current >= thresholds.restart_critical:
+            state = "critical"
+        elif current >= thresholds.restart_warn:
+            state = "warn"
+        else:
+            state = "ok"
+        return {"state": state, "reason": "baseline-missing", "delta": None}
+    base_count = baseline.restart_counts[service]
+    base_started = baseline.started_ats.get(service, "")
+    if started and base_started and started != base_started:
+        return {"state": "warn", "reason": "container-recreated", "delta": None}
+    if current < base_count:
+        return {"state": "warn", "reason": "counter-reset", "delta": None}
+    delta = current - base_count
+    if delta >= thresholds.restart_critical:
+        state = "critical"
+    elif delta >= thresholds.restart_warn:
+        state = "warn"
+    else:
+        state = "ok"
+    return {"state": state, "reason": "delta" if delta > 0 else "stable", "delta": delta}
+
+
+def _restart_check_detail(restart_count: int, evaluation: dict[str, object],
+                          baseline: RestartBaseline | None) -> str:
+    """container-restarts 检查 detail（固定词汇 + 白名单 stem，无采集原文）。"""
+    reason = str(evaluation["reason"])
+    if reason == "baseline-missing":
+        return f"restart_count={restart_count} baseline-missing"
+    if reason == "container-recreated":
+        return f"restart_count={restart_count} container-recreated started_at_changed"
+    if reason == "counter-reset":
+        return f"restart_count={restart_count} counter-reset"
+    source = baseline.source_stem if baseline is not None else None
+    return f"restart_count={restart_count} delta={evaluation['delta']} baseline={source}"
+
+
+def _baseline_report_metadata(baseline: RestartBaseline | None) -> dict[str, object]:
+    """评估结果的 baseline 元数据（None = 直接调用未解析——显式 missing）。"""
+    if baseline is not None:
+        return baseline.as_report_dict()
+    return {"status": "missing", "reason": "baseline-not-resolved",
+            "source_stem": None, "collected_at": None, "invalid_skipped_count": 0}
+
+
 def evaluate_thresholds(collectors: dict[str, object], thresholds: Thresholds,
-                        endpoints: tuple[Endpoint, ...] | list[Endpoint] = ENDPOINTS
+                        endpoints: tuple[Endpoint, ...] | list[Endpoint] = ENDPOINTS,
+                        baseline: RestartBaseline | None = None,
                         ) -> dict[str, object]:
-    """纯函数：collectors + thresholds → 逐项检查/计数/alerts/总状态。
-    fail-closed：采集失败的项恒为可见 critical（缺失绝不当作 healthy）。
-    端点检查覆盖所选端点子集（与报告 config.endpoints 一致，计数自洽）。"""
+    """纯函数：collectors + thresholds（+ M14-23 restart 增量基线）→ 逐项
+    检查/计数/alerts/总状态。fail-closed：采集失败的项恒为可见 critical
+    （缺失绝不当作 healthy）。container-restarts 检查改评**当轮新增增量**
+    （见 evaluate_restart_state）；累计 RestartCount 事实照实保留在
+    collectors 中不变。端点检查覆盖所选端点子集（与报告 config.endpoints
+    一致，计数自洽）。"""
     checks: list[dict[str, str]] = []
 
     compose_ps = collectors["compose_ps"]
@@ -782,12 +1050,15 @@ def evaluate_thresholds(collectors: dict[str, object], thresholds: Thresholds,
     assert isinstance(containers, dict)
     per_service = containers.get("per_service")
     assert isinstance(per_service, dict)
+    restart_evaluation: dict[str, dict[str, object]] = {}
     for service in STACK_SERVICES:
         item = per_service.get(service)
         assert isinstance(item, dict)
         if item.get("status") != "ok":
             checks.append(_check("container-health", service, "critical", "facts-missing"))
             checks.append(_check("container-restarts", service, "critical", "facts-missing"))
+            restart_evaluation[service] = {"state": "critical", "reason": "facts-missing",
+                                           "delta": None}
             continue
         state = str(item.get("state"))
         health = str(item.get("health"))
@@ -799,14 +1070,12 @@ def evaluate_thresholds(collectors: dict[str, object], thresholds: Thresholds,
             checks.append(_check("container-health", service, "critical", f"health={health}"))
         else:  # starting / none / 未知——不可证 healthy，warn 可见
             checks.append(_check("container-health", service, "warn", f"health={health}"))
-        restarts = int(item.get("restart_count") or 0)
-        if restarts >= thresholds.restart_critical:
-            severity = "critical"
-        elif restarts >= thresholds.restart_warn:
-            severity = "warn"
-        else:
-            severity = "ok"
-        checks.append(_check("container-restarts", service, severity, f"restart_count={restarts}"))
+        evaluation = evaluate_restart_state(service, item, baseline, thresholds)
+        restart_evaluation[service] = evaluation
+        checks.append(_check(
+            "container-restarts", service, str(evaluation["state"]),
+            _restart_check_detail(int(item.get("restart_count") or 0), evaluation, baseline),
+        ))
 
     endpoints_collector = collectors["endpoints"]
     assert isinstance(endpoints_collector, dict)
@@ -876,6 +1145,12 @@ def evaluate_thresholds(collectors: dict[str, object], thresholds: Thresholds,
         "partial": partial,
         "overall_status": overall,
         "monitoring_ready": not partial and not alerts,
+        # M14-23 加法字段：baseline 元数据 + 逐服务增量评估（v1 旧消费者
+        # 不读该键照常有效；旧工件作历史输入时同样可选）
+        "restart_evaluation": {
+            "baseline": _baseline_report_metadata(baseline),
+            "per_service": restart_evaluation,
+        },
     }
 
 
@@ -937,6 +1212,12 @@ REPORT_BOUNDARIES: tuple[str, ...] = (
     "http.client direct connection: proxy env never consulted (loopback proxy bypass)",
     "container log summary: match counts and level categories only; raw log lines never persisted",
     "collector failures are recorded as partial=true with a safe category; missing is never treated as healthy",
+    (
+        "restart thresholds evaluate the current-interval delta against the latest legal prior"
+        " complete artifact in the artifact directory (M14-23); cumulative RestartCount facts"
+        " are recorded unchanged; invalid baseline candidates are counted explicitly and never"
+        " silently treated as a zero baseline"
+    ),
     "no external alerting is performed in this milestone; reports are local evidence only",
     "monitoring_ready is not production readiness; this tool never claims production ready",
     (
@@ -1002,6 +1283,25 @@ def render_markdown(report: dict[str, object]) -> str:
                 f"partial={report['partial']}"
             ),
             f"- 检查计数：ok={counts['ok']} warn={counts['warn']} critical={counts['critical']}",
+        ]
+        restart_eval = report["threshold_results"].get("restart_evaluation")  # type: ignore[union-attr]
+        if isinstance(restart_eval, dict):
+            baseline_meta = restart_eval.get("baseline")
+            assert isinstance(baseline_meta, dict)
+            per_service_eval = restart_eval.get("per_service")
+            assert isinstance(per_service_eval, dict)
+            warn_n = sum(1 for v in per_service_eval.values()
+                         if isinstance(v, dict) and v.get("state") == "warn")
+            critical_n = sum(1 for v in per_service_eval.values()
+                             if isinstance(v, dict) and v.get("state") == "critical")
+            source = baseline_meta.get("source_stem") or baseline_meta.get("status")
+            lines.append(
+                f"- restart 增量评估（M14-23）：baseline={source}"
+                f"（增量 ok={len(per_service_eval) - warn_n - critical_n}"
+                f" warn={warn_n} critical={critical_n}；阈值评当轮新增，"
+                "累计 RestartCount 照实入档）"
+            )
+        lines += [
             "",
             "| 检查 | 对象 | 严重度 | 详情 |",
             "|---|---|---|---|",
@@ -1186,7 +1486,15 @@ def main(argv: list[str] | None = None) -> int:
         request_timeout_seconds=args.request_timeout_seconds,
     )
     ended_utc = clock.utc_now_iso()
-    results = evaluate_thresholds(collectors, thresholds, endpoints=endpoints)
+    # M14-23：解析 restart 增量基线（最新合法 prior 完整工件；纯本地只读
+    # fail-safe，零 shell/零网络/零额外生产读取——发生在本轮报告写入之前，
+    # 候选恒为 prior 工件）
+    baseline = resolve_restart_baseline(args.artifact_dir)
+    baseline_note = baseline.source_stem if baseline.source_stem else baseline.reason
+    log.say(f"restart 基线: {baseline.status}（{baseline_note}；"
+            f"非法候选跳过 {baseline.invalid_skipped_count}）")
+    results = evaluate_thresholds(collectors, thresholds, endpoints=endpoints,
+                                  baseline=baseline)
     report = build_report(
         mode="execute", started_utc=started_utc, ended_utc=ended_utc,
         config=config, collectors=collectors, threshold_results=results,

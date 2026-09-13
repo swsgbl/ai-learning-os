@@ -245,6 +245,32 @@ python tools/ops/production_monitor.py --execute \
     --confirm "EXECUTE READ-ONLY PRODUCTION MONITORING"   # execute（旗标+精确短语齐备才放行）
 ```
 
+**状态（M14-23 restart 增量语义，2026-09-13 开发切片（含 supervisor R1
+加固）——本地 commit 待 supervisor 审查与 remote 发布（push/PR/合并）
+在其后进行；真实计划任务调度下的新语义验证尚未运行）**：
+`container-restarts` 阈值判定由静态累计 RestartCount 改为**当轮新增增量**
+（当前累计 − 基线累计）。基线 = 本轮工件目录内**最新合法的 prior 完整**
+monitor JSON 工件（R1 加固后的合法身份 = schema/tool/**milestone**/mode
+四件套 + `partial` 恒布尔 `False` + `started_at_utc` 为 canonical 形态
+（`%Y-%m-%dT%H:%M:%SZ` 且日历合法——畸形/缺失值绝不复制进
+baseline.collected_at）+ 六容器事实齐全）；解析纯本地只读 fail-safe：零
+shell=True/零网络/零写盘/零额外生产读取；**symlink 防御（R1）**——
+symlinked 工件目录/祖先 → `missing/artifact-dir-unreadable` 绝不跟随，
+symlinked 候选文件计 `invalid_skipped` 而不跟随；非法候选显式计入
+`invalid_skipped_count`，绝不静默当作零基线。语义：同容器实例
+（started_at 一致）且增量 0 → ok——健康栈不再因历史存量（如 api
+restart_count=1，即 M14-22 实证的 17 连 warn 形态）永久 warn；增量达
+warn/critical（默认 ≥1/≥5，含边界）→ 可见告警；`started_at` 变化 = 容器
+重建、累计下降 = 计数重置 → 各发**一轮可见 warn**（负增量绝不静默映射
+为零），下一稳定轮恢复 ok；无基线时 count 0 → ok、达阈值 → 一次性
+baseline-missing 可见告警（下一轮以本轮工件为基线即恢复）。累计
+`restart_count` 采集事实照实入档不变；报告加法字段
+`threshold_results.restart_evaluation`（baseline 元数据 + 逐服务
+state/reason/delta，reason 固定词汇 stable/delta/baseline-missing/
+container-recreated/counter-reset/facts-missing）；check_id 仍为
+`container-restarts`；schema 向后兼容——v1 旧工件（无该字段）照常作
+基线与入档。
+
 安全性质（契约测试 `services/api/tests/test_production_monitor.py` 锁定；
 细节见脚本头注释与 `docs/evidence/m14-12-production-monitoring/README.md`）：
 
@@ -331,6 +357,24 @@ incomplete + 8 完整）：exit 0、8 条完整记录（1 ok + 7 warn）入档�
 python tools/ops/monitoring_history.py                 # 默认源/输出目录
 python tools/ops/monitoring_history.py --retention 200
 ```
+
+**状态（M14-23，2026-09-13 开发切片（含 supervisor R1 加固）——本地
+commit 待 supervisor 审查与 remote 发布；真实管道运行下的新字段验证尚未
+运行）**：入档 monitor 加法字段 `threshold_results.restart_evaluation`——
+缺省 = v1 旧工件（合法入档，记录不带新键，旧记录/旧消费者零破坏）；在场
+即严格校验（固定词汇 state/reason/baseline status、六服务全集、delta 为
+int≥0 或 None、baseline_source_stem stem 白名单、baseline_collected_at
+时间戳格式；**R1 baseline 元数据一致性**——status=ok 恒 reason=None +
+白名单 stem + canonical collected_at，status=missing 恒固定词汇 reason
+{artifact-dir-missing/artifact-dir-unreadable/no-prior-artifacts/
+baseline-not-resolved} + 空元数据，status=unusable 恒
+no-usable-prior-artifacts + 空元数据；任何违规 `restart-evaluation`
+fail-closed 输出零写入）。记录累计 `restart_counts` 口径不变，另存规范化
+`restart_evaluation`（baseline 元数据 + states/reasons/deltas——重建/重置
+事件清晰留痕，不可比增量恒 None）；摘要新增 `restart_delta_totals` /
+`restart_event_totals` / `restart_delta_sample_count`（诚实区分「无增量
+数据」与「测得为零」）与 Markdown 增量评估行，**累计 restart_totals 口径
+不重定义**。
 
 安全性质（契约测试 `services/api/tests/test_monitoring_history.py` 锁定；
 细节见 `docs/evidence/m14-13-monitoring-history/README.md`）：
@@ -501,6 +545,20 @@ python tools/ops/monitoring_insights.py                 # plan（默认，零读
 python tools/ops/monitoring_insights.py --execute \
     --confirm "EXECUTE READ-ONLY MONITORING INSIGHTS"   # execute（只读洞察）
 ```
+
+**状态（M14-23，2026-09-13 开发切片（含 supervisor R1 加固）——本地
+commit 待 supervisor 审查与 remote 发布；真实管道产出下的新洞察字段验证
+尚未运行）**：行级可选加法字段 `restart_evaluation`（缺省 = 旧 history
+行，照常可读——增量键在场为 0，诚实区分「无数据」与「测得为零」；在场
+即严格校验，词汇/形态与 monitoring_history 单一事实源一致——**含 R1
+baseline 元数据一致性联动校验**）。`service_summary` 逐服务区分**累计**
+`restart_total`（容器累计 RestartCount 求和，口径不变）与当轮
+`restart_delta_total`（增量求和，不可比 None 不计）/
+`restart_delta_samples` / `restart_event_count`（当轮增量评估非 ok 的
+样本数——增量告警/重建/重置/baseline-missing）/
+`restart_recovery_count`（事件→非事件转移数；legacy 行后转移不可证
+不计）；Markdown 服务表分列渲染（总计（累计）/增量/事件/恢复）+ 口径
+注记。不构成 production readiness 宣称。
 
 安全性质（契约测试 `services/api/tests/test_monitoring_insights.py` 锁定；
 细节见 `docs/evidence/m14-15-monitoring-insights/README.md`）：

@@ -41,6 +41,18 @@
   collected_at——全程零墙钟**（输出逐字节可复现）。两文件同目录 tmp +
   fsync + os.replace 原子落盘；symlink 组件/越界路径一律拒绝；仅在
   **全部输入校验通过之后**才写任何输出。
+- M14-23 restart 增量评估入档：``threshold_results.restart_evaluation``
+  为**可选加法字段**——缺省 = v1 旧工件（合法入档，记录不带新键，
+  旧记录/旧消费者零破坏）；在场即严格校验（固定词汇
+  state/reason/baseline status、六服务全集、delta 为 int≥0 或 None、
+  baseline_source_stem stem 白名单、baseline_collected_at 时间戳格式；
+  任何违规 fail-closed ``restart-evaluation``）。记录累计
+  ``restart_counts`` 口径不变，另存规范化 ``restart_evaluation``
+  （baseline 元数据 + 逐服务 states/reasons/deltas——重建/重置事件清晰
+  留痕，不可比增量恒 None 绝不静默归零）；摘要新增
+  restart_delta_totals/restart_event_totals/restart_delta_sample_count
+  （诚实区分「无增量数据」与「测得为零」），**累计 restart_totals 口径
+  不重定义**。
 - 退出码：0 成功；2 任何拒绝（参数超界、源目录缺失/symlink、零源、
   零完整样本（no-complete-sources）、malformed、partial/incomplete
   （未识别类）、冲突重复、写失败）。
@@ -95,6 +107,23 @@ PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 #: 完整样本面接受的采集状态（incomplete 恒拒绝；历史 incomplete 类经
 #: is_recognized_incomplete 整件识别跳过——M14-20）
 ACCEPTED_OVERALL_STATUSES = frozenset({"ok", "warn", "critical"})
+
+#: M14-23 restart 增量评估固定词汇（与 production_monitor 契约对齐；
+#: monitoring_insights 经本模块引用——单一 schema 事实源）
+RESTART_EVALUATION_STATES = frozenset({"ok", "warn", "critical"})
+RESTART_EVALUATION_REASONS = frozenset({
+    "stable", "delta", "baseline-missing", "container-recreated",
+    "counter-reset", "facts-missing",
+})
+RESTART_EVALUATION_BASELINE_STATUSES = frozenset({"ok", "missing", "unusable"})
+#: baseline 元数据一致性（supervisor R1）：status ↔ reason/stem/collected 联动
+#: ——ok 恒 reason=None + 白名单 stem + canonical collected_at；missing 恒
+#: 固定词汇 reason + 空元数据；unusable 恒 no-usable-prior-artifacts + 空元数据
+RESTART_EVALUATION_BASELINE_REASONS_MISSING = frozenset({
+    "artifact-dir-missing", "artifact-dir-unreadable", "no-prior-artifacts",
+    "baseline-not-resolved",
+})
+RESTART_EVALUATION_BASELINE_REASON_UNUSABLE = "no-usable-prior-artifacts"
 
 #: 历史 incomplete 工件类（M14-20）：M14-12 monitor 自产的采集不完整时期
 #: 工件状态对（monitor 契约：任一采集器失败 → partial=true +
@@ -196,6 +225,8 @@ class Sample:
     restart_counts: dict[str, int]
     endpoints: dict[str, dict[str, object]]
     log_error_totals: dict[str, int]
+    #: M14-23 可选加法字段：v1 旧工件为 None（记录不带该键）
+    restart_evaluation: dict[str, object] | None = None
 
 
 def parse_timestamp(value: object) -> datetime:
@@ -211,6 +242,82 @@ def _require_mapping(value: object, reason: str) -> dict[str, object]:
     if not isinstance(value, dict):
         raise HistoryError(reason)
     return value
+
+
+def _parse_restart_evaluation(threshold: dict[str, object]) -> dict[str, object] | None:
+    """M14-23：``threshold_results.restart_evaluation`` 可选加法字段——缺省
+    （None）= v1 旧工件，合法；在场即严格校验并规范化为记录形态。违规抛
+    HistoryError("restart-evaluation")（固定词汇；绝不携带文件内容文本）。"""
+    raw = threshold.get("restart_evaluation")
+    if raw is None:
+        return None
+    evaluation = _require_mapping(raw, "restart-evaluation")
+    baseline = _require_mapping(evaluation.get("baseline"), "restart-evaluation")
+    baseline_status = baseline.get("status")
+    if not isinstance(baseline_status, str) or baseline_status not in (
+            RESTART_EVALUATION_BASELINE_STATUSES):
+        raise HistoryError("restart-evaluation")
+    baseline_reason = baseline.get("reason")
+    if baseline_reason is not None and not isinstance(baseline_reason, str):
+        raise HistoryError("restart-evaluation")
+    baseline_stem = baseline.get("source_stem")
+    if baseline_stem is not None and (not isinstance(baseline_stem, str)
+                                      or ARTIFACT_STEM_RE.match(baseline_stem) is None):
+        raise HistoryError("restart-evaluation")
+    baseline_collected = baseline.get("collected_at")
+    if baseline_collected is not None:
+        if not isinstance(baseline_collected, str):
+            raise HistoryError("restart-evaluation")
+        try:
+            parse_timestamp(baseline_collected)
+        except HistoryError:
+            raise HistoryError("restart-evaluation") from None
+    # supervisor R1：baseline 元数据一致性（status ↔ reason/stem/collected 联动）
+    if baseline_status == "ok":
+        if baseline_reason is not None or baseline_stem is None or baseline_collected is None:
+            raise HistoryError("restart-evaluation")
+    elif baseline_status == "missing":
+        if (not isinstance(baseline_reason, str)
+                or baseline_reason not in RESTART_EVALUATION_BASELINE_REASONS_MISSING):
+            raise HistoryError("restart-evaluation")
+        if baseline_stem is not None or baseline_collected is not None:
+            raise HistoryError("restart-evaluation")
+    else:  # unusable
+        if baseline_reason != RESTART_EVALUATION_BASELINE_REASON_UNUSABLE:
+            raise HistoryError("restart-evaluation")
+        if baseline_stem is not None or baseline_collected is not None:
+            raise HistoryError("restart-evaluation")
+    invalid_skipped = baseline.get("invalid_skipped_count")
+    if not _is_int(invalid_skipped) or invalid_skipped < 0:  # type: ignore[operator]
+        raise HistoryError("restart-evaluation")
+    per_service = _require_mapping(evaluation.get("per_service"), "restart-evaluation")
+    states: dict[str, str] = {}
+    reasons: dict[str, str] = {}
+    deltas: dict[str, int | None] = {}
+    for service in STACK_SERVICES:
+        item = _require_mapping(per_service.get(service), "restart-evaluation")
+        state = item.get("state")
+        reason = item.get("reason")
+        delta = item.get("delta")
+        if not isinstance(state, str) or state not in RESTART_EVALUATION_STATES:
+            raise HistoryError("restart-evaluation")
+        if not isinstance(reason, str) or reason not in RESTART_EVALUATION_REASONS:
+            raise HistoryError("restart-evaluation")
+        if delta is not None and (not _is_int(delta) or delta < 0):  # type: ignore[operator]
+            raise HistoryError("restart-evaluation")
+        states[service] = state  # type: ignore[assignment]
+        reasons[service] = reason  # type: ignore[assignment]
+        deltas[service] = delta  # type: ignore[assignment]
+    return {
+        "baseline_status": baseline_status,
+        "baseline_reason": baseline_reason,
+        "baseline_source_stem": baseline_stem,
+        "baseline_collected_at": baseline_collected,
+        "baseline_invalid_skipped_count": invalid_skipped,
+        "states": states,
+        "reasons": reasons,
+        "deltas": deltas,
+    }
 
 
 def validate_report(data: object) -> dict[str, object]:
@@ -243,6 +350,7 @@ def validate_report(data: object) -> dict[str, object]:
     for key in ("ok", "warn", "critical"):
         if not _is_int(counts.get(key)) or counts[key] < 0:  # type: ignore[operator]
             raise HistoryError("threshold-counts")
+    restart_evaluation = _parse_restart_evaluation(threshold)
     collectors = _require_mapping(report.get("collectors"), "collectors")
     compose_ps = _require_mapping(collectors.get("compose_ps"), "compose-ps")
     if compose_ps.get("status") != "ok":
@@ -289,7 +397,7 @@ def validate_report(data: object) -> dict[str, object]:
         if not _is_int(total) or total < 0:  # type: ignore[operator]
             raise HistoryError("log-summaries")
         log_error_totals[service] = total
-    return {
+    fields: dict[str, object] = {
         "collected_at": report["started_at_utc"],
         "collected_dt": started,
         "project": project,
@@ -300,6 +408,9 @@ def validate_report(data: object) -> dict[str, object]:
         "endpoints": endpoints,
         "log_error_totals": log_error_totals,
     }
+    if restart_evaluation is not None:  # M14-23：旧工件不带该键
+        fields["restart_evaluation"] = restart_evaluation
+    return fields
 
 
 # ---------------------------------------------------------------- 发现与加载
@@ -433,8 +544,9 @@ def apply_retention(unique: list[Sample], retention: int) -> tuple[list[Sample],
 
 
 def build_record(sample: Sample) -> dict[str, object]:
-    """紧凑记录：规格字段全集；绝无原始日志行/密钥/secret。"""
-    return {
+    """紧凑记录：规格字段全集；绝无原始日志行/密钥/secret。M14-23：源工件
+    带 restart_evaluation 时附加规范化增量评估（旧工件记录形态零变化）。"""
+    record: dict[str, object] = {
         "schema_version": HISTORY_SCHEMA_VERSION,
         "artifact_sha256": sample.sha256,
         "source_stem": sample.stem,
@@ -448,6 +560,19 @@ def build_record(sample: Sample) -> dict[str, object]:
         "endpoints": {key: dict(value) for key, value in sample.endpoints.items()},
         "log_error_totals": dict(sample.log_error_totals),
     }
+    if sample.restart_evaluation is not None:
+        record["restart_evaluation"] = {
+            "baseline_status": sample.restart_evaluation["baseline_status"],
+            "baseline_reason": sample.restart_evaluation["baseline_reason"],
+            "baseline_source_stem": sample.restart_evaluation["baseline_source_stem"],
+            "baseline_collected_at": sample.restart_evaluation["baseline_collected_at"],
+            "baseline_invalid_skipped_count":
+                sample.restart_evaluation["baseline_invalid_skipped_count"],
+            "states": dict(sample.restart_evaluation["states"]),  # type: ignore[arg-type]
+            "reasons": dict(sample.restart_evaluation["reasons"]),  # type: ignore[arg-type]
+            "deltas": dict(sample.restart_evaluation["deltas"]),  # type: ignore[arg-type]
+        }
+    return record
 
 
 def percentile(sorted_values: list[float], fraction: float) -> float:
@@ -479,6 +604,26 @@ def build_summary(*, retained: list[Sample], discovered: int, duplicates: int,
                       for service in STACK_SERVICES}
     log_totals = {service: sum(s.log_error_totals[service] for s in retained)
                   for service in STACK_SERVICES}
+    # M14-23：当轮增量/事件口径（与累计 restart_totals 明确区分；旧工件
+    # 不带 restart_evaluation → 不计入增量样本——诚实区分「无数据」与「测
+    # 得为零」）
+    restart_delta_totals = {service: 0 for service in STACK_SERVICES}
+    restart_event_totals = {service: 0 for service in STACK_SERVICES}
+    restart_delta_sample_count = 0
+    for sample in retained:
+        evaluation = sample.restart_evaluation
+        if evaluation is None:
+            continue
+        restart_delta_sample_count += 1
+        states = evaluation["states"]
+        deltas = evaluation["deltas"]
+        assert isinstance(states, dict) and isinstance(deltas, dict)
+        for service in STACK_SERVICES:
+            delta = deltas.get(service)
+            if isinstance(delta, int):
+                restart_delta_totals[service] += delta
+            if states.get(service) != "ok":
+                restart_event_totals[service] += 1
     oldest, newest = retained[0], retained[-1]
     return {
         "schema_version": HISTORY_SCHEMA_VERSION,
@@ -500,6 +645,11 @@ def build_summary(*, retained: list[Sample], discovered: int, duplicates: int,
         "endpoint_latency_ms": endpoint_stats,
         "restart_totals": restart_totals,
         "restart_total_sum": sum(restart_totals.values()),
+        "restart_delta_totals": restart_delta_totals,
+        "restart_delta_total_sum": sum(restart_delta_totals.values()),
+        "restart_event_totals": restart_event_totals,
+        "restart_event_total_sum": sum(restart_event_totals.values()),
+        "restart_delta_sample_count": restart_delta_sample_count,
         "log_error_totals": log_totals,
         "log_error_total_sum": sum(log_totals.values()),
     }
@@ -557,6 +707,13 @@ def render_summary_markdown(summary: dict[str, object]) -> str:
     lines += [
         "",
         f"- 合计：restart {summary['restart_total_sum']}；日志 error {summary['log_error_total_sum']}",
+        (
+            f"- restart 增量评估（M14-23）：增量数据样本"
+            f" {summary['restart_delta_sample_count']}/{summary['records_retained']}；"
+            f"增量合计 {summary['restart_delta_total_sum']}；"
+            f"事件合计 {summary['restart_event_total_sum']}"
+            "（增量=当轮新增 restart，与上方累计 restart 总计口径不同）"
+        ),
         "",
         "边界：",
         "- 源为 M14-12 monitor 只读 JSON 工件；原始工件永不改动/删除",

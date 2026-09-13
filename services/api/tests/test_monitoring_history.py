@@ -96,7 +96,8 @@ def _report(collected_at: str, *, project: str = PROJECT, overall: str = "ok",
             started_at: str | None = None, ended_at: str | None = None,
             counts: dict[str, int] | None = None,
             drop_service: str | None = None, drop_endpoint: str | None = None,
-            boundaries: list[str] | None = None) -> dict[str, object]:
+            boundaries: list[str] | None = None,
+            restart_evaluation: dict[str, object] | None = None) -> dict[str, object]:
     """canonical 形状的合成 monitor 报告（与 monitor-20260911-173920.json 同构）。"""
     services = {s: {"health": health, "state": "running"} for s in SERVICES if s != drop_service}
     containers = {s: {"status": "ok", "failure_category": None, "error_class": None,
@@ -113,6 +114,10 @@ def _report(collected_at: str, *, project: str = PROJECT, overall: str = "ok",
                            "warning": 0, "traceback": 0, "panic": 0},
                 "error_total": log_errors}
             for s in SERVICES if s != drop_service}
+    threshold: dict[str, object] = {"counts": counts if counts is not None
+                                    else {"ok": 34, "warn": 0, "critical": 0}}
+    if restart_evaluation is not None:  # M14-23 加法字段（在场即校验，缺省=旧工件）
+        threshold["restart_evaluation"] = restart_evaluation
     return {
         "schema_version": schema_version, "tool": tool, "milestone": milestone,
         "mode": mode,
@@ -128,8 +133,7 @@ def _report(collected_at: str, *, project: str = PROJECT, overall: str = "ok",
             "logs": {"status": "ok", "per_service": logs},
         },
         "partial": partial,
-        "threshold_results": {"counts": counts if counts is not None
-                              else {"ok": 34, "warn": 0, "critical": 0}},
+        "threshold_results": threshold,
         "overall_status": overall,
         "monitoring_ready": overall == "ok",
     }
@@ -917,3 +921,275 @@ def test_main_happy_path_stdout(tmp_path, capsys) -> None:
 def test_ops_readme_documents_tool() -> None:
     text = OPS_README.read_text(encoding="utf-8")
     assert "monitoring_history.py" in text
+
+
+# ---------------------------------------------------------------- M14-23 restart 增量评估入档
+
+
+def _restart_eval(*, baseline_status: str = "ok", baseline_reason: str | None = None,
+                  source_stem: str | None = "monitor-20260910-000000",
+                  collected: str | None = "2026-09-10T00:00:00Z",
+                  invalid_skipped: int = 0,
+                  states: dict[str, str] | None = None,
+                  reasons: dict[str, str] | None = None,
+                  deltas: dict[str, int | None] | None = None) -> dict[str, object]:
+    """monitor 形状的 restart_evaluation（M14-23 加法字段合成器）。"""
+    return {
+        "baseline": {"status": baseline_status, "reason": baseline_reason,
+                     "source_stem": source_stem, "collected_at": collected,
+                     "invalid_skipped_count": invalid_skipped},
+        "per_service": {
+            svc: {"state": (states or {}).get(svc, "ok"),
+                  "reason": (reasons or {}).get(svc, "stable"),
+                  "delta": (deltas or {}).get(svc, 0)}
+            for svc in SERVICES
+        },
+    }
+
+
+def test_record_includes_normalized_restart_evaluation(tmp_path) -> None:
+    source, output = tmp_path / "src", tmp_path / "out"
+    source.mkdir()
+    _write_sample(source, "2026-09-13T01:00:00Z", restarts=3,
+                  restart_evaluation=_restart_eval(
+                      states={"api": "warn"}, reasons={"api": "delta"},
+                      deltas={"api": 2}))
+    rc = _run_cli(None, source, output)
+    assert rc == mh.EXIT_OK
+    record = _records(output)[0]
+    assert record["restart_evaluation"] == {
+        "baseline_status": "ok",
+        "baseline_reason": None,
+        "baseline_source_stem": "monitor-20260910-000000",
+        "baseline_collected_at": "2026-09-10T00:00:00Z",
+        "baseline_invalid_skipped_count": 0,
+        "states": {svc: "warn" if svc == "api" else "ok" for svc in SERVICES},
+        "reasons": {svc: "delta" if svc == "api" else "stable" for svc in SERVICES},
+        "deltas": {svc: 2 if svc == "api" else 0 for svc in SERVICES},
+    }
+
+
+def test_record_preserves_recreated_and_reset_reasons(tmp_path) -> None:
+    """重建/重置事件（M14-23 一轮可见语义）在记录 reasons 中清晰留痕。"""
+    source, output = tmp_path / "src", tmp_path / "out"
+    source.mkdir()
+    _write_sample(source, "2026-09-13T01:00:00Z",
+                  restart_evaluation=_restart_eval(
+                      states={"web": "warn", "livekit": "warn"},
+                      reasons={"web": "container-recreated", "livekit": "counter-reset",
+                               "api": "baseline-missing"},
+                      deltas={"web": None, "livekit": None, "api": None}))
+    rc = _run_cli(None, source, output)
+    assert rc == mh.EXIT_OK
+    evaluation = _records(output)[0]["restart_evaluation"]
+    assert isinstance(evaluation, dict)
+    assert evaluation["reasons"]["web"] == "container-recreated"
+    assert evaluation["reasons"]["livekit"] == "counter-reset"
+    assert evaluation["reasons"]["api"] == "baseline-missing"
+    assert evaluation["deltas"]["web"] is None  # 不可比增量绝不静默归零
+
+
+def test_legacy_artifact_without_restart_evaluation_keeps_record_shape(tmp_path) -> None:
+    """v1 旧工件（无 restart_evaluation）照常入档且记录不带新键——
+    schema 向后兼容（旧记录/旧消费者零破坏）。"""
+    source, output = tmp_path / "src", tmp_path / "out"
+    source.mkdir()
+    _write_sample(source, "2026-09-11T17:39:20Z")
+    rc = _run_cli(None, source, output)
+    assert rc == mh.EXIT_OK
+    record = _records(output)[0]
+    assert "restart_evaluation" not in record
+
+
+def _baseline_dict(status: object, reason: object, stem: object,
+                   collected: object, invalid: int = 0) -> dict[str, object]:
+    """monitor 形状的 baseline 元数据（status/reason/stem/collected 联动
+    一致性测试的构造器）。"""
+    return {"status": status, "reason": reason, "source_stem": stem,
+            "collected_at": collected, "invalid_skipped_count": invalid}
+
+
+_VALID_STEM = "monitor-20260910-000000"
+_VALID_COLLECTED = "2026-09-10T00:00:00Z"
+
+
+def _mutate_evaluation(*, baseline_status=None, baseline_not_dict=False,
+                       source_stem=None, invalid_skipped=None, collected=None,
+                       baseline_override: dict[str, object] | None = None,
+                       drop_per_service=False, drop_service=None,
+                       state=None, reason=None, delta=None):
+    """构造「就地把 restart_evaluation 改坏」的 mutator（返回改坏后的 payload）。"""
+    def apply(evaluation: dict[str, object]) -> object:
+        if baseline_not_dict:
+            evaluation["baseline"] = "not-a-dict"
+            return evaluation
+        if drop_per_service:
+            evaluation.pop("per_service")
+            return evaluation
+        if baseline_override is not None:  # 整体替换 baseline（一致性用例）
+            evaluation["baseline"] = dict(baseline_override)
+            return evaluation
+        baseline = evaluation["baseline"]
+        assert isinstance(baseline, dict)
+        if baseline_status is not None:
+            baseline["status"] = baseline_status
+        if source_stem is not None:
+            baseline["source_stem"] = source_stem
+        if invalid_skipped is not None:
+            baseline["invalid_skipped_count"] = invalid_skipped
+        if collected is not None:
+            baseline["collected_at"] = collected
+        per_service = evaluation["per_service"]
+        assert isinstance(per_service, dict)
+        if drop_service is not None:
+            per_service.pop(drop_service)
+            return evaluation
+        item = per_service["api"]
+        assert isinstance(item, dict)
+        if state is not None:
+            item["state"] = state
+        if reason is not None:
+            item["reason"] = reason
+        if delta is not None:
+            item["delta"] = delta
+        return evaluation
+    return apply
+
+
+BAD_RESTART_EVALUATIONS = [
+    ("baseline-status-vocab", _mutate_evaluation(baseline_status="bogus")),
+    ("baseline-status-unhashable", _mutate_evaluation(baseline_status=["ok"])),
+    ("baseline-not-dict", _mutate_evaluation(baseline_not_dict=True)),
+    ("baseline-stem-allowlist", _mutate_evaluation(source_stem="monitor-evil")),
+    ("invalid-skipped-negative", _mutate_evaluation(invalid_skipped=-1)),
+    ("baseline-collected-format", _mutate_evaluation(collected="2026-09-10 00:00:00")),
+    # supervisor R1：baseline 元数据一致性（status ↔ reason/stem/collected 联动）
+    ("ok-with-reason", _mutate_evaluation(baseline_override=_baseline_dict(
+        "ok", "nope", _VALID_STEM, _VALID_COLLECTED))),
+    ("ok-missing-stem", _mutate_evaluation(baseline_override=_baseline_dict(
+        "ok", None, None, _VALID_COLLECTED))),
+    ("ok-missing-collected", _mutate_evaluation(baseline_override=_baseline_dict(
+        "ok", None, _VALID_STEM, None))),
+    ("missing-bad-reason", _mutate_evaluation(baseline_override=_baseline_dict(
+        "missing", "bogus", None, None))),
+    ("missing-none-reason", _mutate_evaluation(baseline_override=_baseline_dict(
+        "missing", None, None, None))),
+    ("missing-unhashable-reason", _mutate_evaluation(baseline_override=_baseline_dict(
+        "missing", ["no-prior-artifacts"], None, None))),
+    ("missing-with-stem", _mutate_evaluation(baseline_override=_baseline_dict(
+        "missing", "no-prior-artifacts", _VALID_STEM, None))),
+    ("missing-with-collected", _mutate_evaluation(baseline_override=_baseline_dict(
+        "missing", "no-prior-artifacts", None, _VALID_COLLECTED))),
+    ("unusable-bad-reason", _mutate_evaluation(baseline_override=_baseline_dict(
+        "unusable", "bogus", None, None))),
+    ("unusable-none-reason", _mutate_evaluation(baseline_override=_baseline_dict(
+        "unusable", None, None, None))),
+    ("unusable-with-stem", _mutate_evaluation(baseline_override=_baseline_dict(
+        "unusable", "no-usable-prior-artifacts", _VALID_STEM, None))),
+    ("unusable-with-collected", _mutate_evaluation(baseline_override=_baseline_dict(
+        "unusable", "no-usable-prior-artifacts", None, _VALID_COLLECTED))),
+    ("per-service-missing", _mutate_evaluation(drop_per_service=True)),
+    ("service-facts-missing", _mutate_evaluation(drop_service="api")),
+    ("state-vocab", _mutate_evaluation(state="bogus")),
+    ("state-unhashable", _mutate_evaluation(state=["ok"])),
+    ("reason-vocab", _mutate_evaluation(reason="bogus")),
+    ("delta-negative", _mutate_evaluation(delta=-1)),
+    ("delta-string", _mutate_evaluation(delta="2")),
+    ("string-payload", lambda evaluation: "restart-evaluation-string"),
+]
+
+
+@pytest.mark.parametrize("name,mutator", BAD_RESTART_EVALUATIONS,
+                         ids=[case[0] for case in BAD_RESTART_EVALUATIONS])
+def test_malformed_restart_evaluation_refused_zero_writes(tmp_path, name: str,
+                                                          mutator) -> None:
+    """在场即严格校验（fail-closed）：任何违规形态输出零写入。"""
+    source, output = tmp_path / "src", tmp_path / "out"
+    source.mkdir()
+    payload = mutator(_restart_eval())
+    _write_sample(source, "2026-09-13T01:00:00Z", restart_evaluation=payload)
+    rc = _run_cli(None, source, output)
+    assert rc == mh.EXIT_REFUSED
+    assert not output.exists()
+
+
+@pytest.mark.parametrize("baseline_reason", [
+    "artifact-dir-missing", "artifact-dir-unreadable", "no-prior-artifacts",
+    "baseline-not-resolved",
+])
+def test_consistent_missing_status_baseline_accepted(tmp_path, baseline_reason: str) -> None:
+    """supervisor R1 一致性接受面：status=missing + 固定词汇 reason + 空元
+    数据（首轮/缺目录形态）照常入档。"""
+    source, output = tmp_path / "src", tmp_path / "out"
+    source.mkdir()
+    _write_sample(source, "2026-09-13T01:00:00Z", restarts=1, overall="warn",
+                  restart_evaluation=_restart_eval(
+                      baseline_status="missing", baseline_reason=baseline_reason,
+                      source_stem=None, collected=None,
+                      states={"api": "warn"}, reasons={"api": "baseline-missing"},
+                      deltas={"api": None}))
+    rc = _run_cli(None, source, output)
+    assert rc == mh.EXIT_OK
+    evaluation = _records(output)[0]["restart_evaluation"]
+    assert isinstance(evaluation, dict)
+    assert evaluation["baseline_status"] == "missing"
+    assert evaluation["baseline_reason"] == baseline_reason
+    assert evaluation["baseline_source_stem"] is None
+    assert evaluation["baseline_collected_at"] is None
+
+
+def test_consistent_unusable_status_baseline_accepted(tmp_path) -> None:
+    """supervisor R1 一致性接受面：status=unusable + 固定 reason + 空元数据
+    + 显式 invalid 计数照常入档。"""
+    source, output = tmp_path / "src", tmp_path / "out"
+    source.mkdir()
+    _write_sample(source, "2026-09-13T01:00:00Z",
+                  restart_evaluation=_restart_eval(
+                      baseline_status="unusable",
+                      baseline_reason="no-usable-prior-artifacts",
+                      source_stem=None, collected=None, invalid_skipped=2))
+    rc = _run_cli(None, source, output)
+    assert rc == mh.EXIT_OK
+    evaluation = _records(output)[0]["restart_evaluation"]
+    assert isinstance(evaluation, dict)
+    assert evaluation["baseline_status"] == "unusable"
+    assert evaluation["baseline_invalid_skipped_count"] == 2
+
+
+def test_summary_restart_delta_and_event_totals(tmp_path) -> None:
+    """摘要清晰区分累计 restart_totals（口径不变）与当轮增量/事件计数。"""
+    source, output = tmp_path / "src", tmp_path / "out"
+    source.mkdir()
+    _write_sample(source, "2026-09-13T01:00:00Z", restarts=5, overall="warn",
+                  restart_evaluation=_restart_eval(
+                      states={"api": "warn"}, reasons={"api": "delta"},
+                      deltas={"api": 2}))
+    _write_sample(source, "2026-09-13T01:15:00Z", restarts=5,
+                  restart_evaluation=_restart_eval(
+                      source_stem="monitor-20260913-010000",
+                      collected="2026-09-13T01:00:00Z"))
+    rc = _run_cli(None, source, output)
+    assert rc == mh.EXIT_OK
+    summary_text = (output / "history-summary.md").read_text(encoding="utf-8")
+    # 累计口径不变：5+5 每服务 → 六服务合计 60
+    assert "restart 60；日志 error 0" in summary_text
+    # M14-23 增量/事件口径：仅 api 增量 2（样本 1 警报 + 样本 2 稳定）
+    assert "增量数据样本 2/2" in summary_text
+    assert "增量合计 2" in summary_text
+    assert "事件合计 1" in summary_text
+    assert "与上方累计 restart 总计口径不同" in summary_text
+
+
+def test_summary_delta_totals_zero_for_legacy_only_sources(tmp_path) -> None:
+    """全部为 v1 旧工件：增量样本计数 0、增量/事件合计 0（诚实区分
+    「无数据」与「测得为零」），累计口径照常。"""
+    source, output = tmp_path / "src", tmp_path / "out"
+    source.mkdir()
+    _write_sample(source, "2026-09-11T16:00:00Z", restarts=1)
+    _write_sample(source, "2026-09-11T17:00:00Z", restarts=1)
+    rc = _run_cli(None, source, output)
+    assert rc == mh.EXIT_OK
+    summary_text = (output / "history-summary.md").read_text(encoding="utf-8")
+    assert "增量数据样本 0/2" in summary_text
+    assert "增量合计 0" in summary_text and "事件合计 0" in summary_text
+    assert "restart 12；日志 error 0" in summary_text  # 累计口径不受影响

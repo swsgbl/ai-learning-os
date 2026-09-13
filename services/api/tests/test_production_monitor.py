@@ -36,6 +36,13 @@ FakeRunner/FakeTransport 注入）：
   原因/CLI 双路径/被拒值零回显）；`--artifact-dir` 口径修正（默认目录
   gitignored vs 操作者显式自选——REPORT_BOUNDARIES/CLI help/运行时注记
   三面锁定）；状态文档 commit 措辞 sweep（supervisor 审查与 remote 发布）。
+- M14-23 restart 语义修复：RestartCount 累计值 vs 当轮新增增量——基线
+  解析（最新合法 prior 完整工件；纯本地只读 fail-safe，零 shell/零网络；
+  非法工件显式计数绝不静默当零基线）、增量阈值（含边界 1/5）、无基线
+  一次性可见告警、count 不变恢复 ok、started_at 变化=重建与 count 下降
+  =重置的一轮可见 warn（负增量绝不静默映射为零）、schema 加法字段
+  threshold_results.restart_evaluation（v1 旧工件/旧记录保持有效）、
+  e2e 两轮恢复与零额外生产读取。
 """
 from __future__ import annotations
 
@@ -592,7 +599,8 @@ def _collectors(*, latency_ms: float = 10.0, http_status: int = 200,
                 health: str = "healthy", state: str = "running",
                 ps_health: str = "healthy", ps_missing: tuple[str, ...] = (),
                 log_errors: int = 0, log_failed: bool = False,
-                inspect_failed: tuple[str, ...] = ()) -> dict[str, object]:
+                inspect_failed: tuple[str, ...] = (),
+                started_at: str = "2026-09-11T00:00:00Z") -> dict[str, object]:
     ps_services = {
         svc: {"health": ps_health, "state": "running"}
         for svc in pm.STACK_SERVICES if svc not in ps_missing
@@ -607,7 +615,7 @@ def _collectors(*, latency_ms: float = 10.0, http_status: int = 200,
                 "status": "ok", "failure_category": None, "error_class": None,
                 "name": f"{PROJECT}-{svc}-1", "state": state, "health": health,
                 "restart_count": restarts, "image": f"aios/{svc}:tag",
-                "started_at": "2026-09-11T00:00:00Z",
+                "started_at": started_at,
             }
     per_endpoint: dict[str, dict[str, object]] = {}
     for endpoint in pm.ENDPOINTS:
@@ -1336,3 +1344,457 @@ def test_real_transport_unreachable_target_categorized_safely() -> None:
     assert result.error_category in {"connection-refused", "connection-error", "timeout"}
     assert result.error_class in {"ConnectionRefusedError", "ConnectionError", "OSError", "TimeoutError"}
     assert result.elapsed_ms <= 2500.0  # 单请求超时上界被尊重
+
+
+# ---------------------------------------------------------------- M14-23 restart 增量语义
+
+
+def _baseline(counts: int | dict[str, int] = 0, *, status: str = "ok",
+              started: str | dict[str, str] = "2026-09-11T00:00:00Z",
+              source_stem: str = "monitor-20260911-000000",
+              reason: str | None = None,
+              invalid_skipped: int = 0) -> pm.RestartBaseline:
+    """构造 RestartBaseline（counts/started 支持标量铺六服务或映射）。"""
+    if isinstance(counts, int):
+        counts = {svc: counts for svc in pm.STACK_SERVICES}
+    if isinstance(started, str):
+        started = {svc: started for svc in pm.STACK_SERVICES}
+    return pm.RestartBaseline(
+        status=status, reason=reason, source_stem=source_stem,
+        collected_at="2026-09-11T00:00:00Z", restart_counts=dict(counts),
+        started_ats=dict(started), invalid_skipped_count=invalid_skipped,
+    )
+
+
+def _prior_artifact_json(*, restarts: int | dict[str, int] = 0,
+                         started: str = "2026-09-11T00:00:00Z",
+                         collected: str = "2026-09-10T00:00:00Z") -> str:
+    """旧 v1 monitor 工件形状（**无** restart_evaluation——基线兼容面）；
+    身份四件套（schema/tool/milestone/mode）+ canonical started_at_utc。"""
+    per_restart = (restarts if isinstance(restarts, dict)
+                   else {svc: restarts for svc in pm.STACK_SERVICES})
+    per_service = {
+        svc: {"status": "ok", "restart_count": per_restart.get(svc, 0), "started_at": started}
+        for svc in pm.STACK_SERVICES
+    }
+    return json.dumps({
+        "schema_version": pm.REPORT_SCHEMA_VERSION, "tool": pm.TOOL_NAME,
+        "milestone": pm.MILESTONE, "mode": "execute", "partial": False,
+        "started_at_utc": collected, "ended_at_utc": collected,
+        "collectors": {"containers": {"status": "ok", "per_service": per_service}},
+    })
+
+
+def _restart_checks(results: dict[str, object]) -> list[dict[str, str]]:
+    return [c for c in results["checks"] if c["check_id"] == "container-restarts"]  # type: ignore[index]
+
+
+# ---------------------------------------------------------------- 基线解析（纯本地只读 fail-safe）
+
+
+def test_baseline_missing_when_no_prior_artifacts(tmp_path) -> None:
+    empty = tmp_path / "artifacts"
+    empty.mkdir()
+    baseline = pm.resolve_restart_baseline(empty)
+    assert baseline.status == "missing"
+    assert baseline.reason == "no-prior-artifacts"
+    assert baseline.source_stem is None and baseline.restart_counts == {}
+    assert baseline.invalid_skipped_count == 0
+
+
+def test_baseline_missing_when_artifact_dir_absent_or_unreadable(tmp_path) -> None:
+    baseline = pm.resolve_restart_baseline(tmp_path / "no-such-dir")
+    assert baseline.status == "missing"
+    assert baseline.reason == "artifact-dir-missing"
+    blocker = tmp_path / "not-a-dir"
+    blocker.write_text("x", encoding="utf-8")
+    baseline = pm.resolve_restart_baseline(blocker)
+    assert baseline.status == "missing"
+    assert baseline.reason == "artifact-dir-unreadable"  # fail-safe，绝不崩溃
+
+
+def test_baseline_picks_latest_legal_prior_complete_artifact(tmp_path) -> None:
+    (tmp_path / "monitor-20260910-000000.json").write_text(
+        _prior_artifact_json(restarts=1), encoding="utf-8")
+    (tmp_path / "monitor-20260911-010000.json").write_text(
+        _prior_artifact_json(restarts=2, started="2026-09-11T08:00:00Z"),
+        encoding="utf-8")
+    baseline = pm.resolve_restart_baseline(tmp_path)
+    assert baseline.status == "ok"
+    assert baseline.source_stem == "monitor-20260911-010000"  # 最新合法者
+    assert baseline.collected_at == "2026-09-10T00:00:00Z"
+    assert baseline.restart_counts == {svc: 2 for svc in pm.STACK_SERVICES}
+    assert baseline.started_ats["api"] == "2026-09-11T08:00:00Z"
+    assert baseline.invalid_skipped_count == 0
+    # 旧 v1 工件（无 restart_evaluation）合法充当基线——向后兼容
+
+
+def test_baseline_skips_invalid_latest_and_counts_explicitly(tmp_path) -> None:
+    (tmp_path / "monitor-20260910-000000.json").write_text(
+        _prior_artifact_json(restarts=1), encoding="utf-8")
+    (tmp_path / "monitor-20260911-010000.json").write_text("not json", encoding="utf-8")
+    baseline = pm.resolve_restart_baseline(tmp_path)
+    assert baseline.status == "ok"  # 回退到更早合法件
+    assert baseline.source_stem == "monitor-20260910-000000"
+    assert baseline.invalid_skipped_count == 1  # 非法件显式计数，绝不静默当零基线
+
+
+def test_baseline_unusable_when_all_prior_artifacts_invalid(tmp_path) -> None:
+    (tmp_path / "monitor-20260910-000000.json").write_text("not json", encoding="utf-8")
+    (tmp_path / "monitor-20260911-010000.json").write_text("[]", encoding="utf-8")
+    baseline = pm.resolve_restart_baseline(tmp_path)
+    assert baseline.status == "unusable"
+    assert baseline.reason == "no-usable-prior-artifacts"
+    assert baseline.invalid_skipped_count == 2
+    assert baseline.source_stem is None and baseline.restart_counts == {}
+
+
+def test_baseline_requires_complete_execute_monitor_identity(tmp_path) -> None:
+    # partial=true（采集不完整时期工件）与 mode=plan 均不可作基线
+    partial = json.loads(_prior_artifact_json(restarts=3))
+    partial["partial"] = True
+    (tmp_path / "monitor-20260910-000000.json").write_text(
+        json.dumps(partial), encoding="utf-8")
+    plan_mode = json.loads(_prior_artifact_json(restarts=3))
+    plan_mode["mode"] = "plan"
+    (tmp_path / "monitor-20260911-010000.json").write_text(
+        json.dumps(plan_mode), encoding="utf-8")
+    baseline = pm.resolve_restart_baseline(tmp_path)
+    assert baseline.status == "unusable"
+    assert baseline.invalid_skipped_count == 2
+
+
+@pytest.mark.parametrize("partial_value", [True, "false", 0],
+                         ids=["partial-true", "partial-string", "partial-int"])
+def test_baseline_rejects_non_boolean_partial_forms(tmp_path, partial_value) -> None:
+    """supervisor 评审：基线必须来自**真正完整**的 execute monitor 工件——
+    partial 恒须为布尔 False；True（采集不完整）、字符串/整数等畸形形态、
+    以及**缺失** partial 键的工件一律不可作基线（显式计入 invalid，绝不
+    静默放行）。"""
+    malformed = json.loads(_prior_artifact_json(restarts=3))
+    malformed["partial"] = partial_value
+    (tmp_path / "monitor-20260910-000000.json").write_text(
+        json.dumps(malformed), encoding="utf-8")
+    missing_partial = json.loads(_prior_artifact_json(restarts=3))
+    missing_partial.pop("partial")
+    (tmp_path / "monitor-20260911-010000.json").write_text(
+        json.dumps(missing_partial), encoding="utf-8")
+    baseline = pm.resolve_restart_baseline(tmp_path)
+    assert baseline.status == "unusable"
+    assert baseline.reason == "no-usable-prior-artifacts"
+    assert baseline.invalid_skipped_count == 2
+
+
+def test_baseline_requires_milestone_identity(tmp_path) -> None:
+    """supervisor R1：基线身份加 milestone 锚（与本工具 MILESTONE 常量一致）
+    ——不符即不可作基线（显式计入 invalid）。"""
+    artifact = json.loads(_prior_artifact_json(restarts=1))
+    artifact["milestone"] = "M14-99"
+    (tmp_path / "monitor-20260910-000000.json").write_text(
+        json.dumps(artifact), encoding="utf-8")
+    baseline = pm.resolve_restart_baseline(tmp_path)
+    assert baseline.status == "unusable"
+    assert baseline.invalid_skipped_count == 1
+
+
+@pytest.mark.parametrize("collected", [
+    "2026-09-10 00:00:00",          # 缺 T/Z
+    "2026-09-10T00:00:00",          # 缺 Z
+    "2026-13-10T00:00:00Z",         # 日历非法
+    "2026-09-10T00:00:00.123Z",     # 非规范亚秒形态
+    " 2026-09-10T00:00:00Z",        # 前导空白
+    12345,                          # 非字符串
+], ids=["no-tz-sep", "no-z", "bad-calendar", "subsecond", "leading-space", "not-str"])
+def test_baseline_rejects_noncanonical_started_at_utc(tmp_path, collected) -> None:
+    """supervisor R1：started_at_utc 必须为 canonical 形态（%Y-%m-%dT%H:%M:%SZ
+    且日历合法）——畸形值绝不复制进 baseline.collected_at（整件不可作基线）。"""
+    artifact = json.loads(_prior_artifact_json(restarts=1))
+    artifact["started_at_utc"] = collected
+    (tmp_path / "monitor-20260910-000000.json").write_text(
+        json.dumps(artifact), encoding="utf-8")
+    baseline = pm.resolve_restart_baseline(tmp_path)
+    assert baseline.status == "unusable"
+    assert baseline.invalid_skipped_count == 1
+    assert baseline.collected_at is None  # 畸形值绝不外泄
+
+
+def test_baseline_missing_started_at_utc_rejected(tmp_path) -> None:
+    artifact = json.loads(_prior_artifact_json(restarts=1))
+    artifact.pop("started_at_utc")
+    (tmp_path / "monitor-20260910-000000.json").write_text(
+        json.dumps(artifact), encoding="utf-8")
+    baseline = pm.resolve_restart_baseline(tmp_path)
+    assert baseline.status == "unusable"
+    assert baseline.invalid_skipped_count == 1
+
+
+def test_baseline_symlinked_artifact_dir_refused_real_fs(tmp_path) -> None:
+    """supervisor R1 symlink 防御：symlinked 工件目录绝不跟随——固定词汇
+    missing/artifact-dir-unreadable，无路径回显。"""
+    real = tmp_path / "real"
+    real.mkdir()
+    (real / "monitor-20260910-000000.json").write_text(
+        _prior_artifact_json(restarts=1), encoding="utf-8")
+    link = tmp_path / "linked"
+    try:
+        link.symlink_to(real, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("symlink 不可用（权限/平台）")
+    baseline = pm.resolve_restart_baseline(link)
+    assert baseline.status == "missing"
+    assert baseline.reason == "artifact-dir-unreadable"
+    assert baseline.restart_counts == {}
+
+
+def test_baseline_symlink_defense_via_monkeypatch(monkeypatch, tmp_path) -> None:
+    """跨平台确定性锁定（supervisor R1）：目录 symlink 判真即零读取；候选
+    文件 symlink 计 invalid_skipped 而不跟随（回退更早合法件）。"""
+    (tmp_path / "monitor-20260910-000000.json").write_text(
+        _prior_artifact_json(restarts=1), encoding="utf-8")
+    (tmp_path / "monitor-20260911-010000.json").write_text(
+        _prior_artifact_json(restarts=2), encoding="utf-8")
+
+    def _fake_is_symlink(self: Path) -> bool:
+        return self.name in {"monitor-20260911-010000.json", "symlinked-dir"}
+
+    monkeypatch.setattr(pm.Path, "is_symlink", _fake_is_symlink)
+    # 候选 symlink：跳过最新件、回退旧件、显式计数
+    baseline = pm.resolve_restart_baseline(tmp_path)
+    assert baseline.status == "ok"
+    assert baseline.source_stem == "monitor-20260910-000000"
+    assert baseline.invalid_skipped_count == 1
+    # 目录自身 symlink：固定词汇 unreadable、零候选读取
+    baseline = pm.resolve_restart_baseline(tmp_path / "symlinked-dir")
+    assert baseline.status == "missing"
+    assert baseline.reason == "artifact-dir-unreadable"
+    assert baseline.restart_counts == {}
+
+
+def test_baseline_ignores_non_monitor_names_and_bad_stems(tmp_path) -> None:
+    (tmp_path / "monitor-20260910-000000.json").write_text(
+        _prior_artifact_json(restarts=1), encoding="utf-8")
+    for ignored in ("plan-20260911-010000.json", "monitor-20260911-010000.md",
+                    ".monitor-20260911-010000.json.tmp", "README.md"):
+        (tmp_path / ignored).write_text("x", encoding="utf-8")
+    (tmp_path / "monitor-evil.json").write_text("{}", encoding="utf-8")  # stem 不合规
+    baseline = pm.resolve_restart_baseline(tmp_path)
+    assert baseline.status == "ok"
+    assert baseline.source_stem == "monitor-20260910-000000"
+    assert baseline.invalid_skipped_count == 1  # 仅 stem 不合规的 monitor-*.json 计入
+
+
+def test_baseline_resolution_zero_shell_zero_network(monkeypatch, tmp_path) -> None:
+    _block_sockets(monkeypatch)
+    _block_subprocess(monkeypatch)
+    (tmp_path / "monitor-20260910-000000.json").write_text(
+        _prior_artifact_json(restarts=1), encoding="utf-8")
+    baseline = pm.resolve_restart_baseline(tmp_path)
+    assert baseline.status == "ok"  # 纯 Path/json 本地读取
+
+
+# ---------------------------------------------------------------- 增量阈值判定（纯函数）
+
+
+@pytest.mark.parametrize("base,current,severity,delta", [
+    (0, 0, "ok", 0),
+    (2, 2, "ok", 0),        # 累计值不变（含历史存量）→ 当轮无新增 → ok
+    (1, 2, "warn", 1),      # 增量 1 恰达 warn（含边界）
+    (0, 4, "warn", 4),
+    (0, 5, "critical", 5),  # 增量 5 恰达 critical（含边界）
+    (0, 30, "critical", 30),
+])
+def test_evaluate_restart_delta_boundaries_inclusive(
+        base: int, current: int, severity: str, delta: int) -> None:
+    results = pm.evaluate_thresholds(
+        _collectors(restarts=current), _thresholds(), baseline=_baseline(counts=base))
+    assert all(check["severity"] == severity for check in _restart_checks(results))
+    evaluation = results["restart_evaluation"]["per_service"]["api"]  # type: ignore[index]
+    assert evaluation == {"state": severity, "reason": "delta" if delta else "stable",
+                          "delta": delta}
+
+
+def test_evaluate_unchanged_cumulative_count_recovers_ok() -> None:
+    """M14-23 核心修复：api restart_count=1 静态累计 warn → 基线同为 1 的
+    下一轮稳定调度恢复 ok（不再永久 warn）。"""
+    results = pm.evaluate_thresholds(
+        _collectors(restarts=1), _thresholds(), baseline=_baseline(counts=1))
+    assert results["overall_status"] == "ok"
+    assert results["monitoring_ready"] is True
+    assert results["alerts"] == []
+    evaluation = results["restart_evaluation"]["per_service"]["api"]  # type: ignore[index]
+    assert evaluation == {"state": "ok", "reason": "stable", "delta": 0}
+
+
+@pytest.mark.parametrize("count,severity", [
+    (0, "ok"), (1, "warn"), (4, "warn"), (5, "critical"),
+])
+def test_evaluate_baseline_missing_one_time_visible_semantics(
+        count: int, severity: str) -> None:
+    """无基线：count 0 → ok；count 达 warn/critical → 一次性可见告警
+    （baseline-missing 语义，下一轮以本轮工件为基线即恢复）。"""
+    results = pm.evaluate_thresholds(_collectors(restarts=count), _thresholds(),
+                                     baseline=_baseline(status="missing",
+                                                        reason="no-prior-artifacts"))
+    assert all(check["severity"] == severity for check in _restart_checks(results))
+    evaluation = results["restart_evaluation"]["per_service"]["api"]  # type: ignore[index]
+    assert evaluation["state"] == severity
+    assert evaluation["reason"] == "baseline-missing"
+    assert evaluation["delta"] is None
+
+
+def test_evaluate_started_at_change_is_recreated_warn_then_recovers() -> None:
+    """started_at 变化 = 容器重建：一轮可见 warn（绝不静默）；以重建后
+    工件为基线的下一稳定轮恢复 ok。"""
+    results = pm.evaluate_thresholds(
+        _collectors(restarts=0, started_at="2026-09-12T00:00:00Z"), _thresholds(),
+        baseline=_baseline(counts=0, started="2026-09-11T00:00:00Z"))
+    assert all(check["severity"] == "warn" for check in _restart_checks(results))
+    evaluation = results["restart_evaluation"]["per_service"]["api"]  # type: ignore[index]
+    assert evaluation == {"state": "warn", "reason": "container-recreated", "delta": None}
+    assert results["overall_status"] == "warn"
+    # 下一稳定轮：基线 = 重建后事实（新 started_at、同 count）→ ok
+    stable = pm.evaluate_thresholds(
+        _collectors(restarts=0, started_at="2026-09-12T00:00:00Z"), _thresholds(),
+        baseline=_baseline(counts=0, started="2026-09-12T00:00:00Z",
+                           source_stem="monitor-20260912-000000"))
+    assert all(check["severity"] == "ok" for check in _restart_checks(stable))
+
+
+def test_evaluate_count_decrease_is_counter_reset_never_silent_zero() -> None:
+    """同 started_at 而 count 下降 = 计数重置：一轮可见 warn；负增量绝不
+    静默映射为零。"""
+    results = pm.evaluate_thresholds(
+        _collectors(restarts=1), _thresholds(), baseline=_baseline(counts=3))
+    assert all(check["severity"] == "warn" for check in _restart_checks(results))
+    evaluation = results["restart_evaluation"]["per_service"]["api"]  # type: ignore[index]
+    assert evaluation == {"state": "warn", "reason": "counter-reset", "delta": None}
+
+
+def test_evaluate_inspect_failure_marks_facts_missing_in_evaluation() -> None:
+    results = pm.evaluate_thresholds(_collectors(inspect_failed=("api",)), _thresholds(),
+                                     baseline=_baseline(counts=0))
+    evaluation = results["restart_evaluation"]["per_service"]["api"]  # type: ignore[index]
+    assert evaluation == {"state": "critical", "reason": "facts-missing", "delta": None}
+
+
+def _m1423_report(restarts: int, baseline: pm.RestartBaseline,
+                  collectors: dict[str, object]) -> dict[str, object]:
+    results = pm.evaluate_thresholds(collectors, _thresholds(), baseline=baseline)
+    return pm.build_report(mode="execute", started_utc="2026-09-11T00:00:00Z",
+                           ended_utc="2026-09-11T00:01:00Z",
+                           config=pm.build_config(
+                               project=PROJECT, profile=pm.DEFAULT_PROFILE,
+                               compose_file=Path(COMPOSE), endpoints=list(pm.ENDPOINTS),
+                               log_tail=200, request_timeout_seconds=5.0,
+                               thresholds=_thresholds()),
+                           collectors=collectors, threshold_results=results,
+                           proxy_env_keys_present=False)
+
+
+def test_restart_evaluation_additive_schema_in_results_and_report() -> None:
+    results = pm.evaluate_thresholds(_collectors(), _thresholds(),
+                                     baseline=_baseline(counts=0))
+    evaluation = results["restart_evaluation"]
+    assert isinstance(evaluation, dict)
+    assert set(evaluation["per_service"]) == set(pm.STACK_SERVICES)  # type: ignore[index]
+    baseline_meta = evaluation["baseline"]  # type: ignore[index]
+    for key in ("status", "reason", "source_stem", "collected_at",
+                "invalid_skipped_count"):
+        assert key in baseline_meta  # type: ignore[operator]
+    report = _m1423_report(0, _baseline(counts=0), _collectors())
+    assert report["threshold_results"]["restart_evaluation"] == evaluation  # 加法嵌入
+    # plan 报告零状态面：不出现 restart_evaluation
+    assert "restart_evaluation" not in json.dumps(_plan_report(), ensure_ascii=False)
+
+
+def test_restart_evaluation_visible_in_markdown() -> None:
+    report = _m1423_report(1, _baseline(counts=1), _collectors(restarts=1))
+    markdown = pm.render_markdown(report)
+    assert "restart" in markdown
+    assert "baseline=monitor-20260911-000000" in markdown
+
+
+# ---------------------------------------------------------------- main execute 出口（两轮恢复）
+
+
+class _FakeClock:
+    """可注入 stamp 序列（每轮 main 构造一次）。"""
+
+    def __init__(self, stamps: list[str]) -> None:
+        self._stamps = list(stamps)
+
+    def utc_now_iso(self) -> str:
+        return "2026-09-13T01:00:00Z"
+
+    def stamp(self) -> str:
+        return self._stamps.pop(0)
+
+
+def test_main_execute_recovers_stale_cumulative_warn_e2e(monkeypatch, tmp_path) -> None:
+    """e2e：工件目录已有 restart_count=1 的旧 v1 工件（真实生产 17 连 warn
+    形态）→ 本轮采集同 count 同 started_at → overall ok 恢复，且生产读取
+    面零新增（仍 1 compose + 6 inspect + 6 logs）。"""
+    _block_sockets(monkeypatch)
+    _block_subprocess(monkeypatch)
+    (tmp_path / "monitor-20260912-120000.json").write_text(
+        _prior_artifact_json(restarts={"api": 1}, started="2026-09-11T00:00:00Z",
+                             collected="2026-09-12T12:00:00Z"), encoding="utf-8")
+    runner = FakeRunner()  # 默认 inspect：restart 0 / started 2026-09-11T00:00:00Z
+    api_one = dict(runner.inspect_facts)
+    api_one["api"] = "running\thealthy\t1\taios/api:tag\t2026-09-11T00:00:00Z"
+    runner.inspect_facts = api_one
+    _patch_gate(monkeypatch, runner, FakeTransport())
+    rc = pm.main(["--execute", "--confirm", pm.CONFIRM_PHRASE,
+                  "--artifact-dir", str(tmp_path)])
+    assert rc == pm.EXIT_OK
+    current = max(tmp_path.glob("monitor-*.json"))  # 最新 stem = 本轮报告
+    report = json.loads(current.read_text("utf-8"))
+    assert report["overall_status"] == "ok"  # 不再因存量 1 永久 warn
+    evaluation = report["threshold_results"]["restart_evaluation"]
+    assert evaluation["baseline"] == {
+        "status": "ok", "reason": None, "source_stem": "monitor-20260912-120000",
+        "collected_at": "2026-09-12T12:00:00Z", "invalid_skipped_count": 0,
+    }
+    assert evaluation["per_service"]["api"] == {"state": "ok", "reason": "stable",
+                                                "delta": 0}
+    # 生产读取面零新增：基线解析纯本地文件，不追加任何 docker 命令
+    assert sum(1 for c in runner.calls if c[1] == "compose") == 1
+    assert sum(1 for c in runner.calls if c[1] == "inspect") == 6
+    assert sum(1 for c in runner.calls if c[1] == "logs") == 6
+
+
+def test_main_execute_two_rounds_first_warns_then_recovers(monkeypatch, tmp_path) -> None:
+    """空工件目录 + count=1：首轮 baseline-missing 一次性 warn（exit 0 恒
+    可见）；第二轮以首轮工件为基线、count 不变 → ok。"""
+    _block_sockets(monkeypatch)
+    _block_subprocess(monkeypatch)
+    runner = FakeRunner()
+    api_one = dict(runner.inspect_facts)
+    api_one["api"] = "running\thealthy\t1\taios/api:tag\t2026-09-11T00:00:00Z"
+    runner.inspect_facts = api_one
+    _patch_gate(monkeypatch, runner, FakeTransport())
+    stamps = ["20260913-010000", "20260913-011500"]
+    shared_clock = _FakeClock(stamps)  # 两轮共享同一序列（每轮 main 构造一次）
+    monkeypatch.setattr(pm, "RealClock", lambda: shared_clock)
+    # 第一轮：无基线 → warn（可见、exit 0）
+    rc = pm.main(["--execute", "--confirm", pm.CONFIRM_PHRASE,
+                  "--artifact-dir", str(tmp_path)])
+    assert rc == pm.EXIT_OK
+    first = json.loads((tmp_path / "monitor-20260913-010000.json").read_text("utf-8"))
+    assert first["overall_status"] == "warn"
+    first_eval = first["threshold_results"]["restart_evaluation"]
+    assert first_eval["baseline"]["status"] == "missing"
+    assert first_eval["per_service"]["api"] == {"state": "warn",
+                                                "reason": "baseline-missing",
+                                                "delta": None}
+    # 第二轮：首轮工件已成基线，count 不变 → ok
+    rc = pm.main(["--execute", "--confirm", pm.CONFIRM_PHRASE,
+                  "--artifact-dir", str(tmp_path)])
+    assert rc == pm.EXIT_OK
+    second = json.loads((tmp_path / "monitor-20260913-011500.json").read_text("utf-8"))
+    assert second["overall_status"] == "ok"
+    second_eval = second["threshold_results"]["restart_evaluation"]
+    assert second_eval["baseline"]["status"] == "ok"
+    assert second_eval["baseline"]["source_stem"] == "monitor-20260913-010000"
+    assert second_eval["per_service"]["api"] == {"state": "ok", "reason": "stable",
+                                                 "delta": 0}
