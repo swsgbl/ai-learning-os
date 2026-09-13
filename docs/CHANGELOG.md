@@ -7,6 +7,39 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 
 ### Added
 
+- M14-23 restart 增量语义生产验收回填（docs-only，零代码/零测试/零
+  workflow 改动、零生产触碰；分支 `docs/m14-23-restart-delta-production-
+  acceptance` 基于 `main@6efcdfd`（PR #100 merge），本地 commit 待
+  supervisor 审查发布）。把 Codex supervisor 2026-09-13 真实计划任务验收
+  事实回填入库，收口 M14-23 遗留边界「真实计划任务调度下的新语义验证尚未
+  运行」：①PR #100（M14-23，feature head `5926172` 含 R1 加固）合并
+  main——merge `6efcdfd`（parents `73d0443` + `5926172`，本地 git 可
+  验证）；PR CI run `34750025828` 与合并后 main push CI run
+  `34750207530` 均 completed/success **5/5 job**（supervisor 验收事实）；
+  ②计划任务 `AIOS-Monitoring-Pipeline` 合并后**自然调度两轮**（18:00 与
+  18:15（+08:00），均 Last Result=0，**零手动生产触发**）：两轮管道
+  `overall_status=ok`、monitor → history → insights 三步全 ok exit 0
+  （monitor 4.068/4.947s、history 0.364/0.31s、insights 0.282/0.201s，
+  lock acquired/released=true）；③**语义翻面核心证据**：17:45 旧代码轮
+  `monitor-20260913-094502.json` overall warn（api 累计 restart_count=1、
+  无 restart_evaluation）；18:00 新代码轮 `monitor-20260913-100002.json`
+  overall **ok**/monitoring_ready **true**——api 累计 1 不变、同容器实例
+  （started_at 三轮逐字相同）、state ok/reason stable/**delta 0**、基线
+  取自 17:45 **旧 v1 工件**（向后兼容基线路径生产实证）；18:15 轮
+  `monitor-20260913-101502.json` 同构保持（滚动基线
+  monitor-20260913-100002）；④18:15 刷新后 history **40 样本
+  ok=3/warn=37**（最新行 ok，api 累计 1 与 restart_evaluation
+  state ok/reason stable/delta 0 同档并存）、insights 40 样本 ok=3、
+  当前 ok 连胜 ×2、最长 non-ok 连败 **37 恰终止于旧语义最后一轮
+  （09:45:02Z）**、恢复转移恰 1 次 @ 10:00:02Z、api 增量/事件/恢复计数
+  全 0（累计 restart_total=39 与增量口径明确区分）。证据
+  `docs/evidence/m14-23-restart-delta-production-acceptance/`（安全摘要：
+  文件名 + SHA-256 + 字节数 + 时长/状态，无绝对路径/容器 ID/密钥；
+  回填回合对 git 谱系与全部留档哈希独立只读复核）。**边界（诚实口径）：
+  两轮自然调度验证恢复语义正确性与短期（两轮窗口）稳定性——不构成外部
+  告警、指标时序存储、长期稳定性、跨机监控的验证，更不构成 production
+  readiness 宣称；重建/重置/baseline-missing 路径的真实生产触发尚未发生
+  （仅契约测试覆盖）；`production_ready=false` 不变**。
 - M14-23 监控 restart 增量语义修复（契约扩展，含 supervisor R1 加固 amend；
   分支 `feat/m14-23-restart-delta-monitoring` 基于 `main@73d0443`，本 Claude
   开发回合独占 worktree 仅一个本地 commit（R1 修正 amend 并入），supervisor
