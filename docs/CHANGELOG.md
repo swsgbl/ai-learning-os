@@ -7,6 +7,30 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 
 ### Added
 
+- M14-24 语音健康端点延迟/劣化修复（cosyvoice bridge：liveness/readiness
+  分离 + 合成路径有界分块转换；funasr 侧根因确认为上游包事件循环阻塞、记为
+  残余风险）。分支 `fix/m14-24-voice-health-latency` 基于 `main@c4bda69`
+  （PR #101 merge），本地 commit 待 supervisor 审查发布。生产触发：
+  2026-09-13 自然监控 14:00/14:45 两轮 voice 端点 warn（funasr-health
+  3619/4813ms、cosyvoice-health 1001ms），14:15/14:30 两轮 funasr+cosyvoice
+  双双 5s 超时（incomplete）；容器面全程 healthy、restart 增量 0。根因：
+  ①funasr（上游 `funasr==1.4.15`）：转写/健康同跑单 uvicorn 事件循环且推理
+  内联阻塞——第三方包，本仓不修改，残余风险与后续建议见证据 README；
+  ②cosyvoice bridge（本仓）：`/health` 本身零锁正确，但合成在推理锁内做
+  整张量单次 `tolist`（非抢占 C 调用）长时独占 GIL 饿死健康线程，且缺轻量
+  liveness。修复（`tools/voice/cosyvoice_openai_bridge.py`）：新增
+  `GET /health/live`（恒 200、不取推理锁、不碰模型，readiness 如实透出）；
+  `/health` 既有 503/200 契约逐字节不变（向后兼容回归锁）；
+  `_tensor_to_samples` + `SAMPLE_CHUNK_SIZE=50_000` 分块转换、推理锁收窄到
+  模型前向、转换移出锁外、块间显式 yield 释放 GIL。新增
+  `services/api/tests/test_voice_health_bridge.py` 14 项（liveness 三态/
+  冷启动/向后兼容逐字节/持锁并发探测计时/8 路并发/分块边界与 yield 次数/
+  参数守卫/文本锚点；TDD RED 11 项实证后 GREEN）。验证：新套件 14 passed +
+  `test_voice_local_scripts.py` 40 passed/1 skipped（合计 54）+ ruff +
+  `py_compile` + `git diff --check`。零生产触碰（不停/启/重启任何服务/
+  容器/voice 进程、零 Docker 变更、零计划任务变更、零监控管道执行、监控
+  阈值零改动不遮蔽告警）；合成/fake 测试；`production_ready=false` 不变。
+  证据 `docs/evidence/m14-24-voice-health-latency/README.md`
 - M14-23 restart 增量语义生产验收回填（docs-only，零代码/零测试/零
   workflow 改动、零生产触碰；分支 `docs/m14-23-restart-delta-production-
   acceptance` 基于 `main@6efcdfd`（PR #100 merge），本地 commit 待

@@ -13,7 +13,7 @@ adapter + 脚本 + 文档；**M14-02 轮（2026-09-10）已在本机完成真实
 | 环节 | provider 名 | 本机服务 | 端口 | 说明 |
 |------|-------------|----------|------|------|
 | ASR | `local-funasr` | funasr-server（SenseVoiceSmall，CPU） | 8010 | `/v1/audio/transcriptions`，无鉴权；适合录音片段转写；流式（Paraformer-zh-streaming / sherpa-onnx）另立项 |
-| TTS | `local-cosyvoice` | CosyVoice 官方仓库 + `cosyvoice_openai_bridge.py` | 8011 | `/v1/audio/speech` 恒返回 WAV；`/health` ready 后 200 |
+| TTS | `local-cosyvoice` | CosyVoice 官方仓库 + `cosyvoice_openai_bridge.py` | 8011 | `/v1/audio/speech` 恒返回 WAV；`/health` ready 后 200（loading/failed 503）；`/health/live` 恒 200 轻量 liveness（M14-24，readiness 仅信息透出、不取推理锁） |
 
 首发显式**不做**三引擎同卡常驻：ASR 走 CPU、TTS 用 GPU（cu128 torch），
 Qwen3-14B 等 LLM 另行安排（RTX 5070 Ti 16GB 放不下全部常驻）。
