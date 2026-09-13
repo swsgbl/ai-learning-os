@@ -308,6 +308,21 @@ PR CI run `34682507203` 与合并后 main push CI run `34682734884` 均全部
 开放）。指标与边界细节见
 `docs/evidence/m14-13-monitoring-history/`。
 
+状态（M14-20 修复，2026-09-13）：**历史 incomplete 工件跳过类**——M14-14
+管道进入真实定时运行后，默认源目录持续混有 2026-09-12 时期（栈修复期间）
+monitor 自产的 `partial=true + overall_status=incomplete` 工件，旧「任何
+incomplete 一律整体拒绝」语义令 history 步骤永久 EXIT 2、监控历史零索引。
+修复 = 识别该**窄类**（完整 monitor 身份 + incomplete/partial 共现对——
+monitor 契约中二者恒共现，采集器事实可合法含 failed，无法经完整校验）→
+**整件跳过不入档**（`skipped_incomplete_count` 显式于摘要与 stdout；源文件
+未改动）；完整 ok/warn/critical 样本照常严格校验入档；其余任何
+incomplete/partial 形态（身份不符、incomplete+partial=false、完整状态+
+partial=true 等矛盾组合）仍 fail-closed；候选全为 incomplete →
+`no-complete-sources` 拒绝。真实 canonical 源目录实证（39 工件 = 31 历史
+incomplete + 8 完整）：exit 0、8 条完整记录（1 ok + 7 warn）入档、跳过 31
+计数显式、源文件逐字节不变、两遍输出逐字节相同。细节见
+`docs/evidence/m14-20-monitoring-history-historical-incomplete/`。
+
 ```
 python tools/ops/monitoring_history.py                 # 默认源/输出目录
 python tools/ops/monitoring_history.py --retention 200
@@ -325,7 +340,11 @@ python tools/ops/monitoring_history.py --retention 200
   milestone/mode=execute/project 白名单/双 UTC 时间戳格式与顺序/
   overall_status∈{ok,warn,critical}（incomplete 拒绝）/partial 恒
   false/阈值计数/六 compose 服务/六容器事实（RestartCount）/五端点
-  状态+延迟（有限数值）/六日志 error_total；not-json 同拒。
+  状态+延迟（有限数值）/六日志 error_total；not-json 同拒。**唯一例外
+  （M14-20）**：识别 M14-12 monitor 自产的历史 incomplete 工件类（完整
+  monitor 身份 + incomplete/partial=true 共现对）→ 整件跳过不入档
+  （计数显式，源文件未改动）；其余任何 incomplete/partial 形态仍
+  fail-closed；候选全为 incomplete → no-complete-sources 拒绝。
 - **去重/排序/留存**：逐文件 SHA-256；同哈希去重（保留 (collected_at,
   stem) 最小者，duplicate_count 显式）；同 (project, collected_at) 不同
   哈希 = conflicting-duplicate 拒绝；唯一样本按 (collected_at, stem)
@@ -344,7 +363,7 @@ python tools/ops/monitoring_history.py --retention 200
   collected_at——零墙钟，输出逐字节可复现**；两文件同目录 tmp+fsync+
   os.replace 原子落盘（失败清理 tmp）；仅在全部输入校验通过后才写。
 - 路径防御：源文件/源目录/输出路径/输出祖先的 symlink 一律拒绝；
-  退出码 0 成功 / 2 任何拒绝（含零源、源目录缺失、写失败）。
+  退出码 0 成功 / 2 任何拒绝（含零源、零完整样本、源目录缺失、写失败）。
 
 ## monitoring_pipeline.py（M14-14）
 

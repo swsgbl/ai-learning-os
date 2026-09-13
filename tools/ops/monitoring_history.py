@@ -14,7 +14,15 @@
   project/双 UTC 时间戳与顺序/overall_status∈{ok,warn,critical}/
   partial 恒 false/阈值计数/六 compose 服务/六容器事实/五端点状态+延迟
   （有限数值）/六日志 error_total）；**malformed / partial / incomplete
-  一律 fail-closed**（输出零写入）。
+  一律 fail-closed**（输出零写入）——唯一例外（M14-20）：**识别 M14-12
+  monitor 自产的历史 incomplete 工件类**（完整 monitor 身份 +
+  ``overall_status=incomplete`` + ``partial=true``——monitor 契约中任一
+  采集器失败即二者恒共现，且采集器事实可合法含 failed，无法经完整校验）
+  → **整件跳过不入档**（``skipped_incomplete_count`` 显式计数于摘要与
+  stdout；源文件绝不改动/删除）；其余任何 incomplete/partial 形态
+  （身份不符、incomplete+partial=false、完整状态+partial=true 等矛盾
+  组合）仍一律 fail-closed。候选全为 incomplete（零完整样本）→
+  ``no-complete-sources`` 拒绝。
 - 去重与排序：逐文件 SHA-256；同哈希 = 同内容 → 去重（保留排序后首个，
   计 duplicate_count）；同 (project, collected_at) 不同哈希 = 冲突 →
   fail-closed。唯一样本按（collected_at, 文件名 stem）确定性排序。
@@ -34,7 +42,8 @@
   fsync + os.replace 原子落盘；symlink 组件/越界路径一律拒绝；仅在
   **全部输入校验通过之后**才写任何输出。
 - 退出码：0 成功；2 任何拒绝（参数超界、源目录缺失/symlink、零源、
-  malformed、partial/incomplete、冲突重复、写失败）。
+  零完整样本（no-complete-sources）、malformed、partial/incomplete
+  （未识别类）、冲突重复、写失败）。
 
 用法（仓库根）：
   python tools/ops/monitoring_history.py                 # 默认源/输出目录
@@ -83,8 +92,14 @@ ENDPOINT_IDS: tuple[str, ...] = (
 ARTIFACT_STEM_RE = re.compile(r"^monitor-[0-9]{8}-[0-9]{6}$")
 PROJECT_NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 
-#: 历史接受的完整采集状态（incomplete 恒拒绝）
+#: 完整样本面接受的采集状态（incomplete 恒拒绝；历史 incomplete 类经
+#: is_recognized_incomplete 整件识别跳过——M14-20）
 ACCEPTED_OVERALL_STATUSES = frozenset({"ok", "warn", "critical"})
+
+#: 历史 incomplete 工件类（M14-20）：M14-12 monitor 自产的采集不完整时期
+#: 工件状态对（monitor 契约：任一采集器失败 → partial=true +
+#: overall_status=incomplete 恒共现；ok/warn/critical 恒 partial=false）
+HISTORICAL_INCOMPLETE_STATUS = "incomplete"
 
 #: 留存：默认 500，硬顶 5000，下限 1
 DEFAULT_RETENTION = 500
@@ -290,6 +305,25 @@ def validate_report(data: object) -> dict[str, object]:
 # ---------------------------------------------------------------- 发现与加载
 
 
+def is_recognized_incomplete(data: object) -> bool:
+    """识别 M14-12 monitor 自产的历史 incomplete 工件类（M14-20）：要求
+    **完整 monitor 身份**（schema_version/tool/milestone/mode）+ 状态对
+    ``overall_status=incomplete`` 且 ``partial is True``（monitor 契约中
+    二者恒共现）。识别后整件跳过不入档（仅计数）；跳过件内容绝不进入
+    任何输出。其余任何 incomplete/partial 形态（身份不符/矛盾组合）返回
+    False → 走 validate_report 严格 fail-closed。"""
+    if not isinstance(data, dict):
+        return False
+    return (
+        data.get("schema_version") == EXPECTED_MONITOR_SCHEMA_VERSION
+        and data.get("tool") == MONITOR_TOOL_NAME
+        and data.get("milestone") == EXPECTED_MILESTONE
+        and data.get("mode") == "execute"
+        and data.get("overall_status") == HISTORICAL_INCOMPLETE_STATUS
+        and data.get("partial") is True
+    )
+
+
 def discover_candidates(names: list[str]) -> list[str]:
     """仅 monitor-*.json 入选；glob 命中但 stem 不合规（含日历非法日期）→
     fail-closed（被拒名不回显）。"""
@@ -309,8 +343,9 @@ def discover_candidates(names: list[str]) -> list[str]:
     return candidates
 
 
-def load_sample(store: Store, source_dir: Path, name: str) -> Sample:
-    """读取 + 哈希 + 校验单个源工件（symlink/解析/校验违规均 fail-closed）。"""
+def load_sample(store: Store, source_dir: Path, name: str) -> Sample | None:
+    """读取 + 哈希 + 校验单个源工件（symlink/解析/校验违规均 fail-closed）。
+    历史 incomplete 工件类（is_recognized_incomplete）返回 None 跳过不入档。"""
     path = source_dir / name
     if store.is_symlink(path):
         raise HistoryError("symlink-source")
@@ -319,6 +354,8 @@ def load_sample(store: Store, source_dir: Path, name: str) -> Sample:
         data = json.loads(raw.decode("utf-8"))
     except (ValueError, UnicodeDecodeError):
         raise HistoryError("not-json") from None
+    if is_recognized_incomplete(data):
+        return None
     fields = validate_report(data)
     sha256 = hashlib.sha256(raw).hexdigest()
     return Sample(
@@ -329,8 +366,11 @@ def load_sample(store: Store, source_dir: Path, name: str) -> Sample:
 # ---------------------------------------------------------------- 管道（去重/排序/留存）
 
 
-def build_samples(store: Store, source_dir: Path) -> list[Sample]:
-    """源目录 → 全部已验证样本（任何违规即抛错，先于任何输出写入）。"""
+def discover_and_classify(store: Store, source_dir: Path) -> tuple[list[Sample], int]:
+    """源目录 → （完整样本列表, 跳过的历史 incomplete 工件计数）。任何
+    未识别类违规即抛错，先于任何输出写入；候选存在但全为 incomplete
+    （零完整样本）→ no-complete-sources 拒绝（fail-closed，绝不从空集
+    构建历史）。symlink 防御覆盖全部候选（含跳过件）。"""
     if not store.exists(source_dir):
         raise HistoryError("source-dir-missing")
     reject_symlinked_path(store, source_dir)
@@ -338,10 +378,24 @@ def build_samples(store: Store, source_dir: Path) -> list[Sample]:
     if not candidates:
         raise HistoryError("no-sources")
     samples: list[Sample] = []
+    skipped_incomplete = 0
     for name in candidates:
         reject_symlinked_path(store, source_dir / name)
-        samples.append(load_sample(store, source_dir, name))
-    return samples
+        sample = load_sample(store, source_dir, name)
+        if sample is None:
+            skipped_incomplete += 1
+        else:
+            samples.append(sample)
+    if not samples:
+        raise HistoryError("no-complete-sources")
+    return samples, skipped_incomplete
+
+
+def build_samples(store: Store, source_dir: Path) -> list[Sample]:
+    """委托兼容面（monitoring_insights monitor 工件目录形态——单一
+    schema 事实源）：仅返回完整样本列表；历史 incomplete 跳过语义同样
+    生效（固定词汇拒绝原因原样透传）。"""
+    return discover_and_classify(store, source_dir)[0]
 
 
 def dedupe_and_sort(samples: list[Sample]) -> tuple[list[Sample], int]:
@@ -403,8 +457,10 @@ def percentile(sorted_values: list[float], fraction: float) -> float:
 
 
 def build_summary(*, retained: list[Sample], discovered: int, duplicates: int,
-                  omitted_older: int, retention: int) -> dict[str, object]:
-    """确定性趋势摘要（生成时间戳取自最新源样本 collected_at——零墙钟）。"""
+                  omitted_older: int, retention: int,
+                  skipped_incomplete: int = 0) -> dict[str, object]:
+    """确定性趋势摘要（生成时间戳取自最新源样本 collected_at——零墙钟）。
+    skipped_incomplete：识别跳过的历史 incomplete 工件计数（M14-20，不入档）。"""
     status_counts = {"ok": 0, "warn": 0, "critical": 0}
     for sample in retained:
         status_counts[sample.overall_status] += 1
@@ -432,6 +488,7 @@ def build_summary(*, retained: list[Sample], discovered: int, duplicates: int,
         "records_retained": len(retained),
         "duplicate_count": duplicates,
         "omitted_older_count": omitted_older,
+        "skipped_incomplete_count": skipped_incomplete,
         "oldest_retained_at": oldest.collected_at,
         "newest_retained_at": newest.collected_at,
         "status_counts": status_counts,
@@ -467,6 +524,10 @@ def render_summary_markdown(summary: dict[str, object]) -> str:
             f"（留存上限 {summary['retention']}，省略更早 {summary['omitted_older_count']} 条，"
             f"重复内容 {summary['duplicate_count']} 条）"
         ),
+        (
+            f"- 历史不完整工件：跳过 {summary['skipped_incomplete_count']} 条"
+            "（M14-12 partial=true 采集不完整时期工件，不入档；源文件未改动）"
+        ),
         (f"- 保留边界：oldest {summary['oldest_retained_at']} ~ "
          f"newest {summary['newest_retained_at']}"),
         (f"- 状态计数：ok={status['ok']} warn={status['warn']} critical={status['critical']}"
@@ -499,6 +560,10 @@ def render_summary_markdown(summary: dict[str, object]) -> str:
         "",
         "边界：",
         "- 源为 M14-12 monitor 只读 JSON 工件；原始工件永不改动/删除",
+        (
+            "- 历史 incomplete 工件（M14-12 monitor 自产 partial=true 类）识别后跳过"
+            "不入档（计数显式）；其余任何 malformed/partial/incomplete 形态一律 fail-closed"
+        ),
         "- 记录绝无原始日志行/密钥/secret/env 值（仅计数、状态、有限延迟数值）",
         "- 摘要零墙钟——生成时间戳取自最新源样本，输出逐字节可复现",
         "- 本工具零子进程/零网络/零容器面/零计划任务/零 env 读取",
@@ -531,14 +596,16 @@ def write_outputs(store: Store, output_dir: Path, records: list[dict[str, object
 
 def run_history(*, store: Store, source_dir: Path, output_dir: Path,
                 retention: int) -> dict[str, object]:
-    """主管道：发现→校验→去重→排序→留存→摘要→写出（拒绝时零输出）。"""
-    samples = build_samples(store, source_dir)
+    """主管道：发现→分类（历史 incomplete 跳过）→校验→去重→排序→留存→
+    摘要→写出（拒绝时零输出）。"""
+    samples, skipped_incomplete = discover_and_classify(store, source_dir)
     discovered = len(samples)
     unique, duplicates = dedupe_and_sort(samples)
     retained, omitted = apply_retention(unique, retention)
     records = [build_record(sample) for sample in retained]
     summary = build_summary(retained=retained, discovered=discovered, duplicates=duplicates,
-                            omitted_older=omitted, retention=retention)
+                            omitted_older=omitted, retention=retention,
+                            skipped_incomplete=skipped_incomplete)
     write_outputs(store, output_dir, records, summary)
     return summary
 
@@ -586,6 +653,10 @@ def main(argv: list[str] | None = None) -> int:
     assert isinstance(status, dict)
     print(f"{TAG} 保留 {summary['records_retained']} 条（发现 {summary['records_discovered']}，"
           f"重复 {summary['duplicate_count']}，省略更早 {summary['omitted_older_count']}）", flush=True)
+    skipped = summary["skipped_incomplete_count"]
+    assert isinstance(skipped, int)
+    if skipped > 0:
+        print(f"{TAG} 跳过历史 incomplete 工件: {skipped}（不入档，源文件未改动）", flush=True)
     print(f"{TAG} 状态: ok={status['ok']} warn={status['warn']} critical={status['critical']}", flush=True)
     print(f"{TAG} 边界: {summary['oldest_retained_at']} ~ {summary['newest_retained_at']}"
           f"（生成时间戳取自最新源: {summary['generated_from_newest_at']}）", flush=True)

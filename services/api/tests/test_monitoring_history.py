@@ -19,6 +19,13 @@ r"""M14-13 tools/ops/monitoring_history.py 契约测试：监控历史索引 + �
   全集 + SHA-256 与源字节一致）；多样本确定性排序；同哈希去重（保留
   (collected_dt, stem) 最小者，duplicate_count 显式）；同 (project,
   collected_at) 不同哈希 → conflicting-duplicate 拒绝；
+- 历史 incomplete 工件（M14-20）：识别 M14-12 monitor 自产的历史
+  incomplete 类（完整 monitor 身份 + overall_status=incomplete +
+  partial=true 共现对）→ 跳过不入档（计数显式于摘要与 stdout；源文件
+  逐字节不变）；完整 ok/warn/critical 样本照常入档；候选全为
+  incomplete → no-complete-sources 拒绝；识别要求完整 monitor 身份
+  （tool/milestone/schema_version/mode 任一不符仍 fail-closed）；跳过
+  件不参与去重/留存计数；
 - 留存：保留最新 N + omitted_older_count + oldest/newest 边界；N 大于
   样本数全保留；CLI 超界（0/5001）拒绝；源文件与目录在运行前后逐字节
   不变（绝不改动/删除源工件）；
@@ -455,6 +462,160 @@ def test_collector_not_ok_refused(monkeypatch, tmp_path) -> None:
     report = _report("2026-09-11T17:39:20Z", partial=True)
     report["collectors"]["compose_ps"]["status"] = "failed"  # type: ignore[index]
     _refused_for_payload(monkeypatch, tmp_path, json.dumps(report))
+
+
+# ---------------------------------------------------------------- 历史 incomplete 工件（M14-20）
+
+
+def _incomplete_report(collected_at: str, *, schema_version: int = 1,
+                       tool: str = "tools/ops/production_monitor.py",
+                       milestone: str = "M14-12", mode: str = "execute",
+                       partial: bool = True) -> dict[str, object]:
+    """canonical 形状的历史 incomplete 工件（与 2026-09-12 时期真实工件
+    同构：cosyvoice-health 端点失败 → endpoints 采集器 failed →
+    partial=true + overall_status=incomplete——monitor 契约中二者恒共现，
+    且采集器事实可合法含 failed，故无法经完整校验，只能整件识别跳过）。"""
+    services = {s: {"health": "healthy", "state": "running"} for s in SERVICES}
+    containers = {s: {"status": "ok", "failure_category": None, "error_class": None,
+                      "name": f"{PROJECT}-{s}-1", "state": "running", "health": "healthy",
+                      "restart_count": 0, "image": f"aios/{s}:tag",
+                      "started_at": "2026-09-11T00:00:00Z"}
+                  for s in SERVICES}
+    endpoints = {e: {"status": "ok", "failure_category": None, "error_class": None,
+                     "http_status": 200, "latency_ms": 10.0}
+                 for e in ENDPOINTS}
+    endpoints["cosyvoice-health"] = {
+        "status": "failed", "failure_category": "endpoint-unhealthy",
+        "error_class": "ConnectError", "http_status": None, "latency_ms": None,
+    }
+    logs = {s: {"status": "ok", "failure_category": None, "error_class": None,
+                "lines_scanned": 5,
+                "levels": {"fatal": 0, "error": 0, "critical": 0,
+                           "warning": 0, "traceback": 0, "panic": 0},
+                "error_total": 0}
+            for s in SERVICES}
+    return {
+        "schema_version": schema_version, "tool": tool, "milestone": milestone,
+        "mode": mode,
+        "started_at_utc": collected_at, "ended_at_utc": collected_at,
+        "config": {"project": PROJECT, "profile": "local"},
+        "boundaries": ["read-only collection"],
+        "collectors": {
+            "compose_ps": {"status": "ok", "failure_category": None, "error_class": None,
+                           "services": services},
+            "containers": {"status": "ok", "per_service": containers},
+            "endpoints": {"status": "failed", "failure_category": "endpoint-unhealthy",
+                          "error_class": None, "per_endpoint": endpoints},
+            "logs": {"status": "ok", "per_service": logs},
+        },
+        "partial": partial,
+        "threshold_results": {"counts": {"ok": 33, "warn": 0, "critical": 1}},
+        "overall_status": "incomplete",
+        "monitoring_ready": False,
+    }
+
+
+def test_historical_incomplete_skipped_complete_samples_indexed(tmp_path, capsys) -> None:
+    """M14-20 根因回归：默认源目录混有 2026-09-12 时期历史 incomplete 工件
+    时，完整 ok/warn 样本必须照常入档（跳过计数显式；源文件逐字节不变）。"""
+    source, output = tmp_path / "src", tmp_path / "out"
+    source.mkdir()
+    incomplete_paths = [
+        _write_sample(source, "2026-09-12T17:37:46Z",
+                      payload=json.dumps(_incomplete_report("2026-09-12T17:37:46Z"))),
+        _write_sample(source, "2026-09-12T18:00:01Z",
+                      payload=json.dumps(_incomplete_report("2026-09-12T18:00:01Z"))),
+    ]
+    _write_sample(source, "2026-09-11T17:39:20Z", overall="ok")
+    _write_sample(source, "2026-09-13T01:04:14Z", overall="warn", latency_ms=1500.0)
+    before = {p.name: p.read_bytes() for p in sorted(source.iterdir())}
+    rc = _run_cli(None, source, output)
+    assert rc == mh.EXIT_OK
+    records = _records(output)
+    assert [r["overall_status"] for r in records] == ["ok", "warn"]  # 时间升序，仅完整样本
+    assert all(r["partial"] is False for r in records)
+    summary_text = (output / "history-summary.md").read_text(encoding="utf-8")
+    assert "历史不完整工件：跳过 2 条" in summary_text
+    assert "发现 2 / 保留 2" in summary_text  # discovered 仅计完整样本
+    out = capsys.readouterr().out
+    assert "跳过历史 incomplete 工件: 2" in out
+    after = {p.name: p.read_bytes() for p in sorted(source.iterdir())}
+    assert before == after  # 含跳过件在内，源文件逐字节不变、零删除
+    assert len(incomplete_paths) == 2
+
+
+def test_all_incomplete_sources_refused_no_complete_samples(tmp_path, capsys) -> None:
+    """候选全为历史 incomplete（零完整样本）→ no-complete-sources 拒绝，
+    输出零写入（fail-closed，绝不从空集构建历史）。"""
+    source, output = tmp_path / "src", tmp_path / "out"
+    source.mkdir()
+    _write_sample(source, "2026-09-12T17:37:46Z",
+                  payload=json.dumps(_incomplete_report("2026-09-12T17:37:46Z")))
+    rc = _run_cli(None, source, output)
+    assert rc == mh.EXIT_REFUSED
+    assert not output.exists()
+    assert "no-complete-sources" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("overrides", [
+    {"tool": "tools/ops/other.py"},
+    {"milestone": "M14-99"},
+    {"schema_version": 2},
+    {"mode": "plan"},
+    {"partial": False},   # incomplete + partial=false = 矛盾形态，不属识别类
+])
+def test_recognition_requires_full_monitor_identity(monkeypatch, tmp_path,
+                                                    overrides: dict) -> None:
+    """识别类要求完整 monitor 身份 + 共现对：任一不符的 incomplete 工件
+    仍走严格校验 fail-closed（即使同目录存在完整样本也整体拒绝）。"""
+    source, output = tmp_path / "src", tmp_path / "out"
+    source.mkdir()
+    _write_sample(source, "2026-09-12T17:37:46Z",
+                  payload=json.dumps(_incomplete_report("2026-09-12T17:37:46Z", **overrides)))
+    _write_sample(source, "2026-09-11T17:39:20Z")
+    rc = _run_cli(None, source, output)
+    assert rc == mh.EXIT_REFUSED
+    assert not output.exists()  # 未识别类 = malformed，输出零写入
+
+
+def test_skipped_incomplete_not_in_dedup_or_discovered(tmp_path) -> None:
+    """跳过件不参与去重/冲突/发现计数：两份逐字节相同的 incomplete 工件
+    各自跳过（计 2），duplicate_count 恒 0（去重仅作用于完整样本）。"""
+    source, output = tmp_path / "src", tmp_path / "out"
+    source.mkdir()
+    payload = json.dumps(_incomplete_report("2026-09-12T17:37:46Z"))
+    _write_sample(source, "2026-09-12T17:37:46Z", payload=payload)
+    _write_sample(source, "2026-09-12T23:59:59Z", payload=payload,
+                  stem="monitor-20260912-235959")
+    _write_sample(source, "2026-09-13T01:04:14Z")
+    rc = _run_cli(None, source, output)
+    assert rc == mh.EXIT_OK
+    assert len(_records(output)) == 1
+    summary_text = (output / "history-summary.md").read_text(encoding="utf-8")
+    assert "历史不完整工件：跳过 2 条" in summary_text
+    assert "重复内容 0 条" in summary_text
+
+
+def test_retention_bounds_apply_to_complete_samples_only(tmp_path) -> None:
+    """留存仅作用于完整样本：3 完整 + 2 incomplete，retention=2 → 保留最新
+    2 条完整、省略 1、跳过 2（三个计数互不混计）。"""
+    source, output = tmp_path / "src", tmp_path / "out"
+    source.mkdir()
+    for hour in (0, 1, 2):
+        _write_sample(source, f"2026-09-13T0{hour}:00:00Z")
+    _write_sample(source, "2026-09-12T17:37:46Z",
+                  payload=json.dumps(_incomplete_report("2026-09-12T17:37:46Z")))
+    _write_sample(source, "2026-09-12T18:00:01Z",
+                  payload=json.dumps(_incomplete_report("2026-09-12T18:00:01Z")))
+    rc = _run_cli(None, source, output, "--retention", "2")
+    assert rc == mh.EXIT_OK
+    records = _records(output)
+    assert [r["collected_at"] for r in records] == [
+        "2026-09-13T01:00:00Z", "2026-09-13T02:00:00Z",
+    ]
+    summary_text = (output / "history-summary.md").read_text(encoding="utf-8")
+    assert "省略更早 1 条" in summary_text
+    assert "历史不完整工件：跳过 2 条" in summary_text
 
 
 # ---------------------------------------------------------------- 接受面 / 排序 / 去重

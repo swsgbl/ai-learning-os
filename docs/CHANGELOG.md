@@ -246,8 +246,33 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   默认关闭保持确定性判分；真实端点冒烟脚本 infra/smoke_llm.sh）
 
 ### Fixed
-- M14-19 CosyVoice bootstrap ModelScope 模型下载载荷过滤（本地 commit 待
-  supervisor 审查发布）：模型下载原为无过滤 `snapshot_download(model_id,
+- M14-20 监控历史索引历史 incomplete 工件修复（本地 commit 待
+  supervisor 审查发布）：M14-14 管道定时运行后默认源目录混有 2026-09-12
+  栈修复期间 monitor 自产的历史 `partial=true + overall_status=incomplete`
+  工件（时点 31/33），`tools/ops/monitoring_history.py` 旧「任何
+  incomplete 一律整体拒绝」语义令其每轮 EXIT 2 零输出——监控历史永久
+  零索引。修法 = 新增纯谓词 `is_recognized_incomplete`：识别窄类（完整
+  monitor 身份 schema_version/tool/milestone==M14-12/mode==execute +
+  incomplete/partial=true 共现对——monitor 契约中二者恒共现）→ 整件跳过
+  不入档（`skipped_incomplete_count` 显式于 summary/摘要 MD/stdout；源
+  文件绝不改动/删除；跳过件内容绝不进入输出——仅计数）；完整
+  ok/warn/critical 样本照常严格校验入档；其余任何 incomplete/partial
+  形态（身份不符/矛盾组合）仍 fail-closed；候选全为 incomplete → 新固定
+  词汇 `no-complete-sources` 拒绝；`build_samples` 签名不变
+  （monitoring_insights 委托面，跳过语义同样生效）；`history.jsonl` 记录
+  schema 零改动。契约测试新增 9 + insights 委托回归 1（TDD RED 先行）；
+  验证 = 聚焦 83 passed + 邻居四套件 411 passed + ruff/py_compile/
+  `git diff --check` + 真实 canonical 源目录端到端实证（39 工件：exit 0、
+  8 条完整记录入档、跳过 31 计数显式、源逐字节不变、两遍输出逐字节
+  相同）。**不删除/不改写任何历史源工件（跳过而非清理是有意设计）**。
+  详见 `docs/evidence/m14-20-monitoring-history-historical-incomplete/`。
+- M14-19 CosyVoice bootstrap ModelScope 模型下载载荷过滤（**合并收口
+  （回填 2026-09-13）：已随 PR #95 合并 main（merged_at
+  2026-09-13T00:50:31Z，merge commit `4c9458f1f6d05857edb209f463887b48b7774b
+  a4`，feature head `f63551b00be2458f2f52a223398ceb8f40583420`；PR CI run
+  `34728812943` 与合并后 main push CI run `34729005137` 均全部 5 job
+  SUCCESS）——下文「本地 commit 待 supervisor 审查发布」为开发时点快照**）：
+  模型下载原为无过滤 `snapshot_download(model_id,
   local_dir=...)`——整仓下载 ≈9.85GB（2026-09-13 ModelScope API 实测
   `FunAudioLLM/Fun-CosyVoice3-0.5B-2512` 共 19 文件），其中 ≈4.44GB 与所选
   运行时无关（`llm.rl.pt` 2.02GB 固定 commit 全仓零引用 /
