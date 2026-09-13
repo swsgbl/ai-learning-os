@@ -10,14 +10,16 @@
 `monitoring_history.py`（M14-13）承担监控历史索引 + 有界留存 + 趋势
 摘要面（只读 M14-12 工件，零墙钟确定性输出）；`monitoring_pipeline.py` +
 `monitoring_pipeline_task.py` + `run_monitoring_pipeline_silent.vbs`
-（M14-14）承担持续/定时采集的**组合管道与调度 readiness** 面（单次
+（M14-14）承担持续/定时采集的**组合管道与调度**面（单次
 monitor → history → insights 组合（M14-21 起接入 insights）+ 计划任务
-管理器；开发回合零真实执行、零注册，`production_ready=false` 不变）；
+管理器；**M14-22 起真实计划任务三步持续执行（两轮连续调度成功）与
+insights 两轮产出/刷新已经 supervisor 验收**，`production_ready=false`
+不变）；
 `monitoring_insights.py`（M14-15）承担
 监控历史**洞察/告警摘要**面（只读 M14-13 history.jsonl 或 M14-12 monitor
 工件目录 → 安全 JSON+MD 摘要；仅本地工件洞察，不接外部告警，
 `production_ready=false` 不变；M14-21 起默认输入与 history canonical
-输出一致并被持续管道持续更新）。
+输出一致并被持续管道持续更新——**M14-22 已验收真实调度首轮产出**）。
 
 ## production_recovery.py
 
@@ -376,6 +378,19 @@ M14-21 起默认源常量三方 resolve 全等，单一事实源；任何失败/
 入档，前置步骤事实绝不遮蔽）。开发/排障默认零执行；真实执行仅由
 supervisor 在获准窗口运行。
 
+**状态（M14-22 真实调度验收，2026-09-13，含 R1 修正）**：计划任务
+`AIOS-Monitoring-Pipeline` 在 PR #98 合并后**两轮连续真实调度成功**
+（12:30 与 12:45（+08:00），均 Last Result=0）——两轮三步全 ok、exit 0
+（第一轮 duration 1.756/3.055/0.432s、第二轮 1.27/0.13/0.143s），lock
+正常获取释放，**insights 产物首次由真实计划任务产出（12:30）并在第二
+轮（12:45）刷新**；监控家族（M14-14/M14-20/M14-21）自此经真实调度端到
+端验收——两轮成功证明重复调度执行，不构成长期稳定性证明。两轮 monitor
+步 `overall_status=warn`——6/6 服务 healthy、5/5 端点 200，**唯一告警 =
+api 容器静态累计 restart_count=1 达 restart_warn=1**（两轮同一静态累计
+值；阈值语义问题而非栈故障；语义修复建议 M14-23）。事实与工件安全
+摘要见
+`docs/evidence/m14-22-monitoring-pipeline-production-acceptance/README.md`。
+
 ```
 python tools/ops/monitoring_pipeline.py                        # plan（默认，零执行）
 python tools/ops/monitoring_pipeline.py --execute \
@@ -451,15 +466,19 @@ UTF-16 的 XML 致 System.Xml 拒载，现与声明及 install 临时字节一�
   `/Delete /F`；归属判定适配 M14-06 实证归一化（URI 两形态 + Description
   逐字 + 全字段精确 + 条件认可省略的默认值）；/XML 按字节形态严格解码
   四形态；DOCTYPE/ENTITY 解析前拒绝（XXE 加固）；XML 生成侧路径转义。
-  **诚实边界**：TimeTrigger/Repetition/StartBoundary 的注册后归一化未经
-  真实安装实证——首次注册若暴露漂移按 malformed fail-closed，走 M14-06
-  R3 同款修正回合。
+  **诚实边界（M14-22 已实证注册态）**：注册后归一化已经真实安装实证
+  ——canonical `status` 返回 installed 且 Action/参数/cwd/Hidden/触发器/
+  间隔/时限逐项匹配（2026-09-13 验收（含 R1 修正）：Last Run 12:30:01
+  与 12:45:01（+08:00）两轮均 Last Result=0、下一轮 13:00；见
+  `docs/evidence/m14-22-monitoring-pipeline-production-acceptance/`）。
 - 静默 VBS：仓库根自脚本位置推导（无盘符硬编码）；隐藏窗口
   `Run(..., 0, True)` + 退出码透传；调用目标恒 repo 自带
   `.venv\Scripts\python.exe`（无覆盖面，preflight 恒查）；携带
   `--execute --confirm "EXECUTE READ-ONLY MONITORING PIPELINE"`（公开门禁
   常量，非 secret）。
-- **readiness ≠ 持续运行证明；`production_ready=false` 不变。**
+- **readiness ≠ 持续运行证明——持续运行已由 M14-22 真实调度首轮验收
+  （installed + 首轮 12:30 三步全 ok + 首轮 insights 产出），但单机单轮
+  验收不扩大为生产就绪；`production_ready=false` 不变。**
 
 ## monitoring_insights.py（M14-15）
 
@@ -467,6 +486,15 @@ UTF-16 的 XML 致 System.Xml 拒载，现与声明及 install 临时字节一�
 monitor 工件目录）→ **安全 JSON+MD 洞察摘要**（只读输入，绝不改动/删除
 任何输入工件）。零子进程/零网络/零容器面/零计划任务/零 env 读取/零墙钟；
 **仅本地工件洞察——不接外部告警系统，不构成 production readiness 宣称**。
+
+**状态（M14-22 验收，2026-09-13，含 R1 修正）**：insights 产物首次由
+真实计划任务（管道 insights 步）产出（12:30）并在第二轮（12:45）刷新，
+落 canonical 输出目录（insights.json / insights-summary.md，两轮 SHA-256
+与字节数见
+`docs/evidence/m14-22-monitoring-pipeline-production-acceptance/README.md`）；
+当前历史（12:45 刷新后）18 样本 ok=1/warn=17/critical=0、warn 连续
+17 条——唯一告警为 api 容器 restart_count=1 静态阈值（服务全 healthy、
+端点全 200），告警语义修复建议 M14-23。
 
 ```
 python tools/ops/monitoring_insights.py                 # plan（默认，零读取/零写入）
