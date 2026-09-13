@@ -61,6 +61,21 @@
 #   与 PyPI sdist 逐字 diff 实证）。门禁与闭包契约一字不动：禁止以 --no-deps
 #   装清单、强制降级 triton、改写已装 dist-info 或弱化 pip check 绕过——
 #   冲突根因在依赖元数据，绕过门禁只会把冲突藏进运行期。
+# - M14-19（ModelScope 下载载荷过滤）：模型下载原为无过滤
+#   snapshot_download(model_id, local_dir=...)——整仓下载 ≈9.85GB（2026-09-13
+#   ModelScope API 实测 19 文件），其中 ≈4.44GB 与运行时无关（llm.rl.pt
+#   2.02GB 全仓零引用 / flow.decoder.estimator.fp32.onnx 1.33GB 仅 load_trt
+#   路径 / speech_tokenizer_v3.batch.onnx 0.97GB 仅训练单例路径 / 宣传图与
+#   元数据）。修法 = 下载段经 tools/voice/cosyvoice_model_payload.py 契约
+#   模块（fail-closed：未知 model_id / 空畸形白名单 / 必需件未被白名单覆盖
+#   一律拒绝——modelscope 1.20 空列表语义=不过滤=整仓）解析 12 精确路径
+#   白名单传 allow_patterns（受支持参数，断点续传/本地缓存语义不变），
+#   下载后逐一存在性校验必需文件。白名单而非 ignore 列表：上游新增文件
+#   默认排除（fail-closed）。CosyVoice-BlankEN/* 属真正必需载荷——固定
+#   commit 074ca6d cosyvoice.py:200 qwen_pretrain_path override 即时构造
+#   Qwen2Encoder（Qwen2ForCausalLM.from_pretrained）+ AutoTokenizer，2026-09-13
+#   生产 venv 探针实证缺 model.safetensors 即 OSError。bash 侧四文件载荷
+#   判定/缓存回落/fail-closed 全部保持不变。
 #
 # 用途：Python 3.10 独立 venv 内克隆官方仓库、装 cu128 torch + 最小运行时依赖、
 #   下载 Fun-CosyVoice3-0.5B-2512 到 gitignored artifacts，然后在 127.0.0.1:8011
@@ -393,15 +408,38 @@ if [ "${COSYVOICE_SKIP_DOWNLOAD:-0}" = "1" ]; then
 elif model_payload_ready "$MODEL_DIR"; then
   say "模型载荷已就位，跳过下载: artifacts/voice/cosyvoice/Fun-CosyVoice3-0.5B"
 else
-  say "经 ModelScope 下载 $MODEL_ID（数 GB，gitignored artifacts；可断点续传）"
-  "$VENV_DIR/bin/python" - "$MODEL_ID" "$MODEL_DIR" <<'PYEOF'
+  say "经 ModelScope 下载 $MODEL_ID（M14-19：仅运行时必需载荷白名单 ≈5.4GB/整仓 9.85GB；gitignored artifacts；可断点续传）"
+  # M14-19：下载载荷契约（tools/voice/cosyvoice_model_payload.py）——12 精确
+  # 路径 allow_patterns 白名单（modelscope 1.20 受支持参数；空/畸形白名单与
+  # 未注册 model_id 在契约模块内 fail-closed 拒绝，绝不退化为整仓下载）。
+  # 模块路径经 argv 传入（快照重执行下仓库根只有 env 透传一途）；断点续传
+  # 与本地缓存命中语义不变（allow_patterns 只收窄下载集合）。
+  if ! "$VENV_DIR/bin/python" - "$MODEL_ID" "$MODEL_DIR" "$REPO_ROOT/tools/voice/cosyvoice_model_payload.py" <<'PYEOF'
+import os
 import sys
 
-model_id, local_dir = sys.argv[1], sys.argv[2]
+model_id, local_dir, payload_module_path = sys.argv[1], sys.argv[2], sys.argv[3]
+sys.path.insert(0, os.path.dirname(os.path.abspath(payload_module_path)))
+import cosyvoice_model_payload as payload
+
 from modelscope import snapshot_download
 
-snapshot_download(model_id, local_dir=local_dir)
+allow_patterns = payload.validate_runtime_payload(model_id)
+snapshot_download(model_id, local_dir=local_dir, allow_patterns=list(allow_patterns))
+# 下载后存在性校验：上游仓库布局变更（改名/移除必需件）在此点名失败，
+# 而不是拖到 bridge 加载失败（bash 侧四文件判定保持不变，此处覆盖全部 11 项）
+missing = [rel for rel in payload.required_files_for(model_id)
+           if not os.path.isfile(os.path.join(local_dir, rel))]
+if missing:
+    print(f"[bootstrap-cosyvoice] FAIL: M14-19 载荷校验失败——必需文件缺失: {missing}"
+          "（上游仓库布局变更？——把缺失项报回仓库修正 cosyvoice_model_payload.py 契约）",
+          file=sys.stderr)
+    sys.exit(1)
+print(f"[bootstrap-cosyvoice] M14-19 必需载荷下载校验 OK（{len(payload.required_files_for(model_id))} 个文件就位）")
 PYEOF
+  then
+    fail "M14-19 模型下载/载荷契约失败（见上——契约模块 fail-closed 或上游布局变更，按提示修正）"
+  fi
 fi
 
 # ---- 模型目录终检：载荷缺失时回落 ModelScope 缓存；仍缺失则 fail-closed ----

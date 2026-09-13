@@ -903,6 +903,221 @@ def test_reachability_script_contract() -> None:
         assert pattern not in text
 
 
+# ---------- M14-19：ModelScope 模型下载载荷契约（snapshot_download allow_patterns） ----------
+
+PAYLOAD_MODULE = TOOLS_VOICE / "cosyvoice_model_payload.py"
+
+#: ModelScope 仓库实测清单（2026-09-13 直读
+#: GET /api/v1/models/FunAudioLLM/Fun-CosyVoice3-0.5B-2512/repo/files?Recursive=true
+#: ——19 文件 + 2 目录树）。测试以该快照为选择地面真值：上游布局变更时本
+#: 常量即需同步更新（契约自证于实现时点的仓库形态）。
+MODELSCOPE_REPO_INVENTORY: tuple[str, ...] = (
+    ".gitattributes",
+    "CosyVoice-BlankEN/config.json",
+    "CosyVoice-BlankEN/generation_config.json",
+    "CosyVoice-BlankEN/merges.txt",
+    "CosyVoice-BlankEN/model.safetensors",
+    "CosyVoice-BlankEN/tokenizer_config.json",
+    "CosyVoice-BlankEN/vocab.json",
+    "README.md",
+    "asset/dingding.png",
+    "campplus.onnx",
+    "configuration.json",
+    "cosyvoice3.yaml",
+    "flow.decoder.estimator.fp32.onnx",
+    "flow.pt",
+    "hift.pt",
+    "llm.pt",
+    "llm.rl.pt",
+    "speech_tokenizer_v3.batch.onnx",
+    "speech_tokenizer_v3.onnx",
+)
+
+
+def _load_payload_module():
+    spec = importlib.util.spec_from_file_location("cosyvoice_model_payload", PAYLOAD_MODULE)
+    assert spec is not None and spec.loader is not None, (
+        "缺少 tools/voice/cosyvoice_model_payload.py——M14-19 下载载荷契约模块"
+    )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+@pytest.fixture(scope="module")
+def payload():
+    return _load_payload_module()
+
+
+def test_model_payload_required_files_allowed_and_selected(payload) -> None:
+    """必需载荷全数放行：配置运行时（Fun-CosyVoice3-0.5B-2512）的每个必需
+    文件都被 allow_patterns 覆盖，且在实测仓库清单上被过滤函数选中——
+    过滤绝不能漏掉任何加载闭包必需文件（漏了 = bridge 启动加载失败）。"""
+    import fnmatch
+
+    patterns = payload.validate_runtime_payload(payload.MODEL_ID)
+    required = payload.required_files_for(payload.MODEL_ID)
+    assert required, "必需载荷集非空"
+    for rel in required:
+        assert any(fnmatch.fnmatch(rel, pattern) for pattern in patterns), rel
+    selected = payload.filter_repo_files(list(MODELSCOPE_REPO_INVENTORY), list(patterns))
+    for rel in required:
+        assert rel in selected, rel
+
+
+def test_model_payload_excludes_unreferenced_repo_assets(payload) -> None:
+    """无关可选资产全数排除：llm.rl.pt（固定 commit 全仓零引用）/
+    speech_tokenizer_v3.batch.onnx（仅 online_feature 训练单例路径引用）/
+    flow.decoder.estimator.fp32.onnx（仅 load_trt=True 路径引用；bridge 默认
+    False）/ asset/dingding.png / README.md / .gitattributes / configuration.json
+    （运行时零引用）——按 2026-09-13 实测清单，19 文件恰选中 12 个必需件。"""
+    patterns = payload.validate_runtime_payload(payload.MODEL_ID)
+    selected = set(payload.filter_repo_files(list(MODELSCOPE_REPO_INVENTORY), list(patterns)))
+    excluded = {
+        "llm.rl.pt",
+        "speech_tokenizer_v3.batch.onnx",
+        "flow.decoder.estimator.fp32.onnx",
+        "asset/dingding.png",
+        "README.md",
+        ".gitattributes",
+        "configuration.json",
+    }
+    assert selected.isdisjoint(excluded)
+    # 净效果锁定：恰为 12 个必需件（11 个 strict 必需 + generation_config.json
+    # ——from_pretrained 标准布局件，242B 保持 BlankEN 目录完整）
+    assert selected == set(payload.required_files_for(payload.MODEL_ID)) | {
+        "CosyVoice-BlankEN/generation_config.json",
+    }
+    assert len(selected) == 12
+
+
+def test_model_payload_blanken_selected_only_by_explicit_runtime(payload) -> None:
+    """CosyVoice-BlankEN/model.safetensors：仅当运行时载荷显式选择时下载。
+    配置运行时（CosyVoice3）显式选择它——固定 commit 074ca6d 源码实证：
+    cosyvoice3.yaml 经 override qwen_pretrain_path=<model_dir>/CosyVoice-BlankEN
+    即时构造 Qwen2Encoder（!new: 急切）→ Qwen2ForCausalLM.from_pretrained，
+    2026-09-13 WSL 生产 venv 探针实证缺 model.safetensors 即 OSError
+    「Error no file named ... model.safetensors ...」——属真正必需载荷。
+    反面：不列 BlankEN 的运行时载荷（未来轻量运行时形态）经同一过滤函数
+    自然排除之——排除是默认，选择必须显式。"""
+    import fnmatch
+
+    patterns = payload.validate_runtime_payload(payload.MODEL_ID)
+    assert "CosyVoice-BlankEN/model.safetensors" in payload.required_files_for(payload.MODEL_ID)
+    assert any(
+        fnmatch.fnmatch("CosyVoice-BlankEN/model.safetensors", pattern)
+        for pattern in patterns
+    )
+    minimal = payload.RuntimePayload(
+        allow_patterns=(
+            "cosyvoice3.yaml", "llm.pt", "flow.pt", "hift.pt",
+            "campplus.onnx", "speech_tokenizer_v3.onnx",
+        ),
+        required_files=(
+            "cosyvoice3.yaml", "llm.pt", "flow.pt", "hift.pt",
+            "campplus.onnx", "speech_tokenizer_v3.onnx",
+        ),
+    )
+    payload.validate_payload_contract(minimal)  # 自身契约合法（必需 ⊆ 白名单）
+    selected = payload.filter_repo_files(
+        list(MODELSCOPE_REPO_INVENTORY), list(minimal.allow_patterns),
+    )
+    assert "CosyVoice-BlankEN/model.safetensors" not in selected
+    assert "CosyVoice-BlankEN/merges.txt" not in selected
+
+
+def test_model_payload_filter_fails_closed(payload) -> None:
+    """fail-closed 契约：未知 model_id / 空·畸形白名单 / 必需集为空 /
+    必需文件未被白名单覆盖——一律 PayloadContractError（modelscope 1.20
+    语义下空 allow_patterns = 不过滤 = 整仓下载，绝不能静默放行到调用）。"""
+    # 未知运行时（防未定义载荷的整仓回退）
+    with pytest.raises(payload.PayloadContractError):
+        payload.runtime_payload_for("someone/other-model")
+    with pytest.raises(payload.PayloadContractError):
+        payload.validate_runtime_payload("someone/other-model")
+    # 空 / 畸形白名单（含 str 形态——modelscope 接受 str 但契约拒绝歧义）
+    for malformed in ([], (), None, "cosyvoice3.yaml", ["  "], ["llm.pt", 123], ["llm.pt", ""]):
+        with pytest.raises(payload.PayloadContractError):
+            payload.validate_allow_patterns(malformed)
+    # 必需集为空：不是合法运行时载荷
+    with pytest.raises(payload.PayloadContractError):
+        payload.validate_payload_contract(
+            payload.RuntimePayload(allow_patterns=("llm.pt",), required_files=()),
+        )
+    # 必需文件未被白名单覆盖（未来运行时 glob 笔误会漏下载必需件）
+    with pytest.raises(payload.PayloadContractError):
+        payload.validate_payload_contract(
+            payload.RuntimePayload(allow_patterns=("*.yaml",), required_files=("llm.pt",)),
+        )
+    # 过滤函数自身同样 fail-closed（空/畸形白名单不得退化为全选）
+    with pytest.raises(payload.PayloadContractError):
+        payload.filter_repo_files(["llm.pt"], [])
+    with pytest.raises(payload.PayloadContractError):
+        payload.filter_repo_files(["llm.pt"], "llm.pt")
+
+
+def test_model_payload_filter_mirrors_modelscope_fnmatch_semantics(payload) -> None:
+    """过滤语义镜像 modelscope 1.20 _download_filter：对 repo 相对全路径
+    fnmatch（树节点由 modelscope 侧先跳过；本镜像保序、纯函数）。"""
+    files = [
+        "llm.pt",
+        "CosyVoice-BlankEN/llm.pt",
+        "CosyVoice-BlankEN/model.safetensors",
+        "sub/dir/flow.pt",
+    ]
+    # 精确路径 = 路径锚定（不误伤同名子路径文件）
+    assert payload.filter_repo_files(files, ["llm.pt"]) == ["llm.pt"]
+    assert payload.filter_repo_files(files, ["flow.pt"]) == []
+    # 前缀目录通配可用（本契约未使用，语义须与 modelscope 一致以备未来运行时）
+    assert payload.filter_repo_files(files, ["CosyVoice-BlankEN/*"]) == [
+        "CosyVoice-BlankEN/llm.pt",
+        "CosyVoice-BlankEN/model.safetensors",
+    ]
+    # 全路径通配 + 保序（fnmatch * 跨 / 匹配，与 modelscope 一致；不匹配 .safetensors）
+    assert payload.filter_repo_files(files, ["*.pt"]) == [
+        "llm.pt", "CosyVoice-BlankEN/llm.pt", "sub/dir/flow.pt",
+    ]
+
+
+def test_bootstrap_cosyvoice_download_filter_contract() -> None:
+    """M14-19 bootstrap 下载过滤契约：模型下载段经 cosyvoice_model_payload
+    契约模块 fail-closed 解析 allow_patterns 后传给 snapshot_download（白名单
+    参数为 modelscope 1.20 受支持形态）；旧的无过滤整仓调用必须移除；下载后
+    逐一存在性校验必需文件（上游布局变更即点名失败）；wetext 预热调用
+    （独立小仓库、自有 payload 判定）保持原状不受影响。"""
+    text = BOOTSTRAP_COSYVOICE.read_text(encoding="utf-8")
+    for anchor in (
+        "cosyvoice_model_payload.py",  # 契约模块（与测试同一真相源）
+        "import cosyvoice_model_payload",  # 显式导入（非字符串拼接）
+        "validate_runtime_payload",  # fail-closed 解析（未知/畸形/漏覆盖即拒）
+        "required_files_for",  # 下载后必需件存在性校验
+        "allow_patterns=list(allow_patterns)",  # 受支持参数形态
+        "M14-19 载荷校验失败",  # 下载后校验失败点名（fail-closed 文案）
+    ):
+        assert anchor in text, anchor
+    # 旧的无过滤调用（整仓下载根因形态）必须移除
+    assert "snapshot_download(model_id, local_dir=local_dir)\n" not in text
+    # 模型下载调用恰一行且带白名单参数（wetext 调用形如
+    # snapshot_download("pengzhendong/wetext")，不匹配该断言面；头部注释里的
+    # 历史形态叙述不算——只看生效行）
+    model_download_lines = [
+        line for line in text.splitlines()
+        if "snapshot_download(model_id" in line and not line.lstrip().startswith("#")
+    ]
+    assert model_download_lines == [
+        "snapshot_download(model_id, local_dir=local_dir, allow_patterns=list(allow_patterns))",
+    ]
+    # wetext 预热调用保持原状（独立小仓库，M14-03 契约不动）
+    assert 'snapshot_download("pengzhendong/wetext")' in text
+    # bash 侧四文件载荷判定保持不变（既有 fail-closed 面零弱化）
+    for preserved in (
+        "model_payload_ready()",
+        "cosyvoice3.yaml", "flow.pt", "llm.pt", "hift.pt",
+        "modelscope_cache_model_dir()",
+    ):
+        assert preserved in text, preserved
+
+
 def test_evidence_script_contract() -> None:
     """测试证据脚本：可复现命令 + 解释器解析顺序留档（复审修正：无机器特定绝对路径——
     canonical venv 回退改为相对同级主检出探测）。"""
