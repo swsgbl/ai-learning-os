@@ -7,6 +7,41 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 
 ### Added
 
+- M14-21 监控洞察接入持续管道（`tools/ops/monitoring_pipeline.py` 三步化 +
+  `tools/ops/monitoring_insights.py` 默认输入对齐 history canonical 输出 +
+  契约测试 52→63/91→93/pipeline_task 预算 pin 三步化；本地 commit，待
+  supervisor 审查发布）。持续管道序列由 monitor → history 升级为
+  **monitor → history → insights**：insights 仅在 history status=ok 后运行
+  （history.jsonl 完整落盘才可洞察），任一前置失败/跳过以固定词汇原因
+  （`monitor-status-<status>` / `history-status-<status>`）入档且前置步骤
+  退出码/类别如实保留绝不遮蔽——insights 失败不改变 monitor/history 事实；
+  修复**双路径事实源**：insights 默认 source 由 M14-15 切片遗留的
+  `.verify/artifacts/m14-13-monitor-history-retention/`（无写入者）改为
+  **直接引用同仓 `monitoring_history.DEFAULT_OUTPUT_DIR` 常量**
+  （`.verify/artifacts/m14-13-monitoring-history/`——契约测试锁定
+  pipeline/history/insights 三方 resolve 全等，canonical 输入自此恒有
+  写入者）；固定命令白名单新增**唯一** insights 精确形态（`--execute` +
+  既有精确确认短语 `EXECUTE READ-ONLY MONITORING INSIGHTS`，与工具自身
+  门禁逐字一致，回归测试锁定；与管道/monitor 门禁短语互不通用）且
+  **恒不带 `--source`**——canonical 输入经已修正默认值生效，`--source`/
+  `--event-limit` 注入一律拒绝且内层零调用；insights 有界超时 5–50s
+  （默认 15s），三步硬顶之和 540+120+50=**710s < PT12M=720s** 执行时限
+  （monitor/history 界与默认不变——兼容面保留；task 注释与预算交叉 pin
+  测试同步三步口径）；报告 config/stages/Markdown 加 insights stage
+  （产物两固定名 + SHA-256 + 字节数；目录缺失如实 `artifact-dir-unreadable`），
+  schema_version 仍 1（加法演进），安全面不变（无绝对本机路径/无子进程
+  原文/无 env/token，写前 redact_secrets 终防线）。验证：监控家族三套件
+  **238 passed**（TDD RED 先行后 GREEN）+ 监控全家族五套件 **510 passed**
+  + 全量 services/api 套件 2496 passed / 34 failed（34 失败经主仓同
+  commit 基线对照确认与 main@9977ece 完全一致——本切片零触碰的环境
+  敏感域既有失败，非本切片引入）+ ruff +
+  `py_compile` + `git diff --check` 全过 + 合成端到端 **40/40 PASS**
+  （fake-runner 四场景退出码/固定词汇 skip 原因/报告卫生面 + 真实只读
+  insights 于 canonical 目录形态 EXIT 0 + `--source` 注入拒绝——全程
+  临时目录）。**开发回合零生产执行、零 scheduler mutation、零 canonical
+  `.verify` 触碰；`production_ready=false` 不变**。证据
+  `docs/evidence/m14-21-monitoring-insights-pipeline/`。
+
 - M13-15 Harmony 治理运行时验收（docs-only，`docs/m13-15-closeout`，PR #96）——M13-14 结构性修正（固定 header 于 Scroll 之外）的**设备端运行时重新测量**（模拟器 `127.0.0.1:5555`，app PID 3826，隔离 mock `tools/harmony_mock` 端口 8765，host 8000 生产栈未触碰）：固定 header 在 load/reload/tab-return/error/recovery/deep-scroll **全状态可见**；加载中刷新按钮**可见但禁用**（防重复刷新），加载/错误/恢复后重新启用（`node scan-refresh-enabled.cjs .` 可复现逐态验证）；只读边界端到端成立（零写操作/零载荷渲染/零账号-token-密码持久化）；hilog 8538 行（`node scan-hilog-crash-markers.cjs hilog-full.txt` 退出码 0）**0 FATAL/0 AppCrash/0 AppFreeze/0 JS_ERR**；HAP 515871 bytes / SHA256 `a5829186e8c7f309f88d993db2b20ba5dfa02ce9db76e622183d849adff46095`；证据 `docs/evidence/m13-15-harmony-governance-runtime-acceptance/`。
 
 **mock-only 边界**：未接真实 provider/生产后端/生产 DB，零 `apps/harmony/**` 改动，`production_ready=false` 不变。

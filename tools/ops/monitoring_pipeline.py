@@ -1,5 +1,6 @@
 #!/usr/bin/env python
-"""M14-14 持续/定时监控采集管道 readiness：monitor(M14-12) → history(M14-13) 单次组合。
+"""M14-14/M14-21 持续/定时监控采集管道 readiness：monitor(M14-12) →
+history(M14-13) → insights(M14-15) 单次组合。
 
 设计（与 tools/ops/production_monitor.py / monitoring_history.py 同款纪律：
 单文件、纯标准库、零第三方依赖；子进程经 Runner 注入 + **固定命令白名单门**、
@@ -8,26 +9,35 @@ HTTP/零计划任务注册，全部行为用 fake 注入测试锁定；真实执
 在获准窗口运行）：
 
 - 双模式：默认 **plan（dry-run）**——零 subprocess、零网络、零生产读取、
-  零调度器改动，仅打印两步计划并落 plan 报告（Runner **零构造**，构造计数
+  零调度器改动，仅打印三步计划并落 plan 报告（Runner **零构造**，构造计数
   测试锁定）；**execute** 需同时满足「旗标 + 精确确认短语」（``--execute``
   + ``--confirm "EXECUTE READ-ONLY MONITORING PIPELINE"`` 一字不差），缺一
   或短语不匹配即 EXIT 2 且**零 Runner 构造/调用**（fail-closed）。数值面
-  （两步超时）硬性拒绝：非有限浮点（nan/inf/-inf）与超硬顶一律 EXIT 2
+  （三步超时）硬性拒绝：非有限浮点（nan/inf/-inf）与超硬顶一律 EXIT 2
   （plan 同样校验，先于任何报告写入）。
-- **固定命令白名单门（结构性）**：execute 仅允许两个**精确固定形态**——
+- **固定命令白名单门（结构性）**：execute 仅允许三个**精确固定形态**——
   ``<python> tools/ops/production_monitor.py --execute --confirm "EXECUTE
   READ-ONLY PRODUCTION MONITORING"``（monitor 自身的门禁短语，与
-  production_monitor.CONFIRM_PHRASE 逐字一致，回归测试锁定）与
-  ``<python> tools/ops/monitoring_history.py``（全部默认参数）。任何其它
-  argv 在执行之前拒绝（CommandNotAllowedError，内层 runner 零调用）；
-  **无 shell=True、无用户可注入命令/URL/env 展开**（CLI 不暴露任何进入
-  命令的参数；子进程输出仅取 returncode，stdout/stderr **绝不持久化/回显**）。
-- 序列语义：恒为 monitor → history；**history 仅在 monitor exit 0 后运行**
-  （monitor ok|warn 才有完整可索引样本）；monitor 失败（非零退出/超时/执行
-  错误）→ history 状态 skipped + 固定词汇原因，**monitor 的退出码/类别如实
-  保留绝不遮蔽**。逐步有界超时 + 保守硬顶：monitor 60–540s（默认 480s，
-  覆盖 monitor 内部最坏预算 ~445s + 启动余量）、history 10–120s（默认
-  45s）——两步硬顶之和 660s < 计划任务执行时限 PT12M=720s < PT15M 间隔。
+  production_monitor.CONFIRM_PHRASE 逐字一致，回归测试锁定）、
+  ``<python> tools/ops/monitoring_history.py``（全部默认参数）与
+  ``<python> tools/ops/monitoring_insights.py --execute --confirm "EXECUTE
+  READ-ONLY MONITORING INSIGHTS"``（insights 自身门禁短语，与
+  monitoring_insights.CONFIRM_PHRASE 逐字一致；**恒不带 --source**——输入
+  恒为 insights 默认源 = history canonical 输出目录，M14-21 起两处常量
+  三方 resolve 全等，单一事实源）。任何其它 argv 在执行之前拒绝
+  （CommandNotAllowedError，内层 runner 零调用）；**无 shell=True、无用户
+  可注入命令/URL/env 展开**（CLI 不暴露任何进入命令的参数；子进程输出仅取
+  returncode，stdout/stderr **绝不持久化/回显**）。
+- 序列语义：恒为 monitor → history → insights；**history 仅在 monitor
+  exit 0 后运行**（monitor ok|warn 才有完整可索引样本）；**insights 仅在
+  history status=ok 后运行**（history.jsonl 完整落盘才可洞察）；任一前置
+  失败（非零退出/超时/执行错误/skipped）→ 后续步骤状态 skipped + 固定
+  词汇原因（``<prev>-status-<status>``），**前置步骤的退出码/类别如实
+  保留绝不遮蔽**；insights 失败不改变 monitor/history 事实。逐步有界超时
+  + 保守硬顶：monitor 60–540s（默认 480s，覆盖 monitor 内部最坏预算
+  ~445s + 启动余量）、history 10–120s（默认 45s）、insights 5–50s（默认
+  15s——纯本地只读工件处理，秒级完成即兜底杀停）——三步硬顶之和
+  540+120+50=710s < 计划任务执行时限 PT12M=720s < PT15M 间隔。
 - 重叠保护（fail-closed）：gitignored 工件目录内独占锁 ``pipeline.lock``
   （O_CREAT|O_EXCL 原子创建；锁/目录 symlink 一律拒绝）。锁已存在 → 可见
   拒绝 EXIT 2 且零步骤执行；**本轮零破坏性 stale-lock 清理**（陈旧锁由
@@ -37,13 +47,13 @@ HTTP/零计划任务注册，全部行为用 fake 注入测试锁定；真实执
   skipped/planned）与退出码、逐步 UTC 起止与时长、固定命令身份（仓内相对
   身份 + ``<python>`` 占位，绝无绝对本机路径）、有界脱敏错误类别/异常类名
   （固定词汇 detail）、步骤产物名 + SHA-256 + 字节数（若可得；monitor 产物
-  按「步骤前后目录差集」发现，仅 hash ≤8 个 monitor-*.json；history 产物为
-  两个固定名）、边界注记。**绝无 env 值/token/header/子进程原文日志/生产
-  ID**（写前 redact_secrets 终防线 + 生成面固定词汇双保险）。报告写入失败
-  = 证据不可失 → EXIT 2。
-- 退出码：0 plan 成功 / execute 两步全 ok；1 execute 已执行但有步骤失败
-  （monitor 非 ok / history 非 ok / 锁释放失败——可见失败不遮蔽）；2 门禁
-  缺失/不匹配、数值超顶、锁占用、symlink/越界路径、报告写入失败。
+  按「步骤前后目录差集」发现，仅 hash ≤8 个 monitor-*.json；history 产物
+  为两个固定名；insights 产物为两个固定名）、边界注记。**绝无 env 值/
+  token/header/子进程原文日志/生产 ID**（写前 redact_secrets 终防线 +
+  生成面固定词汇双保险）。报告写入失败 = 证据不可失 → EXIT 2。
+- 退出码：0 plan 成功 / execute 三步全 ok；1 execute 已执行但有步骤失败
+  （任一步非 ok / 锁释放失败——可见失败不遮蔽）；2 门禁缺失/不匹配、数值
+  超顶、锁占用、symlink/越界路径、报告写入失败。
 - 本工具零 HTTP、零 Docker 命令、零计划任务改动（源码契约锁定）；调度注册
   由 monitoring_pipeline_task.py（supervisor-only）承担；**本工具绝不宣称
   生产就绪；单次管道成功 ≠ production_ready**。
@@ -79,9 +89,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 OPS_DIR = REPO_ROOT / "tools" / "ops"
 MONITOR_SCRIPT = OPS_DIR / "production_monitor.py"
 HISTORY_SCRIPT = OPS_DIR / "monitoring_history.py"
-#: 两步产物目录（与两工具自身默认一致；本工具只读发现，绝不写入）
+INSIGHTS_SCRIPT = OPS_DIR / "monitoring_insights.py"
+#: 三步产物目录（与三工具自身默认一致——契约测试锁定 resolve 全等；本工具
+#: 只读发现，绝不写入）
 MONITOR_ARTIFACT_DIR = REPO_ROOT / ".verify" / "artifacts" / "m14-12-production-monitoring"
 HISTORY_OUTPUT_DIR = REPO_ROOT / ".verify" / "artifacts" / "m14-13-monitoring-history"
+INSIGHTS_OUTPUT_DIR = REPO_ROOT / ".verify" / "artifacts" / "m14-15-monitoring-insights"
 #: 本工具自身报告/锁目录（gitignored）
 ARTIFACT_DIR = REPO_ROOT / ".verify" / "artifacts" / "m14-14-monitoring-pipeline"
 
@@ -91,28 +104,37 @@ MILESTONE = "M14-14"
 TOOL_NAME = "tools/ops/monitoring_pipeline.py"
 MONITOR_TOOL_NAME = "tools/ops/production_monitor.py"
 HISTORY_TOOL_NAME = "tools/ops/monitoring_history.py"
+INSIGHTS_TOOL_NAME = "tools/ops/monitoring_insights.py"
 
 #: execute 门禁之二：精确确认短语（一字不差）
 CONFIRM_PHRASE = "EXECUTE READ-ONLY MONITORING PIPELINE"
 #: monitor 自身门禁短语——与 production_monitor.CONFIRM_PHRASE 逐字一致
 #: （固定命令白名单的组成部分；回归测试锁定两处恒相等）
 MONITOR_CONFIRM_PHRASE = "EXECUTE READ-ONLY PRODUCTION MONITORING"
+#: insights 自身门禁短语——与 monitoring_insights.CONFIRM_PHRASE 逐字一致
+#: （固定命令白名单的组成部分；回归测试锁定两处恒相等）
+INSIGHTS_CONFIRM_PHRASE = "EXECUTE READ-ONLY MONITORING INSIGHTS"
 
 LOCK_NAME = "pipeline.lock"
 LOCK_SCHEMA_VERSION = 1
 HISTORY_OUTPUT_NAMES: tuple[str, ...] = ("history.jsonl", "history-summary.md")
+INSIGHTS_OUTPUT_NAMES: tuple[str, ...] = ("insights.json", "insights-summary.md")
 
 #: 步骤超时（秒）——有界 + 保守硬顶。预算链（与 monitoring_pipeline_task
 #: 的 ExecutionTimeLimit=PT12M=720s 交叉 pin，测试锁定）：monitor 内部最坏
 #: ~445s（compose ps 60 + 6×inspect 30 + 6×logs 30 + 5×HTTP 5）+ 启动余量
-#: → 默认 480s；两步硬顶之和 540+120=660s < 720s 执行时限 < PT15M 重复
-#: 间隔（调度器绝不先于内部超时杀整任务——避免调度器击杀留下 stale lock）。
+#: → 默认 480s；history 45s；insights 纯本地只读工件处理秒级完成 → 默认
+#: 15s；三步硬顶之和 540+120+50=710s < 720s 执行时限 < PT15M 重复间隔
+#: （调度器绝不先于内部超时杀整任务——避免调度器击杀留下 stale lock）。
 MONITOR_TIMEOUT_DEFAULT = 480.0
 MONITOR_TIMEOUT_MIN = 60.0
 MONITOR_TIMEOUT_MAX = 540.0
 HISTORY_TIMEOUT_DEFAULT = 45.0
 HISTORY_TIMEOUT_MIN = 10.0
 HISTORY_TIMEOUT_MAX = 120.0
+INSIGHTS_TIMEOUT_DEFAULT = 15.0
+INSIGHTS_TIMEOUT_MIN = 5.0
+INSIGHTS_TIMEOUT_MAX = 50.0
 
 #: 产物发现边界：每步至多 hash 的文件数 + 单文件字节数上限（超限记数不记哈希）
 MAX_ARTIFACTS_HASHED_PER_STAGE = 8
@@ -127,17 +149,21 @@ _STEM_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 # ---------------------------------------------------------------- 数值面校验（纯）
 
 
-def validate_timeouts(*, monitor_timeout: float, history_timeout: float) -> list[str]:
+def validate_timeouts(*, monitor_timeout: float, history_timeout: float,
+                      insights_timeout: float) -> list[str]:
     """纯函数：返回违规清单（空 = 放行）。非有限浮点显式拒绝；plan 同样校验。"""
     problems: list[str] = []
     for name, value in (("monitor-timeout-seconds", monitor_timeout),
-                        ("history-timeout-seconds", history_timeout)):
+                        ("history-timeout-seconds", history_timeout),
+                        ("insights-timeout-seconds", insights_timeout)):
         if not math.isfinite(value):
             problems.append(f"{name} 必须为有限数值（nan/inf 一律拒绝）")
     if math.isfinite(monitor_timeout) and not MONITOR_TIMEOUT_MIN <= monitor_timeout <= MONITOR_TIMEOUT_MAX:
         problems.append(f"monitor-timeout-seconds 必须在 {MONITOR_TIMEOUT_MIN:g}-{MONITOR_TIMEOUT_MAX:g}s（收到 {monitor_timeout}）")
     if math.isfinite(history_timeout) and not HISTORY_TIMEOUT_MIN <= history_timeout <= HISTORY_TIMEOUT_MAX:
         problems.append(f"history-timeout-seconds 必须在 {HISTORY_TIMEOUT_MIN:g}-{HISTORY_TIMEOUT_MAX:g}s（收到 {history_timeout}）")
+    if math.isfinite(insights_timeout) and not INSIGHTS_TIMEOUT_MIN <= insights_timeout <= INSIGHTS_TIMEOUT_MAX:
+        problems.append(f"insights-timeout-seconds 必须在 {INSIGHTS_TIMEOUT_MIN:g}-{INSIGHTS_TIMEOUT_MAX:g}s（收到 {insights_timeout}）")
     return problems
 
 
@@ -200,22 +226,29 @@ class RealRunner:
 
 
 def allowed_step_argv(python_exe: str, *, monitor_script: Path = MONITOR_SCRIPT,
-                      history_script: Path = HISTORY_SCRIPT) -> dict[str, tuple[str, ...]]:
-    """两个**精确固定形态**（唯一可执行面；python 路径由构造侧固定，非用户输入）。"""
+                      history_script: Path = HISTORY_SCRIPT,
+                      insights_script: Path = INSIGHTS_SCRIPT) -> dict[str, tuple[str, ...]]:
+    """三个**精确固定形态**（唯一可执行面；python 路径由构造侧固定，非用户
+    输入。insights 恒不带 --source——输入恒为其默认源 = history canonical
+    输出目录，M14-21 起两处常量三方 resolve 全等，单一事实源）。"""
     return {
         "monitor": (python_exe, str(monitor_script),
                     "--execute", "--confirm", MONITOR_CONFIRM_PHRASE),
         "history": (python_exe, str(history_script)),
+        "insights": (python_exe, str(insights_script),
+                     "--execute", "--confirm", INSIGHTS_CONFIRM_PHRASE),
     }
 
 
 def is_allowed_step_command(argv: tuple[str, ...] | list[str], python_exe: str, *,
                             monitor_script: Path = MONITOR_SCRIPT,
-                            history_script: Path = HISTORY_SCRIPT) -> bool:
-    """结构性白名单：argv 与两个固定形态之一**逐 token 全等**才放行。"""
+                            history_script: Path = HISTORY_SCRIPT,
+                            insights_script: Path = INSIGHTS_SCRIPT) -> bool:
+    """结构性白名单：argv 与三个固定形态之一**逐 token 全等**才放行。"""
     tokens = tuple(str(item) for item in argv)
     return tokens in allowed_step_argv(python_exe, monitor_script=monitor_script,
-                                       history_script=history_script).values()
+                                       history_script=history_script,
+                                       insights_script=insights_script).values()
 
 
 class StepRunner:
@@ -405,6 +438,8 @@ def command_identity(step_id: str) -> list[str]:
     """报告用固定命令身份（仓内相对身份 + <python> 占位；绝无绝对本机路径）。"""
     if step_id == "monitor":
         return ["<python>", MONITOR_TOOL_NAME, "--execute", "--confirm", MONITOR_CONFIRM_PHRASE]
+    if step_id == "insights":
+        return ["<python>", INSIGHTS_TOOL_NAME, "--execute", "--confirm", INSIGHTS_CONFIRM_PHRASE]
     return ["<python>", HISTORY_TOOL_NAME]
 
 
@@ -439,7 +474,8 @@ def _safe_listing(fs: Fs, directory: Path) -> list[str] | None:
 
 def discover_stage_artifacts(fs: Fs, spec: StepSpec,
                              baseline: list[str] | None) -> list[dict[str, object]] | dict[str, str]:
-    """步骤产物发现（只读）：monitor=前后差集 ∩ monitor-*.json；history=两固定名。"""
+    """步骤产物发现（只读）：monitor=前后差集 ∩ monitor-*.json；history 与
+    insights=各自两固定名（同款固定名模式）。"""
     if spec.step_id == "monitor":
         after = _safe_listing(fs, spec.artifacts_dir)
         if after is None:
@@ -451,11 +487,12 @@ def discover_stage_artifacts(fs: Fs, spec: StepSpec,
                  and MONITOR_STEM_RE.match(n[:-len(".json")]) is not None]
         return _artifact_entries(fs, spec.artifacts_dir,
                                  [f"{stem}.json" for stem in sorted(stems)])
+    fixed_names = HISTORY_OUTPUT_NAMES if spec.step_id == "history" else INSIGHTS_OUTPUT_NAMES
     after = _safe_listing(fs, spec.artifacts_dir)
     if after is None:
         return {"unavailable_reason": "artifact-dir-unreadable"}
     return _artifact_entries(fs, spec.artifacts_dir,
-                             [name for name in HISTORY_OUTPUT_NAMES if name in after])
+                             [name for name in fixed_names if name in after])
 
 
 def run_step(runner: Runner, spec: StepSpec, argv: tuple[str, ...],
@@ -496,14 +533,16 @@ def run_step(runner: Runner, spec: StepSpec, argv: tuple[str, ...],
     }
 
 
-def skipped_step(spec: StepSpec, monitor: dict[str, object]) -> dict[str, object]:
-    """history 因 monitor 非 ok 跳过（固定词汇原因；monitor 事实由其自身条目保留）。"""
+def skipped_step(spec: StepSpec, prev_step_id: str,
+                 prev_stage: dict[str, object]) -> dict[str, object]:
+    """本步因前置步骤非 ok 跳过（固定词汇原因 ``<prev>-status-<status>``；
+    前置步骤事实由其自身条目如实保留）。"""
     return {
         "step_id": spec.step_id, "tool": spec.tool_identity,
         "command_identity": command_identity(spec.step_id),
         "status": "skipped", "exit_code": None, "timed_out": False,
         "failure_category": None, "error_class": None, "failure_detail": None,
-        "skipped_reason": f"monitor-status-{monitor['status']}",
+        "skipped_reason": f"{prev_step_id}-status-{prev_stage['status']}",
         "started_at_utc": None, "ended_at_utc": None, "duration_seconds": None,
         "timeout_seconds": spec.timeout_seconds, "artifacts": None,
     }
@@ -515,9 +554,9 @@ def skipped_step(spec: StepSpec, monitor: dict[str, object]) -> dict[str, object
 PIPELINE_BOUNDARIES: tuple[str, ...] = (
     "plan mode is completely inert: zero subprocess, zero network, zero production reads, zero scheduler mutation",
     "execute requires --execute plus the exact confirmation phrase; malformed or missing gates exit 2 before any runner is constructed",
-    "only two fixed allowlisted command forms are ever invoked (monitor --execute with its own confirm phrase; history with defaults); no shell=True, no user command/URL/env expansion",
-    "sequence is monitor then history; history runs only after monitor exits 0; stage failures are preserved, never masked",
-    "per-step bounded timeouts with conservative hard caps (monitor 60-540s, history 10-120s; caps sum below the PT12M task execution time limit)",
+    "only three fixed allowlisted command forms are ever invoked (monitor --execute with its own confirm phrase; history with defaults; insights --execute with its own confirm phrase and no --source, relying on the canonical history output default); no shell=True, no user command/URL/env expansion",
+    "sequence is monitor then history then insights; history runs only after monitor exits 0; insights runs only after history status is ok; stage failures and skips are preserved with fixed-vocabulary reasons, never masked",
+    "per-step bounded timeouts with conservative hard caps (monitor 60-540s, history 10-120s, insights 5-50s; caps sum to 710s below the PT12M task execution time limit)",
     "overlap protection: fail-closed exclusive lock; zero destructive stale-lock cleanup in this round",
     "report contains only safe facts: statuses, exit codes, stage timing, fixed command identities, sanitized error categories/classes, artifact names/hashes",
     "no env values, tokens, headers, raw child output, or production IDs are ever read into the report",
@@ -555,15 +594,19 @@ def build_report(*, mode: str, started_utc: str, ended_utc: str,
     }
 
 
-def build_config(*, monitor_timeout: float, history_timeout: float) -> dict[str, object]:
+def build_config(*, monitor_timeout: float, history_timeout: float,
+                 insights_timeout: float) -> dict[str, object]:
     return {
         "python_identity": "<sys.executable>",
         "monitor_tool": MONITOR_TOOL_NAME,
         "history_tool": HISTORY_TOOL_NAME,
-        "sequence": ["monitor", "history"],
+        "insights_tool": INSIGHTS_TOOL_NAME,
+        "sequence": ["monitor", "history", "insights"],
         "monitor_timeout_seconds": monitor_timeout,
         "history_timeout_seconds": history_timeout,
+        "insights_timeout_seconds": insights_timeout,
         "monitor_confirm_phrase": MONITOR_CONFIRM_PHRASE,
+        "insights_confirm_phrase": INSIGHTS_CONFIRM_PHRASE,
         "lock": LOCK_NAME,
     }
 
@@ -577,12 +620,12 @@ def render_markdown(report: dict[str, object]) -> str:
         "",
         f"- 工具：`{report['tool']}`（schema_version={report['schema_version']}）",
         f"- 开始（UTC）：{report['started_at_utc']}；结束（UTC）：{report['ended_at_utc']}",
-        f"- overall_status=**{report['overall_status']}**（序列 monitor → history，history 仅在 monitor exit 0 后运行）",
+        f"- overall_status=**{report['overall_status']}**（序列 monitor → history → insights，history 仅在 monitor exit 0 后运行，insights 仅在 history status=ok 后运行）",
         "",
         "| 步骤 | 工具 | 状态 | 退出码 | 时长(s) | 原因/类别 |",
         "|---|---|---|---|---:|---|",
     ]
-    for step_id in ("monitor", "history"):
+    for step_id in ("monitor", "history", "insights"):
         stage = stages[step_id]
         assert isinstance(stage, dict)
         reason = (stage.get("skipped_reason") or stage.get("failure_category")
@@ -624,35 +667,44 @@ def write_reports_atomic(fs: Fs, report: dict[str, object], directory: Path,
 
 def _planned_stages(config: dict[str, object]) -> dict[str, object]:
     stages: dict[str, object] = {}
-    for step_id in ("monitor", "history"):
-        spec_timeout = (config["monitor_timeout_seconds"] if step_id == "monitor"
-                        else config["history_timeout_seconds"])
+    timeout_keys = {"monitor": "monitor_timeout_seconds",
+                    "history": "history_timeout_seconds",
+                    "insights": "insights_timeout_seconds"}
+    tool_names = {"monitor": MONITOR_TOOL_NAME, "history": HISTORY_TOOL_NAME,
+                  "insights": INSIGHTS_TOOL_NAME}
+    for step_id in ("monitor", "history", "insights"):
         stages[step_id] = {
             "step_id": step_id,
-            "tool": MONITOR_TOOL_NAME if step_id == "monitor" else HISTORY_TOOL_NAME,
+            "tool": tool_names[step_id],
             "command_identity": command_identity(step_id),
             "status": "planned", "exit_code": None, "timed_out": False,
             "failure_category": None, "error_class": None, "failure_detail": None,
             "skipped_reason": None,
             "started_at_utc": None, "ended_at_utc": None, "duration_seconds": None,
-            "timeout_seconds": spec_timeout, "artifacts": None,
+            "timeout_seconds": config[timeout_keys[step_id]], "artifacts": None,
         }
     return stages
 
 
 def run_execute(*, runner: StepRunner, clock: Clock, fs: Fs, artifact_dir: Path,
-                monitor_timeout: float, history_timeout: float, python_exe: str,
+                monitor_timeout: float, history_timeout: float,
+                insights_timeout: float, python_exe: str,
                 log: SafeLog) -> tuple[dict[str, object], int]:
-    """execute 主管道：锁 → monitor → (exit 0 才) history → 报告 → 释锁。
+    """execute 主管道：锁 → monitor → (exit 0 才) history → (ok 才)
+    insights → 报告 → 释锁。
 
-    退出码契约见模块头；任何步骤失败如实入档（绝不遮蔽），报告写入失败
-    （证据不可失）与锁路径违规一律 EXIT_USAGE。"""
+    退出码契约见模块头；任何步骤失败/跳过如实入档（绝不遮蔽前置步骤
+    事实），报告写入失败（证据不可失）与锁路径违规一律 EXIT_USAGE。"""
     started_utc = clock.utc_now_iso()
     monitor_spec = StepSpec("monitor", MONITOR_TOOL_NAME, monitor_timeout,
                             MONITOR_ARTIFACT_DIR)
     history_spec = StepSpec("history", HISTORY_TOOL_NAME, history_timeout,
                             HISTORY_OUTPUT_DIR)
-    config = build_config(monitor_timeout=monitor_timeout, history_timeout=history_timeout)
+    insights_spec = StepSpec("insights", INSIGHTS_TOOL_NAME, insights_timeout,
+                             INSIGHTS_OUTPUT_DIR)
+    config = build_config(monitor_timeout=monitor_timeout,
+                          history_timeout=history_timeout,
+                          insights_timeout=insights_timeout)
     # 1) 重叠锁（fail-closed；目录 symlink 先拒，mkdir 先于拒绝会穿越 symlink）
     lock_path = artifact_dir / LOCK_NAME
     try:
@@ -689,13 +741,26 @@ def run_execute(*, runner: StepRunner, clock: Clock, fs: Fs, artifact_dir: Path,
             history["artifacts"] = discover_stage_artifacts(fs, history_spec, None)
             log.say(f"步骤 history: status={history['status']} exit_code={history['exit_code']}")
         else:
-            history = skipped_step(history_spec, monitor)
+            history = skipped_step(history_spec, "monitor", monitor)
             log.say(f"步骤 history: skipped（monitor status={monitor['status']}，"
                     f"exit_code={monitor['exit_code']}——失败如实保留不遮蔽）")
-        stages = {"monitor": monitor, "history": history}
+        # 4) insights 步——仅 history status=ok 后运行（history.jsonl 完整
+        #    落盘才可洞察）；输入恒为 insights 默认源 = history canonical
+        #    输出目录（固定命令形态不带 --source，无用户可注入面）
+        if monitor["status"] == "ok" and history["status"] == "ok":
+            log.say(f"步骤 insights: 执行（timeout {insights_timeout:g}s，固定白名单形态，"
+                    "默认源=history canonical 输出）")
+            insights = run_step(runner, insights_spec, argvs["insights"], clock)
+            insights["artifacts"] = discover_stage_artifacts(fs, insights_spec, None)
+            log.say(f"步骤 insights: status={insights['status']} exit_code={insights['exit_code']}")
+        else:
+            insights = skipped_step(insights_spec, "history", history)
+            log.say(f"步骤 insights: skipped（history status={history['status']}——"
+                    "前置事实如实保留不遮蔽）")
+        stages = {"monitor": monitor, "history": history, "insights": insights}
         all_ok = all(stage["status"] == "ok" for stage in stages.values())
         exit_code = EXIT_OK if all_ok else EXIT_STAGE_FAILED
-        # 4) 释放锁（记录结果；失败为可见失败 EXIT_STAGE_FAILED，不遮蔽步骤事实）
+        # 5) 释放锁（记录结果；失败为可见失败 EXIT_STAGE_FAILED，不遮蔽步骤事实）
         try:
             fs.lock_release(lock_path)
             lock["released"] = True
@@ -704,7 +769,7 @@ def run_execute(*, runner: StepRunner, clock: Clock, fs: Fs, artifact_dir: Path,
             lock["release_failure"] = type(cause).__name__
             log.say(f"锁释放失败（可见失败）: {type(cause).__name__}")
             exit_code = EXIT_STAGE_FAILED
-        # 5) 证据报告（原子写；写入失败 = 证据不可失 → EXIT_USAGE）
+        # 6) 证据报告（原子写；写入失败 = 证据不可失 → EXIT_USAGE）
         report = build_report(mode="execute", started_utc=started_utc,
                               ended_utc=clock.utc_now_iso(), config=config,
                               stages=stages, lock=lock)
@@ -717,7 +782,8 @@ def run_execute(*, runner: StepRunner, clock: Clock, fs: Fs, artifact_dir: Path,
             log.say(f"报告写入失败（证据不可失——按拒绝处理）: {type(cause).__name__}")
             return {}, EXIT_USAGE
         log.say(f"=== 结果: overall_status={report['overall_status']} "
-                f"monitor={stages['monitor']['status']} history={stages['history']['status']} ===")
+                f"monitor={stages['monitor']['status']} history={stages['history']['status']} "
+                f"insights={stages['insights']['status']} ===")
         return report, exit_code
     finally:
         # 兜底释锁：正常路径已在上方释放；此处仅覆盖报告构建期异常逃逸的场景
@@ -734,8 +800,8 @@ def run_execute(*, runner: StepRunner, clock: Clock, fs: Fs, artifact_dir: Path,
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="monitoring_pipeline.py",
-        description="M14-14 监控管道 readiness（默认 plan 零执行；execute 需旗标+精确确认短语，"
-                    "monitor→history 单次组合，固定命令白名单 + 重叠锁 + 原子证据报告）",
+        description="M14-14/M14-21 监控管道 readiness（默认 plan 零执行；execute 需旗标+精确确认短语，"
+                    "monitor→history→insights 单次组合，固定命令白名单 + 重叠锁 + 原子证据报告）",
     )
     parser.add_argument("--execute", action="store_true",
                         help="真实单次组合执行（默认 plan：零 subprocess/零网络/零生产读取）")
@@ -745,6 +811,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help=f"monitor 步超时 {MONITOR_TIMEOUT_MIN:g}-{MONITOR_TIMEOUT_MAX:g}s（默认 {MONITOR_TIMEOUT_DEFAULT:g}）")
     parser.add_argument("--history-timeout-seconds", type=float, default=HISTORY_TIMEOUT_DEFAULT,
                         help=f"history 步超时 {HISTORY_TIMEOUT_MIN:g}-{HISTORY_TIMEOUT_MAX:g}s（默认 {HISTORY_TIMEOUT_DEFAULT:g}）")
+    parser.add_argument("--insights-timeout-seconds", type=float, default=INSIGHTS_TIMEOUT_DEFAULT,
+                        help=f"insights 步超时 {INSIGHTS_TIMEOUT_MIN:g}-{INSIGHTS_TIMEOUT_MAX:g}s（默认 {INSIGHTS_TIMEOUT_DEFAULT:g}；"
+                             f"三步硬顶之和 {MONITOR_TIMEOUT_MAX:g}+{HISTORY_TIMEOUT_MAX:g}+{INSIGHTS_TIMEOUT_MAX:g}"
+                             f"={MONITOR_TIMEOUT_MAX + HISTORY_TIMEOUT_MAX + INSIGHTS_TIMEOUT_MAX:g}s < PT12M=720s）")
     parser.add_argument("--artifact-dir", type=Path, default=ARTIFACT_DIR,
                         help="管道报告/锁目录（默认 .verify/artifacts/m14-14-monitoring-pipeline，gitignored；"
                              "自定义路径为操作者显式自选，其位置与入库与否由操作者负责）")
@@ -758,23 +828,27 @@ def main(argv: list[str] | None = None, *, runner: StepRunner | None = None,
     log = SafeLog()
     # 1) 数值面校验（plan 与 execute 都校验；超顶/非有限一律先拒，零报告写入）
     problems = validate_timeouts(monitor_timeout=args.monitor_timeout_seconds,
-                                  history_timeout=args.history_timeout_seconds)
+                                  history_timeout=args.history_timeout_seconds,
+                                  insights_timeout=args.insights_timeout_seconds)
     if problems:
         for problem in problems:
             log.say(f"拒绝: {problem}")
         return EXIT_USAGE
     resolved_python = python_exe if python_exe is not None else sys.executable
     config = build_config(monitor_timeout=args.monitor_timeout_seconds,
-                          history_timeout=args.history_timeout_seconds)
+                          history_timeout=args.history_timeout_seconds,
+                          insights_timeout=args.insights_timeout_seconds)
     # 2) plan 模式（默认）：零 subprocess、零网络、零生产读取、零调度器改动
     if not args.execute:
-        log.say("=== M14-14 监控管道 PLAN（零 subprocess / 零网络 / 零生产读取 / 零调度器改动） ===")
-        for step_id in ("monitor", "history"):
+        log.say("=== M14-14/M14-21 监控管道 PLAN（零 subprocess / 零网络 / 零生产读取 / 零调度器改动） ===")
+        timeouts = {"monitor": args.monitor_timeout_seconds,
+                    "history": args.history_timeout_seconds,
+                    "insights": args.insights_timeout_seconds}
+        for step_id in ("monitor", "history", "insights"):
             identity = " ".join(command_identity(step_id))
-            timeout = (args.monitor_timeout_seconds if step_id == "monitor"
-                       else args.history_timeout_seconds)
-            log.say(f"步骤 {step_id}: {identity}（timeout {timeout:g}s，固定白名单形态）")
-        log.say("序列: monitor → history（history 仅在 monitor exit 0 后运行；失败如实保留）")
+            log.say(f"步骤 {step_id}: {identity}（timeout {timeouts[step_id]:g}s，固定白名单形态）")
+        log.say("序列: monitor → history → insights（history 仅在 monitor exit 0 后运行；"
+                "insights 仅在 history status=ok 后运行，默认源=history canonical 输出；失败如实保留）")
         log.say(f"重叠锁: {LOCK_NAME}（fail-closed；本轮零 stale-lock 清理）")
         log.say(f'执行需: --execute --confirm "{CONFIRM_PHRASE}"')
         report = build_report(mode="plan", started_utc="", ended_utc="",
@@ -799,11 +873,12 @@ def main(argv: list[str] | None = None, *, runner: StepRunner | None = None,
     execute_runner = runner if runner is not None else StepRunner(RealRunner(), resolved_python)
     execute_clock = clock if clock is not None else RealClock()
     execute_fs = fs if fs is not None else RealFs()
-    log.say("=== M14-14 监控管道 EXECUTE: monitor → history（固定白名单形态） ===")
+    log.say("=== M14-14/M14-21 监控管道 EXECUTE: monitor → history → insights（固定白名单形态） ===")
     _, exit_code = run_execute(runner=execute_runner, clock=execute_clock,
                                fs=execute_fs, artifact_dir=args.artifact_dir,
                                monitor_timeout=args.monitor_timeout_seconds,
                                history_timeout=args.history_timeout_seconds,
+                               insights_timeout=args.insights_timeout_seconds,
                                python_exe=resolved_python, log=log)
     return exit_code
 

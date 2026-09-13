@@ -215,15 +215,20 @@ def test_build_task_xml_key_fields(fake_repo: Path) -> None:
 
 
 def test_interval_covers_pipeline_budget(fake_repo: Path) -> None:
-    """保守间隔交叉 pin：间隔 > 执行时限 ≥ 管道 monitor 超时硬顶 ≥ monitor
-    内部最坏预算（compose ps 60 + 6×inspect 30 + 6×logs 30 + 5×HTTP 5）。"""
+    """保守间隔交叉 pin：间隔 > 执行时限 > 三步超时硬顶之和；monitor 硬顶 ≥
+    monitor 内部最坏预算（compose ps 60 + 6×inspect 30 + 6×logs 30 + 5×HTTP 5）。"""
     interval = _minutes(mpt.REPETITION_INTERVAL)
     limit = _minutes(mpt.EXECUTION_TIME_LIMIT)
     monitor_worst = 60 + 6 * 30 + 6 * 30 + 5 * 5
+    hard_sum = (mp.MONITOR_TIMEOUT_MAX + mp.HISTORY_TIMEOUT_MAX
+                + mp.INSIGHTS_TIMEOUT_MAX)
     assert interval > limit
+    assert limit > hard_sum  # M14-21：三步硬顶总和严格小于 PT12M=720s
     assert limit >= mp.MONITOR_TIMEOUT_MAX
     assert mp.MONITOR_TIMEOUT_MAX >= monitor_worst
-    assert mp.MONITOR_TIMEOUT_DEFAULT <= limit  # 默认超时也落在执行时限内
+    default_sum = (mp.MONITOR_TIMEOUT_DEFAULT + mp.HISTORY_TIMEOUT_DEFAULT
+                   + mp.INSIGHTS_TIMEOUT_DEFAULT)
+    assert default_sum <= limit  # 默认超时总和也落在执行时限内
 
 
 def test_esc_unit() -> None:

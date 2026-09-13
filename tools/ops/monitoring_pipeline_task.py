@@ -101,8 +101,9 @@ TASK_DESCRIPTION = (
 )
 #: 保守重复间隔：PT15M（每小时 4 次只读采集）；执行时限 PT12M < 间隔
 #: （调度器侧不会自我重叠，另有 IgnoreNew + 管道 pipeline.lock 兜底）。
-#: PT12M=720s 同时 ≥ 管道两步超时硬顶之和 540+120=660s（交叉 pin 测试
-#: 锁定——调度器绝不先于内部超时杀整任务，避免击杀留 stale lock）。
+#: PT12M=720s 同时 > 管道三步超时硬顶之和 540+120+50=710s（M14-21 起
+#: monitor → history → insights；交叉 pin 测试锁定——调度器绝不先于内部
+#: 超时杀整任务，避免击杀留 stale lock）。
 REPETITION_INTERVAL = "PT15M"
 EXECUTION_TIME_LIMIT = "PT12M"
 #: 固定 StartBoundary（过去时刻）：注册即生效、按间隔无限期重复

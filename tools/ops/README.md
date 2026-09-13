@@ -11,11 +11,13 @@
 摘要面（只读 M14-12 工件，零墙钟确定性输出）；`monitoring_pipeline.py` +
 `monitoring_pipeline_task.py` + `run_monitoring_pipeline_silent.vbs`
 （M14-14）承担持续/定时采集的**组合管道与调度 readiness** 面（单次
-monitor → history 组合 + 计划任务管理器；开发回合零真实执行、零注册，
-`production_ready=false` 不变）；`monitoring_insights.py`（M14-15）承担
+monitor → history → insights 组合（M14-21 起接入 insights）+ 计划任务
+管理器；开发回合零真实执行、零注册，`production_ready=false` 不变）；
+`monitoring_insights.py`（M14-15）承担
 监控历史**洞察/告警摘要**面（只读 M14-13 history.jsonl 或 M14-12 monitor
 工件目录 → 安全 JSON+MD 摘要；仅本地工件洞察，不接外部告警，
-`production_ready=false` 不变）。
+`production_ready=false` 不变；M14-21 起默认输入与 history canonical
+输出一致并被持续管道持续更新）。
 
 ## production_recovery.py
 
@@ -365,11 +367,14 @@ python tools/ops/monitoring_history.py --retention 200
 - 路径防御：源文件/源目录/输出路径/输出祖先的 symlink 一律拒绝；
   退出码 0 成功 / 2 任何拒绝（含零源、零完整样本、源目录缺失、写失败）。
 
-## monitoring_pipeline.py（M14-14）
+## monitoring_pipeline.py（M14-14 / M14-21）
 
 持续/定时监控采集管道 readiness：**单次组合** M14-12 monitor → M14-13
-history（history 仅在 monitor exit 0 后运行，失败如实保留绝不遮蔽）。
-开发/排障默认零执行；真实执行仅由 supervisor 在获准窗口运行。
+history → M14-15 insights（history 仅在 monitor exit 0 后运行；insights
+仅在 history status=ok 后运行，输入恒为 history canonical 输出目录——
+M14-21 起默认源常量三方 resolve 全等，单一事实源；任何失败/跳过固定词汇
+入档，前置步骤事实绝不遮蔽）。开发/排障默认零执行；真实执行仅由
+supervisor 在获准窗口运行。
 
 ```
 python tools/ops/monitoring_pipeline.py                        # plan（默认，零执行）
@@ -377,31 +382,38 @@ python tools/ops/monitoring_pipeline.py --execute \
     --confirm "EXECUTE READ-ONLY MONITORING PIPELINE"          # execute（单次组合）
 ```
 
-安全性质（契约测试 `services/api/tests/test_monitoring_pipeline.py` 52 项
-锁定；细节见脚本头注释与 `docs/evidence/m14-14-monitoring-pipeline/README.md`）：
+安全性质（契约测试 `services/api/tests/test_monitoring_pipeline.py` 锁定；
+细节见脚本头注释与 `docs/evidence/m14-14-monitoring-pipeline/README.md`、
+`docs/evidence/m14-21-monitoring-insights-pipeline/README.md`）：
 
 - **双模式门禁**：默认 plan 完全惰性（零 subprocess/零网络/零生产读取/
   零调度器改动，Runner 零构造——计数工厂测试锁定）；execute 需
   `--execute` + 精确确认短语 `EXECUTE READ-ONLY MONITORING PIPELINE`
-  （一字不差），缺一/近似即 EXIT 2 且零 Runner 构造/调用；两步超时
+  （一字不差），缺一/近似即 EXIT 2 且零 Runner 构造/调用；三步超时
   非有限浮点/超硬顶同样拒绝（plan 同样校验）。
-- **固定命令白名单门（结构性）**：仅两个精确固定形态——
+- **固定命令白名单门（结构性）**：仅三个精确固定形态——
   `<python> production_monitor.py --execute --confirm "EXECUTE READ-ONLY
-  PRODUCTION MONITORING"`（与 monitor 自身短语逐字一致，回归测试锁定）与
-  `<python> monitoring_history.py`（全默认参数）；任何其它 argv 在执行
-  之前拒绝；无 shell=True、无用户可注入命令/URL/env 展开；子进程输出只取
-  returncode，stdout/stderr 绝不持久化/回显。
+  PRODUCTION MONITORING"`（与 monitor 自身短语逐字一致，回归测试锁定）、
+  `<python> monitoring_history.py`（全默认参数）与
+  `<python> monitoring_insights.py --execute --confirm "EXECUTE READ-ONLY
+  MONITORING INSIGHTS"`（与 insights 自身短语逐字一致；**恒不带
+  --source**——输入恒为其默认源 = history canonical 输出目录）；任何其它
+  argv（含 --source/--event-limit 注入）在执行之前拒绝；无 shell=True、
+  无用户可注入命令/URL/env 展开；子进程输出只取 returncode，stdout/stderr
+  绝不持久化/回显。
 - **超时预算**：monitor 60–540s（默认 480s，覆盖 monitor 内部最坏 ~445s）、
-  history 10–120s（默认 45s）；硬顶之和 660s < 计划任务执行时限
-  PT12M=720s < 重复间隔 PT15M——调度器绝不先于内部超时杀整任务。
+  history 10–120s（默认 45s）、insights 5–50s（默认 15s，纯本地只读工件
+  处理秒级完成即兜底杀停）；三步硬顶之和 540+120+50=710s < 计划任务执行
+  时限 PT12M=720s < 重复间隔 PT15M——调度器绝不先于内部超时杀整任务。
 - **重叠保护**：gitignored 工件目录内 `pipeline.lock`（O_CREAT|O_EXCL）；
   已存在即可见拒绝零执行；**本轮零 stale-lock 清理**（陈旧锁操作者人工
   处置）；锁体仅安全事实；symlink 全路径拒绝。
 - **报告**：schema v1 JSON+MD 原子写（tmp+fsync+os.replace），仅安全事实
   （状态/退出码/时长/固定命令身份（无绝对本机路径）/脱敏错误类别类名/
-  产物名+SHA-256+字节数（差集发现、每步 ≤8 个 hash、超界记数））；
+  产物名+SHA-256+字节数（差集发现、每步 ≤8 个 hash、超界记数；history
+  与 insights 各两固定名））；
   报告写入失败 = 证据不可失 → EXIT 2。
-- 退出码：0 plan 成功 / execute 两步全 ok；1 execute 已执行但有可见失败；
+- 退出码：0 plan 成功 / execute 三步全 ok；1 execute 已执行但有可见失败；
  2 门禁/数值/锁/路径/报告写入拒绝。
 
 ## monitoring_pipeline_task.py + run_monitoring_pipeline_silent.vbs（M14-14）
@@ -470,8 +482,10 @@ python tools/ops/monitoring_insights.py --execute \
   INSIGHTS`（一字不差），缺一/近似即 EXIT 2 且零读取；`--event-limit`
   （默认 50、1–500）超界 plan/execute 同样拒绝。
 - **输入三形态（固定画像）**：`--source` 可为 ① `history.jsonl` 文件本体；
-  ② 含它的目录（默认 gitignored
-  `.verify/artifacts/m14-13-monitor-history-retention/`）；③ M14-12 monitor
+  ② 含它的目录（M14-21 起默认 = 同仓 `monitoring_history.py` 的 canonical
+  输出目录 `.verify/artifacts/m14-13-monitoring-history/`，gitignored，
+  **常量直接引用非平行定义**——持续管道 monitor → history → insights
+  持续更新，本目录恒有写入者）；③ M14-12 monitor
   工件目录（发现/严格校验/去重/排序**委托同仓 M14-13
   `monitoring_history.py` 已测函数**——schema 单一事实源，拒绝原因固定
   词汇透传）。同目录混入两形态 → mixed-inputs 拒绝；空目录/缺源/非

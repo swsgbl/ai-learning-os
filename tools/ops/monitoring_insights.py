@@ -16,8 +16,10 @@ Store 注入，测试注入 FakeStore；本工具只读输入面、只写输出�
   monitor-*.json → mixed-inputs 拒绝）；③ M14-12 monitor 工件目录（仅
   monitor-*.json——发现/严格校验/去重/排序**委托同仓 M14-13
   monitoring_history.py 的已测函数**（单一 schema 事实源），其固定词汇
-  拒绝原因原样透传）。默认 gitignored
-  ``.verify/artifacts/m14-13-monitor-history-retention/``。
+  拒绝原因原样透传）。默认输入 = 同仓 monitoring_history 的 canonical
+  输出目录 ``.verify/artifacts/m14-13-monitoring-history/``（M14-21 起
+  直接引用其 ``DEFAULT_OUTPUT_DIR`` 常量——单一事实源，持续管道
+  monitor → history → insights 持续更新，本目录恒有写入者）。
 - 严格校验（fail-closed，任何拒绝输出零写入）：history 行必须为 M14-13
   记录 schema（schema_version==1 / artifact_sha256 64 位十六进制 / stem
   白名单 / UTC 时间戳 / project 白名单 / overall_status∈{ok,warn,critical}
@@ -71,7 +73,9 @@ EXIT_OK = 0
 EXIT_REFUSED = 2
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_SOURCE = REPO_ROOT / ".verify" / "artifacts" / "m14-13-monitor-history-retention"
+#: M14-21：默认输入 = 同仓 monitoring_history 的 canonical 输出目录（单一
+#: 事实源——持续管道 monitor → history → insights 持续产出，本目录恒有写入者）
+DEFAULT_SOURCE = _history.DEFAULT_OUTPUT_DIR
 DEFAULT_OUTPUT_DIR = REPO_ROOT / ".verify" / "artifacts" / "m14-15-monitoring-insights"
 INSIGHTS_JSON_NAME = "insights.json"
 INSIGHTS_MD_NAME = "insights-summary.md"
