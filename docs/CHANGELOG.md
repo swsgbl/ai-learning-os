@@ -7,10 +7,50 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 
 ### Added
 
+- M14-22 生产监控三步管道验收回填（docs-only，零代码/零测试/零 workflow
+  改动、零生产触碰；分支 `docs/m14-22-monitoring-pipeline-production-
+  acceptance` 基于 `origin/main@1b89d91`（PR #98 merge），本地 commit 待
+  supervisor 审查发布，含 supervisor R1 修正 amend——验收面由「首轮成功」
+  增强为「两轮连续成功」）。把 Codex supervisor 2026-09-13 真实生产验收
+  事实回填入库：①PR #98 已合并 main（merge commit `1b89d91`，parents
+  `9977ece`+`1f131aa`，本地 git 可验证），合并后 main CI run
+  `34737912550` 最终 completed/success、5/5 job（Web/Android/Release
+  tools/Docker/API）；②计划任务 `AIOS-Monitoring-Pipeline` canonical 工具
+  status=**installed**，Action/参数/cwd/Hidden/触发器/间隔/时限逐项匹配，
+  **两轮连续真实调度成功**——Last Run 12:30:01 与 12:45:01（+08:00）均
+  Last Result=0、下一轮 13:00；③canonical 管道报告两轮
+  （`pipeline-20260913-043007` 12:30 + `pipeline-20260913-044503` 12:45，
+  gitignored 不入库，仅安全摘要）：两轮 overall_status=ok，monitor →
+  history → insights **三步全 ok、exit 0**（第一轮 duration
+  1.756/3.055/0.432s、第二轮 1.27/0.13/0.143s），lock acquired/released=
+  true；**insights 产物首次由真实计划任务产出（12:30）并在第二轮（12:45）
+  刷新**（首轮 insights.json `d45c0bcc…b17b`/6112B、insights-summary.md
+  `89e438d1…75b9`/2740B；第二轮 monitor-20260913-044501.json
+  `6006ce2d…1d1d`/14346B、insights.json `8c82612d…1cea`/6277B、
+  insights-summary.md `ac661d11…179c6`/2780B——回填回合两轮独立重算
+  逐项一致）；④monitor 工件两轮结论同构（12:30/12:45）：
+  overall_status=warn、partial=false——6/6 服务 healthy/running、5/5 端点
+  200 且延迟全部正常，**唯一 warn = api 容器 restart_count=1 达
+  restart_warn=1**（两轮同一静态累计值；静态累计阈值语义，**非服务故障**；
+  monitoring_ready=false）；⑤insights-summary（12:45 刷新后）：18 个
+  历史样本 ok=1/warn=17/critical=0、当前 warn 连续 17 条（最新样本服务
+  全 healthy、端点全 200，唯一阈值告警来自 api restart_count=1）。
+  **M14-21 遗留边界「管道真实三步运行与下一轮观察」闭环为已验收——两轮
+  成功证明重复调度执行，不构成长期稳定性证明；未决项保留：外部告警
+  接入、指标时序存储/查询、阈值随时间标定、真实客户端验收、>60s/
+  真实负载/跨机长稳、AGC 发布；下一步建议 M14-23「监控告警语义修复/
+  阈值演进」（区分静态累计 restart_count 与新增 restart、引入恢复态——
+  依据 17 连 warn 生产事实）。`production_ready=false` 不变**。证据
+  `docs/evidence/m14-22-monitoring-pipeline-production-acceptance/`。
+
 - M14-21 监控洞察接入持续管道（`tools/ops/monitoring_pipeline.py` 三步化 +
   `tools/ops/monitoring_insights.py` 默认输入对齐 history canonical 输出 +
-  契约测试 52→63/91→93/pipeline_task 预算 pin 三步化；本地 commit，待
-  supervisor 审查发布）。持续管道序列由 monitor → history 升级为
+  契约测试 52→63/91→93/pipeline_task 预算 pin 三步化；**合并收口（回填
+  2026-09-13）：已随 PR #98 合并 main（merge commit
+  `1b89d9182566ba0ff4afe8f02893acefae94fb43`，feature head `1f131aa`，
+  合并后 main CI run `34737912550` 5/5 job SUCCESS）；遗留观察边界
+  「管道真实三步运行与下一轮观察」已由 M14-22 真实调度验收闭环——下文
+  开发时点表述为快照**）。持续管道序列由 monitor → history 升级为
   **monitor → history → insights**：insights 仅在 history status=ok 后运行
   （history.jsonl 完整落盘才可洞察），任一前置失败/跳过以固定词汇原因
   （`monitor-status-<status>` / `history-status-<status>`）入档且前置步骤
