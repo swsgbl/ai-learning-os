@@ -5,7 +5,16 @@
   merge commit `1da44100ec83adc496520bed6dc9dd660d0b7129`，本地 git 可验证；
   其树等于合并后的 remote main）。本 Claude 开发回合独占 worktree
   `m14-14-monitoring-scheduler`，仅做**一个本地 commit**；supervisor 审查与
-  remote 发布（push/PR/合并）在其后进行。
+  remote 发布（push/PR/合并）在其后进行——该表述是开发时点快照，已被
+  下方合并收口取代。
+- **合并收口（回填 2026-09-13）**：已随 **PR #89** 合并 main——merged_at
+  **2026-09-12T17:28:55Z**，merge commit
+  `f6f03569aa13b52e07a2e63076f158c587117dfc`，feature head
+  `23a03903a9d4ea8909521fa4ecf2504227f4adda`（本地 git 可验证；远端
+  feature 分支截至回填时点仍存在）。PR CI run `34708110486`（含本 README
+  所述 PR #89 CI R3 白名单修正后的最终形态）与合并后 main push CI run
+  `34708350434` 均全部 5 job（Web/API/Docker/Android/Release tools）
+  SUCCESS。**合并 = 代码入库 + CI 绿；持续/定时运行仍为零（见边界）**。
 - 状态：**工具 + 计划任务 readiness 管理器 + 聚焦契约测试交付（本地）；
   开发回合零真实管道执行（execute 模式从未运行）、零计划任务注册/改动、
   零 Docker/零生产 HTTP/零 env 读取**。本回合实际运行过的命令面仅有：

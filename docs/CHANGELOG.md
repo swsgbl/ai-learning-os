@@ -7,8 +7,11 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 
 ### Added
 - M14-15 监控历史洞察/告警摘要第 1 切片（`tools/ops/monitoring_insights.py` +
-  `services/api/tests/test_monitoring_insights.py` 90 项契约测试；本 Claude
-  开发回合仅做本地 commit，supervisor 审查与 remote 发布在其后进行；
+  `services/api/tests/test_monitoring_insights.py` 90 项契约测试；
+  **合并收口（回填 2026-09-13）：已随 PR #90 合并 main（merged_at
+  2026-09-12T18:10:07Z，merge commit `ce10060`，feature head `acdbbb5`；
+  PR CI run `34710154644` 与合并后 main CI run `34710372281` 均 5/5 job
+  SUCCESS）——合并 = 代码入库 + CI 绿**；
   **开发回合零生产执行、零 canonical 仓库/`.verify` 触碰——全部验证用
   合成样本，不等于外部告警接入，`production_ready=false` 不变**）。本地
   只读工件 → 安全 JSON+MD 洞察摘要：输入三形态（`history.jsonl` 文件 /
@@ -43,8 +46,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   证据见 `docs/evidence/m14-15-monitoring-insights/`。
 - M14-14 持续/定时监控采集 + 历史管道 readiness（`tools/ops/monitoring_pipeline.py`
   + `tools/ops/monitoring_pipeline_task.py` +
-  `tools/ops/run_monitoring_pipeline_silent.vbs`；本 Claude 开发回合仅做本地
-  commit，supervisor 审查与 remote 发布在其后进行；**开发回合零真实管道
+  `tools/ops/run_monitoring_pipeline_silent.vbs`；
+  **合并收口（回填 2026-09-13）：已随 PR #89 合并 main（merged_at
+  2026-09-12T17:28:55Z，merge commit `f6f0356`，feature head `23a0390`；
+  PR CI run `34708110486` 与合并后 main CI run `34708350434` 均 5/5 job
+  SUCCESS）——合并 = 代码入库 + CI 绿，持续运行仍为零**；
+  **开发回合零真实管道
   执行（execute 模式从未运行）、零计划任务注册/改动、零 Docker/零生产
   HTTP/零 env 读取——交付的是 readiness，不证明持续运行**）。管道把既有
   M14-12 `production_monitor.py` 与 M14-13 `monitoring_history.py` 安全组合
@@ -235,7 +242,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 
 ### Fixed
 - M14-18 CosyVoice 最小运行时 openai-whisper triton 元数据冲突修复（生产
-  bootstrap 实证，本地 commit 待 supervisor 审查发布）：M14-17 终局 CUDA
+  bootstrap 实证；**合并收口（回填 2026-09-13）：已随 PR #93 合并 main
+  （merged_at 2026-09-12T21:53:44Z，merge commit `cc782b0`，feature head
+  `2185bdc`；PR CI run `34721050144` 与合并后 main CI run `34721233549`
+  均 5/5 job SUCCESS）；其后 PR #73 合并产生 main `42653b7`，merge-main
+  CI run `34726676218` 亦 5/5 SUCCESS。合并 = 代码入库 + CI 绿；生产实际
+  升级与冷启动复验仍为 supervisor 受控执行中，非完成宣称**）：M14-17 终局 CUDA
   闭包恢复已成功（2026-09-13 生产 service.log：torch `2.11.0+cu128` /
   triton `3.6.0` 及全部闭包成员就位），但 `cosyvoice-runtime-requirements.txt`
   的 `openai-whisper==20231117` METADATA 声明 `triton<3,>=2.0.0`（无环境
@@ -270,9 +282,14 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   改动）。**本切片只修复可复现清单/bootstrap 契约与文档：未重跑 bootstrap、
   未向任何 venv 装依赖、未启停任何进程/容器（生产 venv 仅只读探针），
   生产实际升级与冷启动复验由 supervisor 合并后受控执行；
-  `production_ready=false` 不变**。
-- M14-17 CosyVoice bootstrap CUDA 闭包终局修复（真实生产 venv 只读取证，本地
-  commit 待 supervisor 审查发布）：M14-16 的终局 `--no-deps` 回写只恢复三个
+  `production_ready=false` 不变**。证据见
+  `docs/evidence/m14-18-cosyvoice-whisper-triton/`。
+- M14-17 CosyVoice bootstrap CUDA 闭包终局修复（真实生产 venv 只读取证；
+  **合并收口（回填 2026-09-13）：已随 PR #92 合并 main（merged_at
+  2026-09-12T19:12:05Z，merge commit `5fbeb22`，feature head `74d3988`；
+  PR CI run `34713163316` 与合并后 main CI run `34713465954` 均 5/5 job
+  SUCCESS）。合并 = 代码入库 + CI 绿；生产 venv 实际修复与冷启动复验为
+  supervisor 合并后受控执行，非完成宣称**）：M14-16 的终局 `--no-deps` 回写只恢复三个
   主轮——生产 venv 实证（2026-09-13 `pip check`）torch/torchaudio/torchcodec
   均已 cu128，但 nvidia-cudnn-cu12 8.9.2.26（torch metadata 需
   `==9.19.0.56`）、nvidia-nccl-cu12 2.20.5（需 `==2.28.9`）、triton 2.3.1
@@ -308,9 +325,13 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   torch import 触发），通配/范围辅助函数另以隔离单测验证。**本切片只修复
   可复现 bootstrap 契约：未重跑 bootstrap、未装任何依赖、未启停任何进程/
   容器/监控任务，不构成生产运行恢复宣称——生产 venv 实际修复与冷启动复验
-  由 supervisor 合并后受控执行；`production_ready=false` 不变**。
-- M14-16 CosyVoice bootstrap 依赖解析降级回归（真实生产冷启动实证，本地
-  commit 待 supervisor 审查发布）：最小运行时清单的 PyPI 依赖解析
+  由 supervisor 合并后受控执行；`production_ready=false` 不变**。证据见
+  `docs/evidence/m14-17-cosyvoice-cuda-closure/`。
+- M14-16 CosyVoice bootstrap 依赖解析降级回归（真实生产冷启动实证；
+  **合并收口（回填 2026-09-13）：已随 PR #91 合并 main（merged_at
+  2026-09-12T18:28:09Z，merge commit `d6d0635`，feature head `f65251f`；
+  PR CI run `34711072494` 与合并后 main CI run `34711281622` 均 5/5 job
+  SUCCESS）**）：最小运行时清单的 PyPI 依赖解析
   （`lightning==2.2.4` 官方 pin 链）把 torch 降级到 2.3.1 而留下预装
   torchaudio 2.11.0+cu128——cu128 轮 METADATA 不声明 torch 约束，**`pip
   check` 对该混合 ABI 报「No broken requirements found」，不能作为一致性
@@ -331,7 +352,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   venv 解释器仅执行，零 canonical 检出改动）。**本切片只修复可复现
   bootstrap 契约：未重跑 bootstrap、未改生产 venv/进程/模型缓存，不构成
   生产运行恢复宣称——受控部署验证由 supervisor 合并后执行；
-  `production_ready=false` 不变**。
+  `production_ready=false` 不变**。证据见
+  `docs/evidence/m14-16-cosyvoice-runtime-consistency/`。
 - M14-13 CI R2：MinIO 社区版自 2025-10 起停止分发官方 Docker 镜像
   （source-only 分发），`minio/minio:latest` 拉取失败使 CI docker job 在项目
   构建之前即挂——改为本地自建官方 pin 源码镜像：新增 `infra/minio/Dockerfile`

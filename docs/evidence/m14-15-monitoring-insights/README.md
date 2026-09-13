@@ -4,7 +4,15 @@
 - 分支：`feat/m14-15-monitoring-insights`（基于 `main@f6f0356`，即 PR #89 merge
   commit `f6f03569aa13b52e07a2e63076f158c587117dfc`，本地 git 可验证）。本
   Claude 开发回合仅做本地 commit；supervisor 审查与 remote 发布（push/PR/
-  合并）在其后进行。
+  合并）在其后进行——该表述是开发时点快照，已被下方合并收口取代。
+- **合并收口（回填 2026-09-13）**：已随 **PR #90** 合并 main——merged_at
+  **2026-09-12T18:10:07Z**，merge commit
+  `ce100600c1f13b854129ddaa8d440089a98c3142`，feature head 即本切片唯一
+  commit `acdbbb53cae1adb628ae576447a8b5ccfc1a435d`（本地 git 可验证；
+  远端 feature 分支截至回填时点仍存在）。PR CI run `34710154644` 与合并后
+  main push CI run `34710372281` 均全部 5 job（Web/API/Docker/Android/
+  Release tools）SUCCESS。**合并 = 代码入库 + CI 绿；仍不等于外部告警
+  接入或 production readiness（见结论边界）**。
 - 状态：**工具 + 聚焦契约测试交付（本地 commit）；开发回合零生产执行、
   零 canonical 仓库/`.verify` 触碰（全部验证用合成样本在测试临时目录与
   本 worktree 自身 gitignored `.verify` 完成）**。
