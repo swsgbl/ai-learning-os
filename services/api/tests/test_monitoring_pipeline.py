@@ -1,35 +1,42 @@
-r"""M14-14 tools/ops/monitoring_pipeline.py 契约测试：monitor(M14-12) →
-history(M14-13) 单次组合管道的安全边界（零真实容器面/零网络/零生产读取/
-零计划任务改动）。
+r"""M14-14/M14-21 tools/ops/monitoring_pipeline.py 契约测试：monitor(M14-12)
+→ history(M14-13) → insights(M14-15) 单次组合管道的安全边界（零真实容器
+面/零网络/零生产读取/零计划任务改动）。
 
 覆盖（全部 I/O 经真实临时目录或注入 Fake；绝不触碰 canonical 仓库与真实
 .verify 目录；子进程经 FakeRunner 注入——绝不真实调用 production_monitor /
-monitoring_history）：
+monitoring_history / monitoring_insights）：
 - 结构契约：源码零网络/零 env/零容器面 token；唯一 subprocess 执行点无
   shell=；Windows 侧 CREATE_NO_WINDOW；os.replace 唯一落盘机制；
 - plan 惰性：socket+subprocess 双阻断下照常出计划与 plan 报告；Runner
   零构造（计数工厂）；plan 报告零状态宣称；仅 --confirm（缺 --execute）
   仍是 plan；
 - 门禁（fail-closed，零 Runner 构造/调用）：--execute 无 confirm、近似
-  短语 ×5；两步超时超硬顶/非有限浮点 ×N（plan 同样拒绝，零报告写入）；
+  短语 ×5；三步超时超硬顶/非有限浮点 ×N（plan 同样拒绝，零报告写入）；
 - 固定命令白名单门：StepRunner 对一切非精确形态（追加旗标/错误脚本/
-  错误短语/顺序错乱）在任何执行之前拒绝且内层零调用；两固定形态全等；
-- 序列语义：monitor → history 顺序执行（调用序断言）；monitor exit 0
-  才运行 history；monitor 非零退出 → history skipped + 固定词汇原因 +
-  monitor 退出码如实保留（不遮蔽）；history 失败同理；
-- 超时/执行错误：RunnerTimeout → status=timeout + history skipped；
-  RunnerError → status=error；配置超时逐字传给 runner；
+  错误短语/顺序错乱/--source 注入）在任何执行之前拒绝且内层零调用；
+  三固定形态全等；insights 形态不带 --source（依赖 canonical history
+  默认输入——单一事实源，无用户可注入 argv）；
+- 序列语义：monitor → history → insights 顺序执行（调用序断言）；
+  monitor exit 0 才运行 history；history exit 0 才运行 insights；
+  monitor 非零退出 → history/insights skipped + 固定词汇原因 + monitor
+  退出码如实保留（不遮蔽）；history 失败 → insights skipped 同理；
+  insights 失败不改变 monitor/history 事实；
+- 超时/执行错误：RunnerTimeout → status=timeout + 后续步 skipped；
+  RunnerError → status=error；配置超时逐字传给 runner；三步超时硬顶
+  总和 < 计划任务执行时限 PT12M=720s（与 monitoring_pipeline_task 交叉
+  pin）；insights 默认输入/输出与同仓工具 canonical 常量三方一致；
 - 重叠锁：锁已存在 → 可见拒绝 EXIT 2 零步骤执行（且零 stale-lock 清理
   ——不代删）；成功/步骤失败后锁释放；锁体仅安全事实；锁路径/输出祖先
   symlink 拒绝（真实文件面，目标零写入）；锁释放失败可见 EXIT 1 且入档；
 - 报告：schema 版本化、原子写（无 tmp 残留）、写失败 = 证据不可失
   EXIT 2；仅安全事实（无绝对本机路径/无子进程 stdout/stderr 原文/
   secret 形态经终防线脱敏——异常类名投毒实证）；产物名+SHA-256+字节数
-  （monitor 差集发现/非 monitor-*.json 忽略/hash 上限边界；history 两
-  固定名）；
-- 回归 pin（管道组合所依赖的既有工具契约）：monitor 门禁短语常量逐字
-  一致、monitor 退出码映射（ok|warn→0，incomplete|critical→2）、
-  monitor 门禁拒绝零采集、monitor plan 惰性、history 零源拒绝 EXIT 2。
+  （monitor 差集发现/非 monitor-*.json 忽略/hash 上限边界；history 与
+  insights 各两固定名）；
+- 回归 pin（管道组合所依赖的既有工具契约）：monitor/insights 门禁短语
+  常量逐字一致、monitor 退出码映射（ok|warn→0，incomplete|critical→2）、
+  monitor 门禁拒绝零采集、monitor plan 惰性、history 零源拒绝 EXIT 2、
+  insights 默认 source == history canonical 输出目录。
 """
 from __future__ import annotations
 
@@ -48,6 +55,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "tools" / "ops" / "monitoring_pipeline.py"
 MONITOR_SCRIPT = REPO_ROOT / "tools" / "ops" / "production_monitor.py"
 HISTORY_SCRIPT = REPO_ROOT / "tools" / "ops" / "monitoring_history.py"
+INSIGHTS_SCRIPT = REPO_ROOT / "tools" / "ops" / "monitoring_insights.py"
 
 #: 标记值（注入 FakeRunner 输出/异常类名，断言绝不进入报告与 stdout）
 MARK_TOKEN = "sk-ZXmarker0123456789"
@@ -69,6 +77,7 @@ def _load_module(path: Path, name: str):
 mp = _load_module(SCRIPT, "monitoring_pipeline_under_test")
 pm = _load_module(MONITOR_SCRIPT, "production_monitor_for_pipeline_regression")
 mh = _load_module(HISTORY_SCRIPT, "monitoring_history_for_pipeline_regression")
+mi = _load_module(INSIGHTS_SCRIPT, "monitoring_insights_for_pipeline_regression")
 
 FAKE_PY = "C:/fake/python.exe"
 
@@ -77,21 +86,31 @@ FAKE_PY = "C:/fake/python.exe"
 
 
 class FakeRunner:
-    """伪子进程面：按 argv[1] 判步（monitor/history），可注入 rc/异常/回调。"""
+    """伪子进程面：按 argv[1] 判步（monitor/history/insights），可注入 rc/异常/回调。"""
 
     def __init__(self, *, monitor_rc: int = 0, history_rc: int = 0,
+                 insights_rc: int = 0,
                  monitor_exc: BaseException | None = None,
                  history_exc: BaseException | None = None,
+                 insights_exc: BaseException | None = None,
                  on_call=None) -> None:
-        self._rc = {"monitor": monitor_rc, "history": history_rc}
-        self._exc = {"monitor": monitor_exc, "history": history_exc}
+        self._rc = {"monitor": monitor_rc, "history": history_rc,
+                    "insights": insights_rc}
+        self._exc = {"monitor": monitor_exc, "history": history_exc,
+                     "insights": insights_exc}
         self._on_call = on_call
         self.calls: list[tuple[tuple[str, ...], float]] = []
 
     def run(self, argv, *, timeout: float = 60.0, encoding: str | None = None):
         tokens = tuple(str(item) for item in argv)
         self.calls.append((tokens, float(timeout)))
-        step = "monitor" if tokens[1].endswith("production_monitor.py") else "history"
+        script = tokens[1]
+        if script.endswith("production_monitor.py"):
+            step = "monitor"
+        elif script.endswith("monitoring_history.py"):
+            step = "history"
+        else:
+            step = "insights"
         if self._on_call is not None:
             self._on_call(step)
         exc = self._exc[step]
@@ -169,15 +188,18 @@ def _report(artifact_dir: Path) -> dict[str, object]:
 
 
 def _patch_stage_dirs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
-                      *, pre_make: bool = True) -> tuple[Path, Path]:
+                      *, pre_make: bool = True) -> tuple[Path, Path, Path]:
     monitor_dir = tmp_path / "m14-12-artifacts"
     history_dir = tmp_path / "m14-13-artifacts"
+    insights_dir = tmp_path / "m14-15-artifacts"
     if pre_make:
         monitor_dir.mkdir()
         history_dir.mkdir()
+        insights_dir.mkdir()
     monkeypatch.setattr(mp, "MONITOR_ARTIFACT_DIR", monitor_dir)
     monkeypatch.setattr(mp, "HISTORY_OUTPUT_DIR", history_dir)
-    return monitor_dir, history_dir
+    monkeypatch.setattr(mp, "INSIGHTS_OUTPUT_DIR", insights_dir)
+    return monitor_dir, history_dir, insights_dir
 
 
 def _no_tmp_residue(directory: Path) -> bool:
@@ -218,6 +240,7 @@ def test_plan_mode_zero_side_effects(monkeypatch, tmp_path) -> None:
     assert report["overall_status"] == "planned"
     assert report["stages"]["monitor"]["status"] == "planned"
     assert report["stages"]["history"]["status"] == "planned"
+    assert report["stages"]["insights"]["status"] == "planned"
     # plan 零锁
     assert not (tmp_path / "out" / mp.LOCK_NAME).exists()
 
@@ -268,6 +291,7 @@ def test_execute_gate_wrong_phrase(monkeypatch, tmp_path, bad_phrase: str) -> No
 @pytest.mark.parametrize("option,bad", [
     ("--monitor-timeout-seconds", ["59", "541", "nan", "inf", "-inf"]),
     ("--history-timeout-seconds", ["9", "121", "nan", "inf"]),
+    ("--insights-timeout-seconds", ["4", "51", "nan", "inf", "-inf"]),
 ])
 def test_timeout_bounds_refused_in_plan_too(monkeypatch, tmp_path,
                                             option: str, bad: list[str]) -> None:
@@ -282,6 +306,7 @@ def test_timeout_bounds_refused_in_plan_too(monkeypatch, tmp_path,
 @pytest.mark.parametrize("option,value", [
     ("--monitor-timeout-seconds", ["60", "540"]),
     ("--history-timeout-seconds", ["10", "120"]),
+    ("--insights-timeout-seconds", ["5", "50"]),
 ])
 def test_timeout_bounds_inclusive_edges_accepted(tmp_path, option: str,
                                                  value: list[str]) -> None:
@@ -295,10 +320,15 @@ def test_timeout_bounds_inclusive_edges_accepted(tmp_path, option: str,
 
 def test_allowed_forms_exact() -> None:
     forms = mp.allowed_step_argv(FAKE_PY)
-    assert set(forms) == {"monitor", "history"}
+    assert set(forms) == {"monitor", "history", "insights"}
     assert forms["monitor"] == (FAKE_PY, str(mp.MONITOR_SCRIPT),
                                 "--execute", "--confirm", mp.MONITOR_CONFIRM_PHRASE)
     assert forms["history"] == (FAKE_PY, str(mp.HISTORY_SCRIPT))
+    assert forms["insights"] == (FAKE_PY, str(mp.INSIGHTS_SCRIPT),
+                                 "--execute", "--confirm", mp.INSIGHTS_CONFIRM_PHRASE)
+    # insights 形态恒不带 --source：输入恒为 canonical history 默认目录
+    # （单一事实源，绝无用户可注入 argv 面）
+    assert "--source" not in forms["insights"]
     for form in forms.values():
         assert mp.is_allowed_step_command(form, FAKE_PY)
 
@@ -312,6 +342,13 @@ def test_allowed_forms_exact() -> None:
     (FAKE_PY, str(mp.MONITOR_SCRIPT), "--confirm", mp.MONITOR_CONFIRM_PHRASE, "--execute"),
     (FAKE_PY, str(mp.HISTORY_SCRIPT), "--retention", "10"),           # 非默认参数
     (FAKE_PY, str(mp.HISTORY_SCRIPT), "--source-dir", "C:/evil"),     # 任意路径注入
+    (FAKE_PY, str(mp.INSIGHTS_SCRIPT)),                               # 缺 --execute
+    (FAKE_PY, str(mp.INSIGHTS_SCRIPT), "--execute"),                  # 缺 confirm
+    (FAKE_PY, str(mp.INSIGHTS_SCRIPT), "--execute", "--confirm", "WRONG"),
+    (FAKE_PY, str(mp.INSIGHTS_SCRIPT), "--execute", "--confirm",
+     mp.INSIGHTS_CONFIRM_PHRASE, "--source", "C:/evil"),              # source 注入
+    (FAKE_PY, str(mp.INSIGHTS_SCRIPT), "--execute", "--confirm",
+     mp.INSIGHTS_CONFIRM_PHRASE, "--event-limit", "500"),             # 非默认参数
     (FAKE_PY, "tools/ops/other_tool.py"),                             # 非许可脚本
     ("cmd.exe", "/c", "anything"),                                    # 非 python 形态
     (FAKE_PY,),
@@ -336,28 +373,32 @@ def test_step_runner_passes_allowed_forms_with_timeout() -> None:
 # ---------------------------------------------------------------- 序列语义
 
 
-def test_sequence_monitor_then_history_ok(monkeypatch, tmp_path) -> None:
-    monitor_dir, history_dir = _patch_stage_dirs(monkeypatch, tmp_path)
+def test_sequence_monitor_history_insights_ok(monkeypatch, tmp_path) -> None:
+    monitor_dir, history_dir, insights_dir = _patch_stage_dirs(monkeypatch, tmp_path)
 
     def on_call(step: str) -> None:
         if step == "monitor":
             (monitor_dir / "monitor-20260912-000000.json").write_text("{}", encoding="utf-8")
-        else:
+        elif step == "history":
             (history_dir / "history.jsonl").write_text("rows\n", encoding="utf-8")
             (history_dir / "history-summary.md").write_text("# s\n", encoding="utf-8")
+        else:
+            (insights_dir / "insights.json").write_bytes(b"{}")
+            (insights_dir / "insights-summary.md").write_bytes(b"# i\n")
 
     fake = FakeRunner(on_call=on_call)
     rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock())
     assert rc == mp.EXIT_OK
-    # 顺序断言：monitor 先、history 后，且各自为固定白名单形态
-    assert [argv[1] for argv, _ in fake.calls] == [str(mp.MONITOR_SCRIPT), str(mp.HISTORY_SCRIPT)]
+    # 顺序断言：monitor → history → insights，且各自为固定白名单形态
+    assert [argv[1] for argv, _ in fake.calls] == [
+        str(mp.MONITOR_SCRIPT), str(mp.HISTORY_SCRIPT), str(mp.INSIGHTS_SCRIPT)]
     for argv, _timeout in fake.calls:
         assert mp.is_allowed_step_command(argv, FAKE_PY)
     report = _report(tmp_path / "out")
-    assert report["stages"]["monitor"]["status"] == "ok"
-    assert report["stages"]["monitor"]["exit_code"] == 0
-    assert report["stages"]["history"]["status"] == "ok"
-    assert report["stages"]["history"]["exit_code"] == 0
+    assert report["config"]["sequence"] == ["monitor", "history", "insights"]
+    for step in ("monitor", "history", "insights"):
+        assert report["stages"][step]["status"] == "ok"
+        assert report["stages"][step]["exit_code"] == 0
     assert report["overall_status"] == "ok"
     # 产物发现 + 哈希
     monitor_artifacts = report["stages"]["monitor"]["artifacts"]
@@ -367,16 +408,21 @@ def test_sequence_monitor_then_history_ok(monkeypatch, tmp_path) -> None:
     assert monitor_artifacts[0]["bytes"] == 2
     history_artifacts = report["stages"]["history"]["artifacts"]
     assert {entry["name"] for entry in history_artifacts} == {"history.jsonl", "history-summary.md"}
+    insights_artifacts = report["stages"]["insights"]["artifacts"]
+    assert isinstance(insights_artifacts, list)
+    assert {entry["name"] for entry in insights_artifacts} == {"insights.json", "insights-summary.md"}
+    assert {entry["sha256"] for entry in insights_artifacts} == {
+        hashlib.sha256(b"{}").hexdigest(), hashlib.sha256(b"# i\n").hexdigest()}
     assert not (tmp_path / "out" / mp.LOCK_NAME).exists()  # 成功后锁释放
 
 
-def test_monitor_failure_skips_history_and_preserves_exit_code(
-        monkeypatch, tmp_path, capsys) -> None:
+def test_monitor_failure_skips_history_and_insights(monkeypatch, tmp_path,
+                                                    capsys) -> None:
     _patch_stage_dirs(monkeypatch, tmp_path)
     fake = FakeRunner(monitor_rc=2)
     rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock())
     assert rc == mp.EXIT_STAGE_FAILED
-    assert len(fake.calls) == 1  # history 零调用
+    assert len(fake.calls) == 1  # history/insights 零调用
     report = _report(tmp_path / "out")
     monitor = report["stages"]["monitor"]
     assert monitor["status"] == "failed"
@@ -385,26 +431,71 @@ def test_monitor_failure_skips_history_and_preserves_exit_code(
     history = report["stages"]["history"]
     assert history["status"] == "skipped"
     assert history["skipped_reason"] == "monitor-status-failed"
+    insights = report["stages"]["insights"]
+    assert insights["status"] == "skipped"
+    assert insights["skipped_reason"] == "history-status-skipped"
     assert report["overall_status"] == "failed"
     assert "monitor status=failed" in capsys.readouterr().out
 
 
-def test_history_failure_preserved(monkeypatch, tmp_path) -> None:
+def test_history_failure_skips_insights_reason_visible(monkeypatch, tmp_path,
+                                                       capsys) -> None:
     _patch_stage_dirs(monkeypatch, tmp_path)
     fake = FakeRunner(monitor_rc=0, history_rc=2)
     rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock())
     assert rc == mp.EXIT_STAGE_FAILED
+    assert len(fake.calls) == 2  # insights 零调用
     report = _report(tmp_path / "out")
     assert report["stages"]["monitor"]["status"] == "ok"
+    assert report["stages"]["monitor"]["exit_code"] == 0
     assert report["stages"]["history"]["status"] == "failed"
-    assert report["stages"]["history"]["exit_code"] == 2
+    assert report["stages"]["history"]["exit_code"] == 2  # history 事实不遮蔽
+    insights = report["stages"]["insights"]
+    assert insights["status"] == "skipped"
+    assert insights["skipped_reason"] == "history-status-failed"
+    assert insights["exit_code"] is None
     assert report["overall_status"] == "failed"
+    assert "insights: skipped" in capsys.readouterr().out
+
+
+def test_insights_failure_preserves_monitor_history_facts(
+        monkeypatch, tmp_path) -> None:
+    _patch_stage_dirs(monkeypatch, tmp_path)
+    fake = FakeRunner(monitor_rc=0, history_rc=0, insights_rc=2)
+    rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock())
+    assert rc == mp.EXIT_STAGE_FAILED
+    assert len(fake.calls) == 3  # 三步都真实执行（insights 失败不回滚事实）
+    report = _report(tmp_path / "out")
+    assert report["stages"]["monitor"]["status"] == "ok"
+    assert report["stages"]["monitor"]["exit_code"] == 0
+    assert report["stages"]["history"]["status"] == "ok"
+    assert report["stages"]["history"]["exit_code"] == 0
+    insights = report["stages"]["insights"]
+    assert insights["status"] == "failed"
+    assert insights["exit_code"] == 2
+    assert insights["failure_category"] == "stage-exit-nonzero"
+    assert report["overall_status"] == "failed"
+
+
+def test_insights_timeout_categorized(monkeypatch, tmp_path) -> None:
+    _patch_stage_dirs(monkeypatch, tmp_path)
+    fake = FakeRunner(insights_exc=mp.RunnerTimeout("secret " + MARK_TOKEN))
+    rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock())
+    assert rc == mp.EXIT_STAGE_FAILED
+    report = _report(tmp_path / "out")
+    insights = report["stages"]["insights"]
+    assert insights["status"] == "timeout"
+    assert insights["timed_out"] is True
+    assert insights["failure_category"] == "command-timeout"
+    # 前置步骤事实不受 insights 超时影响
+    assert report["stages"]["monitor"]["status"] == "ok"
+    assert report["stages"]["history"]["status"] == "ok"
 
 
 # ---------------------------------------------------------------- 超时 / 执行错误
 
 
-def test_monitor_timeout_skips_history(monkeypatch, tmp_path) -> None:
+def test_monitor_timeout_skips_history_and_insights(monkeypatch, tmp_path) -> None:
     _patch_stage_dirs(monkeypatch, tmp_path)
     fake = FakeRunner(monitor_exc=mp.RunnerTimeout("secret " + MARK_TOKEN))
     rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock())
@@ -418,6 +509,7 @@ def test_monitor_timeout_skips_history(monkeypatch, tmp_path) -> None:
     assert monitor["failure_category"] == "command-timeout"
     assert monitor["failure_detail"] == "stage-killed-after-timeout"
     assert report["stages"]["history"]["skipped_reason"] == "monitor-status-timeout"
+    assert report["stages"]["insights"]["skipped_reason"] == "history-status-skipped"
 
 
 def test_runner_exec_error_categorized_not_persisted(monkeypatch, tmp_path) -> None:
@@ -438,10 +530,11 @@ def test_configured_timeouts_passed_to_runner(monkeypatch, tmp_path) -> None:
     fake = FakeRunner()
     rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock(),
                   extra=("--monitor-timeout-seconds", "300",
-                         "--history-timeout-seconds", "45"))
+                         "--history-timeout-seconds", "45",
+                         "--insights-timeout-seconds", "10"))
     assert rc == mp.EXIT_OK
     timeouts = [timeout for _argv, timeout in fake.calls]
-    assert timeouts == [300.0, 45.0]
+    assert timeouts == [300.0, 45.0, 10.0]
 
 
 # ---------------------------------------------------------------- 重叠锁
@@ -593,7 +686,7 @@ def test_report_write_failure_evidence_exit(monkeypatch, tmp_path) -> None:
     fake = FakeRunner()
     rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock(), fs=_WriteFailFs())
     assert rc == mp.EXIT_USAGE  # 证据不可失——按拒绝处理
-    assert len(fake.calls) == 2  # 步骤确实已执行（拒绝仅因报告不可落盘）
+    assert len(fake.calls) == 3  # 步骤确实已执行（拒绝仅因报告不可落盘）
     assert not (tmp_path / "out" / mp.LOCK_NAME).exists()  # 锁在报告前已释放
 
 
@@ -625,18 +718,43 @@ def test_monitor_artifact_discovery_ignores_nonmonitor_and_bounded(
 
 
 def test_history_artifact_unavailable_when_dir_missing(monkeypatch, tmp_path) -> None:
-    monitor_dir, _history_dir = _patch_stage_dirs(monkeypatch, tmp_path, pre_make=False)
+    monitor_dir, _history_dir, _insights_dir = _patch_stage_dirs(
+        monkeypatch, tmp_path, pre_make=False)
 
     def on_call(step: str) -> None:
         if step == "monitor":
             monitor_dir.mkdir(parents=True)
             (monitor_dir / "monitor-20260912-000000.json").write_text("{}", encoding="utf-8")
-        # history 目录不创建（模拟该步未产出）
+        elif step == "history":
+            pass  # history 目录不创建（模拟该步未产出）
+        else:
+            _insights_dir.mkdir(parents=True)  # insights 仍执行（history rc=0）
+            (_insights_dir / "insights.json").write_text("{}", encoding="utf-8")
 
     fake = FakeRunner(on_call=on_call)
     rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock())
     assert rc == mp.EXIT_OK
     artifacts = _report(tmp_path / "out")["stages"]["history"]["artifacts"]
+    assert artifacts == {"unavailable_reason": "artifact-dir-unreadable"}  # 如实不可得
+
+
+def test_insights_artifact_unavailable_when_dir_missing(monkeypatch, tmp_path) -> None:
+    _monitor_dir, _history_dir, _insights_dir = _patch_stage_dirs(
+        monkeypatch, tmp_path, pre_make=False)
+
+    def on_call(step: str) -> None:
+        if step == "monitor":
+            _monitor_dir.mkdir(parents=True)
+            (_monitor_dir / "monitor-20260912-000000.json").write_text("{}", encoding="utf-8")
+        elif step == "history":
+            _history_dir.mkdir(parents=True)
+            (_history_dir / "history.jsonl").write_text("rows\n", encoding="utf-8")
+        # insights 目录不创建（模拟该步未产出）
+
+    fake = FakeRunner(on_call=on_call)
+    rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock())
+    assert rc == mp.EXIT_OK
+    artifacts = _report(tmp_path / "out")["stages"]["insights"]["artifacts"]
     assert artifacts == {"unavailable_reason": "artifact-dir-unreadable"}  # 如实不可得
 
 
@@ -648,6 +766,69 @@ def test_regression_monitor_confirm_phrase_constant() -> None:
     assert mp.MONITOR_CONFIRM_PHRASE == pm.CONFIRM_PHRASE
     assert pm.CONFIRM_PHRASE == "EXECUTE READ-ONLY PRODUCTION MONITORING"
     assert mp.CONFIRM_PHRASE != pm.CONFIRM_PHRASE  # 管道自身门禁独立
+
+
+def test_regression_insights_confirm_phrase_constant() -> None:
+    """管道固定命令内嵌的 insights 门禁短语与 monitoring_insights 恒一致。"""
+    assert mp.INSIGHTS_CONFIRM_PHRASE == mi.CONFIRM_PHRASE
+    assert mi.CONFIRM_PHRASE == "EXECUTE READ-ONLY MONITORING INSIGHTS"
+    # 与管道/monitor 门禁短语各司其职，互不通用
+    assert mp.INSIGHTS_CONFIRM_PHRASE != mp.CONFIRM_PHRASE
+    assert mp.INSIGHTS_CONFIRM_PHRASE != mp.MONITOR_CONFIRM_PHRASE
+
+
+def test_insights_default_source_matches_history_canonical_output() -> None:
+    """M14-21 双路径事实源修复：insights 默认输入 == history canonical 输出 ==
+    管道 history 步产物发现目录（三方 resolve 全等）。"""
+    assert mi.DEFAULT_SOURCE.resolve() == mh.DEFAULT_OUTPUT_DIR.resolve()
+    assert mp.HISTORY_OUTPUT_DIR.resolve() == mh.DEFAULT_OUTPUT_DIR.resolve()
+    assert str(mh.DEFAULT_OUTPUT_DIR).endswith("m14-13-monitoring-history")
+    # 管道 insights 步产物发现目录 == insights 工具自身默认输出目录
+    assert mp.INSIGHTS_OUTPUT_DIR.resolve() == mi.DEFAULT_OUTPUT_DIR.resolve()
+
+
+def test_insights_step_uses_canonical_default_source(monkeypatch, tmp_path) -> None:
+    """insights 固定命令形态不带 --source：canonical 输入经已修正的工具默认值
+    生效（真实管道中 monitoring_insights 读 history canonical 输出目录）。"""
+    _patch_stage_dirs(monkeypatch, tmp_path)
+    fake = FakeRunner()
+    rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock())
+    assert rc == mp.EXIT_OK
+    insights_argv = fake.calls[2][0]
+    assert "--source" not in insights_argv
+    assert "--output-dir" not in insights_argv
+
+
+def test_three_stage_timeout_budget_below_task_limit() -> None:
+    """三步超时硬顶总和 < 计划任务执行时限 PT12M=720s（与
+    monitoring_pipeline_task.EXECUTION_TIME_LIMIT 交叉 pin；调度器绝不先于
+    内部超时杀整任务，避免击杀留 stale lock）。"""
+    limit = 12 * 60  # PT12M = 720s
+    for name in ("MONITOR", "HISTORY", "INSIGHTS"):
+        default = getattr(mp, f"{name}_TIMEOUT_DEFAULT")
+        minimum = getattr(mp, f"{name}_TIMEOUT_MIN")
+        maximum = getattr(mp, f"{name}_TIMEOUT_MAX")
+        assert minimum < default <= maximum, f"{name} 默认值应落在界内"
+    hard_sum = (mp.MONITOR_TIMEOUT_MAX + mp.HISTORY_TIMEOUT_MAX
+                + mp.INSIGHTS_TIMEOUT_MAX)
+    assert hard_sum < limit, f"三步硬顶之和 {hard_sum}s 必须小于 {limit}s"
+    default_sum = (mp.MONITOR_TIMEOUT_DEFAULT + mp.HISTORY_TIMEOUT_DEFAULT
+                   + mp.INSIGHTS_TIMEOUT_DEFAULT)
+    assert default_sum < limit
+    # 边界同款：monitor 540 + history 120 不变（兼容面），insights 硬顶吃余量
+    assert (mp.MONITOR_TIMEOUT_MAX, mp.HISTORY_TIMEOUT_MAX) == (540.0, 120.0)
+
+
+def test_markdown_renders_all_three_stages(monkeypatch, tmp_path) -> None:
+    _patch_stage_dirs(monkeypatch, tmp_path)
+    fake = FakeRunner(monitor_rc=0, history_rc=0, insights_rc=2)
+    rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock())
+    assert rc == mp.EXIT_STAGE_FAILED
+    md_text = (tmp_path / "out" / "pipeline-20260912-000000.md").read_text(encoding="utf-8")
+    assert "insights" in md_text
+    assert "monitor → history → insights" in md_text
+    for tool_line in (mp.MONITOR_TOOL_NAME, mp.HISTORY_TOOL_NAME, mp.INSIGHTS_TOOL_NAME):
+        assert tool_line in md_text
 
 
 def test_regression_monitor_exit_code_map() -> None:
@@ -693,4 +874,5 @@ def test_cli_defaults_registered() -> None:
     assert args.confirm == ""
     assert args.monitor_timeout_seconds == mp.MONITOR_TIMEOUT_DEFAULT
     assert args.history_timeout_seconds == mp.HISTORY_TIMEOUT_DEFAULT
+    assert args.insights_timeout_seconds == mp.INSIGHTS_TIMEOUT_DEFAULT
     assert args.artifact_dir == mp.ARTIFACT_DIR

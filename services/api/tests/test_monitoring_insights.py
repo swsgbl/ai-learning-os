@@ -48,6 +48,7 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "tools" / "ops" / "monitoring_insights.py"
+HISTORY_SCRIPT = REPO_ROOT / "tools" / "ops" / "monitoring_history.py"
 OPS_README = REPO_ROOT / "tools" / "ops" / "README.md"
 
 #: 标记值（注入 history 行额外字段，断言绝不进入任何输出）
@@ -72,6 +73,7 @@ def _load_module(path: Path, name: str):
 
 
 mi = _load_module(SCRIPT, "monitoring_insights_under_test")
+mh = _load_module(HISTORY_SCRIPT, "monitoring_history_for_insights_default_pin")
 
 
 # ---------------------------------------------------------------- 样本工厂
@@ -1007,18 +1009,27 @@ def test_cli_defaults_registered() -> None:
     parser = mi.build_parser()
     args = parser.parse_args([])
     assert args.source == mi.DEFAULT_SOURCE
-    assert str(mi.DEFAULT_SOURCE).endswith("m14-13-monitor-history-retention")
+    # M14-21：默认输入与 history canonical 输出一致（单一事实源）
+    assert str(mi.DEFAULT_SOURCE).endswith("m14-13-monitoring-history")
     assert args.output_dir == mi.DEFAULT_OUTPUT_DIR
     assert args.event_limit == mi.DEFAULT_EVENT_LIMIT
     assert args.execute is False
     assert args.confirm == ""
 
 
+def test_default_source_is_history_canonical_output() -> None:
+    """M14-21 双路径事实源修复：默认输入直接取同仓 monitoring_history 的
+    canonical 输出目录常量（resolve 全等，非平行重复定义）。"""
+    assert mi.DEFAULT_SOURCE.resolve() == mh.DEFAULT_OUTPUT_DIR.resolve()
+
+
 def test_ops_readme_documents_tool() -> None:
     text = OPS_README.read_text(encoding="utf-8")
     assert "monitoring_insights.py" in text
     assert mi.CONFIRM_PHRASE in text
-    assert "m14-13-monitor-history-retention" in text
+    # M14-21：文档化 canonical 默认输入；retention 切片旧默认路径不再出现
+    assert "m14-13-monitoring-history" in text
+    assert "m14-13-monitor-history-retention" not in text
     assert "m14-15-monitoring-insights" in text
 
 
