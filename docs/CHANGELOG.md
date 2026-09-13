@@ -241,6 +241,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   默认关闭保持确定性判分；真实端点冒烟脚本 infra/smoke_llm.sh）
 
 ### Fixed
+- M14-19 CosyVoice bootstrap ModelScope 模型下载载荷过滤（本地 commit 待
+  supervisor 审查发布）：模型下载原为无过滤 `snapshot_download(model_id,
+  local_dir=...)`——整仓下载 ≈9.85GB（2026-09-13 ModelScope API 实测
+  `FunAudioLLM/Fun-CosyVoice3-0.5B-2512` 共 19 文件），其中 ≈4.44GB 与所选
+  运行时无关（`llm.rl.pt` 2.02GB 固定 commit 全仓零引用 /
+  `flow.decoder.estimator.fp32.onnx` 1.33GB 仅 `load_trt=True` 路径 /
+  `speech_tokenizer_v3.batch.onnx` 0.97GB 仅训练单例路径 / 宣传图与仓库
+  元数据）。修法 = 新增 `tools/voice/cosyvoice_model_payload.py` 载荷契约
+  模块（仅标准库；`RUNTIME_PAYLOADS` 按 model_id 注册 12 精确路径白名单 +
+  11 项 strict 必需集），bootstrap 下载段经它 fail-closed 解析后以
+  `snapshot_download(..., allow_patterns=[...])` 下发（modelscope 1.20
+  受支持参数；断点续传/缓存语义不变），下载后逐一存在性校验必需文件；
+  未知 model_id / 空·畸形白名单 / 必需件未被白名单覆盖一律拒绝
+  （modelscope 空列表语义 = 不过滤 = 整仓）。**CosyVoice-BlankEN/\* 经源码
+  + 生产 venv 探针实证属真正必需载荷**（cosyvoice.py:200 override →
+  `Qwen2Encoder(Qwen2ForCausalLM.from_pretrained)` + `AutoTokenizer`，缺
+  `model.safetensors` 即 OSError）——保留下载；白名单而非 ignore 列表：
+  上游新增文件默认排除（fail-closed）。bash 侧四文件载荷判定/缓存回落/
+  wetext 预热零改动；净效果 = 新冷机 ≈5.4GB（**-45%**）。契约测试 6 项
+  新增（必需件放行/无关资产排除/BlankEN 显式选择语义/fail-closed/
+  fnmatch 语义镜像/bootstrap 调用形态）。
 - M14-18 CosyVoice 最小运行时 openai-whisper triton 元数据冲突修复（生产
   bootstrap 实证；**合并收口（回填 2026-09-13）：已随 PR #93 合并 main
   （merged_at 2026-09-12T21:53:44Z，merge commit `cc782b0`，feature head

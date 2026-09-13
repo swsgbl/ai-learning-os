@@ -231,6 +231,46 @@ contract`（全生效行禁 `--no-deps`/`--force-reinstall`/`--ignore-installed`
 形态）、`test_whisper_api_compat_contract_when_installed`（whisper 可导入
 环境的两 API 签名回归，canonical venv 无 whisper 时显式 skip）。
 
+**M14-19 ModelScope 模型下载载荷过滤（allow_patterns 白名单）**：模型下载
+原为无过滤 `snapshot_download(model_id, local_dir=...)`——整仓下载 ≈9.85GB
+（2026-09-13 ModelScope API 实测 19 文件），其中 ≈4.44GB 与所选运行时无关：
+`llm.rl.pt` 2.02GB（固定 commit `074ca6d` 全仓零引用的 RL 后训练变体）、
+`flow.decoder.estimator.fp32.onnx` 1.33GB（仅 `load_trt=True` 分支引用，
+bridge 默认 `AutoModel(model_dir=...)` 不启用）、`speech_tokenizer_v3.batch.onnx`
+0.97GB（仅 `online_feature` 训练单例（env `onnx_path`）路径引用，推理
+frontend 用 `speech_tokenizer_v3.onnx`）、`asset/dingding.png`/`README.md`/
+`.gitattributes`/`configuration.json`（运行时零引用）。修法 = 新增
+`tools/voice/cosyvoice_model_payload.py` 载荷契约模块（仅标准库，canonical
+测试 venv 与 CosyVoice venv (py3.10) 双侧可导入）：`RUNTIME_PAYLOADS` 按
+model_id 注册 12 精确路径白名单 + 11 项 strict 必需集
+（`required_files ⊆ allow_patterns` 匹配集强校验），bootstrap 下载段经它
+fail-closed 解析后以 `snapshot_download(model_id, local_dir=...,
+allow_patterns=[...])` 下发（modelscope 1.20 受支持参数；断点续传/本地缓存
+命中语义不变——白名单只收窄下载集合），下载后逐一存在性校验必需文件
+（上游布局变更即点名失败）。**fail-closed 面**：未注册 model_id、空/畸形
+白名单（含 str 形态）、必需集为空、必需文件未被白名单覆盖一律拒绝——
+modelscope 1.20 空 `allow_patterns` 语义 = 不过滤 = 整仓下载，绝不静默
+放行。**为什么白名单而不是 ignore 列表**：上游未来新增文件默认被排除
+（fail-closed），ignore 列表对新增文件 fail-open。**CosyVoice-BlankEN/\*
+属真正必需载荷**（任务书曾假设其 optional，被源码+实证推翻）：固定 commit
+`cosyvoice/cli/cosyvoice.py:200` 经 override
+`qwen_pretrain_path=<model_dir>/CosyVoice-BlankEN` 注入 `cosyvoice3.yaml` →
+`!new:` 急切构造 `Qwen2Encoder`（`llm/llm.py:229
+Qwen2ForCausalLM.from_pretrained`）+ `!name:` partial（`frontend.py:39` →
+`AutoTokenizer.from_pretrained`）；2026-09-13 WSL 生产 venv 探针实证
+BlankEN 缺 `model.safetensors` 即 `OSError: Error no file named ... model.
+safetensors ... found`——排除它会让 bridge 模型加载失败。未来运行时
+（TensorRT 形态 / 不需要 BlankEN 的轻量形态）= 在 `RUNTIME_PAYLOADS`
+显式注册自己的载荷；不列出即不下载。契约测试：`test_model_payload_
+required_files_allowed_and_selected`、`test_model_payload_excludes_
+unreferenced_repo_assets`（19→12 净效果锁定）、`test_model_payload_
+blanken_selected_only_by_explicit_runtime`、`test_model_payload_filter_
+fails_closed`、`test_model_payload_filter_mirrors_modelscope_fnmatch_
+semantics`、`test_bootstrap_cosyvoice_download_filter_contract`。bash 侧
+四文件载荷判定（`model_payload_ready`）、ModelScope 缓存回落
+（`modelscope_cache_model_dir`）、wetext 预热（M14-03）全部保持不变。
+净效果：新冷机下载 ≈5.4GB（原 ≈9.85GB，**-45%**）。
+
 ## 幂等与固定版本
 
 - venv/克隆/模型已存在即复用或断点续传；`pip install` 满足即 no-op；uv venv
