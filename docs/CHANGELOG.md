@@ -7,6 +7,43 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 
 ### Added
 
+- M14-24 生产验收回填（docs-only，零代码/零生产触碰；分支
+  `docs/m14-24-production-acceptance` 基于 `main@165ca5c`（PR #102 merge），
+  按任务书不做本地 commit/push——变更以未提交工作树交付 supervisor 审查）。
+  把 Codex supervisor 2026-09-13 获准窗口的受控生产验收事实回填入库，收口
+  M14-24 开发切片遗留边界「生效时机：本回合零重启、随获准窗口下一次重启
+  生效」：①PR #102（M14-24 修复）已合并 main——merge commit
+  `165ca5caff9b48e8514a741e77fe3420b12b5fee`（parents `c4bda69` +
+  `91da769`，本地 git 可验证）；PR CI 5/5 job success、合并后 main CI run
+  `34766519950` 5/5 job success（supervisor 验收事实）；②受控重启时间线：
+  旧 CosyVoice PID 7481 优雅退出 → 第一次新启动 PID 18447 bootstrap 中止
+  （PyPI 网络不可达、模型缓存完整仍强制 pip 联网——暴露 M14-25 离线重启
+  不幂等阻塞点）→ 最终 PID 19132 于 2026-09-13T23:51:10+08:00 启动成功
+  （端口 8011、manifest managed-running、运行合并后新 bridge）；③
+  readiness/lifecycle 实测：端口先监听、loading 期 `/health` 503、加载完成
+  `/health` 200 ready、`/health/live` 恒 200（alive/ready）——liveness 与
+  readiness 不混同；④真实 TTS 冒烟 18467ms、405164 bytes、SHA-256
+  `C54E871D6FD12022085713D2A52DD3ED0483FF4C3A30A643D23958EC42E33DE3`、
+  RIFF/WAVE（原始 WAV 仅 gitignored `.verify/` 不入库）；⑤合成期间并发
+  健康探针 28 次（`/health/live` ×14 + `/health` ×14）非 200 = 0，live
+  max 409.981ms/mean≈38.35ms、health max 9.708ms/mean≈4.61ms，并发合成
+  输出 585644 bytes、SHA-256
+  `92E2A5FADD4DCEF4ACE0D700123A8B3F5EF7373D0E05C2F0B74797865E8DD798`；
+  ⑥新进程后自然监控 00:00 与 00:15 两轮均正常（00:15 轮为 supervisor R1
+  修正补充）：00:00 轮 `pipeline-20260913-160025` overall ok、
+  `monitor-20260913-160023` 34 检查 ok=34/warn=0/critical=0、六容器
+  healthy、restart 增量全 0、FunASR `/health` 200 3.346ms、CosyVoice
+  `/health` 200 12.417ms；00:15 轮 `pipeline-20260913-161559` overall ok、
+  `monitor-20260913-161557` 34 检查 ok=34/warn=0/critical=0、六容器
+  healthy、restart 增量全 0、web-root 7.731ms/web-login 12.052ms/
+  api-health 12.362ms、FunASR 13.161ms、CosyVoice 13.243ms（全 200）。
+  **边界（诚实口径）：单机、单轮真实冒烟 + 00:00/00:15 两轮自然观察——
+  两轮自然观察仍不能证明长期稳定性，非高精度 benchmark；funasr 上游事件循环阻塞未修（ASR
+  负载期 warn/incomplete 属预期非回归）；cosyvoice bootstrap 离线重启
+  不幂等为下一功能切片（M14-25）；`production_ready=false` 不变**。证据
+  `docs/evidence/m14-24-production-acceptance/README.md`（回填回合对 git
+  谱系、两 WAV 字节/SHA-256/RIFF 头、探针统计、monitor/pipeline 工件独立
+  只读复核）
 - M14-24 语音健康端点延迟/劣化修复（cosyvoice bridge：liveness/readiness
   分离 + 合成路径有界分块转换；funasr 侧根因确认为上游包事件循环阻塞、记为
   残余风险）。分支 `fix/m14-24-voice-health-latency` 基于 `main@c4bda69`
