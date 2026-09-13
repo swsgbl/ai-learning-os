@@ -849,9 +849,15 @@ def test_service_summary_totals(tmp_path) -> None:
     data = _scenario_insights(tmp_path)
     services = data["service_summary"]
     assert isinstance(services, dict)
-    assert services["api"] == {"restart_total": 1, "log_error_total": 7, "unhealthy_samples": 1}
-    assert services["redis"] == {"restart_total": 5, "log_error_total": 30, "unhealthy_samples": 1}
-    assert services["postgres"] == {"restart_total": 0, "log_error_total": 0, "unhealthy_samples": 0}
+    # M14-23：restart 增量键恒在场（legacy 行 → 0，诚实区分无数据与测得零）
+    legacy_restart_keys = {"restart_delta_total": 0, "restart_delta_samples": 0,
+                           "restart_event_count": 0, "restart_recovery_count": 0}
+    assert services["api"] == {"restart_total": 1, "log_error_total": 7,
+                               "unhealthy_samples": 1, **legacy_restart_keys}
+    assert services["redis"] == {"restart_total": 5, "log_error_total": 30,
+                                 "unhealthy_samples": 1, **legacy_restart_keys}
+    assert services["postgres"] == {"restart_total": 0, "log_error_total": 0,
+                                    "unhealthy_samples": 0, **legacy_restart_keys}
 
 
 def test_single_sample_edge_shape(tmp_path) -> None:
@@ -1031,6 +1037,240 @@ def test_ops_readme_documents_tool() -> None:
     assert "m14-13-monitoring-history" in text
     assert "m14-13-monitor-history-retention" not in text
     assert "m14-15-monitoring-insights" in text
+
+
+# ---------------------------------------------------------------- M14-23 restart 增量/事件/恢复语义
+
+
+def _restart_eval_record(*, baseline_status: str = "ok",
+                         baseline_reason: str | None = None,
+                         source_stem: str | None = "monitor-20260911-160000",
+                         collected: str | None = "2026-09-11T16:00:00Z",
+                         invalid_skipped: int = 0,
+                         states: dict[str, str] | None = None,
+                         reasons: dict[str, str] | None = None,
+                         deltas: dict[str, int | None] | None = None) -> dict[str, object]:
+    """M14-13 记录形态的 restart_evaluation（与 monitoring_history.build_record 同构）。"""
+    return {
+        "baseline_status": baseline_status,
+        "baseline_reason": baseline_reason,
+        "baseline_source_stem": source_stem,
+        "baseline_collected_at": collected,
+        "baseline_invalid_skipped_count": invalid_skipped,
+        "states": {s: (states or {}).get(s, "ok") for s in SERVICES},
+        "reasons": {s: (reasons or {}).get(s, "stable") for s in SERVICES},
+        "deltas": {s: (deltas or {}).get(s, 0) for s in SERVICES},
+    }
+
+
+def _restart_scenario_rows() -> list[dict[str, object]]:
+    """legacy → api 事件（增量 2）→ api 稳定（增量 0）→ api 重建事件 → 4 样本。"""
+    return [
+        _row("2026-09-11T17:00:00Z", restarts={"api": 1}),  # legacy：无评估字段
+        _row("2026-09-11T17:15:00Z", restarts={"api": 3}, extra={
+            "restart_evaluation": _restart_eval_record(
+                states={"api": "warn"}, reasons={"api": "delta"}, deltas={"api": 2})}),
+        _row("2026-09-11T17:30:00Z", restarts={"api": 3}, extra={
+            "restart_evaluation": _restart_eval_record()}),
+        _row("2026-09-11T17:45:00Z", restarts={"api": 0}, extra={
+            "restart_evaluation": _restart_eval_record(
+                states={"api": "warn"}, reasons={"api": "container-recreated"},
+                deltas={"api": None})}),
+    ]
+
+
+def test_restart_delta_event_recovery_semantics(tmp_path) -> None:
+    """区分累计总计与当轮增量/事件/恢复：累计 restart_total=1+3+3+0=7，
+    增量合计 2（+0，None 不计）、事件 2（delta + recreated）、恢复 1
+    （事件→稳定转移；legacy 行后不计转移）。"""
+    source = tmp_path / "src"
+    source.mkdir()
+    _write_history(source, _restart_scenario_rows())
+    output = tmp_path / "out"
+    assert _execute(source, output) == mi.EXIT_OK
+    services = _insights(output)["service_summary"]
+    assert isinstance(services, dict)
+    api = services["api"]
+    assert isinstance(api, dict)
+    assert api["restart_total"] == 7                    # 累计口径（不变）
+    assert api["restart_delta_total"] == 2              # 当轮增量口径
+    assert api["restart_delta_samples"] == 3            # 3/4 样本带评估数据
+    assert api["restart_event_count"] == 2              # delta + container-recreated
+    assert api["restart_recovery_count"] == 1           # 事件→稳定一次转移
+    assert services["redis"]["restart_delta_samples"] == 3  # 全行生效，redis 全 ok
+    assert services["redis"]["restart_event_count"] == 0
+
+
+def test_legacy_rows_without_restart_evaluation_stay_readable(tmp_path) -> None:
+    """旧 history 行（无 restart_evaluation）照常洞察——增量键在场为 0。"""
+    source = tmp_path / "src"
+    source.mkdir()
+    _write_history(source, [_row("2026-09-11T17:00:00Z", restarts={"api": 4}),
+                            _row("2026-09-11T17:15:00Z", restarts={"api": 4})])
+    output = tmp_path / "out"
+    assert _execute(source, output) == mi.EXIT_OK
+    data = _insights(output)
+    api = data["service_summary"]["api"]  # type: ignore[index]
+    assert isinstance(api, dict)
+    assert api["restart_total"] == 8
+    assert api["restart_delta_total"] == 0 and api["restart_delta_samples"] == 0
+    assert api["restart_event_count"] == 0 and api["restart_recovery_count"] == 0
+
+
+BAD_RESTART_EVAL_ROWS: list[tuple[str, object]] = [
+    ("not-a-dict", "restart-evaluation-string"),
+    ("baseline-status-vocab", {"baseline_status": "bogus"}),
+    ("baseline-status-unhashable", _restart_eval_record()
+     | {"baseline_status": ["ok"]}),
+    # supervisor R1：baseline 元数据一致性（status ↔ reason/stem/collected 联动）
+    ("ok-with-reason", _restart_eval_record(baseline_reason="nope")),
+    ("ok-missing-stem", _restart_eval_record(source_stem=None)),
+    ("ok-missing-collected", _restart_eval_record(collected=None)),
+    ("missing-bad-reason", _restart_eval_record(
+        baseline_status="missing", baseline_reason="bogus",
+        source_stem=None, collected=None)),
+    ("missing-none-reason", _restart_eval_record(
+        baseline_status="missing", baseline_reason=None,
+        source_stem=None, collected=None)),
+    ("missing-unhashable-reason", _restart_eval_record()
+     | {"baseline_status": "missing", "baseline_reason": ["no-prior-artifacts"],
+        "baseline_source_stem": None, "baseline_collected_at": None}),
+    ("missing-with-stem", _restart_eval_record(
+        baseline_status="missing", baseline_reason="no-prior-artifacts",
+        source_stem="monitor-20260911-160000", collected=None)),
+    ("missing-with-collected", _restart_eval_record(
+        baseline_status="missing", baseline_reason="no-prior-artifacts",
+        source_stem=None, collected="2026-09-11T16:00:00Z")),
+    ("unusable-bad-reason", _restart_eval_record(
+        baseline_status="unusable", baseline_reason="bogus",
+        source_stem=None, collected=None)),
+    ("unusable-none-reason", _restart_eval_record(
+        baseline_status="unusable", baseline_reason=None,
+        source_stem=None, collected=None)),
+    ("unusable-with-stem", _restart_eval_record(
+        baseline_status="unusable", baseline_reason="no-usable-prior-artifacts",
+        source_stem="monitor-20260911-160000", collected=None)),
+    ("unusable-with-collected", _restart_eval_record(
+        baseline_status="unusable", baseline_reason="no-usable-prior-artifacts",
+        source_stem=None, collected="2026-09-11T16:00:00Z")),
+    ("missing-states", {k: v for k, v in _restart_eval_record().items()
+                        if k != "states"}),
+    ("missing-service", _restart_eval_record()
+     | {"states": {s: "ok" for s in SERVICES if s != "api"}}),
+    ("state-vocab", _restart_eval_record()
+     | {"states": {**{s: "ok" for s in SERVICES}, "api": "bogus"}}),
+    ("state-unhashable", _restart_eval_record()
+     | {"states": {**{s: "ok" for s in SERVICES}, "api": ["ok"]}}),
+    ("reason-vocab", _restart_eval_record()
+     | {"reasons": {**{s: "stable" for s in SERVICES}, "api": "bogus"}}),
+    ("delta-negative", _restart_eval_record()
+     | {"deltas": {**{s: 0 for s in SERVICES}, "api": -1}}),
+    ("delta-string", _restart_eval_record()
+     | {"deltas": {**{s: 0 for s in SERVICES}, "api": "2"}}),
+    ("invalid-skipped-negative", _restart_eval_record()
+     | {"baseline_invalid_skipped_count": -1}),
+    ("baseline-collected-format", _restart_eval_record()
+     | {"baseline_collected_at": "2026-09-11 16:00:00"}),
+]
+
+
+@pytest.mark.parametrize("name,payload", BAD_RESTART_EVAL_ROWS,
+                         ids=[case[0] for case in BAD_RESTART_EVAL_ROWS])
+def test_restart_evaluation_malformed_row_refused(tmp_path, name: str,
+                                                  payload: object) -> None:
+    """在场即严格校验（fail-closed）：输出零写入。"""
+    source = tmp_path / "src"
+    source.mkdir()
+    _write_history(source, [_row("2026-09-11T17:00:00Z",
+                                 extra={"restart_evaluation": payload})])
+    rc = _execute(source, tmp_path / "out")
+    assert rc == mi.EXIT_REFUSED
+    assert not (tmp_path / "out").exists()
+
+
+@pytest.mark.parametrize("baseline_reason", [
+    "artifact-dir-missing", "artifact-dir-unreadable", "no-prior-artifacts",
+    "baseline-not-resolved",
+])
+def test_consistent_missing_status_baseline_row_readable(tmp_path,
+                                                         baseline_reason: str) -> None:
+    """supervisor R1 一致性接受面：status=missing + 固定词汇 reason + 空元
+    数据的行照常产出洞察（增量/事件计数不受影响）。"""
+    source = tmp_path / "src"
+    source.mkdir()
+    _write_history(source, [
+        _row("2026-09-11T17:00:00Z", restarts={"api": 1}, extra={
+            "restart_evaluation": _restart_eval_record(
+                baseline_status="missing", baseline_reason=baseline_reason,
+                source_stem=None, collected=None,
+                states={"api": "warn"}, reasons={"api": "baseline-missing"},
+                deltas={"api": None})}),
+    ])
+    output = tmp_path / "out"
+    assert _execute(source, output) == mi.EXIT_OK
+    api = _insights(output)["service_summary"]["api"]  # type: ignore[index]
+    assert isinstance(api, dict)
+    assert api["restart_event_count"] == 1
+    assert api["restart_delta_samples"] == 1
+
+
+def test_consistent_unusable_status_baseline_row_readable(tmp_path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    _write_history(source, [
+        _row("2026-09-11T17:00:00Z", extra={
+            "restart_evaluation": _restart_eval_record(
+                baseline_status="unusable",
+                baseline_reason="no-usable-prior-artifacts",
+                source_stem=None, collected=None, invalid_skipped=3)}),
+    ])
+    assert _execute(source, tmp_path / "out") == mi.EXIT_OK
+
+
+def test_markdown_renders_restart_delta_and_event_columns(tmp_path) -> None:
+    source = tmp_path / "src"
+    source.mkdir()
+    _write_history(source, _restart_scenario_rows())
+    output = tmp_path / "out"
+    assert _execute(source, output) == mi.EXIT_OK
+    md = (output / mi.INSIGHTS_MD_NAME).read_text(encoding="utf-8")
+    for header in ("restart 总计（累计）", "restart 增量", "restart 事件", "restart 恢复"):
+        assert header in md, header
+    assert "| api | 7 | 2 | 2 | 1 |" in md  # 累计 7 / 增量 2 / 事件 2 / 恢复 1
+    assert "增量=当轮新增" in md  # 口径区分注记
+
+
+def test_monitor_dir_delegation_carries_restart_evaluation(tmp_path) -> None:
+    """monitor 工件目录形态：带 restart_evaluation 的工件经 M14-13 委托
+    管道入行 → 洞察面照常产出增量/事件计数。"""
+    source = tmp_path / "src"
+    source.mkdir()
+    report = _report("2026-09-13T01:00:00Z")
+    containers = report["collectors"]["containers"]["per_service"]
+    assert isinstance(containers, dict)
+    api_item = containers["api"]
+    assert isinstance(api_item, dict)
+    api_item["restart_count"] = 3
+    report["threshold_results"]["restart_evaluation"] = {  # type: ignore[index]
+        "baseline": {"status": "ok", "reason": None,
+                     "source_stem": "monitor-20260912-120000",
+                     "collected_at": "2026-09-12T12:00:00Z",
+                     "invalid_skipped_count": 0},
+        "per_service": {s: {"state": "warn" if s == "api" else "ok",
+                            "reason": "delta" if s == "api" else "stable",
+                            "delta": 2 if s == "api" else 0}
+                        for s in SERVICES},
+    }
+    (source / "monitor-20260913-010000.json").write_text(
+        json.dumps(report), encoding="utf-8")
+    output = tmp_path / "out"
+    rc = _execute(source, output)
+    assert rc == mi.EXIT_OK
+    api = _insights(output)["service_summary"]["api"]  # type: ignore[index]
+    assert isinstance(api, dict)
+    assert api["restart_total"] == 3
+    assert api["restart_delta_total"] == 2
+    assert api["restart_event_count"] == 1
 
 
 def test_execute_happy_path_stdout_summary(tmp_path, capsys) -> None:

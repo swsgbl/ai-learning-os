@@ -7,6 +7,49 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 
 ### Added
 
+- M14-23 监控 restart 增量语义修复（契约扩展，含 supervisor R1 加固 amend；
+  分支 `feat/m14-23-restart-delta-monitoring` 基于 `main@73d0443`，本 Claude
+  开发回合独占 worktree 仅一个本地 commit（R1 修正 amend 并入），supervisor
+  审查与 remote 发布（push/PR/合并）在其后进行）。动机（M14-22 验收的
+  17 连 warn 生产事实）：容器 RestartCount 是 Docker 的累计事实，旧阈值
+  语义按累计值判定 → api restart_count=1 的健康栈（6/6 服务 healthy、
+  5/5 端点 200）永久停留 warn。修法（TDD RED 先行）：①`tools/ops/
+  production_monitor.py`——`container-restarts` 阈值改评**当轮新增增量**
+  （当前累计 − 基线累计）；基线 = 本轮工件目录内最新合法 prior **完整**
+  monitor 工件（R1 合法身份 = schema/tool/milestone/mode 四件套 + `partial`
+  恒布尔 `False`（缺失/字符串/整数一律不可作基线）+ `started_at_utc` 为
+  canonical 形态（`%Y-%m-%dT%H:%M:%SZ` 且日历合法——畸形/缺失值绝不复制进
+  baseline.collected_at）+ 六容器事实齐全；纯本地只读 fail-safe——零
+  shell=True/零网络/零写盘/零额外生产读取 + **R1 symlink 防御**（symlinked
+  工件目录/祖先 → missing/artifact-dir-unreadable 绝不跟随，固定词汇无路径
+  回显；symlinked 候选文件计 invalid_skipped 而不跟随）；非法候选显式
+  `invalid_skipped_count`，绝不静默当作零基线）；同实例（started_at 一致）
+  增量 0 → ok（存量 warn 下一稳定调度恢复），增量含边界 ≥1/≥5 →
+  warn/critical；`started_at` 变化 = 容器重建、累计下降 = 计数重置 → 各发
+  一轮可见 warn（负增量绝不静默映射为零），下一稳定轮恢复 ok；无基线时
+  count 0 → ok、达阈值 → 一次性 baseline-missing 可见告警（下一轮以本轮
+  工件为基线即恢复）；累计 restart_count 采集事实照实入档不变；报告加法
+  字段 `threshold_results.restart_evaluation`（baseline 元数据 + 逐服务
+  state/reason/delta，reason 固定词汇）；check_id 仍 `container-restarts`；
+  schema 向后兼容（v1 旧工件照常作基线）。②`tools/ops/monitoring_history.py`
+  ——可选加法字段在场即严格校验（缺省 = v1 旧工件合法，记录形态零变化；
+  违规 `restart-evaluation` fail-closed 输出零写入；**R1 baseline 元数据
+  一致性联动**——status ok 恒 reason=None + 白名单 stem + canonical
+  collected_at；missing 恰固定词汇 reason 集 + 空元数据；unusable 恒
+  no-usable-prior-artifacts + 空元数据）；记录规范化 `restart_evaluation`
+  （重建/重置事件留痕、不可比增量恒 None）；摘要新增
+  `restart_delta_totals`/`restart_event_totals`/`restart_delta_sample_count`
+  （诚实区分「无增量数据」与「测得为零」），累计 `restart_totals` 口径
+  不重定义。③`tools/ops/monitoring_insights.py`——行级可选字段（旧
+  history 行照常可读；同一 R1 一致性校验，词汇单一事实源 = history）；
+  `service_summary` 区分累计 `restart_total` 与当轮
+  `restart_delta_total`/`restart_delta_samples`/`restart_event_count`/
+  `restart_recovery_count`（恢复 = 事件→非事件转移，legacy 行后不计）；
+  Markdown 服务表分列 + 口径注记。**诚实边界：开发回合零生产执行（未
+  运行真实 monitor/history/insights/管道、未触碰计划任务）；真实计划任务
+  调度下的新语义验证尚未运行——合并发布后首轮调度的预期行为（api
+  restart_count=1 不变 → 当轮增量 0 → overall_status 恢复 ok）是预期而
+  非已验证事实**；`production_ready=false` 不变。
 - M14-22 生产监控三步管道验收回填（docs-only，零代码/零测试/零 workflow
   改动、零生产触碰；分支 `docs/m14-22-monitoring-pipeline-production-
   acceptance` 基于 `origin/main@1b89d91`（PR #98 merge），本地 commit 待
