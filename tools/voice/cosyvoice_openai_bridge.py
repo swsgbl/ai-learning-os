@@ -9,7 +9,11 @@
 - 输出恒为有效 WAV（RIFF/PCM16/mono，采样率取自模型）；错误恒为 JSON 固定
   脱敏文案——不泄漏模型/仓库/文件路径、key 或内部异常文本；模型未下载、
   依赖缺失、加载中或加载失败一律 503（fail-closed，不虚报可用）；
-- 模型在后台线程加载：/health 在 loading/failed 时返回 503，ready 后 200。
+- 模型在后台线程加载：/health 在 loading/failed 时返回 503，ready 后 200；
+- 健康面分两层（M14-24）：/health 为 readiness（模型能力，503/200 既有契约
+  逐字节不变）；/health/live 为轻量 liveness（恒 200、不取推理锁、不碰模型，
+  readiness 仅信息透出）——进程活/模型忙两态不再混同。合成路径样本转换按
+  SAMPLE_CHUNK_SIZE 分块并在块间 yield，避免长 tolist 单次非抢占独占 GIL。
 
 零 SDK 依赖可测性：本模块顶层只依赖 fastapi（服务端）与标准库；CosyVoice/
 torch 全部惰性导入（加载线程内），`_samples_to_wav_bytes` 为纯标准库实现，
@@ -28,6 +32,7 @@ import io
 import os
 import sys
 import threading
+import time
 import traceback
 import wave
 from contextlib import asynccontextmanager
@@ -154,6 +159,32 @@ DEFAULT_PROMPT_TEXT = "You are a helpful assistant.<|endofprompt|>希望你以�
 DEFAULT_PROMPT_WAV = "asset/zero_shot_prompt.wav"
 MAX_INPUT_CHARS = 2000  # 与主 API /synthesize 的 text 上限一致
 
+#: 合成样本分块转换的块大小（M14-24）：tolist 是单次非抢占 C 调用，整段长
+#: 音频一次性转换会长时间独占 GIL，令 /health 等健康线程饿死（生产实证
+#: ~1s 级延迟）。50_000 样本 ≈ 2s @24kHz，单块转换毫秒级——非抢占窗口
+#: 有界、正常路径开销可忽略。
+SAMPLE_CHUNK_SIZE = 50_000
+
+
+def _tensor_to_samples(flat, *, chunk_samples: int, yield_fn=time.sleep) -> list[float]:
+    """把已展平的张量按块转为 float 列表：块与块之间显式 yield（默认
+    time.sleep(0)，释放 GIL 一拍），使健康端点线程在长合成中仍能被调度。
+
+    duck-typed（torch 张量与测试 fake 同形）：``flat`` 仅需 ``shape[0]`` 与
+    切片 ``.tolist()``。``chunk_samples ≤ 0`` 一律 ValueError（fail-closed，
+    绝不静默退回整段转换）。
+    """
+    if chunk_samples <= 0:
+        raise ValueError("chunk_samples must be positive")
+    total = int(flat.shape[0])
+    samples: list[float] = []
+    for start in range(0, total, chunk_samples):
+        stop = min(start + chunk_samples, total)
+        samples.extend(flat[start:stop].tolist())
+        if stop < total:
+            yield_fn(0)
+    return samples
+
 
 class SpeechRequest(BaseModel):
     """OpenAI /v1/audio/speech 兼容入参（voice/speed 等额外字段忽略）。"""
@@ -236,14 +267,20 @@ class _Engine:
             traceback.print_exc()
 
     def synthesize(self, text: str, prompt_text: str, prompt_wav: str) -> bytes:
-        """zero-shot 合成 → WAV 字节。调用方须保证 phase == ready。"""
+        """zero-shot 合成 → WAV 字节。调用方须保证 phase == ready。
+
+        M14-24：推理锁只覆盖模型前向（GPU 显存与 kv cache 不并发的语义边界）；
+        torch.cat/展平/样本转换移出锁外，并经 _tensor_to_samples 分块转换 +
+        块间 yield——长音频不再以单次非抢占 C 调用独占 GIL，/health 与
+        /health/live 线程在合成中仍可被调度。
+        """
         import torch  # 惰性：cosyvoice venv 内可用
 
         with self.lock:
             outputs = self.model.inference_zero_shot(text, prompt_text, prompt_wav, stream=False)
-            chunks = [output["tts_speech"] for output in outputs]
-            tensor = torch.cat(chunks, dim=-1)
-            samples = tensor.detach().to(torch.float32).cpu().reshape(-1).tolist()
+        tensor = torch.cat([output["tts_speech"] for output in outputs], dim=-1)
+        flat = tensor.detach().to(torch.float32).cpu().reshape(-1)
+        samples = _tensor_to_samples(flat, chunk_samples=SAMPLE_CHUNK_SIZE)
         return _samples_to_wav_bytes(samples, self.model.sample_rate)
 
 
@@ -274,6 +311,16 @@ def create_app(repo_dir: Path, model_dir: Path, *, model_name: str, prompt_text:
             return JSONResponse({"status": "ok", "model": model_name})
         detail = "cosyvoice model is loading" if engine.phase == "loading" else "cosyvoice model unavailable"
         return JSONResponse({"detail": detail}, status_code=503)
+
+    @app.get("/health/live")
+    def health_live() -> JSONResponse:
+        """轻量 liveness（M14-24）：进程在服务即 200，与模型能力解耦。
+
+        readiness（engine.phase：loading/ready/failed）仅作信息透出——诚实
+        可见但不改变 liveness 判定；恒不取 engine.lock、不触发模型工作，
+        合成/加载进行中亦可即刻应答（与 /health 同为零锁读）。
+        """
+        return JSONResponse({"status": "ok", "liveness": "alive", "readiness": engine.phase})
 
     @app.post("/v1/audio/speech")
     def speech(payload: SpeechRequest, request: Request) -> Response:
