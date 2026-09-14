@@ -13,7 +13,7 @@ adapter + 脚本 + 文档；**M14-02 轮（2026-09-10）已在本机完成真实
 | 环节 | provider 名 | 本机服务 | 端口 | 说明 |
 |------|-------------|----------|------|------|
 | ASR | `local-funasr` | funasr-server（SenseVoiceSmall，CPU） | 8010 | `/v1/audio/transcriptions`，无鉴权；适合录音片段转写；流式（Paraformer-zh-streaming / sherpa-onnx）另立项 |
-| TTS | `local-cosyvoice` | CosyVoice 官方仓库 + `cosyvoice_openai_bridge.py` | 8011 | `/v1/audio/speech` 恒返回 WAV；`/health` ready 后 200（loading/failed 503）；`/health/live` 恒 200 轻量 liveness（M14-24，readiness 仅信息透出、不取推理锁；生产验收实证：合成负载下 28 并发探针零非 200、`/health` max 9.708ms，证据 `docs/evidence/m14-24-production-acceptance/`） |
+| TTS | `local-cosyvoice` | CosyVoice 官方仓库 + `cosyvoice_openai_bridge.py` | 8011 | `/v1/audio/speech` 恒返回 WAV；`/health` ready 后 200（loading/failed 503）；`/health/live` 恒 200 轻量 liveness（M14-24，readiness 仅信息透出、不取推理锁；生产验收实证：合成负载下 28 并发探针零非 200、`/health` max 9.708ms，证据 `docs/evidence/m14-24-production-acceptance/`）；bootstrap 离线重启幂等（M14-25 offline fast path：运行时契约全过即零网络安装，证据 `docs/evidence/m14-25-cosyvoice-offline-restart/`） |
 
 首发显式**不做**三引擎同卡常驻：ASR 走 CPU、TTS 用 GPU（cu128 torch），
 Qwen3-14B 等 LLM 另行安排（RTX 5070 Ti 16GB 放不下全部常驻）。
@@ -275,6 +275,20 @@ semantics`、`test_bootstrap_cosyvoice_download_filter_contract`。bash 侧
 
 - venv/克隆/模型已存在即复用或断点续传；`pip install` 满足即 no-op；uv venv
   已存在则直接复用（解释器版本不重装）。
+- **CosyVoice offline fast path（M14-25 离线重启幂等）**：四道门禁（pip
+  check / CUDA closure 运行期一致性 / `import cosyvoice.cli.cosyvoice` /
+  torchaudio WAV 探针）函数化为单一事实源（`gate_pip_check`/
+  `gate_consistency_probe`/`gate_import_probe`/`gate_wav_probe`）；venv 就绪
+  后先以四道门禁判定——**全部通过即跳过整个依赖安装段**（pip upgrade /
+  cu128 初始安装 / 最小与完整清单 / 终局 CUDA 闭包恢复零执行、零网络），
+  日志明示 `offline fast path 命中`，直达模型检查/wetext/启动；任一门禁
+  失败点名缺失项进既有安装路径、安装后门禁照常 fail-closed。判定只依据
+  本地解释器/本地 metadata/本地探针，绝不先联网探测可用性（2026-09-13
+  生产实证 PID 18447：缓存完整仍强制 pip 联网，PyPI 不可达即离线重启失败）。
+  契约/行为测试：`test_bootstrap_offline_fast_path_contract`、
+  `test_bootstrap_offline_fast_path_hit_runs_zero_pip_install`、
+  `test_bootstrap_offline_fast_path_miss_falls_back_to_install`（fake venv
+  实证：命中时 fake pip 桩 argv 只有只读 check/freeze，零 install）。
 - **CosyVoice bootstrap 运行期自保护（M14-02 实证修复）**：bash 按字节偏移
   增量解析脚本——模型下载可运行数小时，期间仓库内并行会话的 git 操作改写
   `bootstrap_cosyvoice_wsl.sh` 会让 bash 在旧偏移上解析新内容，产生与真实
