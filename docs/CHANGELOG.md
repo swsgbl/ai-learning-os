@@ -7,6 +7,60 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 
 ### Added
 
+- M14-25 生产验收回填（docs-only，零代码/零生产触碰；分支
+  `docs/m14-25-production-acceptance` 基于 `main@d54ad5b`（PR #104 merge），
+  独占 worktree 按任务书做且仅做一个本地 commit，不 push/不建 PR）。把
+  supervisor 2026-09-14 获准窗口的受控生产验收事实回填入库，收口 M14-25
+  开发切片遗留边界「真实离线生产重启需 supervisor 合并后受控复验」：
+  ①PR #104（M14-25 修复）已合并 main——merge commit
+  `d54ad5b51ec7653c592786399f37a778f8c07e5d`（parents `1f58800` + feature
+  head `98a2d773c8e098e4a2ebf4328f82ccdcc25023b6`，本地 git 可验证）；
+  PR CI 5/5 job success；合并后 main CI run `34803270943` 首败为 Docker
+  Hub redis 镜像拉取连接重置（外部基础设施侧）、rerun 后 5/5 job
+  success（CI 两项为 supervisor 验收事实）；②受控重启时间线：重启前
+  基线 CosyVoice PID 19132/8011 与 FunASR PID 867/8010 双健康、六容器
+  healthy；第一次 stop 尝试因 WSL `/proc` 探测瞬时不可用 **fail-closed
+  拒绝且未动任何进程**（rc=3、未启动新实例）；默认环境重试后 PID 19132
+  优雅退出（TERM）、新 PID 26008 于 2026-09-14T11:52:45+08:00 启动；
+  ③offline fast path 生产实证（重启偏移后 service.log 硬证据）：命中
+  日志明示 pip check + CUDA closure 一致性 + import cosyvoice.cli.cosyvoice
+  + torchaudio WAV 探针全过——跳过 pip upgrade/install 与 CUDA 闭包网络
+  恢复（零网络安装命令）；模型载荷已就位跳过下载；wetext 离线缓存就绪
+  + bridge 侧 local-only 绑定（zero ModelScope traffic）；禁用模式 grep
+  `FORBIDDEN_INSTALL_DOWNLOAD_PATTERN_MATCHES=0`（无 pip install/upgrade、
+  无 `download.pytorch.org`、无 `Cloning into`、无
+  `FunAudioLLM/CosyVoice.git`、无模型下载）；④稳态健康：`/health` 200
+  ready（model `Fun-CosyVoice3-0.5B-2512`）、`/health/live` 200
+  alive/ready（loading 期 503 契约不变）；⑤主 API 同款 provider TTS
+  成功：`provider=local-cosyvoice latency_ms=21896 bytes=220844`、RIFF/WAV、
+  SHA-256
+  `E78CC2FE0AB4D894160033F1B6975F9B802275CCD0ADE990EDAE34C688AA4ABD`
+  （原始 WAV 仅 gitignored `.verify/` 不入库）；此前 smoke provider TTS
+  亦成功（241964 bytes、`riff_wav=yes`），但 ASR health 因 WSL 转发层超时
+  未通过（`asr=FAIL tts=PASS`）；⑥自然监控如实（R1 追加后完整口径）：
+  11:45 基线轮 pipeline/monitor overall ok（五端点全 200，funasr
+  3.281ms、cosyvoice 4.615ms）；**12:00–13:30 共 7 轮生产监控同构失败**
+  ——每轮六容器 compose 状态 ok、Web root/login 与 API health 均 200
+  （延迟约 1.3–11.9ms），仅 Windows 侧 funasr/cosyvoice 两 loopback 端点
+  5s（`request_timeout_seconds=5.0`）TimeoutError；monitor
+  `overall_status=incomplete`/`partial=true`、pipeline
+  `overall_status=failed`、history/insights 因失败 skipped（13:45 轮工件
+  仍同签名）；supervisor 现场取证：**不是引擎本体死亡**——WSL 内部直连
+  FunASR `/health` 曾 200、CosyVoice PID 26008 持续存活、Windows 侧曾短暂
+  恢复 200；Windows 侧 8010/8011 listener 由 **wslrelay.exe PID 17936**
+  持有（listener 启动 2026-09-12 20:44:46），`wsl.exe` 管理面间歇
+  `WSL/Service/0x8007274c`/`TimeoutExpired`。**边界（诚实
+  口径，R1 追加后）：M14-25 验收只覆盖 offline fast path 重启幂等——不
+  宣称 WSL localhost 转发长期稳定、不掩盖 12:00–13:30 七轮 pipeline
+  failed、不得宣称全绿；Windows→WSL loopback/relay 稳定性是新生产阻塞
+  （wslrelay.exe PID 17936 持有 listener、管理面间歇
+  `0x8007274c`/`TimeoutExpired`；建议下一片 M14-26 聚焦 relay 稳定性、
+  FunASR health facade/sidecar、避免监控 history/insights 因 relay 层失败
+  长期 skipped，不能写成 M14-25 回归）；`production_ready=false` 不变**。
+  证据 `docs/evidence/m14-25-cosyvoice-offline-restart/README.md` §8（回填
+  回合对 git 谱系、29 项证据工件字节数/SHA-256、前后 manifest、偏移
+  日志硬证据与监控工件独立只读复核；R1 追加 14 份轮次工件逐份解析复核）
+
 - M14-25 CosyVoice bootstrap 离线重启幂等修复（offline fast path；分支
   `fix/m14-25-cosyvoice-offline-restart` 基于 `origin/main@1f58800`（PR #103
   merge），本 Claude 开发回合独占 worktree 仅一个本地 commit，零生产触碰）。
