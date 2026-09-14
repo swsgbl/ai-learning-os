@@ -37,21 +37,29 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   `E78CC2FE0AB4D894160033F1B6975F9B802275CCD0ADE990EDAE34C688AA4ABD`
   （原始 WAV 仅 gitignored `.verify/` 不入库）；此前 smoke provider TTS
   亦成功（241964 bytes、`riff_wav=yes`），但 ASR health 因 WSL 转发层超时
-  未通过（`asr=FAIL tts=PASS`）；⑥自然监控如实双轮：11:45 基线轮
-  pipeline/monitor overall ok（五端点全 200，funasr 3.281ms、cosyvoice
-  4.615ms）；**12:00 轮 pipeline overall failed**——六容器与 Web/API
-  正常（200：5.791/1.582/1.918ms），funasr/cosyvoice 两 Windows→WSL
-  loopback 端点 5s（`request_timeout_seconds=5.0`）TimeoutError；
-  supervisor 现场补充：WSL 内部 FunASR `/health` 200、CosyVoice Windows
-  侧曾恢复 200 后再受转发影响、CosyVoice 进程持续存活。**边界（诚实
-  口径）：M14-25 验收只覆盖 offline fast path 重启幂等——不宣称 WSL
-  localhost 转发长期稳定、不掩盖 12:00 pipeline failed；WSL
-  management/relay 偶发 `0x8007274c`/`TimeoutExpired` 是新生产阻塞（建议
-  下一片 M14-26 优先 FunASR health facade 与 WSL loopback/relay 观测，
-  不能写成 M14-25 回归）；`production_ready=false` 不变**。证据
-  `docs/evidence/m14-25-cosyvoice-offline-restart/README.md` §8（回填
+  未通过（`asr=FAIL tts=PASS`）；⑥自然监控如实（R1 追加后完整口径）：
+  11:45 基线轮 pipeline/monitor overall ok（五端点全 200，funasr
+  3.281ms、cosyvoice 4.615ms）；**12:00–13:30 共 7 轮生产监控同构失败**
+  ——每轮六容器 compose 状态 ok、Web root/login 与 API health 均 200
+  （延迟约 1.3–11.9ms），仅 Windows 侧 funasr/cosyvoice 两 loopback 端点
+  5s（`request_timeout_seconds=5.0`）TimeoutError；monitor
+  `overall_status=incomplete`/`partial=true`、pipeline
+  `overall_status=failed`、history/insights 因失败 skipped（13:45 轮工件
+  仍同签名）；supervisor 现场取证：**不是引擎本体死亡**——WSL 内部直连
+  FunASR `/health` 曾 200、CosyVoice PID 26008 持续存活、Windows 侧曾短暂
+  恢复 200；Windows 侧 8010/8011 listener 由 **wslrelay.exe PID 17936**
+  持有（listener 启动 2026-09-12 20:44:46），`wsl.exe` 管理面间歇
+  `WSL/Service/0x8007274c`/`TimeoutExpired`。**边界（诚实
+  口径，R1 追加后）：M14-25 验收只覆盖 offline fast path 重启幂等——不
+  宣称 WSL localhost 转发长期稳定、不掩盖 12:00–13:30 七轮 pipeline
+  failed、不得宣称全绿；Windows→WSL loopback/relay 稳定性是新生产阻塞
+  （wslrelay.exe PID 17936 持有 listener、管理面间歇
+  `0x8007274c`/`TimeoutExpired`；建议下一片 M14-26 聚焦 relay 稳定性、
+  FunASR health facade/sidecar、避免监控 history/insights 因 relay 层失败
+  长期 skipped，不能写成 M14-25 回归）；`production_ready=false` 不变**。
+  证据 `docs/evidence/m14-25-cosyvoice-offline-restart/README.md` §8（回填
   回合对 git 谱系、29 项证据工件字节数/SHA-256、前后 manifest、偏移
-  日志硬证据与监控工件独立只读复核）
+  日志硬证据与监控工件独立只读复核；R1 追加 14 份轮次工件逐份解析复核）
 
 - M14-25 CosyVoice bootstrap 离线重启幂等修复（offline fast path；分支
   `fix/m14-25-cosyvoice-offline-restart` 基于 `origin/main@1f58800`（PR #103

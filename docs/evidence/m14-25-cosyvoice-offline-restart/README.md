@@ -197,8 +197,9 @@ M14-24 验收一致）。反向用例（可选）：对生产 venv 人为制造�
 
 分支 `docs/m14-25-production-acceptance`（基于 canonical `main@d54ad5b`，即
 PR #104 merge commit `d54ad5b51ec7653c592786399f37a778f8c07e5d`，本地 git 可验
-证）；本回填回合 docs-only、独占 worktree，**按任务书做且仅做一个本地 commit**
-（不 push / 不建 PR——remote 发布由 supervisor 决策）。本回合零生产触碰：
+证）；本回填回合 docs-only、独占 worktree，按任务书在分支上做本地 commit
+（R0 回填一个 + R1 追加一个，均 docs-only；不 push / 不建 PR——remote 发布由
+supervisor 决策）。本回合零生产触碰：
 不启/停/重启任何生产容器或 voice 进程（§8.2 的重启由 supervisor 于获准窗口执
 行）、零 Docker/计划任务/服务变更、零网络部署，不修改任何生产代码、测试、
 compose 或 `.verify/**`/`artifacts/**`（canonical 证据仅只读核对）；原始 WAV
@@ -286,24 +287,46 @@ SHA-256，逐项一致（哈希现场计算输出小写、本文件统一转大�
 |---|---|---|---|
 | 11:45（03:45Z，重启前基线轮） | overall **ok** | 全采集器 ok | 五端点全 200：web-root 4.239ms、web-login 1.579ms、api-health 2.204ms、funasr-health **3.281ms**、cosyvoice-health **4.615ms** |
 | 12:00（04:00Z，重启后首轮） | overall **failed**（monitor exit 2；history/insights 按序跳过、skip 原因固定；lock acquired/released=true） | compose_ps/containers/logs 三采集器 ok、**endpoints failed** | **六容器全部 healthy**、Web/API 正常：web-root 200 5.791ms、web-login 200 1.582ms、api-health 200 1.918ms；**funasr-health 与 cosyvoice-health 两 Windows→WSL loopback 端点 5s（`request_timeout_seconds=5.0`）TimeoutError** |
+| 12:15/12:30/12:45/13:00/13:15/13:30（R1 追加六轮） | 六轮 overall 全部 **failed**、与 12:00 轮**同构**（monitor exit 2、history skipped（`monitor-status-failed`）、insights skipped（`history-status-skipped`）、lock true/true） | 六轮均 compose_ps/containers/logs ok、**endpoints failed** | 六轮均六容器 6/6 healthy、web-root/web-login/api-health 三端点 200（延迟约 1.3–11.9ms）、funasr-health/cosyvoice-health 均 timeout/TimeoutError |
 
-12:00 轮 supervisor 现场补充事实：WSL 内部 FunASR `/health` 200（服务本体
-健康）；CosyVoice Windows 侧 11:59 曾恢复 200（§8.3 稳态）后再次受转发影响；
-CosyVoice 进程持续存活（manifest PID 26008、日志连续无中断）。
+**R1 追加（2026-09-14 下午，supervisor 验收事实 + 回填回合 canonical 工件
+核对）**：12:00–13:30 **共 7 轮生产监控同构失败**（上表两行合计）——每轮
+六容器 compose 状态 ok、Web root/login 与 API health 均 200；仅 Windows 侧
+访问 FunASR health 与 CosyVoice health 5s 超时；monitor `overall_status=
+incomplete` 且 `partial=true`；pipeline `overall_status=failed`；history/
+insights 因失败被 skipped。回填核对时点 canonical 监控目录中 13:45 轮
+（monitor `20260914-054502` / pipeline `20260914-054514`）已再落一轮**同
+签名**失败（第 8 轮，哈希见 §8.7 追加表）。
+
+**不是引擎本体死亡**（supervisor 现场取证）：WSL 内部直连 FunASR `/health`
+曾返回 200（服务本体健康）；CosyVoice **PID 26008 持续存活**（manifest/日志
+连续）；CosyVoice Windows 侧也曾短暂恢复 200（11:59，§8.3 稳态）。Windows
+侧 8010/8011 listener 由 **wslrelay.exe PID 17936** 持有，listener 启动时间
+**2026-09-12 20:44:46**（早于 M14-24 与 M14-25 两次故障窗口——同一 listener
+实例跨两次窗口在场）；`wsl.exe` 管理面间歇出现 **`WSL/Service/0x8007274c`
+（连接超时）或 `TimeoutExpired`**（详见 §8.6）。
 
 ### 8.6 WSL localhost 转发层偶发不可用 = 新生产阻塞（非 M14-25 回归）
 
-- 事实链：11:49 两 voice 端点 200（基线）→ 11:57 smoke ASR health 不可达 →
-  11:59 CosyVoice Windows 侧 200（恢复）→ 12:00 双 voice loopback 端点 5s
-  超时（pipeline overall failed）；WSL management/relay 侧偶发 `0x8007274c`
-  （连接超时）/`TimeoutExpired`；
-- 归因边界：**不能写成 M14-25 回归**——M14-25 范围 = bootstrap 离线重启幂等；
-  12:00 轮中 fast path 进程行为全部正确（存活、日志健康、WSL 内部探针 200），
-  失败发生在 Windows→WSL loopback 转发层（M14-24 时点 14:15/14:30 已有同类
-  双端点 5s 超时先例，早于 M14-25 合并）；
-- 建议下一片 **M14-26**：优先处理 **FunASR health facade**（8010 前轻量探针，
-  同时收口 M14-24 残余风险）与 **WSL loopback/relay 观测**（转发层健康
-  可见性）。
+- 事实链（R1 后完整口径）：11:49 两 voice 端点 200（基线）→ 11:57 smoke ASR
+  health 不可达 → 11:59 CosyVoice Windows 侧 200（恢复）→ **12:00–13:30 共
+  7 轮双 voice loopback 端点 5s 超时、pipeline overall failed（同构；13:45
+  轮工件仍同签名）**；期间 WSL 内部 FunASR `/health` 曾 200、CosyVoice PID
+  26008 持续存活（§8.5）——**不是引擎本体死亡**；
+- 转发层取证（supervisor 现场事实）：Windows 侧 8010/8011 listener 由
+  **wslrelay.exe PID 17936** 持有、listener 启动于 **2026-09-12 20:44:46**
+  （同一 listener 实例跨 M14-24 与 M14-25 两次故障窗口在场）；`wsl.exe`
+  管理面间歇出现 **`WSL/Service/0x8007274c`（连接超时）或 `TimeoutExpired`**；
+- 归因边界：**不能写成 M14-25 回归**——M14-25 范围 = bootstrap 离线重启
+  幂等；7 轮失败中 fast path 进程行为全部正确（存活、日志健康、WSL 内部
+  探针 200），失败发生在 Windows→WSL loopback 转发层（M14-24 时点
+  14:15/14:30 已有同类双端点 5s 超时先例，早于 M14-25 合并）——定性为
+  **新的 Windows→WSL loopback/relay 稳定性阻塞**，不宣称全绿；
+- 建议下一片 **M14-26** 聚焦三件事：① **relay 稳定性**（wslrelay/WSL
+  management 面修复或替代转发路径）；② **FunASR health facade/sidecar**
+  （8010 前轻量探针，同时收口 M14-24 残余风险）；③ **避免监控
+  history/insights 因 relay 层失败长期 skipped**（现状为固定词表 skip、
+  不遮蔽，但 7 轮连跳使 history/insights 停更——下游降级策略需评估）。
 
 ### 8.7 证据文件与回填回合只读核对
 
@@ -347,6 +370,39 @@ gitignored canonical 工件（仅安全摘要入库；无绝对路径/容器 ID/
 `post-restart-tts-headers.txt`（0 字节）对应 Windows 直连 curl 超时未收到
 响应头。）
 
+R1 追加核对（2026-09-14 下午，canonical 监控目录只读）——12:15–13:30 六轮
+与 13:45 同签名轮的 monitor/pipeline JSON（12:00 轮哈希已在 §8.7 上表
+monitoring/ 条目）：
+
+| 文件（repo 相对路径） | 字节 | SHA-256 |
+|---|---:|---|
+| `.verify/artifacts/m14-12-production-monitoring/monitor-20260914-041502.json` | 15719 | `83805B285BE017B14806B157B43E332B3B5FB2335430F94FBBFF60ED92343123` |
+| `.verify/artifacts/m14-14-monitoring-pipeline/pipeline-20260914-041527.json` | 4565 | `11B71F3792388B2132A0476CFF08F1D7AAE5D79195EE40084D2C7B62A289F5A7` |
+| `.verify/artifacts/m14-12-production-monitoring/monitor-20260914-043003.json` | 15725 | `D5DE761D0BFDBE262EF968E648D563BC7FAD709606214EF7AADB809EE27B471F` |
+| `.verify/artifacts/m14-14-monitoring-pipeline/pipeline-20260914-043021.json` | 4565 | `4F10BF6687527AAE0E293243172AE9AA42C043F8182915F7EF72A845F42A4635` |
+| `.verify/artifacts/m14-12-production-monitoring/monitor-20260914-044502.json` | 15721 | `16477793A46F76FE9101F9A99F14518944AA4E47AAF3187C28F23F6D0055682F` |
+| `.verify/artifacts/m14-14-monitoring-pipeline/pipeline-20260914-044515.json` | 4565 | `CB4F809E0F15526BB39F5B3951299EE7621BF9896A9148EBDC3F00583EE07374` |
+| `.verify/artifacts/m14-12-production-monitoring/monitor-20260914-050001.json` | 15719 | `E205A3AE1DE422E481B66F7EE66546443BE56520712031309CBF50796D91CF97` |
+| `.verify/artifacts/m14-14-monitoring-pipeline/pipeline-20260914-050013.json` | 4565 | `29F5B6EB9185DDF21301DBC75EDCDA9203783236692935A7F8E1DC10C44E0BB6` |
+| `.verify/artifacts/m14-12-production-monitoring/monitor-20260914-051522.json` | 15719 | `E89F8AE1F8F0FF542D1DA179F01EFDE7A1050EDA7F6DD108FC7C64CCCE689287` |
+| `.verify/artifacts/m14-14-monitoring-pipeline/pipeline-20260914-051537.json` | 4565 | `22E0817DEFD433C681E5C3C6AD764AABEE9228BE3EB1A617C1BAE5FDF3C2C355` |
+| `.verify/artifacts/m14-12-production-monitoring/monitor-20260914-053003.json` | 15723 | `932B9E2CE806CF2CB171DC1A4FCAD1CC05D7F08A804FEF602ABA7B30BC17DF44` |
+| `.verify/artifacts/m14-14-monitoring-pipeline/pipeline-20260914-053033.json` | 4565 | `CF4139312219C824CA06B4C5B91F309AF8C42D5451A2549271D7FB8415378BD2` |
+| `.verify/artifacts/m14-12-production-monitoring/monitor-20260914-054502.json` | 15721 | `BAAC3CF5A7EDBA9BFE7F6F9BB50496FD70D622034B87C76B060771F1453C7AF9` |
+| `.verify/artifacts/m14-14-monitoring-pipeline/pipeline-20260914-054514.json` | 4565 | `C0FEA5073754F049E2467910FD7DF48979F28463907BC6D78E6E9B18A4E32C11` |
+
+R1 追加核对内容（全部通过）：上表 14 份 JSON 逐份解析——每轮 monitor
+`overall_status=incomplete` 且 `partial=true`、compose_ps/containers/logs 三
+采集器 ok、compose-service 阈值 6/6 healthy、web-root/web-login/api-health
+三端点 200（延迟约 1.3–11.9ms）、funasr-health 与 cosyvoice-health 均
+timeout/`TimeoutError`；每轮 pipeline `overall_status=failed`、monitor
+exit 2、history skipped（`monitor-status-failed`）、insights skipped
+（`history-status-skipped`）、lock acquired/released=true——与 supervisor
+验收口径逐项一致。wslrelay.exe PID 17936、listener 启动时间 2026-09-12
+20:44:46、`wsl.exe` 管理面 `WSL/Service/0x8007274c`/`TimeoutExpired` 为
+supervisor 现场取证事实（本回填回合未执行任何进程/网络查询复验——零生产
+触碰约束）。
+
 本回填回合实际执行的只读核对（全部通过）：
 
 - **git 谱系**：canonical main == `d54ad5b`；`git show` 核对 merge commit 完整
@@ -375,13 +431,16 @@ gitignored canonical 工件（仅安全摘要入库；无绝对路径/容器 ID/
    拒绝 + 一次成功重试）+ 偏移日志硬证据 + 禁用模式 grep + 稳态健康 + 一次
    主 API TTS 冒烟（与一次 smoke TTS 成功）——**不构成对语音链路 production
    readiness 的宣称，`production_ready=false` 不变**。
-2. **不宣称 WSL localhost 转发长期稳定**：12:00 自然监控 pipeline overall
-   **failed** 如实在案（两 voice loopback 端点 5s 超时）；本验收中 Windows
+2. **不宣称 WSL localhost 转发长期稳定**：**12:00–13:30 共 7 轮自然监控
+   pipeline overall failed 如实在案**（13:45 轮工件仍同签名；两 voice
+   loopback 端点 5s 超时、history/insights 连续 skipped）；本验收中 Windows
    直连 curl 30s 超时与 smoke ASR health 未通过均与转发层相关，不得以
-   「验收通过」掩盖。
-3. **WSL management/relay 偶发 `0x8007274c`/`TimeoutExpired` 是新生产阻塞**
-   （建议 M14-26：FunASR health facade + WSL loopback/relay 观测），**非
-   M14-25 回归**（归因边界见 §8.6）。
+   「验收通过」掩盖、**不得宣称全绿**。
+3. **Windows→WSL loopback/relay 稳定性是新生产阻塞**（wslrelay.exe PID
+   17936 持有 8010/8011 listener、`wsl.exe` 管理面间歇
+   `WSL/Service/0x8007274c`/`TimeoutExpired`；建议 M14-26 聚焦 relay 稳定性、
+   FunASR health facade/sidecar、避免监控 history/insights 因 relay 层失败
+   长期 skipped），**非 M14-25 回归**（归因边界见 §8.6）。
 4. 反向用例（人为制造契约失败核对未命中路径）未在生产执行——§7 既定
    supervisor 裁量项。
 5. 本回填为 docs-only：不改任何代码/测试/compose/阈值/基础设施，不启停任何
