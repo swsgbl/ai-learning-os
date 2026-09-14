@@ -7,6 +7,35 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 
 ### Added
 
+- M14-25 CosyVoice bootstrap 离线重启幂等修复（offline fast path；分支
+  `fix/m14-25-cosyvoice-offline-restart` 基于 `origin/main@1f58800`（PR #103
+  merge），本 Claude 开发回合独占 worktree 仅一个本地 commit，零生产触碰）。
+  动机：M14-24 受控生产重启实证 PID 18447 在模型/venv/wetext 缓存完整时仍
+  因脚本无条件 pip upgrade/install 与 CUDA closure 恢复联网而中止（PyPI
+  不可达）——最终 PID 19132 只是网络恢复后成功，不是幂等修复。修法：
+  四道门禁（pip check / CUDA closure 运行期一致性 / import
+  cosyvoice.cli.cosyvoice / torchaudio WAV 探针）函数化为单一事实源
+  （`gate_pip_check`/`gate_consistency_probe`/`gate_import_probe`/
+  `gate_wav_probe`，CUDA closure 契约表 18 项不动）；venv 就绪后先以四道
+  门禁判定——当且仅当全部通过即跳过整个依赖安装段（pip upgrade / cu128
+  初始安装 / 最小与完整清单 / 终局 CUDA 闭包恢复五类联网命令零执行）直达
+  模型检查/启动，日志明示 `offline fast path 命中`；任一失败点名缺失项
+  （venv 缺失/pip check/一致性/import/WAV 五类原因）进既有安装路径、安装
+  后门禁照常 fail-closed；判定只依据本地解释器/本地 metadata/本地探针，
+  绝不先联网探测可用性；判定与门禁调用同一组函数（无双事实源）；模型
+  payload 判定、ModelScope 缓存回落、`COSYVOICE_SKIP_DOWNLOAD=1` 缺模型
+  fail-closed、wetext payload/local-only、bridge 启动段原样不动。测试：
+  TDD RED→GREEN 扩展 `test_voice_local_scripts.py` 5 项（文本契约 + fake
+  venv 行为实证 hit/miss——hit 全程零 install/upgrade/index-url、miss 走
+  安装路径 + 门禁 fail-closed exit 1；含 R1 返工教训：初版 fake 布局少拼
+  `cosyvoice/` 层曾误触真实 clone，本轮对齐脚本拼接路径并加运行前防错位
+  assert）。验证：`test_voice_local_scripts.py` 43 passed/1 skipped +
+  `test_voice_service_control.py` 64 passed（voice_service_control.py 零
+  改动）+ bash -n + py_compile + ruff + `git diff --check` 全过。
+  **边界：开发验证是本地/契约验证（fake venv/payload/git），真实离线生产
+  重启需 supervisor 合并后受控复验；`production_ready=false` 不变**。
+  证据 `docs/evidence/m14-25-cosyvoice-offline-restart/README.md`。
+
 - M14-24 生产验收回填（docs-only，零代码/零生产触碰；分支
   `docs/m14-24-production-acceptance` 基于 `main@165ca5c`（PR #102 merge），
   按任务书不做本地 commit/push——变更以未提交工作树交付 supervisor 审查）。

@@ -22,6 +22,8 @@ import importlib.util
 import io
 import os
 import shutil
+import subprocess
+import tempfile
 import wave
 from functools import lru_cache
 from pathlib import Path
@@ -450,6 +452,23 @@ def test_bootstrap_torchcodec_pinned_on_cu128_install_line() -> None:
     assert "--no-deps" not in line
 
 
+OFFLINE_FAST_PATH_GATES = (
+    "gate_pip_check",
+    "gate_consistency_probe",
+    "gate_import_probe",
+    "gate_wav_probe",
+)
+
+#: 五类联网安装命令（fast path 命中时一个都不允许执行）
+NETWORK_INSTALL_MARKERS = (
+    'pip" install --upgrade pip',
+    'pip" install torch torchaudio torchcodec==0.11.1+cu128',
+    'install -r "$REPO_ROOT/tools/voice/cosyvoice-runtime-requirements.txt"',
+    'install -r "$ARTIFACTS/cosyvoice/requirements.full.txt"',
+    'pip" install torch==2.11.0+cu128',
+)
+
+
 def test_bootstrap_torch_reconciliation_order_contract() -> None:
     """M14-17 生产实证回归（2026-09-13）：M14-16 的终局 --no-deps 三件套回写
     不充分——生产 venv 实证 torch/torchaudio/torchcodec 均已 cu128，但
@@ -458,12 +477,14 @@ def test_bootstrap_torch_reconciliation_order_contract() -> None:
     CUDA runtime 仍是 12.1 系列（清单分支装 torch 2.3.1 时连带降级的闭包），
     import torch 失败缺 libcudnn.so.9——pip check 恰报出这三个 == pin 冲突。
     根因：--no-deps 只回写三个主轮，不恢复 torch metadata 声明的依赖闭包。
-    契约（顺序锁定）：初始 cu128 同命令安装 → 最小/完整清单分支 → 终局
-    CUDA 闭包恢复（三件套精确 pin + 闭包成员 pin/extras，**完整依赖解析、
-    无 --no-deps**、同一 cu128 index，禁止 force-reinstall 全量重写）→
-    pip check 附加门禁（fail-closed 指向 CUDA closure 未恢复）→ 运行期
-    一致性探针（CUDA closure 契约表 + torch/torchaudio 基础版本一致 + 同为
-    +cu128 + torchcodec 可导入）→ CosyVoice import 探针 → WAV 加载探针。"""
+    契约（顺序锁定，M14-25 门禁函数化后形态）：门禁函数定义（单一事实源，
+    判定与门禁共享）→ M14-25 offline fast path 判定 → 初始 cu128 同命令
+    安装 → 最小/完整清单分支 → 终局 CUDA 闭包恢复（三件套精确 pin + 闭包
+    成员 pin/extras，**完整依赖解析、无 --no-deps**、同一 cu128 index，
+    禁止 force-reinstall 全量重写）→ pip check 附加门禁（fail-closed 指向
+    CUDA closure 未恢复）→ 运行期一致性探针（CUDA closure 契约表 +
+    torch/torchaudio 基础版本一致 + 同为 +cu128 + torchcodec 可导入）→
+    CosyVoice import 探针 → WAV 加载探针。"""
     text = BOOTSTRAP_COSYVOICE.read_text(encoding="utf-8")
     lines = text.splitlines()
 
@@ -472,20 +493,36 @@ def test_bootstrap_torch_reconciliation_order_contract() -> None:
         assert len(hits) == 1, f"契约锚点应恰好出现一次: {marker!r}（实际 {len(hits)} 次）"
         return hits[0]
 
+    def gate_def(gate: str) -> int:
+        hits = [i for i, line in enumerate(lines) if line.strip() == f"{gate}() {{"]
+        assert len(hits) == 1, f"门禁函数 {gate} 应恰定义一次（单一事实源）"
+        return hits[0]
+
+    # 门禁函数定义顺序 = 门禁顺序（pip check → 一致性 → import → WAV）
+    pip_check_def = gate_def("gate_pip_check")
+    consistency_def = gate_def("gate_consistency_probe")
+    import_def = gate_def("gate_import_probe")
+    wav_def = gate_def("gate_wav_probe")
+    assert pip_check_def < consistency_def < import_def < wav_def
+
+    # M14-25 fast path 判定在门禁定义之后、依赖安装之前
+    fast_path_judge = sole_line("FAST_PATH_HIT=1")
+    assert wav_def < fast_path_judge
+
     initial_install = sole_line('pip" install torch torchaudio torchcodec==0.11.1+cu128')
     minimal_reqs = sole_line('install -r "$REPO_ROOT/tools/voice/cosyvoice-runtime-requirements.txt"')
     full_reqs = sole_line('install -r "$ARTIFACTS/cosyvoice/requirements.full.txt"')
     closure_restore = sole_line('pip" install torch==2.11.0+cu128')
-    pip_check_gate = sole_line('pip" check')
-    consistency_probe = sole_line('say "运行期一致性探针')
-    import_probe = sole_line('say "验证导入闭包')
-    wav_probe = sole_line("torchaudio.load(sys.argv[1]")
-
-    # 顺序：初始安装 → 两个清单分支（先于闭包恢复）→ 终局闭包恢复 →
-    # pip check 附加门禁 → 一致性探针 → CosyVoice import/WAV 探针殿后
+    assert fast_path_judge < initial_install
     assert initial_install < minimal_reqs < closure_restore
     assert initial_install < full_reqs < closure_restore
-    assert closure_restore < pip_check_gate < consistency_probe < import_probe < wav_probe
+
+    # 门禁调用（安装后 fail-closed 执行）顺序不变
+    pip_check_gate = sole_line("if ! gate_pip_check; then")
+    consistency_gate = sole_line("if ! gate_consistency_probe; then")
+    import_gate = sole_line("if ! gate_import_probe; then")
+    wav_gate = sole_line("if ! gate_wav_probe; then")
+    assert closure_restore < pip_check_gate < consistency_gate < import_gate < wav_gate
 
     # 终局闭包恢复内容：三件套精确 pin + torch 2.11.0+cu128 METADATA（Linux
     # 段）声明的 CUDA 闭包成员 + 同一 cu128 index；完整依赖解析（绝无
@@ -512,7 +549,7 @@ def test_bootstrap_torch_reconciliation_order_contract() -> None:
     # 指向 CUDA closure 未恢复；注释必须说明它只是附加门禁、不能替代真实
     # import/运行探针（两个实证盲区：混合 ABI 报 No broken requirements、
     # extras 门控的 12.8 系列 runtime 错配不报）
-    gate_body = "\n".join(lines[closure_restore:consistency_probe])
+    gate_body = "\n".join(lines[closure_restore:consistency_gate])
     for anchor in (
         "CUDA closure 未恢复",
         "附加门禁",
@@ -520,18 +557,344 @@ def test_bootstrap_torch_reconciliation_order_contract() -> None:
     ):
         assert anchor in gate_body, anchor
 
-    # 一致性探针内容（闭包恢复行与 import 探针之间的探针段）：CUDA closure
-    # 契约 + 基础版本一致 + 同 +cu128 + torchcodec 可导入；失败文案点名
-    # pip check 不可见
-    probe_body = "\n".join(lines[closure_restore:import_probe])
+    # 一致性探针内容（gate_consistency_probe 函数定义区间）：CUDA closure
+    # 契约 + 基础版本一致 + 同 +cu128 + torchcodec 可导入
+    probe_body = "\n".join(lines[consistency_def:import_def])
     for anchor in (
         "_base_version(torch_version) != _base_version(torchaudio_version)",
         '"+cu128" not in torch_version or "+cu128" not in torchaudio_version',
         "import torchcodec",
         "pip check",
-        "运行期一致性探针失败",
     ):
         assert anchor in probe_body, anchor
+    # 一致性门禁 fail-closed 文案在门禁调用段（守卫块内、探针调用之后）
+    consistency_gate_region = "\n".join(lines[consistency_gate:import_gate])
+    assert "运行期一致性探针失败" in consistency_gate_region
+
+
+def test_bootstrap_offline_fast_path_contract() -> None:
+    """M14-25 offline fast path 契约（生产实证 PID 18447 回归：模型/venv/
+    wetext 缓存完整时，脚本仍因无条件 pip upgrade/install 与 CUDA 闭包恢复
+    联网而中止——PyPI 不可达导致离线重启失败）：
+    - 门禁函数单一事实源：pip check / CUDA closure 一致性 / import
+      cosyvoice / torchaudio WAV 四道门禁各定义恰一次，fast path 判定与
+      安装后 fail-closed 门禁调用同一组函数——不引入第二套契约逻辑；
+    - fast path 判定块本身零网络：判定依据 = 本地解释器 + 本地 metadata +
+      本地探针，无 pip install / --index-url / snapshot_download / git
+      clone（不允许先访问网络探测可用性再决定 fast path）；
+    - 判定失败点名缺失项（venv 缺失 / pip check / 一致性 / import / WAV
+      五类原因），命中与未命中均有明确日志；
+    - 五类联网安装命令全部位于 fast-path 跳过守卫块内（命中即零执行）；
+    - 门禁 fail-closed 执行仍在依赖安装之后（契约失败绝不因 fast path
+      改动而弱化或绕过安装路径）；
+    - 模型段 / wetext 段 / bridge 启动在守卫块之外之后（fast path 命中时
+      直达，且 COSYVOICE_SKIP_DOWNLOAD 缺模型 fail-closed 语义不动）。"""
+    text = BOOTSTRAP_COSYVOICE.read_text(encoding="utf-8")
+    lines = text.splitlines()
+
+    def sole_active(marker: str) -> int:
+        hits = [i for i, line in enumerate(lines)
+                if marker in line and line.strip() and not line.strip().startswith("#")]
+        assert len(hits) == 1, f"契约锚点应恰出现一次: {marker!r}（实际 {len(hits)} 次）"
+        return hits[0]
+
+    # 门禁函数单一事实源 + 定义在判定块之前
+    gate_defs = {gate: sole_active(f"{gate}() {{") for gate in OFFLINE_FAST_PATH_GATES}
+    fast_path_judge = sole_active("FAST_PATH_HIT=1")
+    assert max(gate_defs.values()) < fast_path_judge
+
+    # 判定块：命中/未命中日志 + 五类缺失原因点名
+    hit_say = sole_active('say "offline fast path 命中')
+    miss_say = sole_active('say "offline fast path 未命中')
+    guard = sole_active('if [ "$FAST_PATH_HIT" != "1" ]; then')
+    assert fast_path_judge < hit_say < miss_say < guard
+    for reason in (
+        "venv 解释器缺失",
+        "pip check 未通过",
+        "一致性探针未通过",
+        "import cosyvoice.cli.cosyvoice 探针未通过",
+        "torchaudio WAV 加载探针未通过",
+    ):
+        assert reason in text, reason
+
+    # 判定块零网络：判定区间（FAST_PATH_HIT 赋值到守卫行）生效行无网络命令
+    for line in lines[fast_path_judge:guard]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        for banned in ('pip" install', "--index-url", "snapshot_download", "git clone"):
+            assert banned not in line, f"fast path 判定块不得含网络命令: {line.strip()}"
+    # 判定区间内四道门禁全部被调用（判定 = 门禁本身，非弱化替身）
+    judge_region = "\n".join(lines[fast_path_judge:guard])
+    for gate in OFFLINE_FAST_PATH_GATES:
+        assert gate in judge_region, gate
+
+    # 守卫块边界：守卫行之后首个顶层 fi；五类联网安装命令全部在块内（缩进）
+    guard_close = min(i for i, line in enumerate(lines) if line == "fi" and i > guard)
+    for marker in NETWORK_INSTALL_MARKERS:
+        pos = sole_active(marker)
+        assert guard < pos < guard_close, f"联网安装命令必须在 fast-path 跳过守卫块内: {marker}"
+        assert lines[pos].startswith("  "), f"守卫块内命令应有缩进: {marker}"
+
+    # 门禁 fail-closed 调用也在守卫块内（安装之后；契约失败走安装路径再验证）
+    for gate in OFFLINE_FAST_PATH_GATES:
+        pos = sole_active(f"if ! {gate}; then")
+        assert guard < pos < guard_close, gate
+
+    # 模型段 / wetext 段 / bridge 启动在守卫块之外之后（fast path 命中直达）
+    model_detect = sole_active("model_payload_ready()")
+    wetext_export = sole_active('export MODELSCOPE_CACHE=')
+    bridge_exec = sole_active(
+        'exec "$VENV_DIR/bin/python" "$REPO_ROOT/tools/voice/cosyvoice_openai_bridge.py"',
+    )
+    assert guard_close < model_detect < wetext_export < bridge_exec
+
+    # skip-download 缺模型 fail-closed 语义保持（既有门禁不被 fast path 弱化）
+    assert "模型未就位" in text
+    assert 'COSYVOICE_SKIP_DOWNLOAD:-0}" = "1"' in text
+
+
+def _bash_friendly(path: Path) -> str:
+    """路径 → 当前宿主 bash 可用形式：Git Bash/MSYS/POSIX 用正斜杠盘符；
+    WSL 启动器转 /mnt/…（与 _bash_syntax_command 同一 host-aware 判别）。"""
+    if os.name == "nt" and BASH is not None and _bash_flavor_is_wsl(BASH):
+        return _windows_to_wsl_path(str(path))
+    return path.as_posix()
+
+
+#: R3 preflight 脚本（LF 源码；经选中的 BASH 以脚本文件形态执行——WSL 启动器
+#: 对 `bash -c '<复合串>'` 做二次命令行解析会字面化内层引号，脚本文件与
+#: bootstrap 本体同形态不受影响）：逐项验证 env 透传（WSL 只透传 WSLENV 声明
+#: 变量）、PIP_CALL_LOG 目录、fake .git 位置、stub 可执行位与首行解释器
+#: （CRLF 检测）、fake 仓库可被该 BASH 的 git 读取且 commit 与 env 一致。
+PREFLIGHT_SCRIPT = """#!/bin/sh
+# M14-25 fast path 行为实证 preflight（R3）
+set -eu
+test -n "${VOICE_ARTIFACTS_DIR:-}" \\
+  || { echo "PREFLIGHT FAIL: VOICE_ARTIFACTS_DIR 未透传（WSL 需 WSLENV 声明）" >&2; exit 1; }
+test -n "${PIP_CALL_LOG:-}" \\
+  || { echo "PREFLIGHT FAIL: PIP_CALL_LOG 未透传（WSL 需 WSLENV 声明）" >&2; exit 1; }
+test -n "${COSYVOICE_COMMIT:-}" \\
+  || { echo "PREFLIGHT FAIL: COSYVOICE_COMMIT 未透传（WSL 需 WSLENV 声明）" >&2; exit 1; }
+test "${COSYVOICE_SKIP_DOWNLOAD:-}" = "1" \\
+  || { echo "PREFLIGHT FAIL: COSYVOICE_SKIP_DOWNLOAD != 1" >&2; exit 1; }
+test -d "${PIP_CALL_LOG%/*}" \\
+  || { echo "PREFLIGHT FAIL: PIP_CALL_LOG 目录不存在" >&2; exit 1; }
+REPO="$VOICE_ARTIFACTS_DIR/cosyvoice/CosyVoice"
+PY="$VOICE_ARTIFACTS_DIR/cosyvoice/venv/bin/python"
+PIP="$VOICE_ARTIFACTS_DIR/cosyvoice/venv/bin/pip"
+test -d "$REPO/.git" \\
+  || { echo "PREFLIGHT FAIL: fake .git 错位（$REPO/.git 不存在——布局与 env 不一致）" >&2; exit 1; }
+test -x "$PY" && test -x "$PIP" \\
+  || { echo "PREFLIGHT FAIL: venv stub 不可执行" >&2; exit 1; }
+test "$(head -n 1 "$PY")" = "#!/bin/sh" \\
+  || { echo "PREFLIGHT FAIL: python stub 首行非 #!/bin/sh（CRLF bad interpreter?）" >&2; exit 1; }
+test "$(head -n 1 "$PIP")" = "#!/bin/sh" \\
+  || { echo "PREFLIGHT FAIL: pip stub 首行非 #!/bin/sh（CRLF bad interpreter?）" >&2; exit 1; }
+test "$(git -C "$REPO" rev-parse HEAD)" = "$COSYVOICE_COMMIT" \\
+  || { echo "PREFLIGHT FAIL: git rev-parse 与 COSYVOICE_COMMIT 不一致（dubious ownership?）" >&2; exit 1; }
+echo PREFLIGHT_OK
+"""
+
+
+class _FakeBootstrapLayout:
+    """临时 fake 布局（不触网、不用生产 venv/模型）：真实 bootstrap 脚本副本
+    + fake git 仓库（固定 commit 可 checkout）+ fake venv（python/pip 桩，
+    pip 桩逐次记录 argv 到日志）+ 模型四载荷 + wetext 四 FST。
+
+    fake python 桩受 FAKE_PYTHON_FAIL 控制（miss 场景让全部探针失败）。"""
+
+    def __init__(self, root: Path, *, python_fail: bool) -> None:
+        """root 必须是短生命周期短路径根（Windows MAX_PATH 隔离，R2）：
+        pytest tmp_path 的深层编号路径（…/test_bootstrap_offline_fast_pa0/…）
+        + git objects 哈希文件名会超 260 字符——git 报「Filename too long」/
+        「Error building trees」且 commit 失败曾被吞（独立复现实证）。调用方
+        用 tempfile.TemporaryDirectory(prefix="m1425-…") 提供短根。
+
+        R3：WSL 启动器（C:\\Windows\\System32\\bash.EXE）只透传 WSLENV 声明
+        的环境变量——测试自有变量必须显式声明（见 self.env 的 WSLENV 构造），
+        否则脚本内 VOICE_ARTIFACTS_DIR 等全部丢失、回落 REPO_ROOT 默认路径，
+        触发真实 git clone（supervisor PowerShell 复现取证：clone 目标
+        repo/artifacts/… 而 fake .git 在布局路径上，/proc environ 缺全部
+        测试变量）。fake stub 必须以显式 LF 字节写入（Windows write_text 会
+        把 \\n 翻成 CRLF——WSL /bin/sh 报「bad interpreter」致 fast path 误
+        判 miss 进安装路径）。"""
+        self.root = root
+        repo_voice = root / "repo" / "tools" / "voice"
+        repo_voice.mkdir(parents=True)
+        self.script = repo_voice / "bootstrap_cosyvoice_wsl.sh"
+        shutil.copyfile(BOOTSTRAP_COSYVOICE, self.script)
+        (repo_voice / "cosyvoice_openai_bridge.py").write_text("# stub\n", encoding="utf-8")
+
+        # VOICE_ARTIFACTS_DIR 语义 = artifacts 根，脚本自行拼接 cosyvoice/…
+        # （COSYVOICE_DIR=$ARTIFACTS/cosyvoice/CosyVoice）。fake 数据必须落在
+        # art_base/cosyvoice/ 下与脚本拼接结果逐层对齐——错一层即触发真实
+        # git clone（联网，破坏测试边界；上一回合实证教训）。
+        art_base = root / "artifacts" / "voice"
+        art = art_base / "cosyvoice"
+        cv = art / "CosyVoice"
+        (cv / "asset").mkdir(parents=True)
+        (cv / "asset" / "zero_shot_prompt.wav").write_bytes(b"RIFF-stub")
+
+        # fake git 仓库：每条命令 fail-fast（非零退出即断言失败并带 stderr——
+        # R2：曾吞掉 commit 失败，只在 rev-parse 才暴露）；core.longpaths=true
+        # 为加固（主修是调用方给的短根——bootstrap 之后也要对该路径跑 git）
+        def _git(*args: str) -> subprocess.CompletedProcess[str]:
+            result = run_utf8(["git", *args], timeout=60, cwd=cv)
+            assert result.returncode == 0, (
+                f"git {' '.join(args)} 失败 (exit {result.returncode}): "
+                f"{result.stderr or result.stdout}"
+            )
+            return result
+
+        _git("init", "-q")
+        _git("config", "core.longpaths", "true")
+        _git("-c", "user.email=t@t", "-c", "user.name=t",
+             "commit", "-q", "--allow-empty", "-m", "stub")
+        self.commit = _git("rev-parse", "HEAD").stdout.strip()
+        assert self.commit, "git rev-parse HEAD 未返回 commit 哈希"
+
+        venv_bin = art / "venv" / "bin"
+        venv_bin.mkdir(parents=True)
+        # R3：显式 LF 字节写入 stub——write_text 的 locale newline 翻译会在
+        # Windows 产出 CRLF，WSL /bin/sh 执行报「bad interpreter: /bin/sh^M」
+        fail_guard = b'if [ -n "$FAKE_PYTHON_FAIL" ]; then exit 1; fi\n'
+        (venv_bin / "python").write_bytes(b"#!/bin/sh\n" + fail_guard + b"exit 0\n")
+        self.pip_log = root / "pip-calls.log"
+        (venv_bin / "pip").write_bytes(
+            b'#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$PIP_CALL_LOG"\nexit 0\n'
+        )
+        for stub in (venv_bin / "python", venv_bin / "pip"):
+            stub.chmod(0o755)
+
+        model = art / "Fun-CosyVoice3-0.5B"
+        model.mkdir(parents=True)
+        for name in ("cosyvoice3.yaml", "flow.pt", "llm.pt", "hift.pt"):
+            (model / name).write_bytes(b"stub")
+
+        wetext = art / "modelscope-cache" / "hub" / "pengzhendong" / "wetext"
+        for sub in ("en/tn", "zh/tn"):
+            (wetext / sub).mkdir(parents=True)
+            for name in ("tagger.fst", "verbalizer.fst"):
+                (wetext / sub / name).write_bytes(b"stub")
+
+        self.env = {
+            **os.environ,
+            "VOICE_ARTIFACTS_DIR": _bash_friendly(art_base),
+            "COSYVOICE_COMMIT": self.commit,
+            "COSYVOICE_SKIP_DOWNLOAD": "1",
+            "PIP_CALL_LOG": _bash_friendly(self.pip_log),
+        }
+        if python_fail:
+            self.env["FAKE_PYTHON_FAIL"] = "1"
+        # R3：WSL 启动器只透传 WSLENV 声明的变量——显式声明全部测试自有变量
+        # （保留既有 WSLENV 声明，去重追加；值保持 POSIX 形态，无需 /p flag）
+        if os.name == "nt" and _bash_flavor_is_wsl(BASH):
+            declared = [v for v in self.env.get("WSLENV", "").split(":") if v]
+            for var in ("VOICE_ARTIFACTS_DIR", "PIP_CALL_LOG", "COSYVOICE_COMMIT",
+                        "COSYVOICE_SKIP_DOWNLOAD", "FAKE_PYTHON_FAIL"):
+                if var not in declared:
+                    declared.append(var)
+            self.env["WSLENV"] = ":".join(declared)
+        # 防错位守卫（运行前）：fake .git 必须恰在脚本将检查的
+        # $VOICE_ARTIFACTS_DIR/cosyvoice/CosyVoice/.git 路径上——否则脚本会
+        # 进入真实 git clone 联网，测试零网络边界被破坏（R1 返工要求）。
+        assert (cv / ".git").is_dir(), (
+            f"fake git 仓库错位: {cv / '.git'} 不存在——布局与脚本拼接路径"
+            "不一致，将触发真实 clone（禁止）"
+        )
+
+    def preflight(self) -> None:
+        """R3 preflight：经同一选中的 BASH（含 WSL 启动器）在启动 bootstrap
+        前验证测试前提成立——env 已透传（WSL 下丢变量即回落默认路径触发真实
+        clone）、fake .git/venv stub 在脚本将读取的路径上可见且可执行、stub
+        首行恰为 '#!/bin/sh'（CRLF 会致 /bin/sh bad interpreter）、fake 仓库
+        可被该 BASH 的 git rev-parse 读取且 commit 与 env 一致。任一不成立
+        立即失败并输出完整诊断。
+
+        实现注：经**脚本文件**而非 `bash -c '<复合串>'` 执行——WSL 启动器
+        对 -c 参数做二次命令行解析，内层引号被字面化（实证 stderr 出现
+        字面 '""'），脚本文件与 bootstrap 本体同形态、不受该解析影响。"""
+        probe = self.root / "preflight.sh"
+        probe.write_bytes(PREFLIGHT_SCRIPT.encode("utf-8"))
+        probe.chmod(0o755)
+        result = run_utf8([BASH, _bash_friendly(probe)], timeout=60, env=self.env)
+        assert result.returncode == 0 and "PREFLIGHT_OK" in result.stdout, (
+            "fast path 行为实证 preflight 失败（env 未透传/布局错位/stub CRLF/"
+            f"git 不可读）——BASH={BASH} exit={result.returncode}\n"
+            f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        )
+
+    def run(self, *, timeout: float = 180) -> subprocess.CompletedProcess[str]:
+        # 真实执行（非 bash -n 语法检查）：host-aware 路径转换同语法检查；
+        # R3：先 preflight（同 BASH 验证 env 透传/布局/stub），再启动脚本
+        self.preflight()
+        return run_utf8([BASH, _bash_friendly(self.script)], timeout=timeout, env=self.env)
+
+    def pip_calls(self) -> list[str]:
+        if not self.pip_log.exists():
+            return []
+        return [line for line in
+                self.pip_log.read_text(encoding="utf-8").splitlines() if line]
+
+
+@pytest.mark.skipif(BASH is None, reason="bash 不可用（fast path 行为实证需要 bash）")
+def test_bootstrap_offline_fast_path_hit_runs_zero_pip_install() -> None:
+    """M14-25 行为实证（hit）：fake venv 四探针全过 + 模型/wetext payload
+    齐备 → bootstrap 全程零 pip install/upgrade/index-url（fake pip 桩逐次
+    记录 argv，只有只读的 check/freeze），命中日志明示 offline fast path，
+    wetext 缓存就绪不触发下载，exit 0 直达 bridge exec。
+
+    布局根用 tempfile.TemporaryDirectory 短根（Windows MAX_PATH 隔离，R2）：
+    不嵌套 pytest 深层编号 tmp 路径——git objects 哈希文件名在其下会超
+    260 字符（「Filename too long」实证）；临时目录自动清理、零网络。"""
+    with tempfile.TemporaryDirectory(prefix="m1425-fp-hit-") as short_root:
+        layout = _FakeBootstrapLayout(Path(short_root), python_fail=False)
+        result = layout.run()
+        assert result.returncode == 0, f"stdout:\n{result.stdout}\nstderr:\n{result.stderr}"
+        assert "offline fast path 命中" in result.stdout
+        assert "wetext 离线缓存就绪" in result.stdout
+        # 安装段整体未执行（say 都不该出现）
+        assert "安装 cu128 torch" not in result.stdout
+        assert "终局 CUDA 闭包恢复" not in result.stdout
+        # R3：硬断言零真实 clone（env 丢失误回落默认路径时，WSL 启动器下曾
+        # 发生真实 github clone——禁止再次发生）
+        combined = result.stdout + result.stderr
+        assert "Cloning into" not in combined, "禁止真实 git clone（env/布局错位）"
+        assert "FunAudioLLM/CosyVoice.git" not in combined
+        pip_calls = layout.pip_calls()
+        assert "check" in pip_calls, "fast path 判定仍必须执行 pip check 门禁"
+        assert not any(
+            "install" in call or "upgrade" in call or "--index-url" in call
+            for call in pip_calls
+        ), f"fast path 命中时不得出现任何安装/索引命令: {pip_calls}"
+
+
+@pytest.mark.skipif(BASH is None, reason="bash 不可用（fast path 行为实证需要 bash）")
+def test_bootstrap_offline_fast_path_miss_falls_back_to_install() -> None:
+    """M14-25 行为实证（miss）：运行时契约探针失败（fake python 桩全失败）
+    → 未命中日志点名一致性探针 → 进入既有安装路径（fake pip 记录到
+    install/--index-url 调用）→ 安装后门禁 fail-closed（exit 1，一致性探针
+    失败文案在 stderr）——契约失败绝不绕过安装、绝不静默继续。
+
+    布局根同上：tempfile 短根（Windows MAX_PATH 隔离，R2）。"""
+    with tempfile.TemporaryDirectory(prefix="m1425-fp-miss-") as short_root:
+        layout = _FakeBootstrapLayout(Path(short_root), python_fail=True)
+        result = layout.run()
+        assert result.returncode == 1, "契约失败必须 fail-closed（exit 1），不得绕过"
+        assert "offline fast path 未命中" in result.stdout
+        assert "一致性探针未通过" in result.stdout
+        assert "运行期一致性探针失败" in result.stderr
+        # R3：硬断言零真实 clone（同 hit 场景）
+        combined = result.stdout + result.stderr
+        assert "Cloning into" not in combined, "禁止真实 git clone（env/布局错位）"
+        assert "FunAudioLLM/CosyVoice.git" not in combined
+        pip_calls = layout.pip_calls()
+        assert any("install" in call for call in pip_calls), (
+            f"契约失败必须走既有安装路径: {pip_calls}"
+        )
+        assert any("--index-url https://download.pytorch.org/whl/cu128" in call
+                   for call in pip_calls), "安装路径含 cu128 index 恢复命令"
 
 
 def test_bootstrap_cuda_closure_contract() -> None:
@@ -822,12 +1185,17 @@ def test_openai_whisper_triton_no_bypass_contract() -> None:
         assert not any("dist-info" in line for line in active_lines), (
             f"{path.name} 生效行不得改写已装 dist-info 元数据"
         )
-    # 反绕过 ①：pip check 门禁保持 fail-closed 形态（if ! ... check; then fail）
+    # 反绕过 ①：pip check 门禁保持 fail-closed 形态——M14-25 门禁函数化后，
+    # pip check 命令恰一处（gate_pip_check 函数定义内），门禁调用行
+    # `if ! gate_pip_check; then` 恰一处且非零退出即 FAIL（不得短路绕过）
     bootstrap = BOOTSTRAP_COSYVOICE.read_text(encoding="utf-8")
-    gate_lines = [line for line in bootstrap.splitlines()
-                  if "pip\" check" in line and not line.strip().startswith("#")]
-    assert len(gate_lines) == 1, "pip check 门禁应恰一处"
-    gate_line = gate_lines[0]
+    pip_check_cmd_lines = [line for line in bootstrap.splitlines()
+                           if "pip\" check" in line and not line.strip().startswith("#")]
+    assert len(pip_check_cmd_lines) == 1, "pip check 命令应恰一处（gate_pip_check 函数内）"
+    gate_call_lines = [line for line in bootstrap.splitlines()
+                       if "if ! gate_pip_check; then" in line and not line.strip().startswith("#")]
+    assert len(gate_call_lines) == 1, "pip check 门禁调用应恰一处"
+    gate_line = gate_call_lines[0]
     assert gate_line.strip().startswith("if !"), "门禁必须 if ! 形态（非零退出即 FAIL）"
     assert "|| true" not in gate_line and "|| :" not in gate_line, "门禁不得被短路绕过"
 

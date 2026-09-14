@@ -76,6 +76,17 @@
 #   Qwen2Encoder（Qwen2ForCausalLM.from_pretrained）+ AutoTokenizer，2026-09-13
 #   生产 venv 探针实证缺 model.safetensors 即 OSError。bash 侧四文件载荷
 #   判定/缓存回落/fail-closed 全部保持不变。
+# - M14-25（离线重启幂等）：2026-09-14 生产实证（M14-24 重启）——模型/venv/
+#   wetext 缓存完整时，脚本仍因无条件 pip upgrade/install 与 CUDA closure
+#   恢复联网而中止（PyPI 不可达，PID 18447；最终 PID 19132 只是网络恢复后
+#   成功，不是幂等修复）。修法 = offline fast path：四道门禁（pip check /
+#   CUDA closure 一致性 / import cosyvoice.cli.cosyvoice / torchaudio WAV
+#   探针）函数化为单一事实源（gate_pip_check/gate_consistency_probe/
+#   gate_import_probe/gate_wav_probe），当且仅当 venv 就绪且四道门禁全部
+#   通过 → 跳过整个依赖安装段（零 pip/PyPI/PyTorch index/ModelScope 网络
+#   命令）直达模型检查/启动；任一门禁失败 → 点名缺失项并进入既有安装/
+#   恢复路径（安装后门禁照常 fail-closed）。判定只依据本地解释器/本地
+#   metadata/本地探针，绝不先联网探测可用性再决定 fast path。
 #
 # 用途：Python 3.10 独立 venv 内克隆官方仓库、装 cu128 torch + 最小运行时依赖、
 #   下载 Fun-CosyVoice3-0.5B-2512 到 gitignored artifacts，然后在 127.0.0.1:8011
@@ -83,8 +94,9 @@
 #   可选经 COSYVOICE_BRIDGE_API_KEY 注入，脚本不回显不落盘）。
 #
 # 幂等：克隆/子模块/模型已存在则跳过或断点续传（git checkout 固定 commit 会丢弃
-#   克隆目录内本地改动——工具目录不应手改）；pip 安装满足即 no-op。本脚本对仓库
-#   只读（新增文件全部落在 artifacts/），不写任何 secret。
+#   克隆目录内本地改动——工具目录不应手改）；M14-25 起 venv 运行时契约（四道门禁）
+#   全部满足时整个依赖安装段被跳过（离线重启零 pip 命令），不满足时 pip 安装
+#   满足即 no-op。本脚本对仓库只读（新增文件全部落在 artifacts/），不写任何 secret。
 #
 # Windows 侧入口（PowerShell，仓库在 D:\ 时）：
 #   wsl -e bash -c "cd '/mnt/d/AI Learning OS/<repo-dir>' && bash tools/voice/bootstrap_cosyvoice_wsl.sh"
@@ -191,63 +203,17 @@ if [ ! -x "$VENV_DIR/bin/python" ]; then
 fi
 say "venv Python: $("$VENV_DIR/bin/python" --version 2>&1)"
 
-# ---- 依赖：先 cu128 torch（含 torchcodec），再最小运行时清单（或官方完整清单回退）----
-# torchcodec 必须与 torch/torchaudio 同一条 cu128 index 命令安装：torchaudio 2.11
-# 后端探测需要它；+cu128 本地版本轮只在 pytorch cu128 index（PyPI 解析拿不到）；
-# torchcodec METADATA 不约束 torch 版本，不会替换/重解 torch 依赖。
-# 清单分支会反向降级 torch 及其 CUDA 闭包（M14-16/M14-17 生产实证）——
-# 装完后必须终局 CUDA 闭包恢复（完整解析，无 --no-deps）+ pip check 附加
-# 门禁 + 一致性探针（见下方 M14-17 段），顺序不可调换。
-say "安装 cu128 torch/torchaudio/torchcodec==0.11.1+cu128（RTX 5070 Ti/Blackwell；网络受限时需代理）"
-"$VENV_DIR/bin/pip" install --upgrade pip
-"$VENV_DIR/bin/pip" install torch torchaudio torchcodec==0.11.1+cu128 --index-url https://download.pytorch.org/whl/cu128
-if [ "${COSYVOICE_FULL_REQUIREMENTS:-0}" = "1" ]; then
-  say "COSYVOICE_FULL_REQUIREMENTS=1：回退官方完整 requirements（剔除 torch/torchaudio 的 cu121 pin）"
-  grep -vE '^(torch|torchaudio)==' "$COSYVOICE_DIR/requirements.txt" > "$ARTIFACTS/cosyvoice/requirements.full.txt"
-  "$VENV_DIR/bin/pip" install -r "$ARTIFACTS/cosyvoice/requirements.full.txt"
-else
-  say "安装最小运行时依赖（tools/voice/cosyvoice-runtime-requirements.txt，导入闭包推导）"
-  "$VENV_DIR/bin/pip" install -r "$REPO_ROOT/tools/voice/cosyvoice-runtime-requirements.txt"
-fi
-
-# ---- 终局 CUDA 闭包恢复（M14-17 生产实证修复）：三件套 + torch metadata 闭包 ----
-# 2026-09-13 生产实证：M14-16 的 --no-deps 只回写三个主轮——torch/torchaudio/
-# torchcodec 虽已是 cu128 组合，但 CUDA 闭包仍是被清单分支连带降级的 12.1
-# 系列（pip check 实证：nvidia-cudnn-cu12 8.9.2.26 需 ==9.19.0.56、
-# nvidia-nccl-cu12 2.20.5 需 ==2.28.9、triton 2.3.1 需 ==3.6.0），import
-# torch 失败缺 libcudnn.so.9。故两分支汇合后以完整依赖解析（同一 cu128
-# index）恢复闭包：三件套精确 pin + torch 2.11.0+cu128 METADATA（Linux 段，
-# 2026-09-13 自生产 venv 真实 wheel metadata 导出）声明的闭包成员——精确
-# == pin 使 PyPI 清单分支无从再降级任一轮；成员 pin 不满足即强制解析安装
-# （即便三件套 pin 已满足，被降级的闭包仍会被修复），已满足即 pip no-op
-# （不做 force-reinstall 全量重写）。cu128 本地版本轮只在该 index（PyPI
-# 解析拿不到）；CUDA 闭包成员（cuda-toolkit/cuda-bindings/nvidia-*/triton）
-# 同 index 可解析——生产 venv 初始安装实证（cuda-toolkit 12.8.1 /
-# cuda-bindings 12.9.7 / nvidia-nvjitlink 12.8.93 / nvidia-nvshmem 3.4.5 /
-# nvidia-cusparselt 0.7.1 均来自该 index 的同一解析，非 PyPI 清单链产物）。
-say "终局 CUDA 闭包恢复：三件套精确 pin + torch 2.11.0+cu128 metadata 闭包成员（完整依赖解析；清单分支可能已降级 torch 与 CUDA 闭包）"
-"$VENV_DIR/bin/pip" install torch==2.11.0+cu128 torchaudio==2.11.0+cu128 torchcodec==0.11.1+cu128 nvidia-cudnn-cu12==9.19.0.56 nvidia-nccl-cu12==2.28.9 nvidia-cusparselt-cu12==0.7.1 nvidia-nvshmem-cu12==3.4.5 triton==3.6.0 "cuda-toolkit[cublas,cudart,cufft,cufile,cupti,curand,cusolver,cusparse,nvjitlink,nvrtc,nvtx]==12.8.1" "cuda-bindings>=12.9.4,<13" --index-url https://download.pytorch.org/whl/cu128
-
-# ---- pip check 附加门禁（M14-17）：闭包恢复的元数据级校验，fail-closed ----
-# pip check 只是附加门禁，不能替代真实 import/运行探针——两个实证盲区：
-# (a) M14-16 实证：混合 ABI（torch 2.3.1 + torchaudio 2.11.0+cu128）时它
-#     报「No broken requirements found」（cu128 轮 METADATA 不声明 torch
-#     约束）；
-# (b) 2026-09-13 生产 venv 实证：extras 门控的 nvidia runtime 错配
-#     （cuda-toolkit 12.8.1 extras 要求 nvidia-cublas-cu12==12.8.4.1.* 而
-#     实为 12.1.3.1）它不报——只报 cudnn/nccl/triton 三个 == pin。
-# 真实防线是下方 CUDA closure 契约探针 + torch import 探针。
-say "pip check 附加门禁（CUDA closure 元数据一致性；不替代 import/运行探针）"
-if ! "$VENV_DIR/bin/pip" check; then
-  fail "pip check 失败——CUDA closure 未恢复（torch 2.11.0+cu128 metadata 声明的依赖闭包与已装版本冲突，逐项见上方输出）：重跑本脚本走终局闭包恢复；仍失败则把实际版本报回仓库修正恢复命令与契约表"
-fi
-
-# ---- 运行期一致性探针（M14-16/M14-17）：pip check 不可见的闭包错配与混合 ABI 防线 ----
-# CUDA closure 契约（M14-17）+ torch/torchaudio/torchcodec 真实导入 + 同源
-# 校验：任一不满足即 fail-closed（清单依赖链再降级在此点名，而不是拖到
-# CosyVoice 导入栈里炸成难定位的 undefined symbol）。
-say "运行期一致性探针：CUDA closure 契约 + torch/torchaudio 同基础版本 + 同源 cu128 + torchcodec 可导入"
-if ! "$VENV_DIR/bin/python" - <<'PYEOF'
+# ---- 运行期契约门禁（M14-25 函数化，单一事实源）----
+# 四道门禁原样函数化：pip check / 运行期一致性探针（CUDA closure 契约 +
+# torch 三件套同源校验）/ CosyVoice import 闭包 / torchaudio WAV 加载。
+# 同一组函数服务两处——M14-25 offline fast path 判定（venv 就绪时以零网络
+# 方式判断本地运行时契约是否全部满足）与下方依赖安装后的 fail-closed 门禁
+# ——两处共享同一实现，不引入第二套契约逻辑（双事实源）。
+gate_pip_check() {
+  "$VENV_DIR/bin/pip" check
+}
+gate_consistency_probe() {
+  "$VENV_DIR/bin/python" - <<'PYEOF'
 import sys
 from importlib.metadata import PackageNotFoundError
 from importlib.metadata import version as _dist_version
@@ -335,13 +301,9 @@ if "+cu128" not in torch_version or "+cu128" not in torchaudio_version:
     _die(f"torch {torch_version} / torchaudio {torchaudio_version} 非同源 cu128 轮（RTX 5070 Ti/Blackwell 需 CUDA 12.8 组合）")
 print(f"[bootstrap-cosyvoice] 运行期一致: torch {torch_version} / torchaudio {torchaudio_version} / torchcodec 可导入 / CUDA closure 契约 {len(CUDA_CLOSURE) + 1} 项符合")
 PYEOF
-then
-  fail "运行期一致性探针失败（见上）——CUDA 闭包/三件套仍不一致即脚本缺陷：把实际版本报回仓库修正恢复命令与契约表"
-fi
-
-# ---- 安装即验证：真实 import 官方入口（不下载模型；缺失点名失败）----
-say "验证导入闭包：import cosyvoice.cli.cosyvoice（bridge 唯一入口）"
-if ! "$VENV_DIR/bin/python" - "$COSYVOICE_DIR" <<'PYEOF'
+}
+gate_import_probe() {
+  "$VENV_DIR/bin/python" - "$COSYVOICE_DIR" <<'PYEOF'
 import sys
 from pathlib import Path
 
@@ -355,14 +317,9 @@ except ModuleNotFoundError as cause:
     sys.exit(1)
 print("[bootstrap-cosyvoice] import cosyvoice.cli.cosyvoice OK")
 PYEOF
-then
-  fail "导入验证失败——最小依赖清单不足；可设 COSYVOICE_FULL_REQUIREMENTS=1 回退官方完整 requirements 后重试，并把缺失包报回仓库修正 cosyvoice-runtime-requirements.txt"
-fi
-
-# ---- sox 疑问的实证解法：load_wav 走 soundfile 后端，用真实加载探针实证 ----
-# 官方 file_utils.load_wav 显式 torchaudio.load(..., backend='soundfile')——
-# 不依赖 sox/libsox；soundfile wheel 自带 libsndfile。探针失败才给出补救指引。
-if ! "$VENV_DIR/bin/python" - "$ASSET_WAV" <<'PYEOF'
+}
+gate_wav_probe() {
+  "$VENV_DIR/bin/python" - "$ASSET_WAV" <<'PYEOF'
 import sys
 
 import torchaudio
@@ -376,8 +333,119 @@ except Exception:  # noqa: BLE001 —— 任何后端失败都 fail-closed
     sys.exit(1)
 print("[bootstrap-cosyvoice] torchaudio.load(backend='soundfile') OK（无需 sox）")
 PYEOF
-then
-  fail "音频后端探针失败（见上）"
+}
+
+# ---- M14-25 offline fast path 判定（离线重启幂等修复；零网络）----
+# 2026-09-14 生产实证（M14-24 重启）：模型/venv/wetext 缓存完整时，脚本仍因
+# 无条件 pip upgrade/install 与 CUDA closure 恢复联网而中止——PyPI/pytorch
+# index 不可达导致离线重启失败（PID 18447）。修法：当且仅当 venv 就绪且四道
+# 门禁（pip check / CUDA closure 一致性 / import cosyvoice / WAV 探针——与
+# 安装后门禁同一组函数）全部通过时，跳过整个依赖安装段（零 pip/PyPI/
+# PyTorch index/ModelScope 网络命令），直达模型检查/启动路径。判定依据全部
+# 为本地解释器 + 本地 metadata + 本地探针——绝不先访问网络探测可用性来
+# 决定 fast path。任一门禁失败 → 点名缺失项并进入既有安装/恢复路径（fail-
+# open 到安装，绝不弱化门禁本身；安装后门禁照常 fail-closed）。缓存缺失/
+# 依赖不完整的全新机器不受影响（探针不过 → 安装路径）。
+FAST_PATH_HIT=1
+FAST_PATH_MISS=""
+if [ ! -x "$VENV_DIR/bin/python" ]; then
+  FAST_PATH_HIT=0
+  FAST_PATH_MISS="venv 解释器缺失（$VENV_DIR/bin/python）"
+elif ! gate_pip_check >/dev/null; then
+  FAST_PATH_HIT=0
+  FAST_PATH_MISS="pip check 未通过（依赖元数据冲突，详见下方安装后门禁完整输出）"
+elif ! gate_consistency_probe >/dev/null; then
+  FAST_PATH_HIT=0
+  FAST_PATH_MISS="CUDA closure/三件套一致性探针未通过（闭包成员缺失或版本不符/混合 ABI，详见探针 stderr）"
+elif ! gate_import_probe >/dev/null; then
+  FAST_PATH_HIT=0
+  FAST_PATH_MISS="import cosyvoice.cli.cosyvoice 探针未通过（运行时依赖缺失，详见探针 stderr）"
+elif ! gate_wav_probe >/dev/null; then
+  FAST_PATH_HIT=0
+  FAST_PATH_MISS="torchaudio WAV 加载探针未通过（soundfile 后端不可用，详见探针 stderr）"
+fi
+if [ "$FAST_PATH_HIT" = "1" ]; then
+  say "offline fast path 命中：pip check + CUDA closure 一致性 + import cosyvoice.cli.cosyvoice + torchaudio WAV 探针全部通过（本地运行时契约满足）——跳过 pip upgrade/install 与 CUDA 闭包网络恢复（零网络安装命令），直达模型检查"
+else
+  say "offline fast path 未命中：$FAST_PATH_MISS——进入既有依赖安装/CUDA 闭包恢复路径"
+fi
+
+if [ "$FAST_PATH_HIT" != "1" ]; then
+  # ---- 依赖：先 cu128 torch（含 torchcodec），再最小运行时清单（或官方完整清单回退）----
+  # torchcodec 必须与 torch/torchaudio 同一条 cu128 index 命令安装：torchaudio 2.11
+  # 后端探测需要它；+cu128 本地版本轮只在 pytorch cu128 index（PyPI 解析拿不到）；
+  # torchcodec METADATA 不约束 torch 版本，不会替换/重解 torch 依赖。
+  # 清单分支会反向降级 torch 及其 CUDA 闭包（M14-16/M14-17 生产实证）——
+  # 装完后必须终局 CUDA 闭包恢复（完整解析，无 --no-deps）+ pip check 附加
+  # 门禁 + 一致性探针（见下方 M14-17 段），顺序不可调换。
+  say "安装 cu128 torch/torchaudio/torchcodec==0.11.1+cu128（RTX 5070 Ti/Blackwell；网络受限时需代理）"
+  "$VENV_DIR/bin/pip" install --upgrade pip
+  "$VENV_DIR/bin/pip" install torch torchaudio torchcodec==0.11.1+cu128 --index-url https://download.pytorch.org/whl/cu128
+  if [ "${COSYVOICE_FULL_REQUIREMENTS:-0}" = "1" ]; then
+    say "COSYVOICE_FULL_REQUIREMENTS=1：回退官方完整 requirements（剔除 torch/torchaudio 的 cu121 pin）"
+    grep -vE '^(torch|torchaudio)==' "$COSYVOICE_DIR/requirements.txt" > "$ARTIFACTS/cosyvoice/requirements.full.txt"
+    "$VENV_DIR/bin/pip" install -r "$ARTIFACTS/cosyvoice/requirements.full.txt"
+  else
+    say "安装最小运行时依赖（tools/voice/cosyvoice-runtime-requirements.txt，导入闭包推导）"
+    "$VENV_DIR/bin/pip" install -r "$REPO_ROOT/tools/voice/cosyvoice-runtime-requirements.txt"
+  fi
+
+  # ---- 终局 CUDA 闭包恢复（M14-17 生产实证修复）：三件套 + torch metadata 闭包 ----
+  # 2026-09-13 生产实证：M14-16 的 --no-deps 只回写三个主轮——torch/torchaudio/
+  # torchcodec 虽已是 cu128 组合，但 CUDA 闭包仍是被清单分支连带降级的 12.1
+  # 系列（pip check 实证：nvidia-cudnn-cu12 8.9.2.26 需 ==9.19.0.56、
+  # nvidia-nccl-cu12 2.20.5 需 ==2.28.9、triton 2.3.1 需 ==3.6.0），import
+  # torch 失败缺 libcudnn.so.9。故两分支汇合后以完整依赖解析（同一 cu128
+  # index）恢复闭包：三件套精确 pin + torch 2.11.0+cu128 METADATA（Linux 段，
+  # 2026-09-13 自生产 venv 真实 wheel metadata 导出）声明的闭包成员——精确
+  # == pin 使 PyPI 清单分支无从再降级任一轮；成员 pin 不满足即强制解析安装
+  # （即便三件套 pin 已满足，被降级的闭包仍会被修复），已满足即 pip no-op
+  # （不做 force-reinstall 全量重写）。cu128 本地版本轮只在该 index（PyPI
+  # 解析拿不到）；CUDA 闭包成员（cuda-toolkit/cuda-bindings/nvidia-*/triton）
+  # 同 index 可解析——生产 venv 初始安装实证（cuda-toolkit 12.8.1 /
+  # cuda-bindings 12.9.7 / nvidia-nvjitlink 12.8.93 / nvidia-nvshmem 3.4.5 /
+  # nvidia-cusparselt 0.7.1 均来自该 index 的同一解析，非 PyPI 清单链产物）。
+  say "终局 CUDA 闭包恢复：三件套精确 pin + torch 2.11.0+cu128 metadata 闭包成员（完整依赖解析；清单分支可能已降级 torch 与 CUDA 闭包）"
+  "$VENV_DIR/bin/pip" install torch==2.11.0+cu128 torchaudio==2.11.0+cu128 torchcodec==0.11.1+cu128 nvidia-cudnn-cu12==9.19.0.56 nvidia-nccl-cu12==2.28.9 nvidia-cusparselt-cu12==0.7.1 nvidia-nvshmem-cu12==3.4.5 triton==3.6.0 "cuda-toolkit[cublas,cudart,cufft,cufile,cupti,curand,cusolver,cusparse,nvjitlink,nvrtc,nvtx]==12.8.1" "cuda-bindings>=12.9.4,<13" --index-url https://download.pytorch.org/whl/cu128
+
+  # ---- pip check 附加门禁（M14-17）：闭包恢复的元数据级校验，fail-closed ----
+  # pip check 只是附加门禁，不能替代真实 import/运行探针——两个实证盲区：
+  # (a) M14-16 实证：混合 ABI（torch 2.3.1 + torchaudio 2.11.0+cu128）时它
+  #     报「No broken requirements found」（cu128 轮 METADATA 不声明 torch
+  #     约束）；
+  # (b) 2026-09-13 生产 venv 实证：extras 门控的 nvidia runtime 错配
+  #     （cuda-toolkit 12.8.1 extras 要求 nvidia-cublas-cu12==12.8.4.1.* 而
+  #     实为 12.1.3.1）它不报——只报 cudnn/nccl/triton 三个 == pin。
+  # 真实防线是下方 CUDA closure 契约探针 + torch import 探针。
+  say "pip check 附加门禁（CUDA closure 元数据一致性；不替代 import/运行探针）"
+  if ! gate_pip_check; then
+    fail "pip check 失败——CUDA closure 未恢复（torch 2.11.0+cu128 metadata 声明的依赖闭包与已装版本冲突，逐项见上方输出）：重跑本脚本走终局闭包恢复；仍失败则把实际版本报回仓库修正恢复命令与契约表"
+  fi
+
+  # ---- 运行期一致性探针（M14-16/M14-17）：pip check 不可见的闭包错配与混合 ABI 防线 ----
+  # CUDA closure 契约（M14-17）+ torch/torchaudio/torchcodec 真实导入 + 同源
+  # 校验：任一不满足即 fail-closed（清单依赖链再降级在此点名，而不是拖到
+  # CosyVoice 导入栈里炸成难定位的 undefined symbol）。探针本体已函数化到
+  # gate_consistency_probe（M14-25——与 offline fast path 判定共享同一实现）。
+  say "运行期一致性探针：CUDA closure 契约 + torch/torchaudio 同基础版本 + 同源 cu128 + torchcodec 可导入"
+  if ! gate_consistency_probe; then
+    fail "运行期一致性探针失败（见上）——CUDA 闭包/三件套仍不一致即脚本缺陷：把实际版本报回仓库修正恢复命令与契约表"
+  fi
+
+  # ---- 安装即验证：真实 import 官方入口（不下载模型；缺失点名失败）----
+  # 探针本体已函数化到 gate_import_probe（M14-25——与 fast path 判定共享）。
+  say "验证导入闭包：import cosyvoice.cli.cosyvoice（bridge 唯一入口）"
+  if ! gate_import_probe; then
+    fail "导入验证失败——最小依赖清单不足；可设 COSYVOICE_FULL_REQUIREMENTS=1 回退官方完整 requirements 后重试，并把缺失包报回仓库修正 cosyvoice-runtime-requirements.txt"
+  fi
+
+  # ---- sox 疑问的实证解法：load_wav 走 soundfile 后端，用真实加载探针实证 ----
+  # 官方 file_utils.load_wav 显式 torchaudio.load(..., backend='soundfile')——
+  # 不依赖 sox/libsox；soundfile wheel 自带 libsndfile。探针失败才给出补救指引。
+  # 探针本体已函数化到 gate_wav_probe（M14-25——与 fast path 判定共享）。
+  if ! gate_wav_probe; then
+    fail "音频后端探针失败（见上）"
+  fi
 fi
 
 # ---- 模型就位检测与下载（幂等；可 COSYVOICE_SKIP_DOWNLOAD=1 显式跳过）----
