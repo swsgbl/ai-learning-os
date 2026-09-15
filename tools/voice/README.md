@@ -427,6 +427,69 @@ manifest 保留以便重试；`status` 显示 `managed-starting` 且长期不变
 仅 127.0.0.1 空闲端口）验证真实 HTTP 探测——测试不启动真实引擎、不占用
 8010/8011（见 `services/api/tests/test_voice_service_control.py`）。
 
+## 语音健康 sidecar（M14-26：双端口只读窄代理 + Windows 侧受控生命周期）
+
+M14-25 生产验收实证（2026-09-14，§8.5–§8.6）：Windows→WSL loopback 转发
+层不稳——12:00–13:30 七轮自然监控 pipeline failed，两 voice 端点 Windows
+侧 5s 超时，而 WSL 内部引擎健康（非引擎本体死亡）；wslrelay.exe 持有
+Windows 侧 8010/8011 listener，`wsl.exe` 管理面间歇
+`0x8007274c`/`TimeoutExpired`。M14-26 据此交付**健康路径旁路**（回填建议
+②）：WSL 内跑一个只读窄代理 sidecar 绑 eth0 私网 IPv4，Windows 侧监控直连
+它取健康状态——不经 wslrelay、不动现有引擎与 relay（部署面零侵入，失败可
+整体回收）。
+
+- **双端口窄代理**：`18010` = FunASR → 恒 `http://127.0.0.1:8010/health`；
+  `18011` = CosyVoice → 恒 `http://127.0.0.1:8011/health` 与
+  `/health/live`。上游 URL 恒为模块常量表 `PORT_ROUTES`，绝不取自请求——
+  结构上不存在通用 TCP/HTTP 转发能力。精确 GET allowlist：查询串/片段
+  400、未知路径 404、非 GET 405（带 `Allow: GET`）、生僻方法 501。
+- **绑定地址 fail-closed**：listen 之前校验——解析 `/proc/net/route` 取
+  默认路由接口 → UDP connect 零发包探测源地址 → IPv4 → 非 0.0.0.0/回环/
+  链路本地 → RFC1918 私网 → 落在默认路由接口网段内；任何一环失败即退出，
+  绝不退回 `0.0.0.0`。
+- **有界代理语义**：上游 socket 超时 5s（对齐监控 GET 口径）、响应体上限
+  64KiB；上游 2xx 与非 2xx（含 503 loading）**原状态码字节级透传**（上游
+  降级如实可见），超时→504、连接失败→502、未知异常→502 固定脱敏文案；
+  零代理 opener（继承的 `HTTP_PROXY` 不得劫持 127.0.0.1 上游探测，同上文
+  修正轮 2 口径）。区分「上游引擎降级」与「转发层故障」正是本 sidecar 的
+  观测目的。
+
+Windows 侧控制器 `tools/voice/voice_health_sidecar_control.py`（仓库根）：
+
+```powershell
+python tools/voice/voice_health_sidecar_control.py status   # 只读体检（不写不杀不清理）
+python tools/voice/voice_health_sidecar_control.py start    # 幂等启动（固定 wsl.exe argv）
+python tools/voice/voice_health_sidecar_control.py stop     # TERM → 宽限 → 单次 KILL
+```
+
+- 退出码：0 成功/幂等无操作；1 操作失败；2 参数错误；3 安全拒绝（保护
+  目标/身份不符/并发锁/WSL 管理不可用）。
+- **命令纪律**：仅固定 allowlist 的 `wsl.exe` argv 形态（start/probe/signal
+  三类，argv 列表直传、零 shell、AST 测试锁定）；信号名 Python 侧白名单
+  （SIGTERM/SIGKILL）；Windows 上 CREATE_NO_WINDOW。
+- **生产保护硬边界（先于一切探测，零信号）**：`PROTECTED_PIDS = {867,
+  26008}`（FunASR/CosyVoice，M14-25 验收时点；引擎重启后 PID 会漂移，复验
+  窗口应核对更新）与 cmdline 含生产标记（wslrelay/wsl.exe/wslservice/
+  vmmem/docker/funasr/cosyvoice/bootstrap 脚本/systemd）的目标一律拒绝；
+  PID 被无关进程复用同样拒绝发信号。kill 目标恒为 manifest 核验过的单个
+  PID 或本次 spawn 的 wsl.exe 句柄——**绝不 pkill/killall/fuser/按端口杀**。
+- **启动失败回收**：`kill_spawned` 只回收本次 spawn 的 wsl.exe 句柄；仅当
+  「本次落档 PID + 探活 + 无保护标记 + 身份标记全过」才对 WSL 内 sidecar
+  补发单次 SIGTERM；核验不可用（WSL 管理面已失败）即放弃并记录——盲发
+  信号比泄漏更危险。
+- **manifest 即事实源**：start 等待 sidecar 落档 status（PID/bind/双端口，
+  schema 版本化原子写）→ 事实核验 → 身份核验（cmdline 双标记）→ manifest
+  原子落档（gitignored `.verify/artifacts/m14-26-voice-health-sidecar/`）；
+  stale/reused/损坏 manifest 只清理文件绝不发信号；并发 start/stop 经
+  O_EXCL 锁串行化（残留锁 600s 后回收）；WSL 管理面失败统一
+  `wsl-management-unavailable` rc 3 单次尝试不重试。
+- 测试与证据：105 项契约/生命周期测试（`services/api/tests/
+  test_voice_health_sidecar.py`）全部 fake Runner/Transport/Health/Popen +
+  importlib 装载 + 临时文件——测试不启动 sidecar、不调用真实 WSL、不占
+  18010/18011（开发回合从未启动本 sidecar）。真实部署与监控端点切换需
+  supervisor 合并后受控复验（`docs/evidence/m14-26-voice-health-sidecar/
+  README.md` §8 五步指引），`production_ready=false` 不变。
+
 ## 边界（实际部署状态，2026-09-10 M14-02 轮更新）
 
 - **本机已完成真实部署与冒烟**（2026-09-10，WSL2 + RTX 5070 Ti）：模型
