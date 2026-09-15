@@ -7,6 +7,41 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 
 ### Added
 
+- M14-26 WSL 语音健康 sidecar（实现 M14-25 §8.6 建议②健康路径旁路——
+  监控健康探测不经 wslrelay 直达 WSL eth0；分支
+  `feat/m14-26-voice-health-sidecar` 基于 `070646f`（M14-25 回填 R1，
+  谱系 d54ad5b（PR #104 merge）→ 3e96d66 → 070646f，本地 git 可验证），
+  独占 worktree 按任务书仅一个本地 commit，不 push/不建 PR；开发期零
+  生产触碰（零生产变更/启停/重启）——不启动 sidecar、不访问任何真实
+  网络或健康端点、不 inspect/stop/restart 任何生产进程；本切片实现
+  与 105 项专属测试零真实 WSL，开发回合内唯一例外是既有邻近回归套件
+  test_cli_status_stopped_subprocess 自身设计内的 wsl.exe bash 只读
+  端口探测（一次环境性超时、复跑通过，非本切片引入））。新增
+  `tools/voice/voice_health_sidecar.py`：WSL 内纯标准库双端口只读窄代理
+  （18010=FunASR→恒 `http://127.0.0.1:8010/health`、18011=CosyVoice→恒
+  `:8011/health` 与 `/health/live`；上游 URL 恒为模块常量绝不取自请求；
+  绑定地址 fail-closed 链——/proc/net/route 默认路由接口 + UDP 零发包
+  探测 + RFC1918 + 接口网段归属，任何一环失败即退出绝不退回 0.0.0.0；
+  精确 GET allowlist：查询串 400/未知路径 404/非 GET 405；有界代理：
+  上游超时 5s、响应体 64KiB、非 2xx 原状态码字节级透传（503 如实
+  可见）、超时 504/连接失败 502 固定脱敏文案；零代理 opener；status
+  文件原子写 + schema 版本化 + 仓库根 containment + 符号链接/穿越
+  拒绝）与 `tools/voice/voice_health_sidecar_control.py`（Windows 侧
+  start/status/stop：固定 allowlist wsl.exe argv 零 shell（AST 测试
+  锁定）+ CREATE_NO_WINDOW；start 幂等（stale/reused/损坏只清理文件
+  零信号）；stop TERM→10s 宽限→单次 KILL；生产保护硬边界
+  PROTECTED_PIDS {867,26008} + PROTECTED_MARKERS 先于一切探测零信号；
+  仅对身份核验全过的本次落档 PID 补发单次 SIGTERM；WSL 管理面失败
+  统一 `wsl-management-unavailable` rc 3 单次尝试；ControlLock 串行
+  化；status 恒只读）。105 项契约/生命周期测试（全 fake Runner/
+  Transport/Health/Popen + importlib + 临时文件）105 passed；ruff
+  （10 项行为等价窄修正后 All checks passed）/py_compile/
+  `git diff --check` 全过；邻近套件 78 passed（1 例既有测试环境
+  flake 新会话复跑通过，非本切片引入）。真实部署与监控端点切换需
+  supervisor 合并后受控复验，`production_ready=false` 不变。详见
+  PROJECT_STATUS M14-26 条目与
+  `docs/evidence/m14-26-voice-health-sidecar/README.md`。
+
 - M14-25 生产验收回填（docs-only，零代码/零生产触碰；分支
   `docs/m14-25-production-acceptance` 基于 `main@d54ad5b`（PR #104 merge），
   独占 worktree 按任务书做且仅做一个本地 commit，不 push/不建 PR）。把

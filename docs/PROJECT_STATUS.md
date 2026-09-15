@@ -9,6 +9,81 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-26 WSL 语音健康 sidecar（双端口只读窄代理 + Windows 侧受控生命周期）**（分支
+`feat/m14-26-voice-health-sidecar`（基于 `070646f`，谱系 = `d54ad5b`（PR #104 merge，
+canonical main）→ `3e96d66`（M14-25 回填 R0）→ `070646f`（R1 relay 失败事实追加，均
+docs-only，本地 git 可验证）；本 Claude 开发回合独占 worktree，按任务书做且仅做**一个
+本地 commit**（不 push/不建 PR——supervisor 审查与 remote 发布在其后进行）。背景：
+M14-25 回填 §8.5–§8.6 固化新生产阻塞——Windows→WSL loopback 转发层不稳（12:00–13:30
+七轮自然监控 pipeline failed，两 voice 端点 Windows 侧 5s TimeoutError，而 WSL 内部引擎
+健康；wslrelay.exe PID 17936 持有 Windows 侧 8010/8011 listener，`wsl.exe` 管理面间歇
+`0x8007274c`/`TimeoutExpired`），回填建议 M14-26 聚焦 ① relay 稳定性 ② FunASR health
+facade/sidecar ③ 避免监控 history/insights 长期 skipped——本切片实现**②的健康路径旁
+路**：不动 relay 本身、不改监控端点配置，为监控提供一条不经 wslrelay 的直达健康通道。
+全程零生产触碰（零生产变更/启停/重启）：不启动本 sidecar、不访问任何真实网络或健康
+端点、不 inspect/stop/restart 任何生产进程（FunASR/CosyVoice/wslrelay/Docker/WSL/CC
+Switch/代理一律未触碰）；本切片实现与其专属 105 项测试零真实 WSL，开发回合内唯一例外
+是既有邻近回归套件 test_cli_status_stopped_subprocess 自身设计内的 wsl.exe bash 只读
+端口探测（一次环境性超时、复跑通过，非 M14-26 引入，见下方验证 bullet 与证据 §6.1））：
+
+- **交付面（3 代码 + 5 文档）**：`tools/voice/voice_health_sidecar.py`（WSL 侧 sidecar，
+  508 行，纯标准库）+ `tools/voice/voice_health_sidecar_control.py`（Windows 侧控制器，
+  1084 行）+ `services/api/tests/test_voice_health_sidecar.py`（1326 行，105 项契约/生命
+  周期测试）+ `docs/evidence/m14-26-voice-health-sidecar/README.md` + 本台账/ROADMAP/
+  CHANGELOG/tools/voice/README 四文档聚焦更新。零改动现有引擎、relay、compose、监控与
+  `voice_service_control.py`。
+- **sidecar 设计（窄而硬，全部 fail-closed）**：WSL 内双端口窄代理——18010=FunASR→恒
+  `http://127.0.0.1:8010/health`、18011=CosyVoice→恒 `:8011/health` 与 `/health/live`
+  （上游 URL 恒为模块常量 `PORT_ROUTES` 绝不取自请求——结构上无通用转发能力）；绑定
+  地址 fail-closed 链（listen 前：`/proc/net/route` 默认路由接口 → UDP connect 零发包
+  探测源地址 → IPv4 → 非 0.0.0.0/回环/链路本地 → RFC1918 → 默认路由接口网段内，任何
+  一环失败即退出绝不退回 `0.0.0.0`，reason 机器可读）；精确 GET allowlist（查询串/
+  片段 400、未知路径 404、非 GET 405 带 `Allow: GET`、生僻方法 501）；有界代理（上游
+  超时 5s 对齐监控 GET 口径、响应体上限 64KiB；2xx 与非 2xx 原状态码字节级透传（上游
+  503 降级如实可见）、超时 504、连接失败 502、未知异常 502 固定脱敏文案）；零代理
+  opener（继承 HTTP_PROXY 不得劫持 127.0.0.1 上游探测，同 voice_service_control 修正
+  轮 2 口径）；status 文件 schema 版本化 + 原子写 + 仓库根 containment + 符号链接/
+  路径穿越拒绝。
+- **控制器生命周期**：固定 allowlist wsl.exe argv（start/probe/signal 三类，argv 列表
+  直传零 shell——AST 测试扫描两文件全部 subprocess 调用，Windows CREATE_NO_WINDOW）；
+  start 幂等（manifest 归属成立或存活但降级均跳过零 spawn；stale/reused/损坏只清理
+  文件零信号）；stop TERM→10s 宽限→单次 KILL→5s 确认，绝不 pkill/killall/fuser/按
+  端口杀；**生产保护硬边界先于一切探测（零信号）**——`PROTECTED_PIDS={867,26008}`
+  （FunASR/CosyVoice，M14-25 验收时点）与 PROTECTED_MARKERS（wslrelay/wsl.exe/
+  wslservice/vmmem/docker/funasr/cosyvoice/bootstrap 脚本/systemd）命中即拒绝，PID 被
+  无关进程复用同样拒绝；启动失败 `kill_spawned` 只回收本次 spawn 的 wsl.exe 句柄 + 仅当
+  「本次落档 PID+探活+无保护标记+身份标记全过」才对 Linux 子进程补发单次 SIGTERM
+  （核验不可用即放弃并记录——盲发信号比泄漏更危险）；WSL 管理面失败统一
+  `wsl-management-unavailable` rc 3 单次尝试不重试；ControlLock O_EXCL 串行化（残留锁
+  TTL 600s）；status 恒只读（零写零杀零清理）；退出码 0/1/2/3。
+- **测试（105 项三片，全部 fake Runner/Transport/Health/Popen + importlib + 临时文件）**：
+  契约片（常量事实源同源、HTTP 面 allowlist、绑定地址 8 类拒绝、文件安全、三类 argv
+  逐元素锁定、AST 零 shell、归属六类分类含 PID 867/26008 硬保护优先于身份标记）+
+  生命周期片（cmd_start/stop/status 全分支 + ControlLock 并发拒绝与陈旧回收）+ 生产
+  修复片（status 等待中 RunnerError 分类回收 rc 3 句柄不裸穿 + Linux 子进程有界补回收
+  五分支）。时延常量 monkeypatch 至毫秒级保持快速；符号链接测试平台不支持时 skip。
+- **验证（开发回合实测，零生产触碰；解释器 = 主仓 `.venv` Python 3.11 / pytest 9.1.1 /
+  ruff 0.16.5）**：sidecar 套件 **105 passed in 0.73s**（ruff 修正后复跑 105 passed in
+  0.69s）；邻近套件（test_voice_health_bridge.py + test_voice_service_control.py）第
+  1 轮 1 failed/77 passed in 37.38s——失败项 `test_cli_status_stopped_subprocess` 为既有
+  测试自身设计内的真实 wsl.exe bash 只读探测超时（与本机 wslrelay 不稳同源环境现象，
+  与 M14-26 三文件零交集），新会话单测复跑 1 passed in 12.96s、全套复跑 **78 passed in
+  17.73s**——判定 flaky/环境性、非 M14-26 引入、未做任何代码修正（亦未为通过它触碰
+  任何 WSL/生产进程）；ruff 第 1 轮 10 errors（FLY002×3/UP035×1/FURB161×1/UP041×1/
+  F541×4，全部行为保持等价的窄修正）→ 复跑 **All checks passed!**；py_compile exit 0；
+  `git diff --check` exit 0；基线邻居 `voice_service_control.py` ruff 全过（仓库
+  tools/voice 默认规则门槛核对）。
+- **边界（诚实口径）**：开发验证是本地/契约验证（全部 fake 实现与样本数据锁定）——
+  真实部署与端到端验证（WSL 内实跑、eth0 实际绑定、18010/18011 实监听、wsl.exe 编排
+  实路径、监控端点切换）**需 supervisor 合并后在获准窗口受控复验**（证据 §8 五步
+  指引）；PROTECTED_PIDS 为 M14-25 验收时点硬编码——引擎重启后 PID 漂移，届时保护
+  主要依赖 PROTECTED_MARKERS 与 manifest 归属核验，复验窗口应核对当前生产 PIDs 并按需
+  更新；本切片不修 relay 本身（建议①）、不改监控当前端点配置（建议③）——两者另行
+  收口；不宣称 WSL localhost 转发长期稳定；`production_ready=false` 不变。证据
+  `docs/evidence/m14-26-voice-health-sidecar/README.md`。
+
+## 前一任务（M14-25 生产验收回填，docs-only 已入库 canonical main）
+
 **M14-25 生产验收回填（docs-only，零代码/零生产触碰）**（分支 `docs/m14-25-production-acceptance`（基于 `main@d54ad5b`，即 PR #104 merge commit `d54ad5b51ec7653c592786399f37a778f8c07e5d`，本地 git 可验证）；本回填回合独占 worktree，按任务书做且仅做**一个本地 commit**（不 push/不建 PR——remote 发布由 supervisor 决策）。背景：supervisor 已于 2026-09-14 在获准窗口完成 M14-25 合并后的受控生产重启与验收，本切片把验收事实回填入库，收口开发切片遗留边界「真实离线生产重启需 supervisor 合并后受控复验」；全程不修改生产代码/测试/compose/服务与 `.verify/**`/`artifacts/**`（canonical 证据仅只读核对），不启停任何生产容器或 voice 进程/计划任务，零网络部署，原始 WAV 绝不入库（仅存 gitignored `.verify/`），不输出任何密钥或 env 值）：
 
 - **合并与 CI（supervisor 验收事实 + 回填回合本地 git 谱系核对）**：PR #104（M14-25 修复）已合并 main——merge commit `d54ad5b51ec7653c592786399f37a778f8c07e5d`（parents `1f58800`（PR #103 merge）+ feature head `98a2d773c8e098e4a2ebf4328f82ccdcc25023b6`，主题 "Merge pull request #104 from swsgbl/fix/m14-25-cosyvoice-offline-restart"；canonical main == 该提交，本地 git 可验证）；PR CI **5/5 job success**；合并后 main CI run `34803270943` 首败为 **Docker Hub redis 镜像拉取连接重置**（外部基础设施侧）、rerun 后 **5/5 job success**（CI 两项为 supervisor 验收事实，回填回合未发起网络查询）。
