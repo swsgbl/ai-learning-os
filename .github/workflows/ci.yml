@@ -7,7 +7,9 @@ on:
 
 jobs:
   web:
-    name: Web (typecheck / lint / build)
+    # M14-35 R1：vitest 进入 PR 门禁（根 package.json 的 test 指向 pytest，
+    # 必须 --workspace apps/web 才跑 web 的 vitest）
+    name: Web (test / typecheck / lint / build)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -16,6 +18,7 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      - run: npm run test --workspace apps/web
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run build
