@@ -37,6 +37,17 @@ Linux 子进程泄漏评估——kill wsl.exe 不保证 WSL 内子进程终止�
 「本次落档 PID + 探活 + 无保护标记 + 身份标记全过」才补发单次 SIGTERM
 （零宽限、零 KILL、零重试）；核验不可用（WSL 面失败）/保护 PID/
 身份不符一律放弃回收并记录——绝不扩大终止面、绝不违反保护边界。
+
+第四片（M14-29 生产缺陷回归，红转绿）：M14-28 受控生产验收暴露
+status_file_relpath 返回 artifacts **目录**而非 status 文件——sidecar
+fail-closed 守卫（已存在目录 → StatusFileError "unsafe-status-target"）
+在监听前中止，start 20s 落档等待超时、控制器 rc 1（证据：主仓库
+gitignored .verify/m14-28-voice-health-production-cutover/）。本片锁定
+修复后契约：status 路径恒为精确 ``.../sidecar-status.json`` 文件（仓库
+内 repo-relative / 仓库外绝对 posix），start 的 spawn argv / 落档等待 /
+evaluate·probe 全走文件路径，而 manifest.log 与人类可读提示路径仍锚定
+artifacts 目录（绝不嵌套进 sidecar-status.json 之下）；stop/status 的
+全部 probe 调用同样只收文件路径。既有安全测试零削弱。
 """
 from __future__ import annotations
 
@@ -1324,3 +1335,131 @@ def test_stale_lock_reclaimed_and_released(tmp_path) -> None:
     assert rc == CTL.EXIT_OK  # 陈旧锁回收后正常放行
     assert "陈旧控制锁已回收" in out.getvalue()
     assert not lock.exists()  # 完成后释放
+
+
+# ---------- 第四片（M14-29）：status 路径 = 精确文件，日志路径锚定目录 ----------
+
+
+_STATUS_FILE_RELPATH = (
+    ".verify/artifacts/m14-26-voice-health-sidecar/sidecar-status.json"
+)
+_DIR_RELPATH = ".verify/artifacts/m14-26-voice-health-sidecar"
+
+
+class _RelRecordingRunner(_LifecycleRunner):
+    """probe 包装：额外记录每次探测收到的 status 路径参数。
+
+    M14-26 生命周期的 _LifecycleRunner 只记 pid_or_dash，目录-vs-文件
+    缺陷因此漏检——本包装把 relpath 一并锁进断言。
+    """
+
+    def __init__(self, **kwargs) -> None:
+        super().__init__(**kwargs)
+        self.probe_relpaths: list[str] = []
+
+    def probe(self, pid_or_dash: str, status_relpath: str) -> dict:
+        self.probe_relpaths.append(status_relpath)
+        return super().probe(pid_or_dash, status_relpath)
+
+
+def _repo_like(tmp_path) -> tuple[Path, Path]:
+    """临时仓库根 + 其内 artifacts 目录（模拟生产 repo-relative 形态）。"""
+    repo_root = (tmp_path / "repo").resolve()
+    artifacts = repo_root / ".verify" / "artifacts" / "m14-26-voice-health-sidecar"
+    artifacts.mkdir(parents=True)
+    return repo_root, artifacts
+
+
+def test_status_file_relpath_inside_repo_returns_exact_status_file(tmp_path) -> None:
+    repo_root, artifacts = _repo_like(tmp_path)
+    assert CTL.status_file_relpath(artifacts, repo_root) == _STATUS_FILE_RELPATH
+
+
+def test_status_file_relpath_production_default_is_exact_status_file() -> None:
+    """真实生产形态：默认 artifacts 下恒得精确 repo-relative status 文件。"""
+    artifacts = CTL.artifacts_default_dir(CTL.REPO_ROOT)
+    assert CTL.status_file_relpath(artifacts, CTL.REPO_ROOT) == _STATUS_FILE_RELPATH
+
+
+def test_status_file_relpath_outside_repo_returns_absolute_status_file(
+    tmp_path,
+) -> None:
+    repo_root, _ = _repo_like(tmp_path)
+    artifacts = tmp_path / "elsewhere" / "artifacts"
+    result = CTL.status_file_relpath(artifacts, repo_root)
+    assert result == f"{artifacts.resolve().as_posix()}/{CTL.STATUS_NAME}"
+    assert Path(result).is_absolute()  # 仓库外 → 绝对 posix 文件路径
+    assert result.endswith(f"/{CTL.STATUS_NAME}")
+
+
+def test_start_spawn_argv_status_file_is_exact_file_path(tmp_path) -> None:
+    """全新 spawn 的 --status-file 必须是文件路径（目录会被 sidecar
+    fail-closed 守卫拒绝：unsafe-status-target → 启动前中止 → 落档超时）。"""
+    artifacts = _artifacts_dir(tmp_path)
+    runner = _fresh_start_runner()
+    out = io.StringIO()
+    assert CTL.cmd_start(artifacts, runner, _FakeHealth(), out) == CTL.EXIT_OK
+    argv = runner.spawn_calls[0]
+    expected = f"{artifacts.resolve().as_posix()}/{CTL.STATUS_NAME}"
+    assert argv[argv.index("--status-file") + 1] == expected
+
+
+def test_start_inside_repo_paths_split_file_and_dir(
+    tmp_path, monkeypatch
+) -> None:
+    """修复不得矫枉过正：status 走文件路径，manifest.log / 人类可读提示
+    仍锚定 artifacts 目录——绝不出现 .../sidecar-status.json/sidecar-control.log。"""
+    repo_root, artifacts = _repo_like(tmp_path)
+    monkeypatch.setattr(CTL, "REPO_ROOT", repo_root)
+    runner = _fresh_start_runner()
+    out = io.StringIO()
+    assert CTL.cmd_start(artifacts, runner, _FakeHealth(), out) == CTL.EXIT_OK
+    argv = runner.spawn_calls[0]
+    assert argv[argv.index("--status-file") + 1] == _STATUS_FILE_RELPATH
+    manifest = CTL.read_manifest(CTL.safe_join(artifacts, CTL.MANIFEST_NAME))
+    assert manifest is not None
+    assert manifest.log == f"{_DIR_RELPATH}/{CTL.LOG_NAME}"
+    assert CTL.STATUS_NAME not in manifest.log  # 日志绝不嵌套进 status 文件之下
+    assert f"manifest: {_DIR_RELPATH}/{CTL.MANIFEST_NAME}" in out.getvalue()
+
+
+def test_start_all_probes_receive_status_file_path(tmp_path, monkeypatch) -> None:
+    """start 全链路 probe 契约：归属核验（旧 PID）/ 落档等待（'-'）/
+    身份核验（新 PID）收到的 status 路径一律是精确文件路径。"""
+    repo_root, artifacts = _repo_like(tmp_path)
+    monkeypatch.setattr(CTL, "REPO_ROOT", repo_root)
+    _write_manifest(artifacts, pid=4242)  # stale → 覆盖 evaluate 分支
+    runner = _RelRecordingRunner(
+        alive=lambda who: who == "5555", cmdline=_OWN_CMDLINE, status=_fresh_status(),
+    )
+    out = io.StringIO()
+    assert CTL.cmd_start(artifacts, runner, _FakeHealth(), out) == CTL.EXIT_OK
+    assert set(runner.probe_calls) == {"4242", "-", "5555"}  # 三类探测全发生
+    assert runner.probe_relpaths
+    assert set(runner.probe_relpaths) == {_STATUS_FILE_RELPATH}
+
+
+def test_stop_probes_receive_status_file_path(tmp_path, monkeypatch) -> None:
+    """stop 的归属核验与 TERM 宽限 wait_dead 同样只收文件路径
+    （信号语义/保护边界零改动——仅路径契约修正）。"""
+    repo_root, artifacts = _repo_like(tmp_path)
+    monkeypatch.setattr(CTL, "REPO_ROOT", repo_root)
+    _write_manifest(artifacts, pid=4242)
+    runner = _RelRecordingRunner(alive=True, cmdline=_OWN_CMDLINE, die_after_signals=1)
+    out = io.StringIO()
+    assert CTL.cmd_stop(artifacts, runner, _FakeHealth(), out) == CTL.EXIT_OK
+    assert runner.signal_calls == [(4242, "SIGTERM")]  # 信号语义不变
+    assert runner.probe_relpaths
+    assert set(runner.probe_relpaths) == {_STATUS_FILE_RELPATH}
+
+
+def test_status_probe_receives_status_file_path(tmp_path, monkeypatch) -> None:
+    """status（只读）的归属核验 probe 同样收精确文件路径。"""
+    repo_root, artifacts = _repo_like(tmp_path)
+    monkeypatch.setattr(CTL, "REPO_ROOT", repo_root)
+    _write_manifest(artifacts, pid=4242)
+    runner = _RelRecordingRunner(alive=True, cmdline=_OWN_CMDLINE)
+    out = io.StringIO()
+    assert CTL.cmd_status(artifacts, runner, _FakeHealth(), out) == CTL.EXIT_OK
+    assert "running-healthy" in out.getvalue()
+    assert runner.probe_relpaths == [_STATUS_FILE_RELPATH]

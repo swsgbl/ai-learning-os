@@ -483,7 +483,8 @@ python tools/voice/voice_health_sidecar_control.py stop     # TERM → 宽限 �
   stale/reused/损坏 manifest 只清理文件绝不发信号；并发 start/stop 经
   O_EXCL 锁串行化（残留锁 600s 后回收）；WSL 管理面失败统一
   `wsl-management-unavailable` rc 3 单次尝试不重试。
-- 测试与证据：105 项契约/生命周期测试（`services/api/tests/
+- 测试与证据：113 项契约/生命周期测试（M14-26 交付 105 + M14-29 新增
+  8 项 status 路径回归；`services/api/tests/
   test_voice_health_sidecar.py`）全部 fake Runner/Transport/Health/Popen +
   importlib 装载 + 临时文件——测试不启动 sidecar、不调用真实 WSL、不占
   18010/18011（开发回合从未启动本 sidecar）。PR #106 已合并（merge
@@ -494,8 +495,25 @@ python tools/voice/voice_health_sidecar_control.py stop     # TERM → 宽限 �
 **监控侧切换契约（M14-27，2026-09-15，基于 PR #106 merge `ec60a093`）**：
 monitor/pipeline 侧的 sidecar 来源切换契约已随 M14-27 实现（canonical
 manifest 严格校验 + fail-closed 零回退，详见 `tools/ops/README.md`）。
-sidecar 本体尚未启动、生产监控尚未切换与观察；M14-28 受控生产验收仍待
-执行，`production_ready=false` 不变。
+sidecar 本体尚未启动、生产监控尚未切换与观察；M14-28 受控生产验收已
+止步于 sidecar 启动（根因与修复见下方 M14-29），`production_ready=false`
+不变。
+
+**status 路径契约修复（M14-29，2026-09-15，分支
+`fix/m14-29-sidecar-status-path` 基于 `d19c296`（PR #107 merge））**：
+M14-28 受控生产验收止步于步骤 4 sidecar 启动——控制器曾把 artifacts
+**目录**当 `--status-file` 传入，sidecar fail-closed 守卫正确拒绝目录
+目标（`unsafe-status-target`）于监听前退出，start 20s 落档等待超时、
+rc 1。修复只改控制器调用契约、绝不绕过守卫：`--status-file` 与
+start/stop/status 的全部 probe 调用恒传精确文件
+`.verify/artifacts/m14-26-voice-health-sidecar/sidecar-status.json`
+（仓库内 repo-relative / 仓库外绝对 posix），而 manifest.log 字段与
+控制日志提示路径仍锚定 artifacts 目录（绝不嵌套进 status 文件之下）；
+信号语义、保护 PID/保护标记、sidecar 本体零改动。测试 113 passed
+（含 8 项 M14-29 新回归、既有 105 项零削弱）、M14-27 套件 35 passed、
+ruff/py_compile/`git diff --check` 全过。真实 M14-28 验收须在本修复
+合并后整体重跑，`production_ready=false` 不变。详见
+`docs/evidence/m14-29-sidecar-status-path/README.md`。
 
 ## 边界（实际部署状态，2026-09-10 M14-02 轮更新）
 

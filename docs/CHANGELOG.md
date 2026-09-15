@@ -580,6 +580,25 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   默认关闭保持确定性判分；真实端点冒烟脚本 infra/smoke_llm.sh）
 
 ### Fixed
+- M14-29 sidecar status 路径契约修复（fixed-pending-review，分支
+  `fix/m14-29-sidecar-status-path` 基于 `d19c296`，2 文件窄改）：M14-28
+  受控生产验收步骤 4 暴露的确定性缺陷——控制器
+  `status_file_relpath` 返回 artifacts **目录**而非 status 文件，
+  `cmd_start` 将其作为 `--status-file` 传给 sidecar，sidecar fail-closed
+  守卫正确拒绝目录目标（`unsafe-status-target`）于监听前退出，20s 落档
+  等待超时、rc 1（原始证据：主仓库 gitignored
+  `.verify/m14-28-voice-health-production-cutover/`，不入 git）。修复只改
+  调用契约、绝不绕过守卫：拆分 `artifacts_dir_relpath`（目录，锚定
+  manifest.log/日志提示）与 `status_file_relpath`（恒
+  `<目录>/sidecar-status.json` 精确文件，仓库内 repo-relative/仓库外绝对
+  posix）；start 的 spawn argv/落档等待/身份核验 probe 与 stop/status
+  全部 probe 调用收文件路径；信号语义与保护边界零改动。TDD 回归：
+  新增 8 项测试（修复前 8 failed/105 passed，修复后 **113 passed**，
+  既有安全测试零削弱）；M14-27 套件 35 passed、ruff/py_compile/
+  `git diff --check` 全过。**M14-28 真实验收仍 halted，须在合并后整体
+  重跑，production_ready=false 不变**。详见
+  `docs/evidence/m14-29-sidecar-status-path/README.md`。
+
 - M14-20 监控历史索引历史 incomplete 工件修复（本地 commit 待
   supervisor 审查发布）：M14-14 管道定时运行后默认源目录混有 2026-09-12
   栈修复期间 monitor 自产的历史 `partial=true + overall_status=incomplete`
