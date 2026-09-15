@@ -10,7 +10,7 @@
 - 只经**固定 allowlist 的 wsl.exe 命令形态**编排（argv 直传，无 bash、
   无 shell、无 ``shell=True``）：
   * start：``wsl.exe --distribution Ubuntu --cd <repo> --exec python3 -u
-    tools/voice/voice_health_sidecar.py --status-file <repo-relative>``；
+    tools/voice/voice_health_sidecar.py --status-file <repo-relative status 文件>``；
     Windows 上 CREATE_NO_WINDOW（不弹控制台窗）；
   * probe：``wsl.exe … --exec python3 -c <PROBE_CODE> <pid|-> <status>``——
     读 sidecar 落档的 status JSON + /proc/<pid> 存在性与 cmdline；
@@ -552,17 +552,30 @@ def report(out: IO[str], log_path: Path | None, message: str) -> None:
         pass  # 日志失败不阻断控制流
 
 
-def status_file_relpath(artifacts: Path, repo_root: Path) -> str:
-    """sidecar --status-file 参数：仓库内 → repo-relative；仓库外 → 绝对 posix。
+def artifacts_dir_relpath(artifacts: Path, repo_root: Path) -> str:
+    """artifacts **目录**路径：仓库内 → repo-relative；仓库外 → 绝对 posix。
 
     先 resolve：相对形态的 --artifacts-dir / 大小写差异统一后再做归属判定，
     保证生产路径恒得 repo-relative（WSL 侧以仓库根 cwd 寻址的前提）。
+    仅用于日志/manifest 等目录锚定路径——**绝不**传给 --status-file/probe。
     """
     resolved = artifacts.resolve()
     try:
         return resolved.relative_to(repo_root).as_posix()
     except ValueError:
         return resolved.as_posix()
+
+
+def status_file_relpath(artifacts: Path, repo_root: Path) -> str:
+    """sidecar --status-file / probe 的 status 路径：精确**文件**路径。
+
+    M14-29 修复（M14-28 生产验收实证）：此处曾返回 artifacts 目录——
+    sidecar 的 fail-closed 守卫（已存在目录 → StatusFileError
+    "unsafe-status-target"）在监听前中止，start 落档等待超时（rc 1）。
+    现恒返回 ``<目录路径>/{STATUS_NAME}``（仓库内 repo-relative /
+    仓库外绝对 posix，两种形态都以 STATUS_NAME 结尾）。
+    """
+    return f"{artifacts_dir_relpath(artifacts, repo_root)}/{STATUS_NAME}"
 
 
 def wait_for_status(runner: Runner, status_relpath: str, timeout: float) -> dict | None:
@@ -653,7 +666,10 @@ def cmd_start(
     log_path = safe_join(artifacts, LOG_NAME)
     status_path = safe_join(artifacts, STATUS_NAME)
     manifest_path = safe_join(artifacts, MANIFEST_NAME)
+    # M14-29：status 契约路径 = 精确文件（--status-file/probe/落档等待）；
+    # 目录路径仅锚定日志与 manifest 提示（绝不嵌套进 status 文件之下）。
     rel = status_file_relpath(artifacts, REPO_ROOT)
+    dir_rel = artifacts_dir_relpath(artifacts, REPO_ROOT)
 
     notes: list[str] = []
     lock = ControlLock(artifacts)
@@ -763,7 +779,7 @@ def cmd_start(
                 f"启动失败——{START_STATUS_TIMEOUT_SECONDS:.0f}s 内未落 status 文件；"
                 f"已终止本次启动的 wsl.exe 句柄（不触碰任何其他进程）",
             )
-            report(out, log_path, f"排查日志: {rel}/{LOG_NAME}")
+            report(out, log_path, f"排查日志: {dir_rel}/{LOG_NAME}")
             return EXIT_ERROR
         try:
             pid = int(spawned["pid"])
@@ -810,7 +826,7 @@ def cmd_start(
             bind=bind,
             ports=ports,
             started_at=str(spawned.get("started_at", "")),
-            log=f"{rel}/{LOG_NAME}" if not Path(rel).is_absolute() else str(log_path),
+            log=f"{dir_rel}/{LOG_NAME}" if not Path(dir_rel).is_absolute() else str(log_path),
         )
         try:
             atomic_write_json(manifest_path, manifest.to_payload())
@@ -823,7 +839,7 @@ def cmd_start(
             out, log_path,
             f"sidecar 已启动（PID {pid}，bind {bind}，端口 {ports}）",
         )
-        report(out, log_path, f"      manifest: {rel}/{MANIFEST_NAME}")
+        report(out, log_path, f"      manifest: {dir_rel}/{MANIFEST_NAME}")
         return EXIT_OK
     finally:
         lock.release()
