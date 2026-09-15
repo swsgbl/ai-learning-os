@@ -7,11 +7,15 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 
 ### Added
 
+- M14-27 监控语音健康来源切换契约（代码/测试切换，不触生产）：production_monitor 新增 --voice-health-source，默认 loopback 保持 8010/8011 直采兼容；sidecar 仅读取 canonical M14-26 manifest 常量，严格校验 schema/service/PID/exact ports/RFC1918 bind，64KiB stat 预检 + 读后长度复核，语音 URL 仅派生 18010/18011 /health，Web/API 仍固定字面 loopback；清单缺失/非法在报告与 Runner/Transport 前失败且绝不回退。monitoring_pipeline monitor argv 固定追加 --voice-health-source sidecar，loopback/缺值形态拒绝。验证：M14-27 35 passed、聚焦 332 passed、监控家族六套件最终回归 635 passed；supervisor 复跑 ruff/py_compile/diff-check 全过。真实 sidecar 启动与生产监控切换观察留 M14-28，production_ready=false 不变。
+
 - M14-26 WSL 语音健康 sidecar（实现 M14-25 §8.6 建议②健康路径旁路——
   监控健康探测不经 wslrelay 直达 WSL eth0；分支
   `feat/m14-26-voice-health-sidecar` 基于 `070646f`（M14-25 回填 R1，
   谱系 d54ad5b（PR #104 merge）→ 3e96d66 → 070646f，本地 git 可验证），
-  独占 worktree 按任务书仅一个本地 commit，不 push/不建 PR；开发期零
+  独占 worktree 按任务书仅一个本地 commit，不 push/不建 PR（该约束为
+  开发时点状态——remote 发布现已由 PR #106 合并收口，merge commit
+  `ec60a093`；真实生产验收仍留 M14-28）；开发期零
   生产触碰（零生产变更/启停/重启）——不启动 sidecar、不访问任何真实
   网络或健康端点、不 inspect/stop/restart 任何生产进程；本切片实现
   与 105 项专属测试零真实 WSL，开发回合内唯一例外是既有邻近回归套件

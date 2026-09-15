@@ -276,6 +276,19 @@ container-recreated/counter-reset/facts-missing）；check_id 仍为
 `container-restarts`；schema 向后兼容——v1 旧工件（无该字段）照常作
 基线与入档。
 
+**状态（M14-27 监控语音健康来源切换契约，2026-09-15，基于 PR #106
+merge `ec60a093`）**：monitor 新增 `--voice-health-source {loopback,
+sidecar}` sidecar 来源——仅读 canonical M14-26 manifest（严格校验：
+symlink/非常规文件拒绝、64KiB 大小双检（stat 预检 + 读后复检）、
+schema/service/正整数 PID/固定 18010/18011 端口/RFC1918 字面 IPv4 bind），
+语音健康 URL 恒派生为 `http://<bind>:18010/health` 与 `:18011/health`，
+任何 manifest 失败在 Runner/Transport/报告之前 fail-closed 退出、**零
+回退**；web/api 端点仍为固定字面 loopback。M14-27 契约测试 35 passed、
+监控家族六套件最终回归 635 passed（聚焦三套件过程口径 332 passed）。**警告：默认 `loopback` 保持直连 8010/8011
+的兼容行为；pipeline 的 sidecar 模式要求存在合法的 M14-26 manifest，
+否则 fail-closed 拒绝；真实生产切换尚未执行（留 M14-28 受控验收），
+`production_ready=false` 不变**。
+
 安全性质（契约测试 `services/api/tests/test_production_monitor.py` 锁定；
 细节见脚本头注释与 `docs/evidence/m14-12-production-monitoring/README.md`）：
 
@@ -447,6 +460,16 @@ insights 0.282/0.201s），37 连 warn 首轮恢复 ok 并保持，证据
 事实与工件安全
 摘要见
 `docs/evidence/m14-22-monitoring-pipeline-production-acceptance/README.md`。
+
+**状态（M14-27 monitor argv 固定 sidecar，2026-09-15，基于 PR #106
+merge `ec60a093`）**：管道固定命令白名单中的 monitor 精确形态固定追加
+`--voice-health-source sidecar`——语音健康采集走 M14-26 sidecar 旁路，
+要求存在合法的 canonical manifest，否则 monitor 在 Runner 之前
+fail-closed 零回退（校验细节见上方 production_monitor 的 M14-27 状态）。
+M14-27 契约测试 35 passed、监控家族六套件最终回归 635 passed（聚焦三套件过程口径 332 passed）。**警告：该切换
+仅为代码/契约口径——默认 `loopback` 兼容直连路径不受影响，真实 sidecar
+启动与生产监控切换尚未执行（留 M14-28 受控验收），`production_ready=
+false` 不变**。
 
 ```
 python tools/ops/monitoring_pipeline.py                        # plan（默认，零执行）

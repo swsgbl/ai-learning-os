@@ -486,9 +486,16 @@ python tools/voice/voice_health_sidecar_control.py stop     # TERM → 宽限 �
 - 测试与证据：105 项契约/生命周期测试（`services/api/tests/
   test_voice_health_sidecar.py`）全部 fake Runner/Transport/Health/Popen +
   importlib 装载 + 临时文件——测试不启动 sidecar、不调用真实 WSL、不占
-  18010/18011（开发回合从未启动本 sidecar）。真实部署与监控端点切换需
-  supervisor 合并后受控复验（`docs/evidence/m14-26-voice-health-sidecar/
+  18010/18011（开发回合从未启动本 sidecar）。PR #106 已合并（merge
+  commit `ec60a093`），真实部署与监控端点切换由
+  M14-28 受控生产验收执行（`docs/evidence/m14-26-voice-health-sidecar/
   README.md` §8 五步指引），`production_ready=false` 不变。
+
+**监控侧切换契约（M14-27，2026-09-15，基于 PR #106 merge `ec60a093`）**：
+monitor/pipeline 侧的 sidecar 来源切换契约已随 M14-27 实现（canonical
+manifest 严格校验 + fail-closed 零回退，详见 `tools/ops/README.md`）。
+sidecar 本体尚未启动、生产监控尚未切换与观察；M14-28 受控生产验收仍待
+执行，`production_ready=false` 不变。
 
 ## 边界（实际部署状态，2026-09-10 M14-02 轮更新）
 
