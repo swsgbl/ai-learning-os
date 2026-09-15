@@ -7,6 +7,27 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 
 ### Added
 
+- M14-28 语音健康 sidecar 生产切换验收回填（docs-only，零代码/零生产
+  触碰；分支 `docs/m14-30-voice-cutover-backfill` 基于 `origin/main@1b6d862`
+  （PR #108 merge））：M14-28 受控生产验收于 2026-09-15 在 merge commit
+  `1b6d862` 上整体复跑 **9/9 PASS**（sidecar 切换/生命周期/监控集成范围）——
+  受控 start argv 恒传精确 status 文件（M14-29 修复经 `/proc/<pid>/cmdline`
+  live 验证，PID 703/复启 701）、manifest/status/bind 172.25.7.64/端口
+  18010/18011 单属主一致、引擎停机期 502 如实透传（1–11ms，绝不伪造 200）、
+  start 幂等不重复 spawn、受控 stop 仅回收 sidecar PID、伪造 manifest
+  pid=867 fail-closed 拒绝（rc=3、零信号、伪造件字节不变）、真实只读监控
+  管道以 `voice_health_source=sidecar` 从 canonical manifest 派生语音端点
+  完成完整采集（monitor 30 ok/2 critical → exit 2 → history/insights 按序
+  skipped、lock acquired/released）——M14-26→28 链（sidecar→manifest→
+  monitor）端到端 live 验证。**诚实边界：不宣称语音链路全绿**（验收窗口内
+  FunASR/CosyVoice 停机，两 voice 端点 502 如实入档，pipeline overall
+  failed 为环境真实状态与 fail-closed 语义，非 M14-28/M14-29 失败）；
+  `production_ready=false`/`monitoring_ready=false` 不变。新增证据
+  `docs/evidence/m14-28-voice-health-production-cutover/README.md`，同步
+  收口 m14-29 证据 README/ROADMAP/PROJECT_STATUS 与本文件 Fixed 段的
+  过期 fixed-pending-review/halted 表述；原始证据 gitignored
+  `.verify/m14-28-voice-health-production-cutover-rerun-1b6d862/` 不入库。
+
 - M14-27 监控语音健康来源切换契约（代码/测试切换，不触生产）：production_monitor 新增 --voice-health-source，默认 loopback 保持 8010/8011 直采兼容；sidecar 仅读取 canonical M14-26 manifest 常量，严格校验 schema/service/PID/exact ports/RFC1918 bind，64KiB stat 预检 + 读后长度复核，语音 URL 仅派生 18010/18011 /health，Web/API 仍固定字面 loopback；清单缺失/非法在报告与 Runner/Transport 前失败且绝不回退。monitoring_pipeline monitor argv 固定追加 --voice-health-source sidecar，loopback/缺值形态拒绝。验证：M14-27 35 passed、聚焦 332 passed、监控家族六套件最终回归 635 passed；supervisor 复跑 ruff/py_compile/diff-check 全过。真实 sidecar 启动与生产监控切换观察留 M14-28，production_ready=false 不变。
 
 - M14-26 WSL 语音健康 sidecar（实现 M14-25 §8.6 建议②健康路径旁路——
@@ -580,7 +601,9 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   默认关闭保持确定性判分；真实端点冒烟脚本 infra/smoke_llm.sh）
 
 ### Fixed
-- M14-29 sidecar status 路径契约修复（fixed-pending-review，分支
+- M14-29 sidecar status 路径契约修复（已随 **PR #108 合并 main**——feature
+  head `527c454`、merge commit `1b6d862`，PR CI run `34933123493` 与合并后
+  main CI run `34946366049` 均 5/5 job SUCCESS；分支
   `fix/m14-29-sidecar-status-path` 基于 `d19c296`，2 文件窄改）：M14-28
   受控生产验收步骤 4 暴露的确定性缺陷——控制器
   `status_file_relpath` 返回 artifacts **目录**而非 status 文件，
@@ -595,8 +618,12 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   全部 probe 调用收文件路径；信号语义与保护边界零改动。TDD 回归：
   新增 8 项测试（修复前 8 failed/105 passed，修复后 **113 passed**，
   既有安全测试零削弱）；M14-27 套件 35 passed、ruff/py_compile/
-  `git diff --check` 全过。**M14-28 真实验收仍 halted，须在合并后整体
-  重跑，production_ready=false 不变**。详见
+  `git diff --check` 全过。M14-28 真实验收已在合并后整体重跑闭环
+  （2026-09-15 于 merge commit `1b6d862` 复跑 **9/9 PASS**，sidecar
+  切换/生命周期/监控集成范围；窗口内语音引擎停机、voice 端点 502 如实
+  透传——不宣称语音链路全绿；pipeline overall failed 为环境真实状态而非
+  任务失败，详见 `docs/evidence/m14-28-voice-health-production-cutover/README.md`），
+  production_ready=false 不变。详见
   `docs/evidence/m14-29-sidecar-status-path/README.md`。
 
 - M14-20 监控历史索引历史 incomplete 工件修复（本地 commit 待
