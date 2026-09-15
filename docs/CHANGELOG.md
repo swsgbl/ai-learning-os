@@ -7,6 +7,8 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
 
 ### Added
 
+- M14-31 语音引擎受控恢复验收回填（docs-only，零代码/零生产触碰；分支 `docs/m14-32-voice-recovery-backfill` 基于 `origin/main@4d6e5c8`（PR #109 merge））：M14-31 于 2026-09-15 22:56–23:08 +08:00 在 main@`4d6e5c8`（全程 tracked clean）上完成 FunASR/CosyVoice 受控恢复并经 **Codex 独立验收 PASS（10/10，本任务验收口径）**——仅经允许的 `tools/voice/voice_service_control.py start` 受控启动：FunASR PID 3445/8010 `/health` 200（sensevoice，模型自本地 modelscope-cache 加载无重下载）78s 达健康、CosyVoice PID 3851/8011 `/health` 200（Fun-CosyVoice3-0.5B-2512）279s 达健康（中间 `managed-running` + health 503 为工具文档明示的启动期相位，终态 200）；sidecar PID 701 未重启/未停止，18010/18011 `/health` 200、18011 `/health/live` 200（alive+ready），state `running-degraded` → `running-healthy`；单次只读 pipeline 23:05:22–24 rc=0 三步 ok，34 ok/0 warn/0 critical、alerts=[]、partial=false、funasr-health 200（13.4ms）、cosyvoice-health 200（3.2ms）；工件哈希链 monitor→history→insights 互相引用一致（monitor `81d6c283…`/history `9c1f2ee4…`/insights `3412dfe9…`）；secret 扫描 9 类 0 命中（Codex 独立复核亦 0）。如实披露：restart_evaluation 基线引用的 23:00:01 monitor 轮疑为周期性监控、非本任务动作。诚实边界：单轮恢复 + 单轮监控全绿不证明长期稳定性、不构成全局 `production_ready=true` 依据；本轮 monitor 报告 `monitoring_ready=true` 为单轮逐轮字段值（≠ production ready）；全局 `production_ready=false` 不变。新增证据 `docs/evidence/m14-31-voice-engine-recovery/README.md`，同步更新 ROADMAP（M14-31 完成条目 + 下一生产阻塞点方向：恢复后持续稳定性观察与真实端到端语音链路（ASR/TTS）复验——锚定既有未决项）与 PROJECT_STATUS 顶部任务结构（M14-30 降级为前一任务）；原始证据 gitignored `.verify/m14-31-voice-engine-recovery/` 不入库。
+
 - M14-28 语音健康 sidecar 生产切换验收回填（docs-only，零代码/零生产
   触碰；分支 `docs/m14-30-voice-cutover-backfill` 基于 `origin/main@1b6d862`
   （PR #108 merge））：M14-28 受控生产验收于 2026-09-15 在 merge commit
