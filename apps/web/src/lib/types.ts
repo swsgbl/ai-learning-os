@@ -348,3 +348,16 @@ export type VariantDraft = {
   reviewed_at: string | null;
   created_at: string;
 };
+
+// --- M14-35 语音 ---
+
+// 房间 token（POST /api/v1/voice/token）：token 字段只经局部变量喂给 SDK，
+// 绝不进入 React state / DOM / 日志；ws_url 是浏览器可达地址（非敏感，可展示）
+export type VoiceTokenResponse = {
+  token: string;
+  room: string;
+  identity: string;
+  role: string;
+  expires_at: string;
+  ws_url: string;
+};

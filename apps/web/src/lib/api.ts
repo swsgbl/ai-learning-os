@@ -11,6 +11,7 @@ import type {
   Submission,
   UserProfile,
   VariantDraft,
+  VoiceTokenResponse,
 } from "./types";
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
 
@@ -97,6 +98,12 @@ export const api = {
     }),
   submission: (examId: string) => request<Submission>(`/api/v1/exams/${examId}/submission`),
   report: (examId: string) => request<ExamReport>(`/api/v1/exams/${examId}/report`),
+  // M14-35: 房间 token（默认 student 角色；响应中的 token 字段由调用方只经局部变量使用）
+  voiceToken: (room: string) =>
+    request<VoiceTokenResponse>("/api/v1/voice/token", {
+      method: "POST",
+      body: JSON.stringify({ room }),
+    }),
 };
 
 export { API_BASE };
