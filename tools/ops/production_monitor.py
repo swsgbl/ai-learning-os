@@ -28,9 +28,13 @@ HTTP/零计划任务，全部行为用 fake/stub 测试锁定；真实采集仅�
   logs --tail 三形态，stop/rm/kill/restart/down/exec/up 等一律拒绝（拒
   绝发生在任何执行之前）；Windows 侧恒 CREATE_NO_WINDOW。
 - 网络纪律（与 soak 同款）：GET-only、无认证、无 cookie、无 header/token、
-  不读响应体、不跟随重定向；**仅字面 loopback IP**（127.0.0.0/8、::1），
-  主机名一律拒绝（零 DNS）；``http.client`` 直连从不读取 proxy 环境变量
-  （结构性旁路），proxy env 仅探测**键名存在性**入注记，值绝不读取/记录。
+  不读响应体、不跟随重定向；web/api 端点**恒字面 loopback IP**（127.0.0.0/8、
+  ::1），主机名一律拒绝（零 DNS）；M14-27 sidecar 语音端点**仅由 canonical
+  sidecar manifest 严格校验通过后派生**——字面 RFC1918 IPv4 + 固定端口
+  18010/18011 + 精确 ``/health``，无 DNS/query/fragment/userinfo/任意 URL/
+  清单路径注入/loopback 回退（清单不可用即 fail-closed 零采集）；
+  ``http.client`` 直连从不读取 proxy 环境变量（结构性旁路），proxy env
+  仅探测**键名存在性**入注记，值绝不读取/记录。
 - 采集器部分失败如实入档：任一采集器失败 → ``partial=true`` + 失败安全
   类别（仅类别 + 异常类名，绝不保留文本）→ ``overall_status=incomplete``；
   **缺失绝不当作 healthy**（fail-closed：failed 项在阈值判定中恒为可见
@@ -198,15 +202,151 @@ def validate_target_url(url: str) -> str | None:
     return None
 
 
-def select_endpoints(only: list[str] | None) -> tuple[list[Endpoint], str | None]:
-    """``--only`` 仅能在固定五端点画像内筛选（未知 ID 即拒绝）。"""
+def select_endpoints(only: list[str] | None,
+                     *, profile: list[Endpoint] | tuple[Endpoint, ...] | None = None,
+                     ) -> tuple[list[Endpoint], str | None]:
+    """``--only`` 仅能在画像内筛选（未知 ID 即拒绝）；``profile`` 缺省为
+    固定五端点 loopback 画像（既有调用不变），sidecar 来源传入 sidecar 画像。"""
+    base: list[Endpoint] | tuple[Endpoint, ...] = ENDPOINTS if profile is None else profile
     if not only:
-        return list(ENDPOINTS), None
-    known = {e.endpoint_id for e in ENDPOINTS}
+        return list(base), None
+    known = {e.endpoint_id for e in base}
     unknown = sorted(set(only) - known)
     if unknown:
         return [], f"unknown-endpoint: {', '.join(unknown)}（可选: {', '.join(sorted(known))}）"
-    return [e for e in ENDPOINTS if e.endpoint_id in set(only)], None
+    return [e for e in base if e.endpoint_id in set(only)], None
+
+
+# ------------------------------------------------- sidecar 语音健康来源（M14-27）
+
+#: M14-26 受控生命周期 sidecar 的规范清单路径（仓库根相对；由
+#: tools/voice/voice_health_sidecar_control.py start 原子落盘）
+SIDECAR_MANIFEST_RELPATH = Path(".verify/artifacts/m14-26-voice-health-sidecar") / "sidecar-manifest.json"
+#: 本工具消费的规范绝对路径（测试经 monkeypatch 替换；生产恒为此常量）
+SIDECAR_MANIFEST_PATH = REPO_ROOT / SIDECAR_MANIFEST_RELPATH
+#: 清单体积硬顶（64 KiB——防失控文件读入内存；超顶即拒）
+SIDECAR_MANIFEST_MAX_BYTES = 65536
+#: 清单 schema 事实（与 voice_health_sidecar_control.Manifest 同源）
+SIDECAR_MANIFEST_SCHEMA_VERSION = 1
+SIDECAR_MANIFEST_SERVICE = "voice-health-sidecar"
+#: sidecar 双端口（18010 = FunASR 窄代理；18011 = CosyVoice 窄代理——与
+#: voice_health_sidecar.PORT_ROUTES 同源事实，恒为模块常量，绝不取自请求）
+SIDECAR_PORT_FUNASR = 18010
+SIDECAR_PORT_COSYVOICE = 18011
+SIDECAR_PORTS: tuple[int, ...] = (SIDECAR_PORT_FUNASR, SIDECAR_PORT_COSYVOICE)
+#: 唯一合法绑定域：RFC1918 三个私网块（与 voice_health_sidecar.
+#: PRIVATE_V4_NETWORKS 同源）。回环/链路本地/公网/0.0.0.0 天然不在域内。
+SIDECAR_PRIVATE_V4_NETWORKS: tuple[ipaddress.IPv4Network, ...] = (
+    ipaddress.ip_network("10.0.0.0/8"),
+    ipaddress.ip_network("172.16.0.0/12"),
+    ipaddress.ip_network("192.168.0.0/16"),
+)
+
+
+def _sidecar_bind_problem(bind: str) -> str | None:
+    """sidecar bind 严格校验：字面 IPv4 + RFC1918（显式排除 unspecified/
+    loopback/link-local）。返回拒绝类别或 None。"""
+    try:
+        addr = ipaddress.ip_address(bind)
+    except ValueError:
+        return "bind-not-literal-ip"
+    if addr.version != 4:
+        return "bind-not-ipv4"
+    if addr.is_unspecified or addr.is_loopback or addr.is_link_local:
+        return "bind-not-rfc1918"
+    if not any(addr in net for net in SIDECAR_PRIVATE_V4_NETWORKS):
+        return "bind-not-rfc1918"
+    return None
+
+
+def load_sidecar_manifest(path: Path) -> tuple[str | None, str | None]:
+    """读取并严格校验 canonical sidecar manifest。体积硬顶双检：读前按
+    ``stat().st_size`` 预检（超顶零读取——绝不把失控文件读入内存），读后
+    按 ``len(data)`` 复核（防 stat/读取间漂移）。成功 → (bind, None)；
+    任何失败 → (None, 固定安全错误类别)——绝不回显文件内容/异常串。"""
+    try:
+        if path.is_symlink():
+            return None, "sidecar-manifest-symlink"
+        if not path.exists():
+            return None, "sidecar-manifest-missing"
+        if not path.is_file():
+            return None, "sidecar-manifest-not-regular-file"
+        if path.stat().st_size > SIDECAR_MANIFEST_MAX_BYTES:
+            return None, "sidecar-manifest-oversize"
+        data = path.read_bytes()
+    except OSError:
+        return None, "sidecar-manifest-unreadable"
+    if len(data) > SIDECAR_MANIFEST_MAX_BYTES:
+        return None, "sidecar-manifest-oversize"
+    try:
+        payload = json.loads(data.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return None, "sidecar-manifest-invalid-json"
+    if not isinstance(payload, dict):
+        return None, "sidecar-manifest-invalid-json"
+    schema = payload.get("schema_version")
+    if isinstance(schema, bool) or not isinstance(schema, int) or schema != SIDECAR_MANIFEST_SCHEMA_VERSION:
+        return None, "sidecar-manifest-schema-version"
+    if payload.get("service") != SIDECAR_MANIFEST_SERVICE:
+        return None, "sidecar-manifest-service"
+    pid = payload.get("pid")
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return None, "sidecar-manifest-pid"
+    ports = payload.get("ports")
+    if (not isinstance(ports, list) or len(ports) != len(SIDECAR_PORTS)
+            or any(isinstance(p, bool) or not isinstance(p, int) for p in ports)
+            or tuple(ports) != SIDECAR_PORTS):
+        return None, "sidecar-manifest-ports"
+    bind = payload.get("bind")
+    if not isinstance(bind, str) or _sidecar_bind_problem(bind) is not None:
+        return None, "sidecar-manifest-bind"
+    return bind, None
+
+
+def build_sidecar_endpoints(bind: str) -> list[Endpoint]:
+    """sidecar 来源端点画像：web/api 端点原样保留，语音双端点替换为
+    manifest bind + 固定窄代理端口 + 精确 /health（固定五端点顺序）。"""
+    problem = _sidecar_bind_problem(bind) if isinstance(bind, str) else "bind-not-literal-ip"
+    if problem is not None:
+        raise ValueError(problem)
+    return [
+        *[e for e in ENDPOINTS if e.group != "voice"],
+        Endpoint("funasr-health", f"http://{bind}:{SIDECAR_PORT_FUNASR}/health", "voice"),
+        Endpoint("cosyvoice-health", f"http://{bind}:{SIDECAR_PORT_COSYVOICE}/health", "voice"),
+    ]
+
+
+def validate_sidecar_voice_url(url: str) -> str | None:
+    """sidecar 语音 URL fail-closed 校验：http-only、字面 IPv4 RFC1918、
+    显式端口且恒为 18010/18011、精确路径 /health、无 query/fragment/
+    userinfo。返回拒绝原因或 None。"""
+    parts = urlsplit(url)
+    if parts.scheme != "http":
+        return "scheme-not-http"
+    host = parts.hostname
+    if host is None:
+        return "no-host"
+    try:
+        addr = ipaddress.ip_address(host)
+    except ValueError:
+        return "host-not-literal-ip"
+    if addr.version != 4 or not any(addr in net for net in SIDECAR_PRIVATE_V4_NETWORKS):
+        return "host-not-rfc1918"
+    try:
+        port = parts.port
+    except ValueError:
+        return "bad-port"
+    if port is None:
+        return "no-explicit-port"
+    if port not in SIDECAR_PORTS:
+        return "port-not-allowed"
+    if parts.username is not None or parts.password is not None:
+        return "userinfo-present"
+    if parts.query or parts.fragment:
+        return "query-or-fragment"
+    if parts.path != "/health":
+        return "path-not-allowed"
+    return None
 
 
 # ---------------------------------------------------------------- compose 项目名（严格白名单）
@@ -1192,13 +1332,15 @@ class SafeLog:
 
 def build_config(*, project: str, profile: str, compose_file: Path, endpoints: list[Endpoint],
                  log_tail: int, request_timeout_seconds: float,
-                 thresholds: Thresholds) -> dict[str, object]:
+                 thresholds: Thresholds, voice_health_source: str = "loopback",
+                 ) -> dict[str, object]:
     return {
         "project": project,
         "profile": profile,
         "compose_file": compose_file.name,
         "services": list(STACK_SERVICES),
         "endpoints": [{"endpoint_id": e.endpoint_id, "url": e.url, "group": e.group} for e in endpoints],
+        "voice_health_source": voice_health_source,
         "log_tail": log_tail,
         "request_timeout_seconds": request_timeout_seconds,
         "thresholds": thresholds.as_dict(),
@@ -1207,7 +1349,18 @@ def build_config(*, project: str, profile: str, compose_file: Path, endpoints: l
 
 #: 报告边界注记（固定词汇表：绝不包含任何采集原文）
 REPORT_BOUNDARIES: tuple[str, ...] = (
-    "read-only collection: compose ps + docker inspect + docker logs --tail + GET-only loopback HTTP; zero mutations",
+    "read-only collection: compose ps + docker inspect + docker logs --tail + GET-only HTTP; zero mutations",
+    (
+        "web/api health-check targets remain fixed literal loopback GET-only URLs"
+        " (127.0.0.1 with explicit ports; no DNS, no query, no fragment, no userinfo)"
+    ),
+    (
+        "sidecar voice health-check targets are derived only from the canonical sidecar"
+        " manifest as literal RFC1918 IPv4 hosts on fixed ports 18010/18011 with the"
+        " exact path /health: no DNS, no query, no fragment, no userinfo, no arbitrary"
+        " URLs, no manifest path injection, and no loopback fallback (an invalid or"
+        " missing manifest fails closed with zero collection)"
+    ),
     "all docker commands pass the readonly whitelist gate (compose ps / inspect / logs --tail only)",
     "http.client direct connection: proxy env never consulted (loopback proxy bypass)",
     "container log summary: match counts and level categories only; raw log lines never persisted",
@@ -1394,6 +1547,10 @@ def build_parser() -> argparse.ArgumentParser:
                         help=f"docker logs --tail 行数 {MIN_LOG_TAIL}-{MAX_LOG_TAIL}（默认 {DEFAULT_LOG_TAIL}）")
     parser.add_argument("--only", action="append", metavar="ENDPOINT_ID",
                         help="仅采集指定端点（可重复；候选见 plan 输出；阈值恒评全五端点画像的已选子集）")
+    parser.add_argument("--voice-health-source", choices=("loopback", "sidecar"),
+                        default="loopback",
+                        help="语音健康端点来源（默认 loopback=8010/8011 直采；sidecar=M14-26 窄代理"
+                             " 18010/18011，URL 由 canonical sidecar manifest 严格校验派生，绝不回退）")
     parser.add_argument("--artifact-dir", type=Path, default=ARTIFACT_DIR,
                         help="报告目录（默认 .verify/artifacts/m14-12-production-monitoring，gitignored；"
                              "自定义路径为操作者显式自选，其位置与入库与否由操作者负责）")
@@ -1426,12 +1583,28 @@ def main(argv: list[str] | None = None) -> int:
     if project_problem is not None:
         log.say(f"拒绝: --project 名非法（原因: {project_problem}）——被拒值不回显")
         return EXIT_USAGE
-    # 2) 端点面（固定画像；--only 仅限已启用集合）
-    endpoints, endpoint_error = select_endpoints(args.only)
+    # 1.7) 语音健康来源（M14-27）：sidecar 需 canonical manifest 严格校验通过才
+    # 放行——任何失败按固定词表拒绝（发生在报告写入与 Runner/Transport 构造
+    # 之前，零采集零回退）；loopback 恒用固定五端点画像
+    endpoint_profile: list[Endpoint] = list(ENDPOINTS)
+    if args.voice_health_source == "sidecar":
+        bind, manifest_error = load_sidecar_manifest(SIDECAR_MANIFEST_PATH)
+        if manifest_error is not None:
+            log.say(f"拒绝: sidecar 语音健康清单不可用（原因: {manifest_error}）——零采集/零报告")
+            return EXIT_USAGE
+        endpoint_profile = build_sidecar_endpoints(bind)
+    # 2) 端点面（--only 仅限所选画像内集合）
+    endpoints, endpoint_error = select_endpoints(args.only, profile=endpoint_profile)
     if endpoint_error is not None:
         log.say(f"拒绝: {endpoint_error}")
         return EXIT_USAGE
-    invalid = [e.endpoint_id for e in endpoints if validate_target_url(e.url) is not None]
+    invalid: list[str] = []
+    for endpoint in endpoints:
+        sidecar_voice = args.voice_health_source == "sidecar" and endpoint.group == "voice"
+        problem = (validate_sidecar_voice_url(endpoint.url) if sidecar_voice
+                   else validate_target_url(endpoint.url))
+        if problem is not None:
+            invalid.append(endpoint.endpoint_id)
     if invalid:
         log.say(f"拒绝: 端点 URL 校验失败: {', '.join(invalid)}（fail-closed，零采集）")
         return EXIT_USAGE
@@ -1445,6 +1618,7 @@ def main(argv: list[str] | None = None) -> int:
         project=args.project, profile=DEFAULT_PROFILE, compose_file=COMPOSE_FILE,
         endpoints=endpoints, log_tail=args.log_tail,
         request_timeout_seconds=args.request_timeout_seconds, thresholds=thresholds,
+        voice_health_source=args.voice_health_source,
     )
     stamp = clock.stamp()
     # 3) plan 模式（默认）：零 subprocess、零网络、零生产读取

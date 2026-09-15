@@ -322,7 +322,8 @@ def test_allowed_forms_exact() -> None:
     forms = mp.allowed_step_argv(FAKE_PY)
     assert set(forms) == {"monitor", "history", "insights"}
     assert forms["monitor"] == (FAKE_PY, str(mp.MONITOR_SCRIPT),
-                                "--execute", "--confirm", mp.MONITOR_CONFIRM_PHRASE)
+                                "--execute", "--confirm", mp.MONITOR_CONFIRM_PHRASE,
+                                "--voice-health-source", "sidecar")
     assert forms["history"] == (FAKE_PY, str(mp.HISTORY_SCRIPT))
     assert forms["insights"] == (FAKE_PY, str(mp.INSIGHTS_SCRIPT),
                                  "--execute", "--confirm", mp.INSIGHTS_CONFIRM_PHRASE)
@@ -340,6 +341,11 @@ def test_allowed_forms_exact() -> None:
     (FAKE_PY, str(mp.MONITOR_SCRIPT), "--execute", "--confirm",
      mp.MONITOR_CONFIRM_PHRASE, "--extra"),                           # 追加旗标
     (FAKE_PY, str(mp.MONITOR_SCRIPT), "--confirm", mp.MONITOR_CONFIRM_PHRASE, "--execute"),
+    # M14-27：monitor 语音来源恒为 sidecar——loopback/缺值形态一律拒绝
+    (FAKE_PY, str(mp.MONITOR_SCRIPT), "--execute", "--confirm",
+     mp.MONITOR_CONFIRM_PHRASE, "--voice-health-source", "loopback"),  # 显式回退 loopback
+    (FAKE_PY, str(mp.MONITOR_SCRIPT), "--execute", "--confirm",
+     mp.MONITOR_CONFIRM_PHRASE, "--voice-health-source"),               # 旗标缺值
     (FAKE_PY, str(mp.HISTORY_SCRIPT), "--retention", "10"),           # 非默认参数
     (FAKE_PY, str(mp.HISTORY_SCRIPT), "--source-dir", "C:/evil"),     # 任意路径注入
     (FAKE_PY, str(mp.INSIGHTS_SCRIPT)),                               # 缺 --execute

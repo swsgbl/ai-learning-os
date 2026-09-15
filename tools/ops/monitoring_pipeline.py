@@ -233,7 +233,8 @@ def allowed_step_argv(python_exe: str, *, monitor_script: Path = MONITOR_SCRIPT,
     输出目录，M14-21 起两处常量三方 resolve 全等，单一事实源）。"""
     return {
         "monitor": (python_exe, str(monitor_script),
-                    "--execute", "--confirm", MONITOR_CONFIRM_PHRASE),
+                    "--execute", "--confirm", MONITOR_CONFIRM_PHRASE,
+                    "--voice-health-source", "sidecar"),
         "history": (python_exe, str(history_script)),
         "insights": (python_exe, str(insights_script),
                      "--execute", "--confirm", INSIGHTS_CONFIRM_PHRASE),

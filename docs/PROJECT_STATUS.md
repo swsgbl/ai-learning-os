@@ -9,11 +9,15 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-27 监控语音健康来源切换契约（loopback → sidecar）**（分支 `feat/m14-27-voice-health-cutover` 基于 `ec60a093`，代码/契约切换 only，当前待 supervisor 审查与 PR 发布。目标：把 M14-26 已交付的健康旁路接入监控契约，避免 Windows→WSL loopback relay 故障导致 voice 端点长期误报并使 history/insights skipped。实现：`production_monitor.py` 新增 `--voice-health-source {loopback,sidecar}`，默认 loopback 完整保留 8010/8011 直采兼容；sidecar 仅读取 canonical `.verify/artifacts/m14-26-voice-health-sidecar/sidecar-manifest.json` 常量，严格校验 schema/service/正 PID/exact `[18010,18011]`/字面 RFC1918 IPv4，64KiB 读前 stat 预检 + 读后长度复核，语音端点仅派生 `http://<bind>:18010/health` 与 `:18011/health`，Web/API 端点仍固定字面 loopback；缺失/非法清单在任何报告写入与 Runner/Transport 构造前 fail-closed，绝不回退。`monitoring_pipeline.py` monitor argv 固定 `--voice-health-source sidecar`，显式 loopback/缺值形态白名单拒绝。测试：M14-27 专属 35 passed；聚焦三套件 332 passed；监控家族六套件最终回归 635 passed；supervisor 独立复跑六套件 635、ruff services/api、py_compile 两工具、git diff-check 全过。边界：零真实 WSL/HTTP/Docker/生产进程触碰；未启动 sidecar；未真实切换生产监控或观察 pipeline；M14-28 受控生产验收未做；`production_ready=false` 不变。）
+
+## 前一任务（M14-26 WSL 语音健康 sidecar，已随 PR #106 合并 main）
+
 **M14-26 WSL 语音健康 sidecar（双端口只读窄代理 + Windows 侧受控生命周期）**（分支
 `feat/m14-26-voice-health-sidecar`（基于 `070646f`，谱系 = `d54ad5b`（PR #104 merge，
 canonical main）→ `3e96d66`（M14-25 回填 R0）→ `070646f`（R1 relay 失败事实追加，均
 docs-only，本地 git 可验证）；本 Claude 开发回合独占 worktree，按任务书做且仅做**一个
-本地 commit**（不 push/不建 PR——supervisor 审查与 remote 发布在其后进行）。背景：
+本地 commit**（不 push/不建 PR——supervisor 审查与 remote 发布在其后进行；该约束为开发时点状态，remote 发布现已由 PR #106 合并收口——merge commit `ec60a093`，真实部署与监控验收仍留 M14-28）。背景：
 M14-25 回填 §8.5–§8.6 固化新生产阻塞——Windows→WSL loopback 转发层不稳（12:00–13:30
 七轮自然监控 pipeline failed，两 voice 端点 Windows 侧 5s TimeoutError，而 WSL 内部引擎
 健康；wslrelay.exe PID 17936 持有 Windows 侧 8010/8011 listener，`wsl.exe` 管理面间歇
