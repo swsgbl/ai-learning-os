@@ -5,9 +5,16 @@
   变更面 2 文件（控制器 `tools/voice/voice_health_sidecar_control.py` +
   测试 `services/api/tests/test_voice_health_sidecar.py`），零改动 sidecar
   本体、引擎、relay、M14-27 monitor/pipeline 与保护逻辑。
-- 状态：**fixed-pending-review**（待 supervisor 审查）；`production_ready=false`
-  不变；**真实 M14-28 验收仍处 halted，须在本修复合并后重跑**——本切片
-  只修控制器调用契约，不构成任何运行时事实。
+- 状态：**已收口（2026-09-15 回填）**——本修复已随 **PR #108 合并 main**
+  （feature head `527c454`、merge commit `1b6d862`，本地 git 可验证；PR CI
+  run `34933123493` 与合并后 main CI run `34946366049` 均 5/5 job
+  SUCCESS）；其遗留前提「真实 M14-28 验收须在合并后重跑」已闭环——
+  2026-09-15 16:38:56–16:59:43 +08:00 在 merge commit `1b6d862` 上整体
+  复跑 **9/9 PASS**（sidecar 切换/生命周期/监控集成范围；本修复经
+  `/proc/<pid>/cmdline` live 验证——argv 恒传精确 status 文件），证据
+  `docs/evidence/m14-28-voice-health-production-cutover/README.md` 与
+  gitignored `.verify/m14-28-voice-health-production-cutover-rerun-1b6d862/`；
+  `production_ready=false` 不变。
 
 ## 1. 缺陷（M14-28 受控验收实证，2026-09-15）
 
@@ -75,8 +82,9 @@ spawn argv `--status-file` 后随该精确文件；manifest.log / `manifest:`
 
 - **零真实 WSL/零 HTTP/零 Docker/零生产进程/零计划任务**：全部行为经
   fake/临时文件测试锁定；本回合未启动 sidecar、未触碰任何生产进程。
-- **不宣称生产就绪**：`production_ready=false`；M14-28 验收仍为 halted
-  状态，其步骤 4 起的完整流程（真实 sidecar 启动、监控切换、观察）
-  须在本修复审查合并后**整体重跑**，不复用任何 M14-28 已执行步骤结论。
+- **不宣称生产就绪**：`production_ready=false`；M14-28 验收已按本节要求
+  在修复合并后**整体重跑闭环**（2026-09-15，merge commit `1b6d862`，
+  9/9 PASS，不复用任何 halted 步骤结论——含真实 sidecar 启动、监控
+  切换与观察）。
 - 不修改 sidecar 本体（守卫保持原样——本修复只修 Windows 侧调用契约），
   不修改引擎服务、relay、M14-27 monitor 与保护逻辑。
