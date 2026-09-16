@@ -247,7 +247,10 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   端点/密钥冒烟待运维显式执行）；检索 cloud-web 已交付真实
   SearXNG-compatible 实现与冒烟脚本（M10-12——真实端点冒烟待运维显式执行，key 按需）。
 - 部署绑定：所有端口默认 127.0.0.1；LAN/外网需 `AIOS_BIND_IP=0.0.0.0` 且必须同时
-  设强 AUTH_SECRET + APP_ENV=production（启动 fail-closed），否则不要对外暴露。
+  设强 AUTH_SECRET + APP_ENV=production（启动 fail-closed），否则不要对外暴露；
+  LiveKit 媒体面可单独绑本机 LAN IP（`AIOS_LIVEKIT_BIND_IP`，M14-37——默认浏览器
+  ICE 稳定拓扑，前置为强 LIVEKIT_API_SECRET + 可达 PUBLIC_LIVEKIT_URL，
+  API/Web 保持 loopback，详见「语音（LiveKit）局域网/公开拓扑」节）。
 
 
 - `AUTH_SECRET` 未配置 = 认证关闭，`GET /api/v1/auth/status` 如实透出 `auth_enabled=false`；
@@ -1307,6 +1310,34 @@ localhost-only CORS / **缺 PUBLIC_LIVEKIT_URL 或其仍是容器内部地址**�
   → 数据通道）：
   `AIOS_MODE=local bash infra/smoke_voice.sh` /
   `AIOS_MODE=public AIOS_PUBLIC_HOST=<LAN_IP> bash infra/smoke_voice.sh`。
+
+**默认浏览器 ICE 稳定拓扑（M14-37）**：默认浏览器（不带 Chromium loopback 受控
+flag）连本机 loopback LiveKit 存在间歇性 ICE 失败（M14-35，浏览器默认不收集
+loopback candidate，属拓扑级非确定性）。修复形态：LiveKit 媒体面单独绑本机
+LAN IP，浏览器拿到的是常规 LAN candidate，无需受控 flag：
+
+```bash
+AIOS_LIVEKIT_BIND_IP='<本机LAN_IP>' AIOS_LIVEKIT_API_SECRET='<至少 32 字节随机串>' AIOS_PUBLIC_LIVEKIT_URL='ws://<本机LAN_IP>:7880' docker compose -f infra/docker-compose.yml --profile local up -d --build
+```
+
+- 端口绑定回落链：`AIOS_LIVEKIT_BIND_IP` → `AIOS_BIND_IP` → `127.0.0.1`
+  （未设 = 存量行为零变化，livekit 仍跟随 AIOS_BIND_IP）；api/web/postgres/redis/
+  minio 一律不受影响——避免为了本机浏览器 ICE 稳定性把 API/Web 一起暴露；
+- `--node-ip` 通告回落链：`AIOS_LIVEKIT_EXTERNAL_IP`（显式优先，M9-08 语义保留）
+  → `AIOS_LIVEKIT_BIND_IP` → `127.0.0.1`（单变量路径下绑定与通告自洽）；
+- 安全边界（fail-closed，API 启动校验）：`AIOS_LIVEKIT_BIND_IP` 非 loopback 时
+  要求 1) 强 `AIOS_LIVEKIT_API_SECRET`（≥32 字节且非仓库默认占位值）；
+  2) `AIOS_PUBLIC_LIVEKIT_URL` 为浏览器可达地址（不得缺失/为容器内部或
+  127.0.0.1 地址）。API/Web 保持 loopback 时**无需** APP_ENV=production /
+  AIOS_CORS_ORIGINS 覆盖（同机默认浏览器拓扑下 localhost Web 源是合法配置，
+  API 未公开，M9-06/M9-07 的 API 面门禁不适用）；
+- 务必填具体本机 IP，不要 0.0.0.0（node-ip 通告 0.0.0.0 不可配对，等于没修）；
+- 远程设备跨对称 NAT/严格防火墙仍连不上时，走既有 M10-05 TURN 后备
+  （`infra/coturn/` 外部部署模板，见 docs/COTURN_DEPLOYMENT.md）；
+- 浏览器验收口径：`infra/verify_web_livekit_client.py` 默认（default 模式）绝不
+  添加 loopback 受控 flag；`AIOS_LIVEKIT_BROWSER_LOOPBACK=1` 才是受控
+  （controlled）回归模式——模式与 Chromium argv 摘要记录在 results.json
+  `browser` 节（脚本 docstring 有完整说明）。
 
 ## 本地验证
 

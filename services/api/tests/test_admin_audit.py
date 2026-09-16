@@ -410,9 +410,13 @@ def test_compose_livekit_ports_bound_to_loopback_by_default() -> None:
     with open(COMPOSE_FILE, encoding="utf-8") as fh:
         compose = yaml.safe_load(fh)
     ports = compose["services"]["livekit"]["ports"]
-    assert "${AIOS_BIND_IP:-127.0.0.1}:7881:7881" in ports, "LiveKit TCP 必须显式绑定 IP"
-    assert "${AIOS_BIND_IP:-127.0.0.1}:7882-7892:7882-7892/udp" in ports, (
-        "LiveKit UDP 必须显式绑定 IP"
+    # M14-37: 嵌套默认回落链 —— LiveKit 单独可绑（AIOS_LIVEKIT_BIND_IP），
+    # 回落 AIOS_BIND_IP，最终 127.0.0.1（默认仍全 loopback）
+    assert "${AIOS_LIVEKIT_BIND_IP:-${AIOS_BIND_IP:-127.0.0.1}}:7881:7881" in ports, (
+        "LiveKit TCP 必须显式绑定 IP（含媒体面独立绑定回落链）"
+    )
+    assert "${AIOS_LIVEKIT_BIND_IP:-${AIOS_BIND_IP:-127.0.0.1}}:7882-7892:7882-7892/udp" in ports, (
+        "LiveKit UDP 必须显式绑定 IP（含媒体面独立绑定回落链）"
     )
     assert not any(p_.startswith(("7881", "7882-")) for p_ in ports), (
         "不得存在裸宿主绑定的 LiveKit 端口"
@@ -423,6 +427,113 @@ def test_compose_livekit_ports_bound_to_loopback_by_default() -> None:
     assert env.get("HOST_BIND_IP") == "${AIOS_BIND_IP:-127.0.0.1}", (
         "宿主绑定意图必须以 HOST_BIND_IP 传入 API 容器（对齐 settings.host_bind_ip）"
     )
+    assert env.get("HOST_LIVEKIT_BIND_IP") == "${AIOS_LIVEKIT_BIND_IP:-}", (
+        "LiveKit 媒体面绑定意图必须传入 API 容器"
+        "（对齐 settings.host_livekit_bind_ip，缺省空串=未启用）"
+    )
+
+
+# --- M14-37：LiveKit 媒体面独立公开绑定的 fail-closed 前置 ---
+
+
+def test_exposure_livekit_only_bind_requires_strong_secret_and_url() -> None:
+    """API 保持 loopback + LiveKit 单独非 loopback：媒体面前置必须满足。"""
+    common = {"host_bind_ip": "127.0.0.1", "app_env": "docker", "auth_secret": None}
+    strong = "prod-lk-secret-0123456789abcdef012345"
+    # 弱/缺/占位 LIVEKIT_API_SECRET → 拒绝（媒体面凭据不得为公开默认值）
+    for weak in (None, "ailos-local-dev-secret-0f4c9a1e7b2d", "short"):
+        with pytest.raises(RuntimeError, match="LIVEKIT_API_SECRET"):
+            validate_exposure(
+                **common, livekit_bind_ip="192.168.1.50",
+                livekit_api_secret=weak, public_livekit_url="ws://192.168.1.50:7880",
+            )
+    # 强 secret 但缺/loopback PUBLIC_LIVEKIT_URL → 拒绝（浏览器必须拿到 LAN 地址）
+    with pytest.raises(RuntimeError, match="PUBLIC_LIVEKIT_URL"):
+        validate_exposure(
+            **common, livekit_bind_ip="192.168.1.50",
+            livekit_api_secret=strong, public_livekit_url=None,
+        )
+    with pytest.raises(RuntimeError, match="PUBLIC_LIVEKIT_URL"):
+        validate_exposure(
+            **common, livekit_bind_ip="192.168.1.50",
+            livekit_api_secret=strong, public_livekit_url="ws://127.0.0.1:7880",
+        )
+    # 合法组合通过：API/Web 仍 loopback，无需 APP_ENV=production/CORS 覆盖
+    # （同机默认浏览器拓扑下 localhost Web 源是合法配置）
+    validate_exposure(
+        **common, livekit_bind_ip="192.168.1.50",
+        livekit_api_secret=strong, public_livekit_url="ws://192.168.1.50:7880",
+    )
+
+
+def test_exposure_livekit_bind_rejects_wildcard_and_invalid_literals() -> None:
+    """M14-37 rework：AIOS_LIVEKIT_BIND_IP 必须是具体本机 LAN IP 字面量（fail-closed）。
+
+    - wildcard（0.0.0.0 / ::）可作端口 bind 但不能作 LiveKit --node-ip 通告地址，
+      放它进入公开分支等于放行无效修复配置 → 拒绝；
+    - 非法字面量（段数错误 / 带空格 / 带换行 / 误带端口）→ 拒绝
+      （stdlib ipaddress 解析，不依赖字符串集合枚举）；
+    - IPv4-mapped 口径说明（Windows dual-stack 常见形态）：Python ipaddress 对
+      ::ffff:a.b.c.d 的 is_loopback/is_unspecified 按 IPv6 字面判定，直接用会把
+      ::ffff:127.0.0.1 误判为非 loopback——实现先解包为 IPv4 再分类：
+      ::ffff:127.0.0.1 = loopback（不触发门禁），::ffff:0.0.0.0 = wildcard（拒绝）；
+    - 合法 LAN IP（IPv4 与 IPv6 ULA）仍按原语义通过（强 secret + 可达 URL）。
+    """
+    common = {"host_bind_ip": "127.0.0.1", "app_env": "docker", "auth_secret": None}
+    strong = "prod-lk-secret-0123456789abcdef012345"
+    reachable = "ws://192.168.1.50:7880"
+    for wild in ("0.0.0.0", "::", "::ffff:0.0.0.0"):
+        with pytest.raises(RuntimeError, match="LAN IP"):
+            validate_exposure(
+                **common, livekit_bind_ip=wild,
+                livekit_api_secret=strong, public_livekit_url=reachable,
+            )
+    for bad in ("192.168.1", "not-an-ip", " 192.168.1.50", "192.168.1.50\n", "192.168.1.50:7880"):
+        with pytest.raises(RuntimeError, match="LAN IP"):
+            validate_exposure(
+                **common, livekit_bind_ip=bad,
+                livekit_api_secret=strong, public_livekit_url=reachable,
+            )
+    # 拒绝与 API/Web 面状态无关：API 公开 + LiveKit wildcard 同样拒绝（通告地址无效）
+    with pytest.raises(RuntimeError, match="LAN IP"):
+        validate_exposure(
+            host_bind_ip="0.0.0.0", app_env="production",
+            auth_secret="prod-auth-secret-0123456789abcdef012345",
+            livekit_api_secret="prod-lk-secret-0123456789abcdef01",
+            cors_origins="https://learn.example.com",
+            public_livekit_url="wss://voice.example.com",
+            livekit_bind_ip="0.0.0.0",
+        )
+    # IPv4-mapped loopback：解包后按 loopback 分类 → 不触发媒体面门禁
+    validate_exposure(
+        **common, livekit_bind_ip="::ffff:127.0.0.1",
+        livekit_api_secret=None, public_livekit_url=None,
+    )
+    # 合法 LAN IP（IPv4 / IPv6 ULA）原语义通过
+    validate_exposure(
+        **common, livekit_bind_ip="192.168.1.50",
+        livekit_api_secret=strong, public_livekit_url=reachable,
+    )
+    validate_exposure(
+        **common, livekit_bind_ip="fd00::50",
+        livekit_api_secret=strong, public_livekit_url="ws://[fd00::50]:7880",
+    )
+
+
+def test_exposure_livekit_loopback_or_unset_bind_gates_nothing() -> None:
+    """未启用/loopback 的 LiveKit 绑定：不触发媒体面门禁（存量语义零破坏）。
+
+    口径说明（M14-37 rework）：空串 "" 是 compose 默认部署的「未启用」哨兵——
+    `${AIOS_LIVEKIT_BIND_IP:-}` 未设置时向 API 透传空串（HOST_LIVEKIT_BIND_IP=""，
+    由 test_m905_ownership_audit.py compose 契约锁定），故 "" 等价 None 而非
+    非法字面量；非空但无法解析/wildcard 的值由 fail-closed 用例另行拒绝。
+    """
+    for lk in (None, "", "127.0.0.1", "localhost"):
+        validate_exposure(
+            host_bind_ip="127.0.0.1", app_env="docker",
+            auth_secret=None, livekit_api_secret=None,
+            livekit_bind_ip=lk,
+        )
 
 
 # --- M9-07 Source verify 回归 ---
