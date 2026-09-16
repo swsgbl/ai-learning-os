@@ -29,7 +29,10 @@ taskkill/killpg/Popen，不触网、不装依赖、不读 secret）：
 from __future__ import annotations
 
 import importlib.util
+import json
+import re
 import subprocess
+import urllib.request
 from pathlib import Path
 
 import pytest
@@ -427,3 +430,263 @@ def test_source_results_records_browser_section():
     """main 落盘 results.json 前必须并入 browser 段（模式可审计）。"""
     assert 'results["browser"] = browser_report(loopback)' in SOURCE
     assert "browser_loopback_enabled()" in SOURCE  # main 显式解析模式（fail-closed 入口）
+
+
+# ---------- M14-38：LiveKit 信令面探测（契约派生 + 显式 override + fail-closed） ----------
+# 旧版 preflight 硬编码探测本机 loopback 信令端口——LAN cutover（媒体面绑本机
+# LAN IP）拓扑下探测目标错误。新契约：
+#   AIOS_PUBLIC_LIVEKIT_URL 未设置 → 登录后 POST /api/v1/voice/token 响应 ws_url 契约派生；
+#   AIOS_PUBLIC_LIVEKIT_URL 已设置 → 严格校验（ws/wss + 非空主机名）后 override；
+#   空串/非法 scheme/缺主机名/契约失败/探测不可达 → ENV-BLOCKED fail-closed；
+#   access_token/房间 JWT 绝不落日志/报告——livekit_probe 段只含
+#   source/ws_url/health_url/http_status（派生事实可审计）。
+
+LAN_IP = "192.168.8.3"
+FAKE_API_TOKEN = "access-token-ZX-preflight-0123456789"
+
+
+def test_ws_url_to_health_url_loopback_and_lan(vwlc):
+    """纯函数：ws→http、wss→https；保留 netloc/path，空路径补 /。"""
+    assert vwlc.ws_url_to_health_url("ws://127.0.0.1:7880") == "http://127.0.0.1:7880/"
+    assert vwlc.ws_url_to_health_url(f"ws://{LAN_IP}:7880") == f"http://{LAN_IP}:7880/"
+    assert vwlc.ws_url_to_health_url(f"wss://{LAN_IP}:7880/rtc") == f"https://{LAN_IP}:7880/rtc"
+    assert vwlc.ws_url_to_health_url("wss://lk.example.com") == "https://lk.example.com/"
+
+
+def test_ws_url_to_health_url_drops_query_and_fragment(vwlc):
+    assert vwlc.ws_url_to_health_url("ws://h.example:1700/p?x=1#frag") == "http://h.example:1700/p"
+
+
+@pytest.mark.parametrize("bad", [
+    "http://192.168.8.3:7880",  # 非 ws/wss scheme
+    "192.168.8.3:7880",         # 无 scheme
+    "",                          # 空串
+    "ws://",                     # 无主机名
+    "wss:///",                   # 无主机名（带斜杠）
+    "ftp://h/p",                 # 其他 scheme
+    "ws:/onlyone",               # 单斜杠 → netloc 为空
+])
+def test_ws_url_to_health_url_illegal_fails_closed(vwlc, bad):
+    with pytest.raises(SystemExit):
+        vwlc.ws_url_to_health_url(bad)
+
+
+def test_override_url_unset_returns_none(vwlc, monkeypatch):
+    """未设置 → None（走契约派生）——默认路径零配置即可覆盖两类拓扑。"""
+    monkeypatch.delenv(vwlc.LIVEKIT_OVERRIDE_ENV, raising=False)
+    assert vwlc.livekit_override_url() is None
+    assert vwlc.livekit_override_url({}) is None
+
+
+def test_override_url_valid_ws_wss_returned_verbatim(vwlc, monkeypatch):
+    monkeypatch.setenv(vwlc.LIVEKIT_OVERRIDE_ENV, f"ws://{LAN_IP}:7880")
+    assert vwlc.livekit_override_url() == f"ws://{LAN_IP}:7880"
+    assert vwlc.livekit_override_url(
+        {vwlc.LIVEKIT_OVERRIDE_ENV: "wss://lk.example.com/rtc"}
+    ) == "wss://lk.example.com/rtc"
+
+
+@pytest.mark.parametrize("bad", ["", " ", "http://192.168.8.3:7880",
+                                 "wss:/onlyone", "192.168.8.3:7880", "ws://"])
+def test_override_url_illegal_fails_closed(vwlc, monkeypatch, bad):
+    """显式 override 写错（空串/非法 scheme/缺主机名）→ 拒绝执行，
+    绝不静默回退契约派生路径（显式配置必须当场暴露）。"""
+    monkeypatch.setenv(vwlc.LIVEKIT_OVERRIDE_ENV, bad)
+    with pytest.raises(SystemExit):
+        vwlc.livekit_override_url()
+    with pytest.raises(SystemExit):
+        vwlc.livekit_override_url({vwlc.LIVEKIT_OVERRIDE_ENV: bad})
+
+
+def test_api_call_applies_headers_to_request(vwlc, monkeypatch):
+    """api_call 可带鉴权头（登录后的 Bearer）——只进请求，绝不落日志。"""
+    captured = {}
+
+    class _Resp:
+        status = 200
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b"{}"
+
+    def fake_urlopen(req, data=None):
+        captured["headers"] = {k.lower(): v for k, v in req.headers.items()}
+        captured["data"] = data
+        return _Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    vwlc.api_call("POST", "/api/v1/voice/token", body={"room": "room-x"},
+                  headers={"Authorization": f"Bearer {FAKE_API_TOKEN}"})
+    assert captured["headers"]["authorization"] == f"Bearer {FAKE_API_TOKEN}"
+    assert captured["headers"]["content-type"] == "application/json"
+    assert json.loads(captured["data"])["room"] == "room-x"
+
+
+def test_ensure_user_returns_access_token(vwlc, monkeypatch):
+    """登录成功 → access_token 返回调用方（只进内存）；幂等注册在前。"""
+    calls = []
+
+    def fake_api_call(method, path, body=None, headers=None):
+        calls.append((method, path))
+        if path.endswith("/login"):
+            return 200, {"access_token": FAKE_API_TOKEN}
+        return 201, {}
+
+    monkeypatch.setattr(vwlc, "api_call", fake_api_call)
+    assert vwlc.ensure_user() == FAKE_API_TOKEN
+    assert calls[0] == ("POST", "/api/v1/auth/register")
+    assert calls[1] == ("POST", "/api/v1/auth/login")
+
+
+@pytest.mark.parametrize("status,payload", [
+    (401, {"detail": "bad credentials"}),
+    (200, {}),  # 200 但无 access_token → 同样 fail-closed
+])
+def test_ensure_user_login_failure_fails_closed(vwlc, monkeypatch, status, payload):
+    monkeypatch.setattr(vwlc, "api_call",
+                        lambda method, path, body=None, headers=None: (status, payload))
+    with pytest.raises(SystemExit) as exc:
+        vwlc.ensure_user()
+    assert str(status) in str(exc.value)  # 仅状态码；响应体不回显
+
+
+def test_fetch_contract_ws_url_uses_bearer_and_room_contract(vwlc, monkeypatch):
+    """契约派生：POST /api/v1/voice/token + Bearer；room 满足业务正则。"""
+    captured = {}
+
+    def fake_api_call(method, path, body=None, headers=None):
+        captured.update(method=method, path=path, body=body, headers=headers)
+        return 200, {"ws_url": f"ws://{LAN_IP}:7880", "token": "eyJfake.payload.value"}
+
+    monkeypatch.setattr(vwlc, "api_call", fake_api_call)
+    assert vwlc.fetch_contract_ws_url(FAKE_API_TOKEN) == f"ws://{LAN_IP}:7880"
+    assert captured["method"] == "POST"
+    assert captured["path"] == "/api/v1/voice/token"
+    assert captured["headers"] == {"Authorization": f"Bearer {FAKE_API_TOKEN}"}
+    # room 满足业务契约 ^[A-Za-z0-9_-]{3,64}$（否则 API 422，探测自伤）
+    assert re.fullmatch(r"[A-Za-z0-9_-]{3,64}", captured["body"]["room"])
+    assert captured["body"]["room"].startswith("preflight-")
+    assert 0 < captured["body"]["ttl_seconds"] <= 300  # 短命 token，探测即弃
+
+
+@pytest.mark.parametrize("status,payload", [
+    (503, {"detail": "Voice requires LiveKit configuration"}),
+    (422, {"detail": "room 需为 3-64 位字母数字/-/_"}),
+    (200, {"token": "eyJx.y.z"}),  # 200 但无 ws_url
+])
+def test_fetch_contract_ws_url_failure_reports_status_only(vwlc, monkeypatch, status, payload):
+    """契约失败仅报 HTTP 状态码——响应体（含房间 JWT/服务端 detail）绝不回显。"""
+    monkeypatch.setattr(vwlc, "api_call",
+                        lambda method, path, body=None, headers=None: (status, payload))
+    with pytest.raises(SystemExit) as exc:
+        vwlc.fetch_contract_ws_url(FAKE_API_TOKEN)
+    message = str(exc.value)
+    assert str(status) in message
+    for body_fragment in ("Voice requires", "eyJ", "room 需为"):
+        assert body_fragment not in message
+
+
+def test_resolve_livekit_health_contract_derivation_lan(vwlc, monkeypatch):
+    """默认（无 override）：契约派生 LAN ws_url → 同源 http 探测。"""
+    monkeypatch.delenv(vwlc.LIVEKIT_OVERRIDE_ENV, raising=False)
+    probed = {}
+
+    def fake_api_call(method, path, body=None, headers=None):
+        return 200, {"ws_url": f"ws://{LAN_IP}:7880", "token": "eyJfake.room.jwt"}
+
+    monkeypatch.setattr(vwlc, "api_call", fake_api_call)
+    monkeypatch.setattr(vwlc, "http_status",
+                        lambda url, timeout=5.0: (probed.setdefault("url", url), 200)[1])
+    report = vwlc.resolve_livekit_health(FAKE_API_TOKEN)
+    assert report == {
+        "source": "voice-token-contract",
+        "ws_url": f"ws://{LAN_IP}:7880",
+        "health_url": f"http://{LAN_IP}:7880/",
+        "http_status": 200,
+    }
+    assert probed["url"] == f"http://{LAN_IP}:7880/"  # 探测目标 = 契约地址同源
+
+
+def test_resolve_livekit_health_contract_derivation_loopback(vwlc, monkeypatch):
+    """默认路径同码零改动覆盖 loopback 拓扑（ws_url 来自契约，非硬编码）。"""
+    monkeypatch.delenv(vwlc.LIVEKIT_OVERRIDE_ENV, raising=False)
+    monkeypatch.setattr(vwlc, "api_call",
+                        lambda method, path, body=None, headers=None:
+                        (200, {"ws_url": "ws://127.0.0.1:7880"}))
+    monkeypatch.setattr(vwlc, "http_status", lambda url, timeout=5.0: 200)
+    report = vwlc.resolve_livekit_health(FAKE_API_TOKEN)
+    assert report["health_url"] == "http://127.0.0.1:7880/"
+    assert report["source"] == "voice-token-contract"
+
+
+def test_resolve_livekit_health_override_wins_without_contract_call(vwlc, monkeypatch):
+    """显式 override 优先且不再调用契约端点（探测目标与业务契约解耦的场景）。"""
+    monkeypatch.setenv(vwlc.LIVEKIT_OVERRIDE_ENV, f"wss://{LAN_IP}:7880/rtc")
+    monkeypatch.setattr(vwlc, "api_call",
+                        lambda *a, **k: pytest.fail("override 模式不得调用契约端点"))
+    monkeypatch.setattr(vwlc, "http_status", lambda url, timeout=5.0: 200)
+    report = vwlc.resolve_livekit_health(FAKE_API_TOKEN)
+    assert report == {
+        "source": "env-override",
+        "ws_url": f"wss://{LAN_IP}:7880/rtc",
+        "health_url": f"https://{LAN_IP}:7880/rtc",
+        "http_status": 200,
+    }
+
+
+def test_resolve_livekit_health_unreachable_fails_closed(vwlc, monkeypatch):
+    """派生地址探测不可达 → ENV-BLOCKED（禁止自行启动/重启服务）。"""
+    monkeypatch.setenv(vwlc.LIVEKIT_OVERRIDE_ENV, f"ws://{LAN_IP}:7880")
+    monkeypatch.setattr(vwlc, "http_status", lambda url, timeout=5.0: None)
+    with pytest.raises(SystemExit) as exc:
+        vwlc.resolve_livekit_health(FAKE_API_TOKEN)
+    message = str(exc.value)
+    assert "ENV-BLOCKED" in message and f"http://{LAN_IP}:7880/" in message
+    assert FAKE_API_TOKEN not in message
+
+
+def test_livekit_probe_report_never_leaks_credentials(vwlc, monkeypatch):
+    """livekit_probe 段只含派生事实：无 JWT 形态、无注入 token 值、无鉴权头字样。"""
+    monkeypatch.delenv(vwlc.LIVEKIT_OVERRIDE_ENV, raising=False)
+
+    def fake_api_call(method, path, body=None, headers=None):
+        # 模拟真实响应：含房间 JWT 与 token 字段（泄漏面最大化的假想载荷）
+        return 200, {
+            "token": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ4In0."
+                     "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c",
+            "ws_url": f"ws://{LAN_IP}:7880",
+        }
+
+    monkeypatch.setattr(vwlc, "api_call", fake_api_call)
+    monkeypatch.setattr(vwlc, "http_status", lambda url, timeout=5.0: 200)
+    report = vwlc.resolve_livekit_health(FAKE_API_TOKEN)
+    blob = json.dumps(report, ensure_ascii=False)
+    assert vwlc.JWT_RE.search(blob) is None
+    assert FAKE_API_TOKEN not in blob
+    assert "Authorization" not in blob and "Bearer" not in blob
+    assert set(report) == {"source", "ws_url", "health_url", "http_status"}
+
+
+def test_source_no_hardcoded_livekit_signaling_port():
+    """硬编码信令端口必须绝迹（含 docstring）：探测地址一律由契约/override 派生，
+    loopback 与 LAN 两类拓扑零改动覆盖。"""
+    assert "7880" not in SOURCE
+
+
+def test_source_preflight_order_contract():
+    """main 顺序契约：preflight（API 面）→ 登录取 token → LiveKit 派生探测——
+    全部在 ENV-BLOCKED fail-closed（return 2）的 try 块内。"""
+    assert SOURCE.index("        preflight()") < SOURCE.index("        api_token = ensure_user()")
+    assert SOURCE.index("        api_token = ensure_user()") < SOURCE.index(
+        "        livekit_probe = resolve_livekit_health(api_token)")
+
+
+def test_source_results_records_livekit_probe_section():
+    """results.json 必须并入 livekit_probe 段（探测来源/地址可审计）。"""
+    assert 'results["livekit_probe"] = livekit_probe' in SOURCE
+    assert "resolve_livekit_health(api_token)" in SOURCE

@@ -1,7 +1,8 @@
 """M14-35 Web 真实 LiveKit 客户端连接验收（Playwright Chromium + 复用生产栈）。
 
 拓扑（不重启任何既有服务）：
-    - API(:8000) / LiveKit(:7880) / DB：复用当前运行的生产容器，只读探测 +
+    - API(:8000) / LiveKit(信令地址由契约派生，见「LiveKit 信令面探测」) /
+      DB：复用当前运行的生产容器，只读探测 +
       合法 API 写入（注册/登录验收用户、签发房间 token——均为业务端点）；
     - web：本脚本在空闲端口启动【本分支构建】的 Next 服务（构建期注入
       NEXT_PUBLIC_API_BASE_URL="" + AIOS_ACCEPTANCE_API_PROXY=<api>），
@@ -31,6 +32,22 @@ Popen 对象、结束时只 terminate 包装器 PID，Windows 上进程终止不
     results.json 的 browser 段记录模式与 Chromium argv 摘要（可审计，
     不含任何凭据）。
 
+LiveKit 信令面探测（M14-38，契约派生 + 显式 override）：
+    旧版 preflight 硬编码探测本机 loopback 信令端口——LAN cutover（媒体面
+    绑本机 LAN IP）拓扑下探测目标错误。现改为：
+    - 默认（AIOS_PUBLIC_LIVEKIT_URL 未设置）：登录验收用户后请求
+      POST /api/v1/voice/token，以响应 ws_url 派生同源 http/https 健康 URL
+      （与浏览器实际拿到的地址同源——探测即业务契约本身，不重造第二事实
+      源）；loopback 拓扑派生本机 loopback 信令地址、LAN cutover 拓扑派生
+      LAN 信令地址（地址/端口全部来自部署事实），两类拓扑零改动覆盖；
+    - 显式 override（AIOS_PUBLIC_LIVEKIT_URL 已设置）：严格校验（仅 ws/wss
+      + 非空主机名）后采用，优先于契约派生；空串/非法 scheme/缺主机名 →
+      ENV-BLOCKED fail-closed（显式配置写错当场暴露，绝不静默回退）；
+    - 派生/override 后探测不可达 → ENV-BLOCKED（禁止自行启动/重启服务）；
+    - access_token 与房间 JWT 只进内存与请求头，绝不落日志/报告/DOM；
+      results.json 的 livekit_probe 段只记 source/ws_url/health_url/
+      http_status（派生事实可审计，无任何凭据）。
+
 覆盖（真实浏览器行为断言）：
     1 登录后打开 /voice，出现 LiveKit 连接检测卡片；
     2 点击开始检测：token/connect/data/cleanup 四步必须 passed；
@@ -55,6 +72,10 @@ Popen 对象、结束时只 terminate 包装器 PID，Windows 上进程终止不
     AIOS_LIVEKIT_BROWSER_LOOPBACK  严格开关 0|1：默认（未设置/0）为 default
                     模式（绝不注入 loopback flag）；1 为 controlled 受控
                     模式；任何其他值 ENV-BLOCKED fail-closed（M14-37）
+    AIOS_PUBLIC_LIVEKIT_URL  LiveKit 信令探测显式 override（M14-38）：未
+                    设置 = 由 POST /api/v1/voice/token 响应 ws_url 契约派生；
+                    设置 = 严格校验（ws/wss + 非空主机名）后采用；空串/
+                    非法值 ENV-BLOCKED fail-closed
 """
 from __future__ import annotations
 
@@ -68,6 +89,7 @@ import subprocess
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from collections.abc import Mapping
 from pathlib import Path
@@ -160,24 +182,29 @@ def http_status(url: str, timeout: float = 5.0) -> int | None:
 
 
 def preflight() -> None:
+    """API 面前置探测（只读）。
+
+    M14-38 起 LiveKit 信令面探测不再硬编码 loopback 地址——由
+    resolve_livekit_health 以契约/override 派生地址单独探测（两类拓扑零改动）。
+    """
     status = http_status(f"{API_BASE}/health")
     if status is None:
         raise SystemExit("ENV-BLOCKED: 生产 API 不可达（禁止自行启动/重启服务，fail-closed）")
     check("env: 生产 API 可达", True, f"/health -> {status}")
-    lk = http_status("http://127.0.0.1:7880/")
-    if lk is None:
-        raise SystemExit("ENV-BLOCKED: LiveKit 7880 不可达（禁止自行启动/重启服务，fail-closed）")
-    check("env: LiveKit 信令端口可达", True, f"HTTP {lk}")
 
 
 # --- 验收用户（走业务端点，幂等） ---
 
 
-def api_call(method: str, path: str, body: dict | None = None):
+def api_call(method: str, path: str, body: dict | None = None,
+             headers: dict[str, str] | None = None):
+    """业务端点调用（可带请求头——如登录后的 Bearer；头值绝不落日志/报告）。"""
     req = urllib.request.Request(API_BASE + path, method=method)
     data = json.dumps(body).encode() if body is not None else None
     if data:
         req.add_header("Content-Type", "application/json")
+    for key, value in (headers or {}).items():
+        req.add_header(key, value)
     try:
         with urllib.request.urlopen(req, data) as response:
             payload = response.read()
@@ -187,12 +214,116 @@ def api_call(method: str, path: str, body: dict | None = None):
         return error.code, json.loads(payload) if payload else {}
 
 
-def ensure_user() -> None:
+def ensure_user() -> str:
+    """注册/登录验收用户（幂等）→ access_token（M14-38）。
+
+    token 只留在内存供后续请求头使用，绝不落日志/报告/DOM；失败仅报
+    HTTP 状态码（失败响应体可能含敏感上下文，不回显）。
+    """
     api_call("POST", "/api/v1/auth/register", body={"username": LEARNER, "password": PASSWORD})
-    status, _ = api_call("POST", "/api/v1/auth/login", body={"username": LEARNER, "password": PASSWORD})
-    if status != 200:
-        raise SystemExit(f"ENV-BLOCKED: 验收用户登录失败（HTTP {status}）")
+    status, payload = api_call("POST", "/api/v1/auth/login",
+                               body={"username": LEARNER, "password": PASSWORD})
+    token = payload.get("access_token") if isinstance(payload, dict) else None
+    if status != 200 or not token:
+        raise SystemExit(f"ENV-BLOCKED: 验收用户登录失败（HTTP {status}，token 缺失）")
     check("seed: 验收用户可登录", True)
+    return str(token)
+
+
+# --- LiveKit 信令面探测（M14-38：契约派生优先，显式 override 严格校验） ---
+
+#: 显式 override env：设置时覆盖契约派生（用于探测目标与业务契约解耦的拓扑）。
+LIVEKIT_OVERRIDE_ENV = "AIOS_PUBLIC_LIVEKIT_URL"
+
+_WS_SCHEMES = ("ws", "wss")
+
+
+def _validated_ws_url(raw: str, origin: str) -> str:
+    """ws/wss + 非空主机名严格校验；失败 → ENV-BLOCKED（fail-closed）。
+
+    URL 本身不是凭据，错误消息可含解析结果便于定位配置错误。
+    """
+    parsed = urllib.parse.urlparse(raw)
+    if parsed.scheme not in _WS_SCHEMES or not parsed.hostname:
+        raise SystemExit(
+            f"ENV-BLOCKED: {origin} 非法（仅接受 ws://|wss:// + 非空主机名，"
+            f"收到 scheme={parsed.scheme!r} host={parsed.hostname!r}——fail-closed）"
+        )
+    return raw
+
+
+def livekit_override_url(env: Mapping[str, str] | None = None) -> str | None:
+    """解析 AIOS_PUBLIC_LIVEKIT_URL 显式 override。
+
+    未设置 → None（走 voice/token 契约派生）；设置 → 严格校验后返回原值；
+    空串/非法 scheme/缺主机名 → ENV-BLOCKED（绝不静默回退派生路径——显式
+    配置写错必须当场暴露）。与 LOOPBACK 开关同口径：不 strip，值必须精确。
+    """
+    source: Mapping[str, str] = os.environ if env is None else env
+    raw = source.get(LIVEKIT_OVERRIDE_ENV)
+    if raw is None:
+        return None
+    if not raw:
+        raise SystemExit(
+            f"ENV-BLOCKED: {LIVEKIT_OVERRIDE_ENV} 显式设置为空——请移除该变量"
+            "（走契约派生）或填合法 URL（fail-closed）"
+        )
+    return _validated_ws_url(raw, LIVEKIT_OVERRIDE_ENV)
+
+
+def ws_url_to_health_url(ws_url: str) -> str:
+    """LiveKit 信令 ws/wss URL → 同源 http/https 健康探测 URL（纯函数）。
+
+    ws→http、wss→https；保留 netloc 与路径（无路径取 /），丢弃 query/
+    fragment；非 ws/wss 或缺主机名 → ENV-BLOCKED。
+    """
+    parsed = urllib.parse.urlparse(_validated_ws_url(ws_url, "LiveKit ws_url"))
+    scheme = "https" if parsed.scheme == "wss" else "http"
+    return f"{scheme}://{parsed.netloc}{parsed.path or '/'}"
+
+
+def fetch_contract_ws_url(api_token: str) -> str:
+    """经真实业务契约派生 LiveKit 信令地址：POST /api/v1/voice/token → ws_url。
+
+    探测即浏览器同款契约（浏览器拿什么地址，探测就打什么地址）；api_token
+    只进本次请求头；失败仅报 HTTP 状态码，绝不回显响应体（内含房间 JWT）。
+    """
+    room = f"preflight-{int(time.time())}"  # 满足 ^[A-Za-z0-9_-]{3,64}$
+    status, payload = api_call(
+        "POST", "/api/v1/voice/token",
+        body={"room": room, "ttl_seconds": 60},
+        headers={"Authorization": f"Bearer {api_token}"},
+    )
+    ws_url = payload.get("ws_url") if isinstance(payload, dict) else None
+    if status != 200 or not ws_url:
+        raise SystemExit(
+            f"ENV-BLOCKED: 语音 token 契约不可用（HTTP {status}，ws_url 缺失"
+            "——LiveKit 未配置或 API 异常，fail-closed）"
+        )
+    return str(ws_url)
+
+
+def resolve_livekit_health(api_token: str) -> dict:
+    """LiveKit 信令面探测编排（M14-38）：显式 override 优先，默认契约派生。
+
+    返回 results.json 的 livekit_probe 段：source/ws_url/health_url/
+    http_status——派生事实可审计，无任何凭据；探测不可达 → ENV-BLOCKED
+    （禁止自行启动/重启服务，fail-closed）。
+    """
+    override = livekit_override_url()
+    if override is not None:
+        ws_url, source = override, "env-override"
+    else:
+        ws_url, source = fetch_contract_ws_url(api_token), "voice-token-contract"
+    health_url = ws_url_to_health_url(ws_url)
+    status = http_status(health_url)
+    if status is None:
+        raise SystemExit(
+            f"ENV-BLOCKED: LiveKit 信令端口不可达（{health_url}，来源={source}；"
+            "禁止自行启动/重启服务，fail-closed）"
+        )
+    check(f"env: LiveKit 信令端口可达（来源={source}）", True, f"{health_url} -> HTTP {status}")
+    return {"source": source, "ws_url": ws_url, "health_url": health_url, "http_status": status}
 
 
 # --- 本分支 web：构建 + 空闲端口自起自收 ---
@@ -435,10 +566,12 @@ def main() -> int:
     out_dir = Path(os.environ.get("AIOS_OUT", REPO_ROOT / ".verify" / "m14-35-web-livekit-client"))
     shots = out_dir / "screenshots"
     shots.mkdir(parents=True, exist_ok=True)
+    livekit_probe: dict = {}
     try:
         loopback = browser_loopback_enabled()  # M14-37 严格开关（fail-closed 入口）
         preflight()
-        ensure_user()
+        api_token = ensure_user()  # access_token 只进内存（M14-38）
+        livekit_probe = resolve_livekit_health(api_token)
     except SystemExit as cause:
         print(cause, file=sys.stderr)
         return 2
@@ -464,6 +597,7 @@ def main() -> int:
             stop_process_tree(proc)
     results["verdict"] = verdict
     results["browser"] = browser_report(loopback)  # 模式可审计（M14-37）
+    results["livekit_probe"] = livekit_probe  # 探测来源/地址可审计（M14-38，无凭据）
     results["checks_passed"] = CHECKS
     (out_dir / "results.json").write_text(
         json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8"

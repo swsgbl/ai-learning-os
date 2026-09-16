@@ -70,6 +70,18 @@ EXPECTED_STACK_SERVICES = frozenset({"postgres", "redis", "minio", "api", "web",
 #: M14-09：AIOS_WEB_IMAGE_TAG 独立成键——web 镜像 tag 不再与 api 共用
 #: AIOS_IMAGE_TAG（同 tag 发布 = env 文件里两键显式同值；Web-only 升级 =
 #: 仅改 AIOS_WEB_IMAGE_TAG）。在线事实取自 web 容器镜像（collect_live_pins）。
+#: M14-38 拓扑键（LAN cutover 防漂移）：信令/媒体面绑定与浏览器可达 URL 纳入
+#: pin——否则恢复路径会以 env 缺省把拓扑静默重建回 loopback（compose 中
+#: AIOS_LIVEKIT_BIND_IP 缺省回落 AIOS_BIND_IP→127.0.0.1）。在线事实：
+#: AIOS_BIND_IP/AIOS_PUBLIC_LIVEKIT_URL 取自 api 容器 env（HOST_BIND_IP=/
+#: PUBLIC_LIVEKIT_URL=；PUBLIC 为空串也是事实 = 容器未注入公开地址 → 与 env
+#: 非空值不等 = 漂移可见）；AIOS_LIVEKIT_BIND_IP 取自 `docker port <livekit>
+#: 7880` 的宿主绑定段。loopback 部署同样显式填 127.0.0.1 / ws://127.0.0.1:7880。
+TOPOLOGY_PIN_KEYS: tuple[str, ...] = (
+    "AIOS_BIND_IP",
+    "AIOS_LIVEKIT_BIND_IP",
+    "AIOS_PUBLIC_LIVEKIT_URL",
+)
 PIN_KEYS: tuple[str, ...] = (
     "AIOS_IMAGE_TAG",
     "AIOS_WEB_IMAGE_TAG",
@@ -77,6 +89,7 @@ PIN_KEYS: tuple[str, ...] = (
     "AIOS_WEB_PORT",
     "AIOS_AUTH_SECRET",
     "AIOS_LIVEKIT_API_SECRET",
+    *TOPOLOGY_PIN_KEYS,
 )
 #: env 文件键 → 在线容器事实的提取方式（inspect format 见 collect_live_pins）
 ENGINE_POLL_SECONDS = 5.0
@@ -247,6 +260,12 @@ def collect_live_pins(runner: Runner, project: str) -> dict[str, str] | None:
             live["AIOS_AUTH_SECRET"] = line.partition("=")[2]
         elif line.startswith("LIVEKIT_API_SECRET="):
             live["AIOS_LIVEKIT_API_SECRET"] = line.partition("=")[2]
+        # M14-38 拓扑事实（api 容器 env）：HOST_BIND_IP= 即 AIOS_BIND_IP 插值；
+        # PUBLIC_LIVEKIT_URL= 空串也是事实（容器未注入公开地址 → 与 env 非空值不等）
+        elif line.startswith("HOST_BIND_IP="):
+            live["AIOS_BIND_IP"] = line.partition("=")[2]
+        elif line.startswith("PUBLIC_LIVEKIT_URL="):
+            live["AIOS_PUBLIC_LIVEKIT_URL"] = line.partition("=")[2]
     image_result = runner.run(
         ["docker", "inspect", "--format", "{{.Config.Image}}", api], timeout=30.0
     )
@@ -264,6 +283,15 @@ def collect_live_pins(runner: Runner, project: str) -> dict[str, str] | None:
     if port_result.returncode == 0 and port_result.stdout.strip():
         # 输出形如 127.0.0.1:3011（多行时取首个）
         live["AIOS_WEB_PORT"] = port_result.stdout.splitlines()[0].strip().rpartition(":")[2]
+    # M14-38：livekit 信令端口的宿主绑定段（127.0.0.1:7880 / <LAN-IP>:7880）
+    # 即媒体面拓扑事实——与 web 端口提取方向相反（取冒号前的宿主地址段）
+    livekit_port_result = runner.run(
+        ["docker", "port", container_name(project, "livekit"), "7880"], timeout=30.0
+    )
+    if livekit_port_result.returncode == 0 and livekit_port_result.stdout.strip():
+        live["AIOS_LIVEKIT_BIND_IP"] = (
+            livekit_port_result.stdout.splitlines()[0].strip().rpartition(":")[0]
+        )
     return live
 
 
@@ -288,9 +316,11 @@ def placeholder_pin_keys(values: dict[str, str]) -> tuple[str, ...]:
 def check_pins(env_path: Path, runner: Runner, project: str, log: RunLog) -> PinReport:
     """env 文件与在线容器的 pin 一致性核查（输出仅键名与布尔，绝不输出值）。
 
-    六键一致性 fail-closed（M14-09 增 AIOS_WEB_IMAGE_TAG）：在线容器存在时，任一 PIN_KEY 在线事实缺失
-    （inspect/port 探测不完整）或与 env 不等 → ok=False（supervisor 评审
-    修正：缺事实不得按「跳过」放行）；模板占位值恒拒绝（含无在线容器路径）。
+    九键一致性 fail-closed（M14-09 增 AIOS_WEB_IMAGE_TAG；M14-38 增拓扑键
+    AIOS_BIND_IP/AIOS_LIVEKIT_BIND_IP/AIOS_PUBLIC_LIVEKIT_URL）：在线容器存在时，
+    任一 PIN_KEY 在线事实缺失（inspect/port 探测不完整）或与 env 不等 →
+    ok=False（supervisor 评审修正：缺事实不得按「跳过」放行）；模板占位值
+    恒拒绝（含无在线容器路径）。
     """
     env_values = parse_env_file(env_path)
     if not env_path.is_file():
@@ -310,18 +340,18 @@ def check_pins(env_path: Path, runner: Runner, project: str, log: RunLog) -> Pin
         report = PinReport(ok=not missing and not placeholders, env_present=True,
                            missing_keys=missing, placeholder_keys=placeholders, live_present=False)
         if report.ok:
-            log.say("pin: OK（env 六键齐全且无占位值；无在线容器可比对）")
+            log.say("pin: OK（env 九键齐全且无占位值；无在线容器可比对）")
         return report
     missing_live = tuple(key for key in PIN_KEYS if live.get(key) is None)
     if missing_live:
-        log.say(f"pin: 在线容器事实缺失键: {', '.join(missing_live)}——六键一致性不可证")
+        log.say(f"pin: 在线容器事实缺失键: {', '.join(missing_live)}——九键一致性不可证")
         log.say("      enforce 将拒绝执行 up（inspect/port 探测不完整时不得按跳过放行）")
     mismatched = tuple(
         key for key in PIN_KEYS
         if key not in missing_live and env_values.get(key) != live.get(key)
     )
     matched = [key for key in PIN_KEYS if key not in mismatched and key not in missing_live]
-    log.say(f"pin: 一致键 {len(matched)}/{len(PIN_KEYS)}（值不回显）；比对对象: api/web 容器")
+    log.say(f"pin: 一致键 {len(matched)}/{len(PIN_KEYS)}（值不回显）；比对对象: api/web/livekit 容器")
     if mismatched:
         # 仅报键名：值差异（密钥轮换/漂移）用 up 重建是危险的，必须可见拒绝
         log.say(f"pin: 不一致键: {', '.join(mismatched)}——与在线容器不符（值不回显）")
@@ -330,7 +360,7 @@ def check_pins(env_path: Path, runner: Runner, project: str, log: RunLog) -> Pin
                        env_present=True, missing_keys=missing, mismatched_keys=mismatched,
                        missing_live_keys=missing_live, placeholder_keys=placeholders)
     if report.ok:
-        log.say("pin: OK（六键齐全：env 无缺键/占位，且与在线容器逐键一致）")
+        log.say("pin: OK（九键齐全：env 无缺键/占位，且与在线容器逐键一致）")
     return report
 
 
