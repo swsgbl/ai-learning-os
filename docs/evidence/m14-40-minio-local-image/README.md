@@ -30,9 +30,12 @@ python tools/ops/minio_image_adoption.py preflight --execute --confirm "EXECUTE 
   代码四处交叉锁定并与 compose `image:` 锚点契约测试互锁）——恰好一次
   `docker build`（infra/minio），零 compose 项目操作。
 - 可选环境变量 `AIOS_MINIO_BUILD_HTTPS_PROXY`：仅接受
-  socks5h/socks5/http/https + host[:port]，端口语义校验 1–65535，且只向
-  构建传入 Docker 预定义 `HTTPS_PROXY` build arg——零 GOPROXY 改动、零
-  Dockerfile 改动、零 pin 改动。
+  socks5h/socks5/http/https + host[:port]，端口语义校验 1–65535，且向
+  构建传入 Docker 预定义 `HTTPS_PROXY` + `https_proxy` **两个** build arg
+  （确定性顺序：先大写后小写、同值各恰一次——修正轮 3：BuildKit 可保留/
+  注入小写 `https_proxy`，Go `ProxyFromEnvironment` 可优先小写，单写大写
+  会让宿主 loopback 死代理胜出）——零 GOPROXY 改动、零 Dockerfile 改动、
+  零 pin 改动。
 
 ### smoke（一次性冒烟）
 
@@ -166,6 +169,51 @@ apk/curl/git/wget/GOPROXY 契约。
 preflight、生产采纳、push/PR/CI 均待执行**——修正仅为代码级 + 契约锁定，
 不宣称修正后构建/冒烟已通过。
 
+## 修正回合 3（2026-09-17，小写 https_proxy 双写覆盖；零 Docker/零生产操作）
+
+supervisor 用修正回合 2 的代理感知 fetcher 重建镜像，两次失败于新源码
+fetch RUN（如实记录）。在已接受提交 eab02cc 之上追加第四个 local commit
+（本 worktree，不 push）。
+
+**失败与诊断证据**：
+
+- 两份失败报告（gitignored）：`build-20260916-171833` / `build-20260916-
+  171935`（`.verify/artifacts/m14-40-minio-image-adoption/`），失败点为新
+  源码 fetch RUN；
+- plain-log 诊断：`fetch: ... container connecting via static system HTTPS
+  proxy http://127.0.0.1:7892 ... dial tcp 127.0.0.1:7892: connectex: ...
+  refused`——fetcher 读到的是宿主残留的 host-loopback 死代理（宿主上
+  7892 不对构建容器可达），不是操作者显式指定的代理；
+- 诊断性 pinned-builder RUN **同时**传 `--build-arg
+  HTTPS_PROXY=http://http.docker.internal:3128` 与 `--build-arg
+  https_proxy=http://http.docker.internal:3128`：两个 env 值均正确注入。
+  根因：工具此前只传 Docker 预定义大写 `HTTPS_PROXY`，而 BuildKit 可
+  保留/注入小写 `https_proxy`，Go `ProxyFromEnvironment` 可优先小写 →
+  宿主 loopback 死代理胜出，显式代理被架空。
+
+**修正**（`tools/ops/minio_image_adoption.py`，唯一行为面）：当
+`AIOS_MINIO_BUILD_HTTPS_PROXY` 提供时，build argv 从恰一个
+`--build-arg HTTPS_PROXY=<值>` 改为确定性双写——
+`--build-arg HTTPS_PROXY=<值> --build-arg https_proxy=<值>`（先大写后
+小写、同值各恰一次）；argv 白名单同步收紧为该唯一形态（只写大写/只写
+小写/顺序颠倒/单侧值漂移/同大小写重复一律拒绝），未设置 env 时零代理
+arg 形态不变。`services/api/tests/test_minio_image_adoption.py` 契约同步
+（125→**127 项**）：run_build 精确 argv 断言改双写 + 新增小写覆盖真实
+失败回归（含门处拒绝只写大写的旧形态）。
+
+修正回合 3 验证（本 worktree 真实执行，零 Docker/零生产操作）：
+
+- 聚焦采纳套件 `test_minio_image_adoption.py`：**127 passed**；
+- selfbuild 套件 `test_minio_selfbuild.py`：**24 passed**（无改动）；
+- 邻居复验（selfbuild + production_recovery + compose_profiles +
+  backup_drill）：**94 passed / 3 skipped**；
+- `ruff check` / `py_compile`（改动代码文件）、`git diff --check`、diff
+  secret 模式扫描——全部通过。
+
+修正后状态（诚实边界）：supervisor **以双写代理重建镜像、重跑 smoke、
+真实只读 preflight、生产采纳、push/PR/CI 均待执行**——修正仅为工具
+argv 构造 + 白名单 + 契约锁定，不宣称修正后真实构建已通过。
+
 ## 验证（Stage 1/1b + Stage 2 复验）
 
 - Stage 1 全量 services/api：**3045 passed / 33 skipped**；
@@ -186,6 +234,8 @@ preflight、生产采纳、push/PR/CI 均待执行**——修正仅为代码级 
 - supervisor 代理构建已成功；smoke 已暴露版本元数据缺陷且清理成功（见
   上「supervisor 代理构建与冒烟结果」）；第一轮修正后的三次重建均败于
   BuildKit RUN 层 DNS / BusyBox wget 无代理支持（见上「修正回合 2」）；
-  第二轮修正（Go fetcher 代理感知）后的**重建镜像、重跑 smoke、真实
-  preflight、push / PR / CI 未执行**——均为 supervisor 后续动作，两轮
-  修正回合零生产操作。
+  第二轮修正（Go fetcher 代理感知）后的两次重建又败于小写 `https_proxy`
+  宿主残留覆盖显式代理（见上「修正回合 3」）；第三轮修正（HTTPS_PROXY +
+  https_proxy 双写覆盖）后的**重建镜像、重跑 smoke、真实 preflight、
+  push / PR / CI 未执行**——均为 supervisor 后续动作，三轮修正回合零
+  生产操作。

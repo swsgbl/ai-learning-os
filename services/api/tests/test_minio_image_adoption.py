@@ -262,12 +262,18 @@ def test_invalid_project_name_rejected(tmp_path: Path) -> None:
      "--entrypoint", "/bin/ls", mia.SELF_IMAGE_REF, "-lan", "/probe", "-laR"),
     ("docker", "run", "--rm", "--network", "none", "-v", f"{PROD_VOLUME}:/probe:ro",
      "--entrypoint", "/bin/du", mia.SELF_IMAGE_REF, "-sh", "/probe", "/other"),
-    # R1-6：build 代理形态——surface 未带代理值 / 值不一致 / 值形态非法
+    # R1-6：build 代理形态——大小写双写但 surface 未带代理值（surface 敏感
+    # 拒绝面见下方专测）；只写大写的旧形态恒拒（修正轮 3 回归）
+    ("docker", "build", "-t", mia.SELF_IMAGE_REF,
+     "--build-arg", "HTTPS_PROXY=socks5h://host.docker.internal:10808",
+     "--build-arg", "https_proxy=socks5h://host.docker.internal:10808",
+     str(mia.BUILD_CONTEXT)),
+    ("docker", "build", "-t", mia.SELF_IMAGE_REF,
+     "--build-arg", "HTTPS_PROXY=evil.example:1080",
+     "--build-arg", "https_proxy=evil.example:1080", str(mia.BUILD_CONTEXT)),
     ("docker", "build", "-t", mia.SELF_IMAGE_REF,
      "--build-arg", "HTTPS_PROXY=socks5h://host.docker.internal:10808",
      str(mia.BUILD_CONTEXT)),
-    ("docker", "build", "-t", mia.SELF_IMAGE_REF,
-     "--build-arg", "HTTPS_PROXY=evil.example:1080", str(mia.BUILD_CONTEXT)),
     ("docker", "build", "-t", mia.SELF_IMAGE_REF,
      "--build-arg", "GOPROXY=direct", str(mia.BUILD_CONTEXT)),
 ])
@@ -322,14 +328,35 @@ def test_gate_accepts_recursive_census_helper_shape() -> None:
 def test_gate_build_proxy_shape_only_with_matching_surface_value() -> None:
     proxy = "socks5h://host.docker.internal:10808"
     argv = ("docker", "build", "-t", mia.SELF_IMAGE_REF,
-            "--build-arg", f"HTTPS_PROXY={proxy}", str(mia.BUILD_CONTEXT))
-    # surface 携带同一值 → 唯一合法代理形态
+            "--build-arg", f"HTTPS_PROXY={proxy}",
+            "--build-arg", f"https_proxy={proxy}", str(mia.BUILD_CONTEXT))
+    # surface 携带同一值 → 唯一合法代理形态（大小写双写、先大写后小写）
     assert mia.is_allowed_docker_argv(argv, mia.Surface(project=PROJECT,
                                                         build_https_proxy=proxy))
     # surface 无代理值 / 值不同 → 拒绝
     assert not mia.is_allowed_docker_argv(argv, make_surface())
     assert not mia.is_allowed_docker_argv(argv, mia.Surface(project=PROJECT,
                                                             build_https_proxy="http://x:1"))
+    # 修正轮 3：只写大写 / 只写小写 / 顺序颠倒 / 单侧值漂移 / 同大小写重复
+    # —— 即便 surface 携带同一值也一律拒绝（两个预定义 arg 各恰一次、同值、
+    # 先大写后小写，缺任一即让 BuildKit 保留的小写 https_proxy 胜出）
+    surface = mia.Surface(project=PROJECT, build_https_proxy=proxy)
+    for drift in (
+        ("docker", "build", "-t", mia.SELF_IMAGE_REF,
+         "--build-arg", f"HTTPS_PROXY={proxy}", str(mia.BUILD_CONTEXT)),
+        ("docker", "build", "-t", mia.SELF_IMAGE_REF,
+         "--build-arg", f"https_proxy={proxy}", str(mia.BUILD_CONTEXT)),
+        ("docker", "build", "-t", mia.SELF_IMAGE_REF,
+         "--build-arg", f"https_proxy={proxy}",
+         "--build-arg", f"HTTPS_PROXY={proxy}", str(mia.BUILD_CONTEXT)),
+        ("docker", "build", "-t", mia.SELF_IMAGE_REF,
+         "--build-arg", f"HTTPS_PROXY={proxy}",
+         "--build-arg", "https_proxy=http://other:1", str(mia.BUILD_CONTEXT)),
+        ("docker", "build", "-t", mia.SELF_IMAGE_REF,
+         "--build-arg", f"HTTPS_PROXY={proxy}",
+         "--build-arg", f"HTTPS_PROXY={proxy}", str(mia.BUILD_CONTEXT)),
+    ):
+        assert not mia.is_allowed_docker_argv(drift, surface)
 
 
 def test_gate_runner_raises_before_execution() -> None:
@@ -391,16 +418,26 @@ def test_build_fails_closed_when_post_build_inspect_unusable(inspect_result) -> 
     assert facts["image_id"] is None
 
 
-def test_build_passes_https_proxy_only_as_predefined_build_arg() -> None:
+def test_build_passes_explicit_proxy_as_both_case_predefined_build_args() -> None:
+    """显式代理值 = 恰两个 Docker 预定义 build arg（HTTPS_PROXY + https_proxy）。
+
+    M14-40 修正轮 3：单写大写时 BuildKit 可保留/注入小写 ``https_proxy``
+    （实测保留宿主 loopback 死代理 http://127.0.0.1:7892），而 Go
+    ``ProxyFromEnvironment`` 可优先小写 → 死代理胜出。契约：双写同值、
+    先大写后小写、各恰一次。
+    """
     proxy = "socks5h://host.docker.internal:10808"
     runner = FakeRunner(default_handler)
     facts = mia.run_build(runner, https_proxy=proxy)
     assert facts["ok"] is True
     build_argv = runner.calls[0]
-    # 唯一代理形态：-t 锚点 + 恰一个 --build-arg HTTPS_PROXY=<值> + context
+    # 唯一代理形态：-t 锚点 + 恰两个 --build-arg（先大写后小写、同值）+ context
     assert build_argv == ("docker", "build", "-t", mia.SELF_IMAGE_REF,
                           "--build-arg", f"HTTPS_PROXY={proxy}",
+                          "--build-arg", f"https_proxy={proxy}",
                           str(mia.BUILD_CONTEXT))
+    assert build_argv.count("--build-arg") == 2
+    assert build_argv.index(f"HTTPS_PROXY={proxy}") < build_argv.index(f"https_proxy={proxy}")
     # GOPROXY 不受影响；代理值不入 facts
     assert "GOPROXY" not in " ".join(build_argv)
     assert proxy not in json.dumps(facts)
@@ -412,6 +449,32 @@ def test_build_without_proxy_keeps_default_shape() -> None:
     assert facts["ok"] is True
     assert runner.calls[0] == ("docker", "build", "-t", mia.SELF_IMAGE_REF,
                                str(mia.BUILD_CONTEXT))
+
+
+def test_build_proxy_covers_lowercase_env_override_regression() -> None:
+    """修正轮 3 真实失败回归：小写 https_proxy 必须被显式值双写覆盖。
+
+    两次真实重建（build-20260916-171833/-171935）败于新源码 fetch RUN：
+    plain-log ``dial tcp 127.0.0.1:7892: connectex: ... refused``——工具只传
+    大写 HTTPS_PROXY 时，BuildKit 仍保留/注入宿主小写 https_proxy（死
+    host-loopback 代理），Go ``ProxyFromEnvironment`` 可优先小写 → 死代理
+    胜出。诊断性 pinned-builder RUN 同时传
+    HTTPS_PROXY=http://http.docker.internal:3128 与
+    https_proxy=http://http.docker.internal:3128 证实两 env 值均可控注入。
+    契约：run_build 生成的 argv 恒为大小写双写同值（Go fetcher 读到的
+    ProxyFromEnvironment 环境即显式代理，不再是宿主残留）。
+    """
+    proxy = "http://http.docker.internal:3128"
+    runner = FakeRunner(default_handler)
+    assert mia.run_build(runner, https_proxy=proxy)["ok"] is True
+    argv = runner.calls[0]
+    assert argv.count(f"HTTPS_PROXY={proxy}") == 1
+    assert argv.count(f"https_proxy={proxy}") == 1
+    # 旧形态（只写大写）在门处即拒——即使 surface 携带同一值
+    legacy = ("docker", "build", "-t", mia.SELF_IMAGE_REF,
+              "--build-arg", f"HTTPS_PROXY={proxy}", str(mia.BUILD_CONTEXT))
+    assert not mia.is_allowed_docker_argv(legacy, mia.Surface(project=PROJECT,
+                                                              build_https_proxy=proxy))
 
 
 @pytest.mark.parametrize("value", [

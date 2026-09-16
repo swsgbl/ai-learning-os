@@ -11,8 +11,11 @@ M14-39 留下的本机地面，三模式：
 - **build**：只构建 compose 锚定的那一个镜像（``docker build -t <锚点>
   infra/minio``——纯 docker build，零 compose 操作、零生产触碰）。可选
   ``AIOS_MINIO_BUILD_HTTPS_PROXY``（操作者显式提供，严格 URL 形态）：值仅
-  作为 Docker 预定义 ``HTTPS_PROXY`` build arg 传入（GOPROXY/Dockerfile/
-  镜像 pin/报告日志均不变），未设置时默认无代理形态不变；
+  作为 Docker 预定义 ``HTTPS_PROXY`` + ``https_proxy`` 两个 build arg 传入
+  （大小写双写——M14-40 修正轮 3：BuildKit 可保留/注入小写 ``https_proxy``，
+  而 Go ``ProxyFromEnvironment`` 可能优先小写，单写大写会让宿主 loopback 死
+  代理胜出；GOPROXY/Dockerfile/镜像 pin/报告日志均不变），未设置时默认
+  无代理形态不变；
 - **smoke**：固定形态一次性容器/卷（严格 ``aios-m14-40-`` 前缀 + UTC 时间戳
   生成名）起自建镜像 → 等待 ``/minio/health/cluster`` 200 → uid 1000 在
   ``/data`` 写/读/删数据探针 → 二进制 ``--version`` 报告 pin 的
@@ -128,7 +131,9 @@ SMOKE_CONSOLE_PORT = 19001
 
 #: build 模式唯一读取的环境变量：操作者显式提供的 HTTPS 代理（如
 #: socks5h://host.docker.internal:10808——构建容器无法直连 proxy.golang.org 时）。
-#: 值只作为 Docker 预定义 HTTPS_PROXY build arg 传入；默认（未设置）恒不加代理。
+#: 值只作为 Docker 预定义 HTTPS_PROXY + https_proxy 两个 build arg 传入（大小写
+#: 双写，修正轮 3：Go ProxyFromEnvironment 可优先小写 https_proxy——单写大写
+#: 时 BuildKit 保留的宿主小写值会覆盖意图）；默认（未设置）恒不加代理。
 BUILD_PROXY_ENV = "AIOS_MINIO_BUILD_HTTPS_PROXY"
 _BUILD_PROXY_RE = re.compile(
     r"^(?:socks5h?|https?)://[A-Za-z0-9._-]+(?::(?:6553[0-5]|655[0-2][0-9]"
@@ -291,13 +296,18 @@ def is_allowed_docker_argv(argv: tuple[str, ...] | list[str], surface: Surface) 
         if tokens == ("docker", "build", "-t", SELF_IMAGE_REF, str(BUILD_CONTEXT)):
             return True
         # 唯一代理形态：操作者经 AIOS_MINIO_BUILD_HTTPS_PROXY 提供的值只作为
-        # Docker 预定义 HTTPS_PROXY build arg 传入（精确全长，值逐字匹配）
+        # Docker 预定义 HTTPS_PROXY + https_proxy 两个 build arg 传入（精确全长，
+        # 值逐字匹配；确定性顺序：先大写后小写——修正轮 3：BuildKit 可保留/注入
+        # 小写 https_proxy 且 Go ProxyFromEnvironment 可优先小写，单写大写会让
+        # 宿主 loopback 死代理胜出，故显式值必须大小写双写覆盖）
         return (surface.build_https_proxy is not None
-                and len(tokens) == 7
+                and len(tokens) == 9
                 and tokens[:4] == ("docker", "build", "-t", SELF_IMAGE_REF)
                 and tokens[4] == "--build-arg"
                 and tokens[5] == f"HTTPS_PROXY={surface.build_https_proxy}"
-                and tokens[6] == str(BUILD_CONTEXT))
+                and tokens[6] == "--build-arg"
+                and tokens[7] == f"https_proxy={surface.build_https_proxy}"
+                and tokens[8] == str(BUILD_CONTEXT))
     if sub == "image":
         return tokens in {
             ("docker", "image", "inspect", SELF_IMAGE_REF, "--format", "{{.Id}}"),
@@ -578,14 +588,18 @@ def run_build(runner: Runner, https_proxy: str | None = None) -> dict[str, objec
     """只构建 compose 锚定镜像（docker build，零 compose/零生产触碰）。
 
     ``https_proxy`` 为操作者经 ``AIOS_MINIO_BUILD_HTTPS_PROXY`` 提供的值时，
-    仅作为 Docker 预定义 ``HTTPS_PROXY`` build arg 传入（GOPROXY/Dockerfile/
-    镜像 pin 不变；值不入报告/日志）。构建返回 0 之后仍需 image inspect 回显
-    非空镜像 Id——探针失败/无 Id 一律 fail-closed 记失败。
+    作为 Docker 预定义 ``HTTPS_PROXY`` + ``https_proxy`` 两个 build arg 传入
+    （确定性顺序：先大写后小写——修正轮 3 实测：BuildKit 可保留/注入小写
+    ``https_proxy``，Go ``ProxyFromEnvironment`` 可优先小写，单写大写会让宿主
+    loopback 死代理胜出；GOPROXY/Dockerfile/镜像 pin 不变；值不入报告/日志）。
+    构建返回 0 之后仍需 image inspect 回显非空镜像 Id——探针失败/无 Id 一律
+    fail-closed 记失败。
     """
     started = time.monotonic()
     argv = ["docker", "build", "-t", SELF_IMAGE_REF]
     if https_proxy:
-        argv += ["--build-arg", f"HTTPS_PROXY={https_proxy}"]
+        argv += ["--build-arg", f"HTTPS_PROXY={https_proxy}",
+                 "--build-arg", f"https_proxy={https_proxy}"]
     argv.append(str(BUILD_CONTEXT))
     result, failure = _run_or_failure(runner, argv, timeout=BUILD_TIMEOUT_SECONDS)
     elapsed = round(time.monotonic() - started, 1)
