@@ -9,9 +9,11 @@ Transport/Sleeper 注入）。本套件全部用 FakeRunner/FakeTransport 锁行
   生产容器 rm/生产卷 rm/错误镜像/非 :ro 生产卷挂载/无 --network none 的
   helper 一律在任何执行之前拒绝；
 - build：只构建 compose 锚定镜像；失败保留诊断尾行；
-- smoke：一次性名严格 aios-m14-40- 前缀；端口占用/镜像缺失即拒绝（杜绝
-  隐式 pull）；cluster 健康 + uid 1000 数据探针 + 版本核对；finally 恒清理
-  且清理只认本轮两个生成名；
+- smoke：一次性名严格 aios-m14-40- 前缀；端口占用（仅真实 HTTP 响应计占用
+  ——Windows 对未绑定 loopback 端口的探测常为 timeout 而非 refused，
+  refused/timeout/http-error 一律放行，docker run -p 绑定是权威裁决）/
+  镜像缺失即拒绝（杜绝隐式 pull）；cluster 健康 + uid 1000 数据探针 +
+  版本核对；finally 恒清理且清理只认本轮两个生成名；
 - preflight：镜像元数据/运行时 uid/版本/compose+Dockerfile 锚点/六容器健康/
   卷属主（root → 采纳 blocked，全部 uid 1000 → pass）；镜像缺失时不发起任何
   docker run（隐式 pull 结构性杜绝）；
@@ -75,7 +77,8 @@ class FakeRunner:
 
 
 class FakeTransport:
-    """端口探测恒 refused；cluster 端点第 N 次起返回给定状态。"""
+    """端口探测按 ``port_probe`` 回放（refused/timeout/http-error/ok=真实
+    HTTP 响应）；cluster 端点第 N 次起返回给定状态。"""
 
     def __init__(self, *, port_probe: str = "connection-refused",
                  cluster_status: int | None = 200, ready_after: int = 1) -> None:
@@ -473,6 +476,32 @@ def test_smoke_refused_when_ports_busy() -> None:
     # 零 docker run（连一次性容器都不起，也绝无清理面副作用）
     assert not [c for c in runner.calls if c[:2] == ("docker", "run")]
     assert not [c for c in runner.calls if c[:2] == ("docker", "rm")]
+
+
+@pytest.mark.parametrize("port_probe", ["connection-refused", "timeout", "http-error"])
+def test_smoke_ports_free_proceeds_without_http_response(port_probe: str) -> None:
+    # M14-40 修正回归：Windows loopback 对未绑定端口的探测常回 TimeoutError
+    # 而非 ConnectionRefusedError——任何非 HTTP 响应类别都放行（docker run -p
+    # 的端口绑定才是权威裁决，绑定失败即启动失败 + finally 清理）
+    assert mia.smoke_ports_free(FakeTransport(port_probe=port_probe)) is True
+
+
+def test_smoke_ports_free_busy_only_on_real_http_response() -> None:
+    # 唯一占用信号 = 真实 HTTP 响应（status is not None）
+    assert mia.smoke_ports_free(FakeTransport(port_probe="ok")) is False
+
+
+def test_smoke_proceeds_on_windows_timeout_probe_shape() -> None:
+    # Windows 真实形态集成回归：未绑定端口探测回 timeout——冒烟照常全绿
+    # 并精确清理（旧口径在此形态下会误拒 refused-gate）
+    runner = FakeRunner(default_handler)
+    facts = mia.run_smoke(runner, FakeTransport(port_probe="timeout"), FakeSleeper(),
+                          SafeLog(), STAMP)
+    assert facts.get("status") != "refused"
+    assert facts["ok"] is True and facts["problems"] == []
+    assert facts["cleanup_ok"] is True
+    assert ("docker", "rm", "--force", SMOKE_C) in runner.calls
+    assert ("docker", "volume", "rm", SMOKE_V) in runner.calls
 
 
 def test_smoke_refused_when_image_missing_no_implicit_pull() -> None:

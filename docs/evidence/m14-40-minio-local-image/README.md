@@ -37,7 +37,11 @@ python tools/ops/minio_image_adoption.py preflight --execute --confirm "EXECUTE 
 ### smoke（一次性冒烟）
 
 - 只使用严格 `aios-m14-40-` 前缀的生成式一次性容器/卷名；loopback
-  19000/19001（忙端口/名字冲突在任何副作用之前 fail-closed）。
+  19000/19001。端口占用探测仅以**真实 HTTP 响应**为占用信号（M14-40 修正：
+  Windows 对未绑定 loopback 端口的探测常回 TimeoutError 而非
+  ConnectionRefusedError——refused/timeout/http-error 一律放行，后续
+  `docker run -p` 的端口绑定是权威裁决，绑定失败即启动失败 + finally 恒
+  清理）；真实 HTTP 响应/名字冲突在任何副作用之前 fail-closed。
 - 核查 cluster 健康、uid 1000 数据探针与版本后，finally 中精确清理恰这
   两个名字——**清理失败即冒烟整体失败**。
 - 冒烟 env 只用仓库公开 compose dev 占位值；绝不读取任何 env secret
@@ -74,6 +78,46 @@ python tools/ops/minio_image_adoption.py preflight --execute --confirm "EXECUTE 
   一次性冒烟、真实只读 preflight、生产前后容器 ID 证据、push/PR/CI
   ——全部待 supervisor 执行，本回合未做、不宣称通过。
 
+## supervisor 代理构建与冒烟结果（2026-09-17，如实记录）
+
+- supervisor 以 `AIOS_MINIO_BUILD_HTTPS_PROXY` 代理路径执行 build：
+  **构建成功**，镜像 `aios/minio:RELEASE.2025-10-15T17-29-55Z` 落地。
+- 随后执行 smoke：**暴露版本元数据缺陷**——二进制 `--version` 打印
+  `DEVELOPMENT.GOGET`（commit 输出正确）：初版 Dockerfile ldflags 只注入
+  `cmd.Version`/`cmd.CommitID`，而 CLI `--version` 打印的是
+  `cmd.ReleaseTag`（未注入即回退上游默认值）→ 版本核对失败
+  （`version-not-pinned`），但 **finally 清理成功**（一次性容器/卷零残留）。
+- 同轮暴露第二缺陷：Windows loopback 对未绑定 127.0.0.1:19000/19001 的
+  探测回 `TimeoutError` 而非 `ConnectionRefusedError`，`smoke_ports_free`
+  旧口径（仅 refused 算空闲）在 Windows 上恒误拒。
+
+## 修正回合（2026-09-17，代码级修正 + 契约锁定；零 Docker/零生产操作）
+
+在已接受提交 f8685a4 之上追加第二个 local commit（本 worktree，不 push）：
+
+1. **ReleaseTag 注入**：`infra/minio/Dockerfile` 补
+   `-X github.com/minio/minio/cmd.ReleaseTag=${MINIO_RELEASE}`（与
+   Version 同源用同一 pin）；`test_minio_selfbuild.py` 新增 ReleaseTag
+   注入契约（缺注入即红，docstring 记录 DEVELOPMENT.GOGET 回归事实）。
+2. **smoke 端口门修正**：`smoke_ports_free` 仅以真实 HTTP 响应
+   （`status is not None`）为占用信号——refused/timeout/http-error 一律
+   放行（后续 `docker run -p` 端口绑定是权威裁决，绑定失败即启动失败 +
+   finally 恒清理）；`test_minio_image_adoption.py` 补 refused/timeout/
+   http-error 放行 + 真实 HTTP 响应占用 + Windows timeout 形态集成回归。
+
+修正回合验证（本 worktree 真实执行，零 Docker/零生产操作）：
+
+- 聚焦采纳套件 `test_minio_image_adoption.py`：**125 passed**；
+- selfbuild 套件 `test_minio_selfbuild.py`：**22 passed**；
+- 邻居复验（selfbuild + production_recovery + compose_profiles +
+  backup_drill）：**92 passed / 3 skipped**；
+- `ruff check` / `py_compile`（改动代码文件）、`git diff --check`、diff
+  secret 模式扫描——全部通过。
+
+修正后状态（诚实边界）：supervisor **重建镜像、重跑 smoke、真实只读
+preflight、生产采纳、push/PR/CI 均待执行**——修正仅为代码级 + 契约测试
+锁定，不宣称修正后构建/冒烟已通过。
+
 ## 验证（Stage 1/1b + Stage 2 复验）
 
 - Stage 1 全量 services/api：**3045 passed / 33 skipped**；
@@ -91,5 +135,7 @@ python tools/ops/minio_image_adoption.py preflight --execute --confirm "EXECUTE 
 - M14-40 **不把自建镜像采纳进生产、不做任何数据迁移**；后续受控任务：
   `minio-data` 卷 root → uid 1000 一次性迁移（M14-13 生产采纳注记），
   再 `up -d --no-build` 固化。
-- 代理构建未执行；真实 smoke / 真实 preflight 未执行；push / PR / CI
-  未执行——以上均为 supervisor 后续动作，本回合零生产操作。
+- supervisor 代理构建已成功；smoke 已暴露版本元数据缺陷且清理成功（见
+  上「supervisor 代理构建与冒烟结果」）；修正后**重建镜像、重跑 smoke、
+  真实 preflight、push / PR / CI 未执行**——均为 supervisor 后续动作，
+  修正回合零生产操作。

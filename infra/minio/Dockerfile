@@ -46,10 +46,14 @@ RUN wget -q -O minio-src.tar.gz "${MINIO_SOURCE_URL}" \
     && rm minio-src.tar.gz \
     # go.sum（随 pin commit 检出）是依赖完整性锚点；官方构建口径：
     # CGO_ENABLED=0 + kqueue + trimpath + 显式 release/commit ldflags
-    # （ldflags 符号路径已按该 tag 的 buildscripts/gen-ldflags.go 复核）
+    # （ldflags 符号路径已按该 tag 的 buildscripts/gen-ldflags.go 复核；
+    # ReleaseTag 必须注入——CLI `--version` 打印的是 cmd.ReleaseTag，
+    # 缺注入即回退上游默认 DEVELOPMENT.GOGET（M14-40 supervisor 代理
+    # 构建后真实冒烟实测修正，与 Version 同源用 pin 的 MINIO_RELEASE））
     && mkdir -p /out \
     && go build -tags kqueue -trimpath -ldflags "-s -w \
          -X github.com/minio/minio/cmd.Version=${MINIO_RELEASE} \
+         -X github.com/minio/minio/cmd.ReleaseTag=${MINIO_RELEASE} \
          -X github.com/minio/minio/cmd.CommitID=${MINIO_COMMIT}" \
          -o /out/minio .
 

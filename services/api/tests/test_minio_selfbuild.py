@@ -10,7 +10,8 @@ Docker CLI 也可全跑；compose 渲染面由既有 restart/profiles 套件覆�
 - Dockerfile：不可变 pin（上游 commit、builder/runtime 基镜像 digest）、
   源码唯一来源 = codeload 官方不可变 commit URL（HTTPS、完整 40 位 SHA 寻址，
   绝无 tag/branch 可移动 ref）、全文件零 apk add（下载/解压只用 BusyBox）、
-  CGO_ENABLED=0、kqueue/trimpath、显式 release/commit ldflags、go.sum 依赖
+  CGO_ENABLED=0、kqueue/trimpath、显式 release（Version+ReleaseTag）/commit
+  ldflags、go.sum 依赖
   完整性（无 GOSUMDB 关闭/无 -mod=mod/无 -insecure 等 bypass、无 vendor 拷入）、
   GOTOOLCHAIN=local、非 root 运行 + 可写 /data、runtime 只含 minio 二进制。
 - compose：minio 服务面（名称/端口/env/卷/restart/healthcheck 节奏）不变；
@@ -139,6 +140,17 @@ def test_explicit_release_and_commit_ldflags(dockerfile: str) -> None:
     assert "-ldflags" in dockerfile
     assert "-X github.com/minio/minio/cmd.Version=${MINIO_RELEASE}" in dockerfile
     assert "-X github.com/minio/minio/cmd.CommitID=${MINIO_COMMIT}" in dockerfile
+
+
+def test_releasetag_injected_for_cli_version_surface(dockerfile: str) -> None:
+    """CLI `--version` 打印的是 cmd.ReleaseTag，必须与 Version 同源注入。
+
+    M14-40 supervisor 代理构建后真实冒烟实测：仅注入 Version/CommitID 时
+    `minio --version` 打印上游默认 ``DEVELOPMENT.GOGET``（cmd.ReleaseTag 的
+    未注入回退值）——版本核对失败但 commit 正确。回归契约：ReleaseTag 用
+    同一 pin 的 MINIO_RELEASE 注入，缺注入即本测试红。
+    """
+    assert "-X github.com/minio/minio/cmd.ReleaseTag=${MINIO_RELEASE}" in dockerfile
 
 
 def test_dependency_integrity_via_gosum_without_bypass(dockerfile: str) -> None:

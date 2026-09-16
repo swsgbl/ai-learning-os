@@ -42,7 +42,9 @@ Transport 注入、sleep 经 Sleeper 注入——开发回合零真实 Docker/�
   绝无宽域进程/端口/容器/卷清理）；本工具零 ``docker compose``、零
   pull/stop/restart/kill/exec。
 - 冒烟端口固定 loopback 127.0.0.1:19000/19001（与生产 9000/9001 恒不冲突）；
-  启动前端口占用即拒绝（零冒烟副作用）；env 用 compose 同款 repo 公开开发
+  启动前端口占用探测仅以真实 HTTP 响应为占用信号（Windows 对未绑定端口的
+  loopback 探测常为超时而非拒绝——refused/timeout 放行，``docker run -p``
+  的端口绑定是权威裁决，失败即 finally 清理）；env 用 compose 同款 repo 公开开发
   占位（本工具不读取任何 env secret，含 infra/env.production-recovery）。
 - 报告：schema 版本化 JSON + Markdown 原子写入（tmp + os.replace）；默认
   目录 ``.verify/artifacts/m14-40-minio-image-adoption``（gitignored）；
@@ -616,10 +618,18 @@ def run_build(runner: Runner, https_proxy: str | None = None) -> dict[str, objec
 
 
 def smoke_ports_free(transport: Transport) -> bool:
-    """端口占用探测：任何成功响应/超时都按占用处理（fail-closed）。"""
+    """端口占用探测：唯一可信的占用信号 = 探测请求得到真实 HTTP 响应。
+
+    Windows loopback 对未绑定端口的探测常回 ``TimeoutError`` 而非
+    ``ConnectionRefusedError``（M14-40 supervisor 冒烟实测）——旧口径
+    「仅 refused 算空闲」在 Windows 上恒误拒。现口径：得到任何 HTTP 状态码
+    （``status is not None``）= 端口确有监听者 → busy；refused/timeout/
+    http-error 一律放行——后续 ``docker run -p`` 的端口绑定才是权威裁决
+    （端口真被占用则绑定失败即启动失败，finally 恒清理，零残留）。
+    """
     for port in (SMOKE_API_PORT, SMOKE_CONSOLE_PORT):
         probe = transport.get("127.0.0.1", port, "/", timeout=PORT_PROBE_TIMEOUT_SECONDS)
-        if probe.error_category != "connection-refused":
+        if probe.status is not None:
             return False
     return True
 

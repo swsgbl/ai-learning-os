@@ -62,9 +62,17 @@ MinIO 社区版自 2025-10（安全发布窗口）起停止分发官方 Docker �
 构建参数对齐官方社区构建口径（并行验证会话按 pin tag 读取上游
 `buildscripts/gen-ldflags.go` 与 Makefile 复核）：`CGO_ENABLED=0`、
 `-tags kqueue`、`-trimpath`、显式 release/commit ldflags
-（`-X …cmd.Version=<RELEASE>` 与 `-X …cmd.CommitID=<COMMIT>` 符号路径
-均已确认在该 tag 存在且为官方注入集的子集；该 tag 无版本缺失 fatal
-guard，版本元数据仅展示用）。
+（`-X …cmd.Version=<RELEASE>`、`-X …cmd.ReleaseTag=<RELEASE>` 与
+`-X …cmd.CommitID=<COMMIT>` 符号路径均已确认在该 tag 存在且为官方注入集
+的子集；该 tag 无版本缺失 fatal guard，版本元数据仅展示用）。
+
+**修正注记（2026-09-17，M14-40 supervisor 代理构建后真实冒烟实测）**：
+初版 Dockerfile 只注入 `cmd.Version`/`cmd.CommitID`——代理构建成功、
+commit 输出正确，但 CLI `--version` 打印的是 `cmd.ReleaseTag`（未注入时
+回退上游默认 `DEVELOPMENT.GOGET`），版本核对失败。即初版「官方注入集
+子集」的复核结论在 CLI 打印面上不完整。修正：补注入
+`-X …cmd.ReleaseTag=<RELEASE>`（与 Version 同源用 pin 的 MINIO_RELEASE），
+`test_minio_selfbuild.py` 契约同步新增 ReleaseTag 注入断言锁定。
 
 ## 变更面
 
@@ -97,6 +105,9 @@ guard，版本元数据仅展示用）。
   ——镜像构建的首次真实执行在下一次 CI docker job（或 supervisor 获准
   窗口）；「实际构建耗时」「tarball 可取性」「版本元数据渲染（容器内
   `minio --version`）」以首次 CI 构建为准，本回合不宣称。
+  （2026-09-17 更新：M14-40 supervisor 代理构建成功 + 真实冒烟已实测
+  版本渲染——暴露 ReleaseTag 缺注入缺陷（见上修正注记）；修正后的
+  重建复验待 supervisor 执行，修正回合零 Docker/零生产操作。）
 - tarball 无 SHA-256 fail-closed 校验（见上「供应链完整性模型」第 1 条的
   如实说明与补强路径）。
 - 自建后 MinIO 的安全响应责任在本仓：上游社区版可能不再有新发布——后续
