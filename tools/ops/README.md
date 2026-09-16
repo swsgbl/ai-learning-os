@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -656,3 +656,60 @@ non-ok 连败 37 恰终止于旧语义最后一轮（09:45:02Z）、恢复转移
   日志行、密钥/secret、生产容器 ID；被拒值不回显。
 - 退出码：0 plan 成功 / execute 成功；2 任何拒绝（门禁、参数超界、源
   缺失/symlink、零样本、malformed、乱序、混档、超 5000、写失败）。
+
+## minio_image_adoption.py（M14-40）
+
+MinIO 本地镜像采纳预检：**build / smoke / preflight 三模式**，各模式
+默认 plan（零执行，只出计划与报告）；真实执行需 `--execute` + 模式
+专属精确确认短语（一字不差，缺一或近似即拒绝且零副作用）。本回合
+交付工具与契约测试；真实代理构建、一次性冒烟、真实只读 preflight
+待 supervisor 在获准窗口执行——2026-09-16T12:51:06Z 无代理直接构建
+已真实尝试，468.7s 后于 Go module 拉取阶段失败（proxy.golang.org
+connection refused，docker build rc=1，如实入档 gitignored
+`.verify/artifacts/m14-40-minio-image-adoption/build-20260916-125106.json/.md`）。
+
+```
+python tools/ops/minio_image_adoption.py build     # plan（默认，零执行）
+python tools/ops/minio_image_adoption.py build --execute \
+    --confirm "EXECUTE MINIO IMAGE BUILD"          # 真实构建（supervisor）
+python tools/ops/minio_image_adoption.py smoke --execute \
+    --confirm "EXECUTE MINIO IMAGE SMOKE"          # 一次性冒烟（supervisor）
+python tools/ops/minio_image_adoption.py preflight --execute \
+    --confirm "EXECUTE MINIO PREFLIGHT"            # 只读生产盘点（supervisor）
+```
+
+安全性质（契约测试 `services/api/tests/test_minio_image_adoption.py`
+120 项锁定；细节见脚本头注释与
+`docs/evidence/m14-40-minio-local-image/README.md`）：
+
+- **build**：只构建 compose 锚定的
+  `aios/minio:RELEASE.2025-10-15T17-29-55Z`（pin commit
+  `9e49d5e7a648f00e26f2246f4dc28e6b07f8c84a`，代码四处交叉锁定并与
+  compose `image:` 锚点契约测试互锁）——恰好一次 `docker build`
+  （infra/minio），零 compose 项目操作。可选
+  `AIOS_MINIO_BUILD_HTTPS_PROXY`（socks5h/socks5/http/https +
+  host[:port]，端口语义校验 1–65535）只向构建传 Docker 预定义
+  `HTTPS_PROXY` build arg——零 GOPROXY/Dockerfile/pin 改动。
+- **smoke**：严格 `aios-m14-40-` 前缀生成式一次性容器/卷名（忙端口/
+  名字冲突在任何副作用之前 fail-closed）；loopback 19000/19001；核查
+  cluster 健康、uid 1000 数据探针与版本后 finally 精确清理恰两名
+  ——**清理失败即冒烟整体失败**；env 只用仓库公开 compose dev 占位值，
+  绝不读取 env secret（含 `infra/env.production-recovery`）。
+- **preflight（只读生产盘点 + 采纳判定）**：`--project` 仅
+  `aios-m14-03-production-rehearsal`；只读 docker version / image
+  inspect / inspect / volume inspect（镜像元数据与运行时 uid/版本、
+  compose/Dockerfile 锚点、六容器健康、生产卷 driver/size/递归 UID
+  普查）；生产卷探针恒 `:ro`（挂 /probe）挂入 `--network none`
+  一次性 `--rm` helper 容器逐次移除，**绝不写生产卷**。采纳判定
+  fail-closed：镜像缺失、user/entrypoint/version 不符、卷属主非
+  uid 1000 **或普查不确定**、栈非全健康 → adoption=blocked；
+  **adoption=pass ≠ production readiness**（`production_ready=false`
+  不变；chown 迁移 + `up -d --no-build` 采纳是后续受控切片）。
+- **argv 结构白名单**：每个 docker argv 必须匹配固定结构形态（常量
+  镜像引用/派生生产名/生成式一次性名），任何偏离在执行之前拒绝；
+  零 stop/rm/restart/exec、零 `docker compose`、零 pull、零 env
+  secret 读取；报告 schema v1 JSON+Markdown 落 gitignored 默认工件
+  目录（`--artifact-dir` 为操作者显式自选，其位置与 gitignore 状态
+  由操作者负责）。
+- 退出码统一：`0` 成功；`2` 一切失败（fail-closed，门禁/校验拒绝与
+  真实执行失败同码，绝不静默降级）。
