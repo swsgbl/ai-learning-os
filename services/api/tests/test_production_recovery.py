@@ -8,8 +8,9 @@ r"""M14-06 tools/ops/production_recovery.py 契约测试：恢复编排决策与
   DEGRADED；
 - 决策状态空间与 voice_service_control.Inspection.state 的真实取值集合一致
   （交叉契约：构造 Inspection 实例枚举全部状态，编排侧无未覆盖状态）；
-- pin check（M14-09 六键，含独立 AIOS_WEB_IMAGE_TAG）：env 文件缺失/缺键/
-  与在线容器漂移 → 拒绝（仅报键名，绝不报值）；
+- pin check（M14-09 独立 AIOS_WEB_IMAGE_TAG；M14-38 九键，增三拓扑键
+  AIOS_BIND_IP/AIOS_LIVEKIT_BIND_IP/AIOS_PUBLIC_LIVEKIT_URL——LAN cutover
+  防漂移）：env 文件缺失/缺键/与在线容器漂移 → 拒绝（仅报键名，绝不报值）；
   在线容器缺失 → 跳过比对放行；全部一致 → 放行；
 - secret 不泄漏：伪 secret 标记值绝不出现在任何日志行/日志文件（防御性
   redact 兜底）；
@@ -70,7 +71,8 @@ class FakeRunner:
                  ps_health: dict[str, str] | None = None, live_env: str | None = None,
                  live_image: str = "aios/api:m14-03-prod-rehearsal",
                  live_web_image: str = "aios/web:m14-03-prod-rehearsal",
-                 web_port: str = "127.0.0.1:3011", up_rc: int = 0,
+                 web_port: str = "127.0.0.1:3011", livekit_port: str = "127.0.0.1:7880",
+                 up_rc: int = 0,
                  up_out: str = "Container aios-m14-03-production-rehearsal-api-1  Running\n") -> None:
         self.engine_ready = engine_ready
         self.services = services
@@ -79,6 +81,7 @@ class FakeRunner:
         self.live_image = live_image
         self.live_web_image = live_web_image
         self.web_port = web_port
+        self.livekit_port = livekit_port
         self.up_rc = up_rc
         self.up_out = up_out
         self.calls: list[tuple[str, ...]] = []
@@ -107,6 +110,10 @@ class FakeRunner:
                 return pr.CommandResult(argv, 1, "", "Error: No such object")
             return pr.CommandResult(argv, 0, image + "\n", "")
         if argv[:2] == ("docker", "port"):
+            # M14-38：web → 宿主端口段；livekit → 宿主绑定 IP 段（拓扑事实，
+            # 空串 = docker port 无输出 = 在线事实缺失）
+            if "-livekit-" in str(argv[2]):
+                return pr.CommandResult(argv, 0, self.livekit_port + "\n", "")
             return pr.CommandResult(argv, 0, self.web_port + "\n", "")
         if "ps" in argv and "--format" in argv:
             rows = "".join(
@@ -144,6 +151,9 @@ def _matching_env_text() -> str:
         f"AIOS_WEB_PORT=3011\n"
         f"AIOS_AUTH_SECRET={MARK_AUTH}\n"
         f"AIOS_LIVEKIT_API_SECRET={MARK_LIVEKIT}\n"
+        f"AIOS_BIND_IP=127.0.0.1\n"
+        f"AIOS_LIVEKIT_BIND_IP=127.0.0.1\n"
+        f"AIOS_PUBLIC_LIVEKIT_URL=ws://127.0.0.1:7880\n"
     )
 
 
@@ -153,6 +163,8 @@ def _matching_live_env() -> str:
         f"AUTH_SECRET={MARK_AUTH}\n"
         f"LIVEKIT_API_SECRET={MARK_LIVEKIT}\n"
         "S3_BUCKET=aios-objects\n"
+        "HOST_BIND_IP=127.0.0.1\n"
+        "PUBLIC_LIVEKIT_URL=ws://127.0.0.1:7880\n"
     )
 
 
@@ -382,7 +394,8 @@ def test_pin_multiple_missing_live_facts_ok_false(tmp_path: Path) -> None:
     report = pr.check_pins(env_file, runner, "proj", log)
     assert not report.ok
     assert set(report.missing_live_keys) == {"AIOS_AUTH_SECRET", "AIOS_LIVEKIT_API_SECRET",
-                                             "AIOS_IMAGE_TAG", "AIOS_WEB_PORT"}
+                                             "AIOS_IMAGE_TAG", "AIOS_WEB_PORT",
+                                             "AIOS_BIND_IP", "AIOS_PUBLIC_LIVEKIT_URL"}
     assert report.mismatched_keys == ()  # 缺失与不等分类分离，报告清晰
     _assert_no_marker_leak(log)
 
@@ -638,3 +651,149 @@ def test_e2e_compose_up_failure_visible(tmp_path: Path) -> None:
     code, log = _run(runner, voice, dry_run=False, env_file=env_file)
     assert code == pr.EXIT_ERROR
     assert any("compose-up" in line for line in log.lines)
+
+
+# --------------------------- M14-38：拓扑键 pin（九键防漂移，LAN cutover 收口）
+# 动机：compose 中 AIOS_LIVEKIT_BIND_IP 缺省回落 AIOS_BIND_IP→127.0.0.1——
+# 不 pin 则恢复路径会把 LAN 拓扑静默重建回 loopback。在线事实：
+# AIOS_BIND_IP/AIOS_PUBLIC_LIVEKIT_URL 取 api 容器 env（HOST_BIND_IP=/
+# PUBLIC_LIVEKIT_URL=，空串也是事实）；AIOS_LIVEKIT_BIND_IP 取
+# `docker port <livekit> 7880` 宿主绑定段。输出仅键名——拓扑值虽非密钥
+# 也不回显（键名-only 纪律）。
+
+LAN_IP = "192.168.8.3"
+LOOPBACK_WS = "ws://127.0.0.1:7880"
+
+
+def _lan_env_text() -> str:
+    return (
+        _matching_env_text()
+        .replace("AIOS_BIND_IP=127.0.0.1", f"AIOS_BIND_IP={LAN_IP}")
+        .replace("AIOS_LIVEKIT_BIND_IP=127.0.0.1", f"AIOS_LIVEKIT_BIND_IP={LAN_IP}")
+        .replace(f"AIOS_PUBLIC_LIVEKIT_URL={LOOPBACK_WS}", f"AIOS_PUBLIC_LIVEKIT_URL=ws://{LAN_IP}:7880")
+    )
+
+
+def _lan_live_env() -> str:
+    return (
+        _matching_live_env()
+        .replace("HOST_BIND_IP=127.0.0.1", f"HOST_BIND_IP={LAN_IP}")
+        .replace(f"PUBLIC_LIVEKIT_URL={LOOPBACK_WS}", f"PUBLIC_LIVEKIT_URL=ws://{LAN_IP}:7880")
+    )
+
+
+def test_topology_pin_keys_exported_and_pinned() -> None:
+    """三拓扑键已导出且纳入 PIN_KEYS（缺一即整体 pin 拒绝）。"""
+    assert pr.TOPOLOGY_PIN_KEYS == ("AIOS_BIND_IP", "AIOS_LIVEKIT_BIND_IP",
+                                    "AIOS_PUBLIC_LIVEKIT_URL")
+    assert set(pr.TOPOLOGY_PIN_KEYS) <= set(pr.PIN_KEYS)
+    assert len(pr.PIN_KEYS) == 9
+
+
+def test_pin_topology_keys_missing_from_env_refuses(tmp_path: Path) -> None:
+    """env 缺拓扑键 → 拒绝：恢复路径不得以 compose 缺省静默重建回 loopback。"""
+    env_file = tmp_path / "pin.env"
+    env_file.write_text(
+        _matching_env_text()
+        .replace("AIOS_BIND_IP=127.0.0.1\n", "")
+        .replace("AIOS_LIVEKIT_BIND_IP=127.0.0.1\n", "")
+        .replace(f"AIOS_PUBLIC_LIVEKIT_URL={LOOPBACK_WS}\n", ""),
+        encoding="utf-8",
+    )
+    runner = FakeRunner(live_env=_matching_live_env())
+    log = pr.RunLog(echo=False)
+    report = pr.check_pins(env_file, runner, "proj", log)
+    assert not report.ok
+    assert set(pr.TOPOLOGY_PIN_KEYS) <= set(report.missing_keys)
+    joined = "\n".join(log.lines)
+    for key in pr.TOPOLOGY_PIN_KEYS:
+        assert key in joined
+    _assert_no_marker_leak(log)
+
+
+def test_pin_lan_topology_all_match_ok(tmp_path: Path) -> None:
+    """LAN cutover 拓扑（三键全 LAN）且与在线容器一致 → 放行：拓扑键不限定值，
+    只锁定「env 声明 = 在线事实」。"""
+    env_file = tmp_path / "lan.env"
+    env_file.write_text(_lan_env_text(), encoding="utf-8")
+    runner = FakeRunner(live_env=_lan_live_env(), livekit_port=f"{LAN_IP}:7880")
+    log = pr.RunLog(echo=False)
+    report = pr.check_pins(env_file, runner, "proj", log)
+    assert report.ok and not report.mismatched_keys and not report.missing_live_keys
+    _assert_no_marker_leak(log)
+
+
+def test_pin_livekit_bind_drift_refuses(tmp_path: Path) -> None:
+    """env 已切 LAN 但在线 livekit 端口仍绑 loopback（重建不完整/漂移）→ 拒绝。"""
+    env_file = tmp_path / "lan.env"
+    env_file.write_text(_lan_env_text(), encoding="utf-8")
+    runner = FakeRunner(live_env=_lan_live_env(), livekit_port="127.0.0.1:7880")
+    log = pr.RunLog(echo=False)
+    report = pr.check_pins(env_file, runner, "proj", log)
+    assert not report.ok
+    assert report.mismatched_keys == ("AIOS_LIVEKIT_BIND_IP",)
+    joined = "\n".join(log.lines)
+    assert "AIOS_LIVEKIT_BIND_IP" in joined and "拒绝" in joined
+    _assert_no_marker_leak(log)
+
+
+def test_pin_public_url_empty_live_value_refuses(tmp_path: Path) -> None:
+    """容器 PUBLIC_LIVEKIT_URL 为空串（compose 默认未注入）而 env 非空 →
+    空串事实与非空声明不等 = 漂移可见拒绝（绝不按「缺失跳过」放行）。"""
+    env_file = tmp_path / "pin.env"
+    env_file.write_text(_matching_env_text(), encoding="utf-8")
+    runner = FakeRunner(live_env=_matching_live_env().replace(
+        f"PUBLIC_LIVEKIT_URL={LOOPBACK_WS}", "PUBLIC_LIVEKIT_URL="))
+    log = pr.RunLog(echo=False)
+    report = pr.check_pins(env_file, runner, "proj", log)
+    assert not report.ok
+    assert report.mismatched_keys == ("AIOS_PUBLIC_LIVEKIT_URL",)
+    assert "AIOS_PUBLIC_LIVEKIT_URL" not in report.missing_live_keys  # 空串 ≠ 缺失
+    _assert_no_marker_leak(log)
+
+
+def test_pin_topology_live_facts_missing_refuse(tmp_path: Path) -> None:
+    """在线拓扑事实缺失（api env 无 HOST_BIND_IP 行 + docker port livekit 无输出）
+    → 事实缺失拒绝（fail-closed，不得按跳过放行）。"""
+    env_file = tmp_path / "pin.env"
+    env_file.write_text(_matching_env_text(), encoding="utf-8")
+    runner = FakeRunner(
+        live_env=_matching_live_env().replace("HOST_BIND_IP=127.0.0.1\n", ""),
+        livekit_port="",
+    )
+    log = pr.RunLog(echo=False)
+    report = pr.check_pins(env_file, runner, "proj", log)
+    assert not report.ok
+    assert set(report.missing_live_keys) == {"AIOS_BIND_IP", "AIOS_LIVEKIT_BIND_IP"}
+    joined = "\n".join(log.lines)
+    assert "事实缺失" in joined
+    _assert_no_marker_leak(log)
+
+
+def test_pin_topology_drift_never_echoes_values(tmp_path: Path) -> None:
+    """拓扑键漂移时输出仅键名——LAN IP/URL 虽非密钥也不回显（键名-only 纪律，
+    防部署拓扑细节进入日志）。"""
+    env_file = tmp_path / "lan.env"
+    env_file.write_text(_lan_env_text(), encoding="utf-8")
+    runner = FakeRunner(live_env=_matching_live_env())  # 在线仍 loopback 全套
+    log = pr.RunLog(echo=False)
+    report = pr.check_pins(env_file, runner, "proj", log)
+    assert not report.ok and report.mismatched_keys == pr.TOPOLOGY_PIN_KEYS
+    joined = "\n".join(log.lines)
+    assert LAN_IP not in joined and LOOPBACK_WS not in joined
+    _assert_no_marker_leak(log)
+
+
+def test_e2e_lan_topology_green_full_recovery(tmp_path: Path) -> None:
+    """端到端：LAN 拓扑九键全绿 → up 执行 → OK（LAN 不是特殊分支，
+    与 loopback 同码路径）。"""
+    env_file = tmp_path / "lan.env"
+    env_file.write_text(_lan_env_text(), encoding="utf-8")
+    runner = FakeRunner(live_env=_lan_live_env(), livekit_port=f"{LAN_IP}:7880")
+    voice = FakeVoice(_healthy_voice())
+    code, log = _run(runner, voice, dry_run=False, env_file=env_file)
+    assert code == pr.EXIT_OK
+    assert any("结果: OK" in line for line in log.lines)
+    joined = "\n".join(log.lines)
+    assert LAN_IP not in joined  # 全绿路径同样不回显拓扑值
+    _assert_no_marker_leak(log)
