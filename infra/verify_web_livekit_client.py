@@ -16,17 +16,20 @@ Popen 对象、结束时只 terminate 包装器 PID，Windows 上进程终止不
 进程组（start_new_session）启动并 SIGTERM→SIGKILL 该组。绝不按端口或进程名
 扫杀（杜绝误伤生产进程）。
 
-受控验收条件（R2，非生产用户默认）：
-    当前 compose 生产栈 LiveKit 以 --node-ip 127.0.0.1 通告媒体地址且 UDP
-    端口只绑定 127.0.0.1；Chromium/WebRTC 默认不收集 loopback ICE candidate，
-    ICE 配对依赖 Docker/Windows 网络路径时存在间歇性失败（Codex 独立默认
-    首跑 connect failed：could not establish pc connection，失败房间所有
-    ICE candidate pair failed；同构建复跑通过——拓扑级不确定，非可忽略抖动）。
-    本验收因此显式加 --allow-loopback-in-peer-connection，使浏览器可收集
-    loopback candidate 与 LiveKit 的 127.0.0.1 媒体地址直接配对。该 flag 是
-    本机 loopback LiveKit 部署的受控验收条件，生产用户浏览器默认并不具备；
-    本脚本 3/3 通过只代表受控拓扑，不代表默认浏览器直连拓扑稳定（默认拓扑
-    的受控改造/验收是独立的生产阻塞项，见 docs/ROADMAP.md）。
+浏览器模式（M14-37，AIOS_LIVEKIT_BROWSER_LOOPBACK 严格开关）：
+    背景（M14-35 遗留生产阻塞）：当前 compose 生产栈 LiveKit 以 --node-ip
+    127.0.0.1 通告媒体地址且 UDP 端口只绑定 127.0.0.1；Chromium/WebRTC 默认
+    不收集 loopback ICE candidate，默认浏览器直连存在间歇性 ICE 失败（Codex
+    独立默认首跑 connect failed：could not establish pc connection；同构建
+    复跑通过——拓扑级不确定，非可忽略抖动）。两种显式模式：
+      - default（未设置/0）：绝不注入 loopback flag——代表生产用户默认
+        浏览器拓扑；失败即真实生产阻塞证据，如实计数绝不虚报；
+      - controlled（=1）：追加 LOOPBACK_FLAG 常量，使浏览器收集 loopback
+        ICE candidate 与 LiveKit 的 127.0.0.1 媒体地址直接配对（M14-35 R2
+        受控验收口径），通过仅代表受控拓扑而非默认拓扑；
+      - 任何其他值：ENV-BLOCKED fail-closed（拒绝执行，绝不静默当默认）。
+    results.json 的 browser 段记录模式与 Chromium argv 摘要（可审计，
+    不含任何凭据）。
 
 覆盖（真实浏览器行为断言）：
     1 登录后打开 /voice，出现 LiveKit 连接检测卡片；
@@ -49,6 +52,9 @@ Popen 对象、结束时只 terminate 包装器 PID，Windows 上进程终止不
     AIOS_WEB_PORT   指定 web 端口（默认自动挑空闲端口）
     AIOS_SKIP_BUILD=1 跳过构建（复用上一次验收构建产物）
     AIOS_OUT        证据目录，默认 .verify/m14-35-web-livekit-client
+    AIOS_LIVEKIT_BROWSER_LOOPBACK  严格开关 0|1：默认（未设置/0）为 default
+                    模式（绝不注入 loopback flag）；1 为 controlled 受控
+                    模式；任何其他值 ENV-BLOCKED fail-closed（M14-37）
 """
 from __future__ import annotations
 
@@ -63,6 +69,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
+from collections.abc import Mapping
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -72,6 +79,57 @@ PASSWORD = "password-123"
 CHECK_TIMEOUT_MS = 90_000
 # JWT 三段形态（headers.payload.signature）：用于脱敏与「DOM 不含 token」断言
 JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}")
+
+# --- 浏览器模式开关（M14-37：default 默认拓扑 / controlled 受控拓扑） ---
+
+#: 严格开关 env：仅接受字面 "0"/"1"；未设置 = default；任何其他值 fail-closed。
+LOOPBACK_ENV = "AIOS_LIVEKIT_BROWSER_LOOPBACK"
+
+#: 受控模式专属 Chromium flag——全源码唯一字面量定义处（launch 只引用本常量，
+#: 契约测试锁定字面量恰好出现一次，杜绝任何旁路硬编码把它带进 default 模式）。
+LOOPBACK_FLAG = "--allow-loopback-in-peer-connection"
+
+#: 基础 Chromium 启动参数（两种模式共用）：fake 麦克风设备 + 免授权 UI。
+BASE_CHROMIUM_ARGS = (
+    "--use-fake-device-for-media-stream",
+    "--use-fake-ui-for-media-stream",
+)
+
+
+def browser_loopback_enabled(env: Mapping[str, str] | None = None) -> bool:
+    """解析模式开关：未设置/0 → False（default）；仅字面 "1" → True（controlled）。
+
+    任何其他值（空串/空白/"true"/"01"/带换行等变体）一律 SystemExit
+    fail-closed——绝不静默当默认值，防止拼错的开关把受控拓扑误标成
+    默认拓扑验收。
+    """
+    source: Mapping[str, str] = os.environ if env is None else env
+    raw = source.get(LOOPBACK_ENV)
+    if raw is None or raw == "0":
+        return False
+    if raw == "1":
+        return True
+    raise SystemExit(
+        f"ENV-BLOCKED: {LOOPBACK_ENV} 仅接受 0|1（收到 {raw!r}），fail-closed"
+    )
+
+
+def chromium_launch_args(loopback: bool) -> list[str]:
+    """Chromium 启动参数：default = 基础两条；controlled = 追加 loopback flag。"""
+    args = list(BASE_CHROMIUM_ARGS)
+    if loopback:
+        args.append(LOOPBACK_FLAG)
+    return args
+
+
+def browser_report(loopback: bool) -> dict:
+    """results.json 的 browser 段：模式与 argv 摘要（可审计，不含任何凭据）。"""
+    return {
+        "mode": "controlled" if loopback else "default",
+        "loopback_env_var": LOOPBACK_ENV,
+        "loopback_flag_present": loopback,
+        "chromium_launch_args": chromium_launch_args(loopback),
+    }
 
 CHECKS: list[str] = []
 
@@ -289,23 +347,18 @@ def stop_process_tree(proc: subprocess.Popen, *, grace_seconds: float = 15.0) ->
 # --- 浏览器验收 ---
 
 
-def run_browser(web_base: str, shots: Path) -> dict:
+def run_browser(web_base: str, shots: Path, loopback: bool = False) -> dict:
     from playwright.sync_api import sync_playwright
 
     console_errors: list[str] = []
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(
             headless=True,
-            args=[
-                "--use-fake-device-for-media-stream",
-                "--use-fake-ui-for-media-stream",
-                # R2 受控验收条件（非生产用户默认）：当前 LiveKit --node-ip
-                # 127.0.0.1 且 UDP 仅绑 loopback；Chromium/WebRTC 默认不收集
-                # loopback ICE candidate，默认直连存在间歇性 ICE 失败（Codex
-                # 独立实证）。此 flag 使浏览器收集 loopback candidate 与
-                # 127.0.0.1 媒体地址直接配对——只代表受控拓扑，见模块 docstring。
-                "--allow-loopback-in-peer-connection",
-            ],
+            # M14-37：模式由 AIOS_LIVEKIT_BROWSER_LOOPBACK 严格开关决定——
+            # default 模式绝不注入 loopback flag（代表生产用户默认浏览器）；
+            # controlled 模式追加 LOOPBACK_FLAG 常量，使浏览器可收集 loopback
+            # ICE candidate 与 LiveKit 的 127.0.0.1 媒体地址直接配对。
+            args=chromium_launch_args(loopback),
         )
         context = browser.new_context(
             viewport={"width": 1440, "height": 900}, locale="zh-CN",
@@ -383,6 +436,7 @@ def main() -> int:
     shots = out_dir / "screenshots"
     shots.mkdir(parents=True, exist_ok=True)
     try:
+        loopback = browser_loopback_enabled()  # M14-37 严格开关（fail-closed 入口）
         preflight()
         ensure_user()
     except SystemExit as cause:
@@ -397,7 +451,7 @@ def main() -> int:
     results: dict = {"verdict": verdict}
     try:
         proc = start_web(port)
-        results = run_browser(f"http://127.0.0.1:{port}", shots)
+        results = run_browser(f"http://127.0.0.1:{port}", shots, loopback=loopback)
         verdict = "passed" if results["steps"].get("mic") == "passed" else "passed-with-skip"
     except AssertionError as cause:
         print(cause, file=sys.stderr)
@@ -409,11 +463,15 @@ def main() -> int:
         if proc is not None:
             stop_process_tree(proc)
     results["verdict"] = verdict
+    results["browser"] = browser_report(loopback)  # 模式可审计（M14-37）
     results["checks_passed"] = CHECKS
     (out_dir / "results.json").write_text(
         json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    print(f"\nverdict={verdict}  ({len(CHECKS)} checks)  证据: {out_dir}")
+    print(
+        f"\nverdict={verdict}  browser={results['browser']['mode']}"
+        f"  ({len(CHECKS)} checks)  证据: {out_dir}"
+    )
     return 0 if verdict in ("passed", "passed-with-skip") else 1
 
 

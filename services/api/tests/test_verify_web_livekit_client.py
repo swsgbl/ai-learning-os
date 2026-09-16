@@ -311,3 +311,119 @@ def test_source_forbids_port_or_name_based_kills():
 
 def test_source_start_not_via_npm_wrapper():
     assert 'npm(), "run", "start"' not in SOURCE  # 旧缺陷形态必须消失
+
+
+# ---------- M14-37：AIOS_LIVEKIT_BROWSER_LOOPBACK 严格开关（默认/受控拓扑） ----------
+# 背景阻塞（M14-35）：默认浏览器（无 Chromium loopback 受控 flag）连本机
+# loopback LiveKit 存在间歇性 ICE 失败。本开关把「受控验收拓扑」（加 flag）
+# 与「默认拓扑」（绝不加 flag，代表生产用户浏览器）拆成显式模式：
+#   AIOS_LIVEKIT_BROWSER_LOOPBACK 未设/0 → default（绝不注入 loopback flag）
+#   AIOS_LIVEKIT_BROWSER_LOOPBACK=1      → controlled（注入，复现 M14-35 受控验收）
+#   其他任何值                            → ENV-BLOCKED fail-closed（拒绝执行）
+# results.json 必须记录模式与 Chromium argv 摘要（可审计），且绝不泄露 JWT/token。
+
+LOOPBACK_FLAG = "--allow-loopback-in-peer-connection"
+
+
+def test_loopback_switch_default_off_without_env(vwlc, monkeypatch):
+    """未设置 env → 默认模式（False）：默认拓扑即生产用户浏览器语义。"""
+    monkeypatch.delenv(vwlc.LOOPBACK_ENV, raising=False)
+    assert vwlc.browser_loopback_enabled() is False
+    assert LOOPBACK_FLAG not in vwlc.chromium_launch_args(False)
+
+
+def test_loopback_switch_explicit_zero_still_off(vwlc, monkeypatch):
+    monkeypatch.setenv(vwlc.LOOPBACK_ENV, "0")
+    assert vwlc.browser_loopback_enabled() is False
+    assert LOOPBACK_FLAG not in vwlc.chromium_launch_args(
+        vwlc.browser_loopback_enabled()
+    )
+
+
+def test_loopback_switch_one_is_controlled_mode(vwlc, monkeypatch):
+    monkeypatch.setenv(vwlc.LOOPBACK_ENV, "1")
+    assert vwlc.browser_loopback_enabled() is True
+    args = vwlc.chromium_launch_args(True)
+    assert LOOPBACK_FLAG in args
+    assert args.count(LOOPBACK_FLAG) == 1  # 恰好一次，不重复注入
+    # 受控模式只是叠加 flag，基础 fake 麦克风参数保留
+    assert "--use-fake-device-for-media-stream" in args
+    assert "--use-fake-ui-for-media-stream" in args
+
+
+@pytest.mark.parametrize(
+    "raw", ["true", "TRUE", "yes", "on", "", " ", "2", "01", "0 ", "1\n"]
+)
+def test_loopback_switch_illegal_value_fails_closed(vwlc, monkeypatch, raw):
+    """非 0/1 的一律拒绝执行（fail-closed），绝不静默当默认值继续跑。"""
+    monkeypatch.setenv(vwlc.LOOPBACK_ENV, raw)
+    with pytest.raises(SystemExit):
+        vwlc.browser_loopback_enabled()
+    # env 映射显式传入路径同样 fail-closed（同一条解析逻辑）
+    with pytest.raises(SystemExit):
+        vwlc.browser_loopback_enabled({vwlc.LOOPBACK_ENV: raw})
+
+
+def test_chromium_launch_args_pure_and_ordered(vwlc):
+    """参数构造是纯函数：默认两条 + 受控模式追加第三条。"""
+    assert vwlc.chromium_launch_args(False) == [
+        "--use-fake-device-for-media-stream",
+        "--use-fake-ui-for-media-stream",
+    ]
+    assert vwlc.chromium_launch_args(True) == [
+        "--use-fake-device-for-media-stream",
+        "--use-fake-ui-for-media-stream",
+        LOOPBACK_FLAG,
+    ]
+
+
+def test_browser_report_records_mode_and_argv_summary(vwlc):
+    """results.json 的 browser 段：模式名（default/controlled）+ argv 摘要。"""
+    default_report = vwlc.browser_report(False)
+    assert default_report["mode"] == "default"
+    assert default_report["loopback_flag_present"] is False
+    assert LOOPBACK_FLAG not in default_report["chromium_launch_args"]
+    controlled = vwlc.browser_report(True)
+    assert controlled["mode"] == "controlled"
+    assert controlled["loopback_flag_present"] is True
+    assert LOOPBACK_FLAG in controlled["chromium_launch_args"]
+    assert controlled["loopback_env_var"] == "AIOS_LIVEKIT_BROWSER_LOOPBACK"
+
+
+def test_browser_report_never_leaks_jwt_or_token(vwlc):
+    """证据记录不泄露 JWT/token：browser 段只含模式与 argv，无凭据形态串。"""
+    import json
+
+    for report in (vwlc.browser_report(False), vwlc.browser_report(True)):
+        blob = json.dumps(report, ensure_ascii=False)
+        assert vwlc.JWT_RE.search(blob) is None
+        # 真实否定断言（替换原「or report 占位恒真」写法）：键与值全序列化后
+        # 不得出现 token/JWT/secret 字样——锁死报告结构不得新增凭据类字段
+        assert "token" not in blob.lower()
+        assert "jwt" not in blob.lower()
+        assert "secret" not in blob.lower()
+
+
+def test_sanitize_redacts_jwt_forms(vwlc):
+    """落盘脱敏：JWT 三段形态串必须被占位符替换（含中文上下文）。"""
+    dirty = (
+        "connect failed at eyJhbGciOiJIUzI1NiJ9."
+        "eyJzdWIiOiIxMjM0NTY3ODkwIn0."
+        "SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c step"
+    )
+    cleaned = vwlc.sanitize(dirty)
+    assert "eyJhbGci" not in cleaned
+    assert "[REDACTED-JWT]" in cleaned
+    assert "connect failed at" in cleaned  # 上下文保留，仅凭据替换
+
+
+def test_source_loopback_flag_literal_only_in_constant():
+    """flag 字面量全源码只出现一次（常量定义处）：launch 调用只引用常量，
+    杜绝任何旁路硬编码再次把受控 flag 带进默认模式。"""
+    assert SOURCE.count(LOOPBACK_FLAG) == 1, "loopback flag 字面量必须唯一定义于常量"
+
+
+def test_source_results_records_browser_section():
+    """main 落盘 results.json 前必须并入 browser 段（模式可审计）。"""
+    assert 'results["browser"] = browser_report(loopback)' in SOURCE
+    assert "browser_loopback_enabled()" in SOURCE  # main 显式解析模式（fail-closed 入口）

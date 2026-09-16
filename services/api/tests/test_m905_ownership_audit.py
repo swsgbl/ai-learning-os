@@ -589,3 +589,65 @@ def test_compose_livekit_config_and_credentials_stay_same_source(stack, auth_on)
     # 凭据同源：--keys 与 API env 同一组值
     assert api_env["LIVEKIT_API_KEY"] in livekit_cmd
     assert api_env["LIVEKIT_API_SECRET"] in livekit_cmd
+
+
+# --- 8. M14-37 LiveKit 媒体面独立绑定（渲染隔离矩阵 + node-ip 回落链） ---
+
+
+def test_compose_livekit_independent_bind_isolates_media_plane(stack, auth_on) -> None:
+    """AIOS_LIVEKIT_BIND_IP 单独生效：livekit 走 LAN，api/web 仍 loopback；
+    HOST_LIVEKIT_BIND_IP 透传 API；node-ip 回落链 EXTERNAL > BIND > 127.0.0.1。"""
+    import json
+    import os
+    import subprocess
+
+    def render(env_extra: dict) -> dict:
+        env = {**os.environ, "AIOS_WEB_PORT": "3100", **env_extra}
+        env.pop("DATABASE_URL", None)
+        proc = subprocess.run(
+            ["docker", "compose", "-f", COMPOSE_FILE, "--profile", "local", "config", "--format", "json"],
+            capture_output=True, text=True, check=True, env=env,
+        )
+        return json.loads(proc.stdout)
+
+    # 独立绑定：BIND_IP=127.0.0.1 + LIVEKIT_BIND_IP=LAN → 只有 livekit 走 LAN
+    isolated = render({"AIOS_BIND_IP": "127.0.0.1", "AIOS_LIVEKIT_BIND_IP": "192.168.1.50"})
+    lk_ports = isolated["services"]["livekit"]["ports"]
+    assert lk_ports and all(p.get("host_ip") == "192.168.1.50" for p in lk_ports), (
+        "AIOS_LIVEKIT_BIND_IP 应作用于 livekit 全部端口（7880/7881/UDP 7882-7892）"
+    )
+    for svc in ("api", "web"):
+        ports = isolated["services"][svc].get("ports", [])
+        assert ports and all(p.get("host_ip") == "127.0.0.1" for p in ports), (
+            f"{svc} 必须仍跟随 AIOS_BIND_IP=127.0.0.1（媒体面独立，API/Web 不暴露）"
+        )
+    assert isolated["services"]["api"]["environment"]["HOST_LIVEKIT_BIND_IP"] == "192.168.1.50", (
+        "独立绑定意图必须透传 API（fail-closed 校验入口）"
+    )
+    assert "--node-ip 192.168.1.50" in " ".join(isolated["services"]["livekit"]["command"]), (
+        "node-ip 应回落 AIOS_LIVEKIT_BIND_IP（单变量路径绑定与通告自洽）"
+    )
+
+    # EXTERNAL 显式优先于 BIND（M9-08 局域网语义保留）
+    override = render({
+        "AIOS_BIND_IP": "127.0.0.1",
+        "AIOS_LIVEKIT_BIND_IP": "192.168.1.50",
+        "AIOS_LIVEKIT_EXTERNAL_IP": "10.0.0.9",
+    })
+    assert "--node-ip 10.0.0.9" in " ".join(override["services"]["livekit"]["command"]), (
+        "AIOS_LIVEKIT_EXTERNAL_IP 显式配置必须优先于 BIND 回落"
+    )
+    assert all(
+        p.get("host_ip") == "192.168.1.50" for p in override["services"]["livekit"]["ports"]
+    ), "EXTERNAL 只改通告地址，不改实际绑定"
+
+    # 默认（两者都未设）：livekit 跟随 AIOS_BIND_IP，node-ip 127.0.0.1（存量零破坏）
+    follow = render({"AIOS_BIND_IP": "0.0.0.0"})
+    assert all(
+        p.get("host_ip") == "0.0.0.0" for p in follow["services"]["livekit"]["ports"]
+    ), "未设 AIOS_LIVEKIT_BIND_IP 时 livekit 应回落 AIOS_BIND_IP"
+    assert "--node-ip 127.0.0.1" in " ".join(follow["services"]["livekit"]["command"])
+    default = render({})
+    assert default["services"]["api"]["environment"]["HOST_LIVEKIT_BIND_IP"] == "", (
+        "默认未启用独立绑定时透传空串（=未启用，不触发媒体面门禁）"
+    )

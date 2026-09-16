@@ -607,6 +607,47 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   默认关闭保持确定性判分；真实端点冒烟脚本 infra/smoke_llm.sh）
 
 ### Fixed
+- M14-37 LiveKit 默认拓扑稳定性（默认/受控浏览器模式开关 + 媒体面独立绑定）——分支
+  `fix/m14-37-livekit-default-topology` 基于 `main@54e8005`（PR #113 merge），本 Claude 开发
+  回合独占 worktree 单 local commit 不 push。背景（M14-35 遗留生产阻塞）：当前栈 LiveKit
+  以 `--node-ip 127.0.0.1` 通告媒体且 UDP 仅绑 loopback，Chromium/WebRTC 默认不收集
+  loopback ICE candidate，默认浏览器直连存在间歇性 ICE 失败（拓扑级不确定）；M14-35 R2 的
+  `--allow-loopback-in-peer-connection` 受控 flag 只是验收口径，生产用户浏览器默认不具备。
+  修复双侧：① 验收口径诚实化（`infra/verify_web_livekit_client.py`）——新
+  `AIOS_LIVEKIT_BROWSER_LOOPBACK` 严格开关：未设置/`0` = **default 模式绝不注入 loopback
+  flag**（代表生产用户默认拓扑，失败即真实生产阻塞证据）；字面 `1` = controlled 受控模式
+  （M14-35 R2 口径保留）；任何其他值（10 变体）**ENV-BLOCKED fail-closed** 退出码 2，绝不
+  静默当默认；flag 字面量收敛为 `LOOPBACK_FLAG` 常量全源码唯一定义处（契约测试锁定恰好
+  出现一次，杜绝旁路硬编码）；results.json 新增 browser 段（mode/flag present/argv 摘要，
+  永不泄露 JWT/token）。② 媒体面独立绑定拓扑——`AIOS_LIVEKIT_BIND_IP` 单独把 livekit
+  绑本机 LAN IP（端口回落链 LIVEKIT_BIND → BIND → 127.0.0.1，未设置存量行为零变化；
+  node-ip 回落链 EXTERNAL → LIVEKIT_BIND → 127.0.0.1），浏览器拿到常规 LAN candidate 无需
+  受控 flag，API/Web 仍走 `AIOS_BIND_IP` 不整体公开；`HOST_LIVEKIT_BIND_IP` 透传
+  settings `host_livekit_bind_ip`；`validate_exposure` 新增 LiveKit-only 公开分支
+  fail-closed：非 loopback 绑定要求强 `LIVEKIT_API_SECRET`（≥32 字节且非仓库公开默认
+  占位值）+ 浏览器可达 `PUBLIC_LIVEKIT_URL`（不得缺失/容器内部/loopback），API/Web 面
+  公开时 M9-06/M9-07 原四项校验语义零改动；rework（同 commit amend）：
+  `livekit_bind_ip` 经 stdlib ipaddress 解析，wildcard（`0.0.0.0`/`::`）与非法
+  字面量任何面状态下 fail-closed 拒绝（`--node-ip` 不能通告 wildcard，错误信息
+  要求具体本机 LAN IP；空串保留 compose「未启用」哨兵；IPv4-mapped 先解包再
+  分类），browser 段脱敏断言由占位恒真改为真实否定（token/JWT/secret 字样不得
+  出现）；文档 `.env.example` + `docs/DEVELOPMENT.md`
+  （一键命令、回落链、0.0.0.0 警告、TURN 后备衔接、验收口径）。测试新增 14 个函数（开关
+  语义 4 含非法值参数化 10 变体、argv 纯净性、browser 段可审计与脱敏 3、源码文本契约 2、
+  暴露校验纯函数 2、compose 渲染矩阵 1——`docker compose config` 渲染不启容器，锁定
+  livekit 走 LAN 而 api/web 仍 loopback + node-ip 回落链；rework 另 +1 fail-closed
+  用例）。本地验证：聚焦 77 passed（含 rework 用例）、
+  ruff/py_compile/`git diff --check` 全绿、增行 secret 扫描 0 真实凭据命中；真实默认浏览器
+  验收 **8/8 连跑 verdict=passed**（gitignored `.verify/m14-37-default-topology/run1..run8`：
+  每轮 mode=default、loopback_flag_present=false、token/connect/data/mic/cleanup 五步全
+  passed、ws_url=ws://127.0.0.1:7880、DOM 无 JWT、检测窗口 console 零错误、生产栈零重启
+  零 env 变更）；受控回归 1/1 passed（mode=controlled、flag present——M14-35 R2 旧口径
+  不破坏）；非法值探针 ENV-BLOCKED 退出码 2 无 results.json；8 连跑后本 worktree 孤儿
+  进程扫描 FOUND 0（M14-36 不回归）。诚实边界：8/8 是间歇性失败未在本批复现的实证而非
+  loopback 拓扑已稳定（生产栈绑定未动，间歇性 ICE 风险仍在）；拓扑修复以能力形态交付，
+  实际切换（LAN 绑定 + 强 secret + 可达 URL 后 up -d）与切换后默认拓扑验收留运维显式
+  执行；不覆盖远程设备/跨 NAT（M10-05 TURN 后备域）/多人/重连/长稳；不构成
+  `production_ready=true` 依据。证据 `docs/evidence/m14-37-livekit-default-topology/README.md`。
 - M14-36 Web 验收工具进程生命周期修复（Windows 孤儿进程树精确回收）——分支
   `fix/m14-36-acceptance-process-cleanup` 基于 `main@3a5c095`，本 Claude 开发
   回合独占 worktree 单 local commit 不 push。缺陷（监督者盘点实证）：

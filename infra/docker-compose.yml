@@ -3,6 +3,13 @@ name: ai-learning-os
 # M9-05: 所有端口默认只绑 127.0.0.1（本机使用）。
 # 需要 LAN/外网访问时：AIOS_BIND_IP=0.0.0.0 且必须同时设置强 AUTH_SECRET
 # 与 APP_ENV=production（API 启动 fail-closed 校验），见 docs/DEVELOPMENT.md。
+#
+# M14-37: LiveKit 媒体面可独立绑定 —— AIOS_LIVEKIT_BIND_IP 单独把 livekit
+# 绑到 LAN IP（回落链 AIOS_LIVEKIT_BIND_IP → AIOS_BIND_IP → 127.0.0.1），
+# 解决默认浏览器连本机 loopback LiveKit 的间歇性 ICE 失败（M14-35 生产阻塞），
+# 无需为此把 API/Web 一起暴露。API/Web 仍走 AIOS_BIND_IP；LiveKit 单独非
+# loopback 绑定时 API 启动 fail-closed 要求强 LIVEKIT_API_SECRET 与可达
+# PUBLIC_LIVEKIT_URL（本机同机场景 API 保持 loopback，CORS/APP_ENV 不动）。
 
 # M14-06: 全部长驻服务 restart: unless-stopped —— Docker 引擎重启/容器崩溃后
 # 自动拉起（自愈基线）；显式 `docker compose stop/down` 仍会被尊重（unless-
@@ -83,6 +90,10 @@ services:
       APP_ENV: ${AIOS_APP_ENV:-docker}
       # M9-06: 宿主绑定意图传入 API（容器内 env 名对齐 settings 字段 host_bind_ip）
       HOST_BIND_IP: ${AIOS_BIND_IP:-127.0.0.1}
+      # M14-37: LiveKit 媒体面独立绑定意图传入 API（对齐 settings
+      # host_livekit_bind_ip）—— 非 loopback 时启动校验要求强
+      # LIVEKIT_API_SECRET + 可达 PUBLIC_LIVEKIT_URL（fail-closed）
+      HOST_LIVEKIT_BIND_IP: ${AIOS_LIVEKIT_BIND_IP:-}
       # M9-04: CORS 与 Web 端口联动 —— AIOS_WEB_PORT 自定义时默认跟随，
       # 也可用 AIOS_CORS_ORIGINS 完整覆盖（冒烟验证 preflight 一致性）
       CORS_ORIGINS: ${AIOS_CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000,http://localhost:${AIOS_WEB_PORT:-3000},http://127.0.0.1:${AIOS_WEB_PORT:-3000}}
@@ -151,19 +162,21 @@ services:
     restart: unless-stopped
     # M9-07/M9-08: --keys 与 API 共用同一组凭据；config 可切换 local/public
     # （AIOS_LIVEKIT_CONFIG，public 版 use_external_ip=true 适合公网自动探测）；
-    # --node-ip 显式通告媒体地址（局域网必配 AIOS_LIVEKIT_EXTERNAL_IP=<LAN_IP>；
-    # 本机默认 127.0.0.1 自洽）
+    # --node-ip 显式通告媒体地址：AIOS_LIVEKIT_EXTERNAL_IP 显式优先（M9-08
+    # 局域网语义保留），回落 AIOS_LIVEKIT_BIND_IP（M14-37：单变量路径下
+    # 绑定与通告同一 LAN IP 自洽），本机默认 127.0.0.1
     command: >-
       --config ${AIOS_LIVEKIT_CONFIG:-/etc/livekit/livekit.yaml}
       --keys "${AIOS_LIVEKIT_API_KEY:-devkey}: ${AIOS_LIVEKIT_API_SECRET:-ailos-local-dev-secret-0f4c9a1e7b2d}"
-      --node-ip "${AIOS_LIVEKIT_EXTERNAL_IP:-127.0.0.1}"
+      --node-ip "${AIOS_LIVEKIT_EXTERNAL_IP:-${AIOS_LIVEKIT_BIND_IP:-127.0.0.1}}"
     volumes:
       - ./livekit/livekit.yaml:/etc/livekit/livekit.yaml:ro
       - ./livekit/livekit-public.yaml:/etc/livekit/livekit-public.yaml:ro
     ports:
-      - "${AIOS_BIND_IP:-127.0.0.1}:7880:7880"
-      - "${AIOS_BIND_IP:-127.0.0.1}:7881:7881"
-      - "${AIOS_BIND_IP:-127.0.0.1}:7882-7892:7882-7892/udp"
+      # M14-37: 媒体面独立绑定回落链（LiveKit 可单独 LAN，API/Web 不动）
+      - "${AIOS_LIVEKIT_BIND_IP:-${AIOS_BIND_IP:-127.0.0.1}}:7880:7880"
+      - "${AIOS_LIVEKIT_BIND_IP:-${AIOS_BIND_IP:-127.0.0.1}}:7881:7881"
+      - "${AIOS_LIVEKIT_BIND_IP:-${AIOS_BIND_IP:-127.0.0.1}}:7882-7892:7882-7892/udp"
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:7880/ || exit 1"]
       interval: 10s

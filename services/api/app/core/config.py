@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     auth_cookie_samesite: CookieSameSite = "lax"
     # M9-06: 宿主端口绑定意图（compose 透传 AIOS_BIND_IP）——非 loopback 时启动校验升级
     host_bind_ip: str = "127.0.0.1"
+    # M14-37: LiveKit 媒体面独立绑定意图（compose 透传 AIOS_LIVEKIT_BIND_IP；
+    # 空=未启用，compose 回落 AIOS_BIND_IP）——非 loopback 时启动校验要求强
+    # LIVEKIT_API_SECRET + 可达 PUBLIC_LIVEKIT_URL（API/Web 可保持 loopback）
+    host_livekit_bind_ip: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
