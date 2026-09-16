@@ -607,6 +607,38 @@ Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow
   默认关闭保持确定性判分；真实端点冒烟脚本 infra/smoke_llm.sh）
 
 ### Fixed
+- M14-36 Web 验收工具进程生命周期修复（Windows 孤儿进程树精确回收）——分支
+  `fix/m14-36-acceptance-process-cleanup` 基于 `main@3a5c095`，本 Claude 开发
+  回合独占 worktree 单 local commit 不 push。缺陷（监督者盘点实证）：
+  `infra/verify_web_livekit_client.py` 旧版 start_web 以 npm 包装链
+  （mise.exe → cmd.exe npm.cmd → node）为 Popen 对象、finally 只 terminate
+  该包装器单 PID——Windows 进程终止不级联子进程，`next start` 的 node.exe
+  与中间 shim 全部存活为孤儿，跨次验收累计 26 个 node.exe/mise.exe 孤儿
+  进程锁死 worktree 文件句柄。修复只动验收工具、零生产服务触碰：
+  ①`resolve_node_executable()` 以 `node -p process.execPath` 解析真实 node
+  可执行文件，直接 Popen `[<真实node>, <next_bin()>, "start", "-p", <port>]`
+  （Popen PID 即最终长命进程本身，无中间 shim）；`next_bin()` 惰性解析
+  next CLI 真实入口（npm workspaces 提升 → 仓库根 node_modules 优先，
+  兼容 apps/web 本地；全缺 ENV-BLOCKED fail-closed）；②`stop_process_tree()`
+  有界精确树回收：Windows 恰 `taskkill /PID <Popen pid> /T /F`（只该 PID
+  树，绝不按端口/进程名扫杀——无 /IM、pkill、killall、netstat、Get-Process、
+  wmic）；POSIX `start_new_session=True` 自成进程组 → SIGTERM → 有界宽限
+  → SIGKILL；已退出零动作；③main finally 换用 stop_process_tree。TDD
+  新增 `test_verify_web_livekit_client.py` 20 项全 mock 契约测试（probe
+  argv/平台分支/树杀语义/文本锚点与禁词，绝不真实执行 taskkill/killpg）。
+  验证：聚焦 20 passed、全量 services/api **2826 passed / 0 failed /
+  33 skipped**、ruff（services/api + infra 脚本）+ py_compile +
+  `git diff --check` 全过；真实受控浏览器验收一次执行 **13/13 checks
+  verdict=passed exit 0**（复用生产 API/LiveKit/DB 零重启；token/connect/
+  data/mic/cleanup 五步全 passed、DOM 无 JWT、检测窗口 console 零错误；
+  受控条件同 M14-35 R2 loopback flag 口径），验收前后孤儿扫描
+  （Win32_Process：node/mise/cmd 命令行含本 worktree 路径）均 **FOUND 0**
+  ——旧缺陷形态下退出后必然残留，修复后退出即零残留。边界：POSIX 组杀
+  仅全 mock 契约验证（未在 POSIX 真机跑）；单次验收不穷尽外部强杀等
+  异常路径（但该路径下孤儿面已最小化——无中间 shim 链）；默认拓扑 ICE
+  间歇性失败未消除（独立生产阻塞项）；`production_ready=false` 不变。
+  证据 `docs/evidence/m14-36-acceptance-process-cleanup/README.md`（原始
+  证据 gitignored `.verify/m14-36-acceptance-process-cleanup/` 不入库）
 - M14-29 sidecar status 路径契约修复（已随 **PR #108 合并 main**——feature
   head `527c454`、merge commit `1b6d862`，PR CI run `34933123493` 与合并后
   main CI run `34946366049` 均 5/5 job SUCCESS；分支

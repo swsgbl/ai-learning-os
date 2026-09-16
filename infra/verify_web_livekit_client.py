@@ -8,6 +8,14 @@
       经同源 /api/* rewrite 网关访问上游 API（生产 CORS 是精确 allowlist，
       不为此验收放行新源）；验收结束即关闭该自建进程。
 
+进程生命周期（M14-36）：自建 web 以真实 node 直启 next start（`node -p
+process.execPath` 解析可执行文件，绕过 mise/npm shim——旧版以 npm 包装器为
+Popen 对象、结束时只 terminate 包装器 PID，Windows 上进程终止不级联子进程，
+跨次验收累计 26 个 node.exe/mise.exe 孤儿进程锁死 worktree 文件句柄）。结束
+时按 Popen PID 精确树回收：Windows taskkill /PID <pid> /T /F；POSIX 以独立
+进程组（start_new_session）启动并 SIGTERM→SIGKILL 该组。绝不按端口或进程名
+扫杀（杜绝误伤生产进程）。
+
 受控验收条件（R2，非生产用户默认）：
     当前 compose 生产栈 LiveKit 以 --node-ip 127.0.0.1 通告媒体地址且 UDP
     端口只绑定 127.0.0.1；Chromium/WebRTC 默认不收集 loopback ICE candidate，
@@ -48,6 +56,7 @@ import json
 import os
 import re
 import shutil
+import signal
 import socket
 import subprocess
 import sys
@@ -130,6 +139,35 @@ def ensure_user() -> None:
 
 # --- 本分支 web：构建 + 空闲端口自起自收 ---
 
+#: POSIX 组杀信号：Windows 上 signal.SIGKILL 不存在，取等价数值保证可移植可测
+_SIG_TERM = getattr(signal, "SIGTERM", 15)
+_SIG_KILL = getattr(signal, "SIGKILL", 9)
+
+#: next CLI 真实入口候选（node 脚本）：绕过 npm 包装链直接以 node 启动。
+#: 本仓库为 npm workspaces——依赖提升到仓库根 node_modules（实际形态）；
+#: 兼容 workspace 本地 node_modules。惰性解析：导入期不触发（CI 的 pytest
+#: 环境无 node_modules 也能 import 本模块跑契约测试）。
+NEXT_BIN_CANDIDATES = (
+    REPO_ROOT / "node_modules" / "next" / "dist" / "bin" / "next",
+    REPO_ROOT / "apps" / "web" / "node_modules" / "next" / "dist" / "bin" / "next",
+)
+
+
+def next_bin() -> Path:
+    """解析 next CLI 真实入口（存在即用；都缺 → ENV-BLOCKED fail-closed）。"""
+    for candidate in NEXT_BIN_CANDIDATES:
+        if candidate.is_file():
+            return candidate
+    raise SystemExit(
+        "ENV-BLOCKED: 未找到 next CLI（候选均不存在："
+        f"{'; '.join(str(c) for c in NEXT_BIN_CANDIDATES)}；apps/web 依赖未安装？）"
+    )
+
+
+def _is_windows() -> bool:
+    """平台判定唯一入口（测试注入替身，无需污染全局 os.name）。"""
+    return os.name == "nt"
+
 
 def free_port() -> int:
     with socket.socket() as sock:
@@ -143,6 +181,28 @@ def npm() -> str:
         if path:
             return path
     raise SystemExit("ENV-BLOCKED: 未找到 npm")
+
+
+def resolve_node_executable() -> str:
+    """解析真实 Node 可执行文件路径（`node -p process.execPath`）。
+
+    mise/npm shim 只是短命引导；让它们做 Popen 父进程会在 Windows 上留下
+    长命孤儿链（M14-36 缺陷根因）。解析出的真实 node 才直接作为 next
+    start 的宿主进程，Popen PID 即最终长命进程本身。
+    """
+    try:
+        result = subprocess.run(
+            ["node", "-p", "process.execPath"],
+            capture_output=True, text=True, timeout=60, check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as cause:
+        raise SystemExit(
+            f"ENV-BLOCKED: node 不可用，无法解析真实可执行文件（{type(cause).__name__}）"
+        ) from cause
+    path = (result.stdout or "").strip()
+    if result.returncode != 0 or not path:
+        raise SystemExit("ENV-BLOCKED: `node -p process.execPath` 解析失败（真实 node 不可用）")
+    return path
 
 
 def build_web(out_dir: Path) -> None:
@@ -161,13 +221,20 @@ def build_web(out_dir: Path) -> None:
 
 
 def start_web(port: int) -> subprocess.Popen:
+    """直接以真实 node 启动 next start（不经 npm 包装链，M14-36）。
+
+    Popen PID 即 next start 的 node 宿主进程本身（无中间 mise/cmd/npm shim）；
+    POSIX 上以独立会话/进程组启动（pgid==pid），保证停止时可精确、有界地只
+    回收本进程树。绝不按端口或进程名扫杀。
+    """
     env = dict(os.environ)
     env["NEXT_PUBLIC_API_BASE_URL"] = ""
     env["AIOS_ACCEPTANCE_API_PROXY"] = API_BASE
     proc = subprocess.Popen(
-        [npm(), "run", "start", "--", "-p", str(port)],
+        [resolve_node_executable(), str(next_bin()), "start", "-p", str(port)],
         cwd=REPO_ROOT / "apps" / "web", env=env,
         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        start_new_session=not _is_windows(),
     )
     base = f"http://127.0.0.1:{port}"
     for _ in range(60):
@@ -178,6 +245,45 @@ def start_web(port: int) -> subprocess.Popen:
             return proc
         time.sleep(1)
     raise AssertionError("FAIL: web 服务 60s 未就绪")
+
+
+def stop_process_tree(proc: subprocess.Popen, *, grace_seconds: float = 15.0) -> None:
+    """有界、精确的进程树回收（M14-36）：只针对本脚本 Popen 出的 PID 树。
+
+    - 进程已退出：直接返回（不发起任何 kill）；
+    - Windows：taskkill /PID <pid> /T /F——/T 恰好沿该 PID 的进程树递归终止，
+      不按端口/进程名扫描（杜绝误伤生产进程）；
+    - POSIX：start_web 已用 start_new_session 使其自成进程组（pgid==pid），
+      先对组 SIGTERM、有界等待，超时再对组 SIGKILL；组已消亡被容忍。
+    最后统一有界 wait() 回收 Popen 句柄。
+    """
+    if proc.poll() is not None:
+        return
+    if _is_windows():
+        subprocess.run(
+            ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+            capture_output=True, timeout=60, check=False,
+        )
+    else:
+        try:
+            os.killpg(proc.pid, _SIG_TERM)
+        except OSError:
+            pass  # 组已消亡
+        try:
+            proc.wait(timeout=grace_seconds)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(proc.pid, _SIG_KILL)
+            except OSError:
+                pass
+    try:
+        proc.wait(timeout=grace_seconds)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        try:
+            proc.wait(timeout=grace_seconds)
+        except subprocess.TimeoutExpired:
+            pass
 
 
 # --- 浏览器验收 ---
@@ -301,11 +407,7 @@ def main() -> int:
         results = {"verdict": "failed", "error": sanitize(f"{type(cause).__name__}: {cause}")}
     finally:
         if proc is not None:
-            proc.terminate()
-            try:
-                proc.wait(timeout=15)
-            except subprocess.TimeoutExpired:
-                proc.kill()
+            stop_process_tree(proc)
     results["verdict"] = verdict
     results["checks_passed"] = CHECKS
     (out_dir / "results.json").write_text(
