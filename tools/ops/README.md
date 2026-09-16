@@ -46,10 +46,24 @@ python tools/ops/production_recovery.py               # enforce（需 pin env �
    inspect/port 探测不完整同样拒绝）。仅报键名，值绝不回显（子进程输出写
    日志前经防御性 redact）。任一不满足 → enforce 在 `up` 之前可见拒绝——
    防止恢复路径用默认值/漂移值/占位值静默重建容器（tag/端口/密钥轮换）。
-4. **幂等 up**：`docker compose -f infra/docker-compose.yml -p
-   aios-m14-03-production-rehearsal --profile local --env-file <pin>
-   up -d --no-build`（绝不 `--build`；dry-run 模式附加 compose 原生
-   `--dry-run`）。
+4. **up 决策（M14-39 恢复边界）**：pin 通过后先做只读栈健康快照
+   （`compose ps --format json`）。六服务（postgres/redis/minio/api/web/
+   livekit）全部 healthy/running 时，dry-run 与 enforce **一致跳过
+   compose up**（明确输出「健康栈无需 up」，继续语音调和与最终判定）——
+   startup recovery 是恢复健康，不是部署/config drift 收敛；拓扑变更由
+   `livekit_lan_cutover.py` 显式执行。栈有缺失/不健康时：
+   1. **up 前只读本地镜像预检**：compose 自建镜像锚点
+      （`aios/minio:RELEASE.2025-10-15T17-29-55Z`，M14-13 起本地构建、
+      registry 不可拉取）经 `docker image inspect` 探测（零
+      pull/build/stop；探测失败按缺失处理）；缺失 → 输出
+      `minio-local-image-missing` 并在 up 之前 fail-closed（本工具绝不
+      pull/build——人工在获准窗口构建后重试）。栈全健康时跳过 up 即
+      不触发预检（健康栈不因本机未构建自建镜像被误伤）。
+   2. **幂等 up**：`docker compose -f infra/docker-compose.yml -p
+      aios-m14-03-production-rehearsal --profile local --env-file <pin>
+      up -d --no-build`（绝不 `--build`；dry-run 模式附加 compose 原生
+      `--dry-run`；不加 `--no-deps`、不加 `--no-recreate`、不隐藏漂移——
+      恢复路径整栈 up 口径，与 M14-38 cutover 的最小范围重建分工）。
 5. **六服务健康等待**：`compose ps` 轮询至 postgres/redis/minio/api/web/
    livekit 全 healthy（默认 420s）。
 6. **本地语音调和（status first）**：经 `tools/voice/voice_service_control.py`
@@ -61,8 +75,9 @@ python tools/ops/production_recovery.py               # enforce（需 pin env �
      `managed-starting` → **可见失败**：不 spawn、不发信号、不清理 manifest；
    - `unmanaged-running` 非 200 → 不触碰（拒绝误杀边界）+ DEGRADED 退出。
 
-退出码：`0` 完成/无需恢复；`1` 可见失败（含 pin 拒绝、健康未达、语音 fail
-状态、DEGRADED）；`2` 参数错误。运行日志落 `artifacts/recovery/`
+退出码：`0` 完成/无需恢复；`1` 可见失败（含 pin 拒绝、自建镜像缺失
+（`minio-local-image-missing`）、健康未达、语音 fail 状态、DEGRADED）；
+`2` 参数错误。运行日志落 `artifacts/recovery/`
 （gitignored）；Windows 侧子进程恒 `CREATE_NO_WINDOW`。
 
 ## 部署 env（pin 事实源）
