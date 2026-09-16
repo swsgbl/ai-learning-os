@@ -40,8 +40,9 @@ MinIO 社区版自 2025-10（安全发布窗口）起停止分发官方 Docker �
 
 ## 供应链完整性模型
 
-1. **源码**：唯一来源 = 上表 codeload 官方不可变 commit URL（HTTPS-only，
-   全 Dockerfile 仅一次 `wget`）。**如实说明**：本回合未附 tarball 的
+1. **源码**：唯一来源 = 上表 codeload 官方不可变 commit URL（HTTPS-only；
+   下载器 = builder 阶段内现场编译的纯标准库 Go fetcher——M14-40 修正轮 2
+   起代理感知，见下方修正注记 2）。**如实说明**：本回合未附 tarball 的
    SHA-256（回合约束「不下载上游工件」，无法本地取得校验和）——源码面
    完整性 = 不可变 commit 寻址 URL + TLS + GitHub 官方源；如需更强可后续
    由 supervisor 获准下载一次补算 SHA-256 并在 Dockerfile 中 fail-closed
@@ -56,8 +57,9 @@ MinIO 社区版自 2025-10（安全发布窗口）起停止分发官方 Docker �
    下载；
 4. **基镜像**：builder/runtime 一律 digest pin（与 `infra/coturn/` 同款
    纪律），无浮动 FROM；
-5. **最小面**：全文件零 `apk add` —— 下载/解压只用 builder 自带 BusyBox
-   （wget/tar），不引入 git/curl 等额外包面。
+5. **最小面**：全文件零 `apk add` —— 下载用 builder 阶段内现场编译的纯标准库
+   Go fetcher（代理感知），解压只用自带 BusyBox tar，不引入 git/curl 等
+   额外包面。
 
 构建参数对齐官方社区构建口径（并行验证会话按 pin tag 读取上游
 `buildscripts/gen-ldflags.go` 与 Makefile 复核）：`CGO_ENABLED=0`、
@@ -73,6 +75,19 @@ commit 输出正确，但 CLI `--version` 打印的是 `cmd.ReleaseTag`（未注
 子集」的复核结论在 CLI 打印面上不完整。修正：补注入
 `-X …cmd.ReleaseTag=<RELEASE>`（与 Version 同源用 pin 的 MINIO_RELEASE），
 `test_minio_selfbuild.py` 契约同步新增 ReleaseTag 注入断言锁定。
+
+**修正注记 2（2026-09-17，M14-40 supervisor 修正镜像三次重建实测）**：
+ReleaseTag 修正后的三次重建（build-20260916-164346/-164601/-164823）均败
+于 BusyBox wget 的 `bad address 'codeload.github.com'`——BuildKit RUN 层
+DNS 不稳定（同一宿主普通 Docker 容器 DNS 可解析），且 BusyBox wget 无视
+HTTPS_PROXY（无 HTTP CONNECT 支持，代理在场也走不了）；Docker 内建代理
+`http://http.docker.internal:3128` 对 `CONNECT codeload.github.com:443`
+探通（HTTP/1.0 200 OK）。修正：下载器换成 builder 阶段内现场编译的纯标准库
+Go fetcher（net/http 默认 transport = ProxyFromEnvironment，printf 内联落盘
+`/fetch`、用后连同临时源码包删除）——源码 URL/HTTP 200 校验/BusyBox tar
+解压/供应链面全部不变（零 apk add、零 git、零 curl、零 GOPROXY 改动）。
+修正后的重建复验待 supervisor 执行（M14-40 修正回合 2 零 Docker/零生产
+操作）。
 
 ## 变更面
 
@@ -106,8 +121,10 @@ commit 输出正确，但 CLI `--version` 打印的是 `cmd.ReleaseTag`（未注
   窗口）；「实际构建耗时」「tarball 可取性」「版本元数据渲染（容器内
   `minio --version`）」以首次 CI 构建为准，本回合不宣称。
   （2026-09-17 更新：M14-40 supervisor 代理构建成功 + 真实冒烟已实测
-  版本渲染——暴露 ReleaseTag 缺注入缺陷（见上修正注记）；修正后的
-  重建复验待 supervisor 执行，修正回合零 Docker/零生产操作。）
+  版本渲染——暴露 ReleaseTag 缺注入缺陷（见上修正注记）；该修正后的三次
+  重建又均败于 BuildKit RUN 层 DNS / BusyBox wget 无代理支持（见修正
+  注记 2），第二轮修正（Go fetcher 代理感知）后的重建复验待 supervisor
+  执行，两轮修正回合零 Docker/零生产操作。）
 - tarball 无 SHA-256 fail-closed 校验（见上「供应链完整性模型」第 1 条的
   如实说明与补强路径）。
 - 自建后 MinIO 的安全响应责任在本仓：上游社区版可能不再有新发布——后续

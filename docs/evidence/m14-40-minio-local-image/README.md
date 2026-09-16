@@ -118,6 +118,54 @@ python tools/ops/minio_image_adoption.py preflight --execute --confirm "EXECUTE 
 preflight、生产采纳、push/PR/CI 均待执行**——修正仅为代码级 + 契约测试
 锁定，不宣称修正后构建/冒烟已通过。
 
+## 修正回合 2（2026-09-17，源码获取代理感知；零 Docker/零生产操作）
+
+supervisor 用修正后 Dockerfile 三次重建镜像，均失败于源码下载阶段（如实
+记录）。在已接受提交 7f4c6b2 之上追加第三个 local commit（本 worktree，
+不 push）。
+
+**失败与诊断证据**：
+
+- 三份失败报告（gitignored）：`build-20260916-164346` / `build-20260916-
+  164601` / `build-20260916-164823`（`.verify/artifacts/m14-40-minio-image-
+  adoption/`），失败点一致：`wget: bad address 'codeload.github.com'`——
+  BusyBox wget 解析不了 codeload 域名；
+- 诊断 1：**BuildKit RUN 层 DNS 不稳定**——同一宿主上普通 Docker 容器的
+  DNS 可解析 codeload.github.com，唯 BuildKit RUN 步骤解析失败；
+- 诊断 2：**BusyBox wget 无视 HTTPS_PROXY/https_proxy**（无 HTTP CONNECT
+  支持——HTTP 代理在场也走不了），旧下载器结构性无法代理化；
+- 探针：Docker 内建代理 `http://http.docker.internal:3128` 对
+  `CONNECT codeload.github.com:443` 返回 `HTTP/1.0 200 OK`——代理路径可用，
+  缺的只是代理感知的下载器。当前源码获取不感知代理，阻塞既定在线构建
+  模式。
+
+**修正**：`infra/minio/Dockerfile` 仅替换源码下载这一步——BusyBox wget →
+builder 阶段内**现场编译的纯标准库 Go fetcher**（printf 内联落盘
+`/fetch/main.go` + 最小 go.mod，本 builder 已 pin 的 go 编译执行；net/http
+默认 transport 语义 = `http.Get`，Proxy 即 `ProxyFromEnvironment`——读
+HTTPS_PROXY/https_proxy，HTTPS 经 HTTP CONNECT 出代理且由代理侧解析目标
+域名，绕开 BuildKit RUN 层 DNS）。供应链面零变化：仍是同一不可变
+`MINIO_SOURCE_URL`、仍校验 HTTP 200、仍写同一 `minio-src.tar.gz`、仍用
+BusyBox tar 解压、临时源码包与 `/fetch` 一并删除；**零 apk add、零 git、
+零 curl、零 GOPROXY 改动、零新增上游源**，Version/ReleaseTag/CommitID
+注入不变。`test_minio_selfbuild.py` 契约同步（22→**24 项**）：源码 URL
+测试改锁 fetcher 调用形态，新增代理感知 fetcher 契约 + 指令面零
+apk/curl/git/wget/GOPROXY 契约。
+
+修正回合 2 验证（本 worktree 真实执行，零 Docker/零生产操作）：
+
+- 聚焦采纳套件 `test_minio_image_adoption.py`：**125 passed**——工具无需
+  改动：其 `AIOS_MINIO_BUILD_HTTPS_PROXY` 路径传入的 Docker 预定义
+  `HTTPS_PROXY` build arg 此前只作用于 Go module 拉取，现在同样作用于
+  源码 fetcher（测试未暴露真实契约缺口）；
+- selfbuild 套件 `test_minio_selfbuild.py`：**24 passed**；
+- 邻居复验（selfbuild + production_recovery + compose_profiles +
+  backup_drill）：**94 passed / 3 skipped**。
+
+修正后状态（诚实边界）：supervisor **代理重建镜像、重跑 smoke、真实只读
+preflight、生产采纳、push/PR/CI 均待执行**——修正仅为代码级 + 契约锁定，
+不宣称修正后构建/冒烟已通过。
+
 ## 验证（Stage 1/1b + Stage 2 复验）
 
 - Stage 1 全量 services/api：**3045 passed / 33 skipped**；
@@ -136,6 +184,8 @@ preflight、生产采纳、push/PR/CI 均待执行**——修正仅为代码级 
   `minio-data` 卷 root → uid 1000 一次性迁移（M14-13 生产采纳注记），
   再 `up -d --no-build` 固化。
 - supervisor 代理构建已成功；smoke 已暴露版本元数据缺陷且清理成功（见
-  上「supervisor 代理构建与冒烟结果」）；修正后**重建镜像、重跑 smoke、
-  真实 preflight、push / PR / CI 未执行**——均为 supervisor 后续动作，
+  上「supervisor 代理构建与冒烟结果」）；第一轮修正后的三次重建均败于
+  BuildKit RUN 层 DNS / BusyBox wget 无代理支持（见上「修正回合 2」）；
+  第二轮修正（Go fetcher 代理感知）后的**重建镜像、重跑 smoke、真实
+  preflight、push / PR / CI 未执行**——均为 supervisor 后续动作，两轮
   修正回合零生产操作。

@@ -15,8 +15,9 @@
 #
 # 供应链完整性模型（fail-closed）：
 #   1. 源码唯一来源 = codeload 官方不可变 commit URL（HTTPS，完整 40 位 SHA
-#      寻址，绝无 tag/branch 可移动 ref）；全文件零 apk add —— 下载/解压用
-#      builder 基镜像自带 BusyBox（wget/tar）；
+#      寻址，绝无 tag/branch 可移动 ref）；全文件零 apk add —— 下载用本
+#      builder 阶段已 pin 的 golang 工具链现场编译的纯标准库 Go fetcher
+#      （net/http 默认 transport，代理感知），解压用自带 BusyBox tar；
 #   2. 依赖完整性由源码树内官方 go.sum 承担：GOFLAGS=-mod=readonly（模块图
 #      只读，不许改写 go.mod/go.sum）、GOSUMDB 默认开启、GOPROXY 不覆盖；
 #      指令面零 bypass；
@@ -39,11 +40,72 @@ ENV CGO_ENABLED=0 \
 
 WORKDIR /src
 
-# 唯一源码获取：codeload 官方不可变 commit URL；下载/解压全用 BusyBox
-# （wget/tar）——零 apk add、零 git、零其他网络源
-RUN wget -q -O minio-src.tar.gz "${MINIO_SOURCE_URL}" \
+# 唯一源码获取：codeload 官方不可变 commit URL。下载器（M14-40 修正轮 2）
+# = 用本 builder 阶段已 pin 的 golang 工具链现场编译的小型纯标准库 Go
+# fetcher：net/http 默认 transport 语义（ProxyFromEnvironment——读
+# HTTPS_PROXY/https_proxy，HTTPS 经 HTTP CONNECT 出代理且由代理侧解析目标
+# 域名）。实测动因：三次修正镜像重建均失败于 build-20260916-164346/
+# -164601/-164823 的 `wget: bad address 'codeload.github.com'`——BuildKit
+# RUN 层 DNS 不稳定（普通 Docker 容器 DNS 可解）；BusyBox wget 无视
+# HTTPS_PROXY（无 HTTP CONNECT 支持，代理在场也走不了）；Docker 内建代理
+# http://http.docker.internal:3128 对 CONNECT codeload.github.com:443 探通
+# （HTTP/1.0 200 OK）。fetcher 校验 HTTP 200 后写同一 minio-src.tar.gz，
+# 解压仍用 BusyBox tar，临时源码包与 fetcher 一并删除——零 apk add、零
+# git、零 curl、零 GOPROXY 改动、零新增上游源。
+RUN mkdir -p /fetch \
+    && printf '%s\n' \
+       'module aios-srcfetch' \
+       '' \
+       'go 1.24' \
+       > /fetch/go.mod \
+    && printf '%s\n' \
+       'package main' \
+       '' \
+       'import (' \
+       '"fmt"' \
+       '"io"' \
+       '"net/http"' \
+       '"os"' \
+       ')' \
+       '' \
+       '// http.Get = http.DefaultClient/DefaultTransport: Proxy = ProxyFromEnvironment' \
+       'func main() {' \
+       'if len(os.Args) != 3 {' \
+       'fmt.Fprintln(os.Stderr, "usage: fetch <url> <output>")' \
+       'os.Exit(2)' \
+       '}' \
+       'resp, err := http.Get(os.Args[1])' \
+       'if err != nil {' \
+       'fmt.Fprintln(os.Stderr, "fetch:", err)' \
+       'os.Exit(1)' \
+       '}' \
+       'defer resp.Body.Close()' \
+       'if resp.StatusCode != http.StatusOK {' \
+       'fmt.Fprintln(os.Stderr, "fetch: HTTP", resp.Status)' \
+       'os.Exit(1)' \
+       '}' \
+       'out, err := os.Create(os.Args[2])' \
+       'if err != nil {' \
+       'fmt.Fprintln(os.Stderr, "fetch:", err)' \
+       'os.Exit(1)' \
+       '}' \
+       'if _, err := io.Copy(out, resp.Body); err != nil {' \
+       'out.Close()' \
+       'fmt.Fprintln(os.Stderr, "fetch:", err)' \
+       'os.Exit(1)' \
+       '}' \
+       'if err := out.Close(); err != nil {' \
+       'fmt.Fprintln(os.Stderr, "fetch:", err)' \
+       'os.Exit(1)' \
+       '}' \
+       '}' \
+       > /fetch/main.go \
+    && cd /fetch && go build -o /fetch/fetch . \
+    && cd /src \
+    && /fetch/fetch "${MINIO_SOURCE_URL}" minio-src.tar.gz \
     && tar -xzf minio-src.tar.gz --strip-components=1 \
     && rm minio-src.tar.gz \
+    && rm -rf /fetch \
     # go.sum（随 pin commit 检出）是依赖完整性锚点；官方构建口径：
     # CGO_ENABLED=0 + kqueue + trimpath + 显式 release/commit ldflags
     # （ldflags 符号路径已按该 tag 的 buildscripts/gen-ldflags.go 复核；

@@ -9,10 +9,11 @@ Docker CLI 也可全跑；compose 渲染面由既有 restart/profiles 套件覆�
 两层契约：
 - Dockerfile：不可变 pin（上游 commit、builder/runtime 基镜像 digest）、
   源码唯一来源 = codeload 官方不可变 commit URL（HTTPS、完整 40 位 SHA 寻址，
-  绝无 tag/branch 可移动 ref）、全文件零 apk add（下载/解压只用 BusyBox）、
-  CGO_ENABLED=0、kqueue/trimpath、显式 release（Version+ReleaseTag）/commit
-  ldflags、go.sum 依赖
-  完整性（无 GOSUMDB 关闭/无 -mod=mod/无 -insecure 等 bypass、无 vendor 拷入）、
+  绝无 tag/branch 可移动 ref）、全文件零 apk add（下载 = builder 内现场编译
+  的纯标准库 Go fetcher——代理感知 net/http 默认 transport；解压只用自带
+  BusyBox tar）、CGO_ENABLED=0、kqueue/trimpath、显式 release
+  （Version+ReleaseTag）/commit ldflags、go.sum 依赖完整性（无 GOSUMDB 关闭/
+  无 GOPROXY 覆盖/无 -mod=mod/无 -insecure 等 bypass、无 vendor 拷入）、
   GOTOOLCHAIN=local、非 root 运行 + 可写 /data、runtime 只含 minio 二进制。
 - compose：minio 服务面（名称/端口/env/卷/restart/healthcheck 节奏）不变；
   镜像从 registry 浮动 tag 换成 `build:` + 上游 RELEASE 锚点 tag；`mc ready
@@ -104,10 +105,19 @@ def test_source_pins_declared_as_immutable_args(dockerfile: str) -> None:
 
 
 def test_source_fetched_from_official_immutable_commit_url(dockerfile: str) -> None:
-    """源码唯一来源 = codeload 官方不可变 commit URL（完整 40 位 SHA 寻址）。"""
+    """源码唯一来源 = codeload 官方不可变 commit URL（完整 40 位 SHA 寻址）。
+
+    M14-40 修正轮 2：下载器从 BusyBox wget 换成 builder 内现场编译的纯标准库
+    Go fetcher；产物与解压不变——仍写同一 minio-src.tar.gz、仍用 BusyBox tar
+    解压（源码来源与供应链面零变化，只换传输器）。
+    """
     assert CODELOAD_URL_ARG in dockerfile
     assert f"ARG MINIO_COMMIT={MINIO_COMMIT}" in dockerfile
-    assert dockerfile.count("wget -q -O minio-src.tar.gz") == 1
+    # 下载由 Go fetcher 完成（非 BusyBox wget），写同一 minio-src.tar.gz
+    assert '/fetch/fetch "${MINIO_SOURCE_URL}" minio-src.tar.gz' in dockerfile
+    assert "wget -q -O minio-src.tar.gz" not in dockerfile
+    # 解压不变：BusyBox tar，strip 顶层目录，恰好一次
+    assert dockerfile.count("tar -xzf minio-src.tar.gz --strip-components=1") == 1
     # 不按 tag/branch 可移动 ref 取源码；绝无明文 http / git 协议
     assert "tar.gz/RELEASE" not in dockerfile
     assert "tar.gz/main" not in dockerfile
@@ -116,8 +126,60 @@ def test_source_fetched_from_official_immutable_commit_url(dockerfile: str) -> N
     assert "git://" not in dockerfile
 
 
+def test_source_fetch_is_proxy_aware_go_fetcher(dockerfile: str) -> None:
+    """源码下载器 = builder 内现场编译的纯标准库 Go fetcher，代理感知。
+
+    M14-40 修正轮 2 实测动因：三次修正镜像重建（build-20260916-164346/
+    -164601/-164823）均败于 BuildKit RUN 层 ``wget: bad address
+    'codeload.github.com'``（DNS 不稳定——普通 Docker 容器 DNS 可解）；
+    BusyBox wget 无视 HTTPS_PROXY（无 HTTP CONNECT 支持，代理在场也走不了）；
+    Docker 内建代理 ``http://http.docker.internal:3128`` 对
+    CONNECT codeload.github.com:443 探通（HTTP/1.0 200 OK）。契约：fetcher
+    用 net/http 默认 transport（http.Get——Proxy = ProxyFromEnvironment，读
+    HTTPS_PROXY/https_proxy），HTTP 非 200 即失败，产物写 minio-src.tar.gz，
+    用后连同临时源码包一起删除。
+    """
+    # fetcher 源码内联于 Dockerfile（printf 落盘 /fetch），由本 builder 的 go 编译
+    assert "printf '%s\\n'" in dockerfile
+    assert "> /fetch/main.go" in dockerfile
+    assert "> /fetch/go.mod" in dockerfile
+    assert "go build -o /fetch/fetch ." in dockerfile
+    # 纯标准库 + 默认 transport：http.Get（Proxy = ProxyFromEnvironment）
+    assert '"net/http"' in dockerfile
+    assert "http.Get(os.Args[1])" in dockerfile
+    assert "ProxyFromEnvironment" in dockerfile
+    # 状态校验 + 产物落盘 + 临时面清理
+    assert "resp.StatusCode != http.StatusOK" in dockerfile
+    assert "os.Create(os.Args[2])" in dockerfile
+    assert "rm minio-src.tar.gz" in dockerfile
+    assert "rm -rf /fetch" in dockerfile
+    # fetcher 的 go.mod 是 printf 内联生成，非外部拷入
+    assert "COPY go.mod" not in dockerfile
+
+
+def test_source_fetch_adds_no_package_or_bypass_surface(dockerfile: str) -> None:
+    """代理感知改造不扩大供应链面：指令面零包安装/零 git/零 curl/零 wget。"""
+    # 只扫指令行（注释可叙述历史/违禁词名，指令面才是行为面）
+    code = "\n".join(
+        line for line in dockerfile.splitlines() if not line.strip().startswith("#")
+    )
+    for banned in (
+        "apk add",   # 零包安装（代理感知不靠加装 curl/git）
+        "apk ",      # 连 apk 信息查询也不引入
+        "curl",      # 不引入 curl 二进制/命令
+        "git clone",
+        "git ",      # 不引入 git
+        "wget ",     # 源码获取不再经 BusyBox wget（指令面零 wget）
+        "GOPROXY",   # 不覆盖默认 proxy.golang.org（HTTPS + sumdb 校验链）
+        "GOSUMDB=off",
+        "-mod=mod",
+    ):
+        assert banned not in code, f"供应链面扩大/bypass 出现: {banned}"
+
+
 def test_zero_apk_add(dockerfile: str) -> None:
-    """指令面零 apk add —— 下载/解压只用 builder 自带 BusyBox（wget/tar）。"""
+    """指令面零 apk add —— 下载用 builder 内编译的纯标准库 Go fetcher，解压
+    只用自带 BusyBox tar（代理感知改造不引入任何包安装面）。"""
     code = "\n".join(
         line for line in dockerfile.splitlines() if not line.strip().startswith("#")
     )
