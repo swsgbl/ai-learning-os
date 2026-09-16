@@ -214,6 +214,34 @@ arg 形态不变。`services/api/tests/test_minio_image_adoption.py` 契约同�
 真实只读 preflight、生产采纳、push/PR/CI 均待执行**——修正仅为工具
 argv 构造 + 白名单 + 契约锁定，不宣称修正后真实构建已通过。
 
+## supervisor 双写代理真实执行结果（2026-09-16/17，如实记录）
+
+修正回合 3（HTTPS_PROXY + https_proxy 双写）后，supervisor 对三模式做了
+真实执行，全部完成（报告均 gitignored，`.verify/artifacts/m14-40-minio-
+image-adoption/`）：
+
+- **build 成功**：`build-20260916-202017.json/.md`——耗时 207.8s，镜像
+  `aios/minio:RELEASE.2025-10-15T17-29-55Z`（image Id
+  `sha256:0f1c79afdb0b5fcdd49e385c46bca065f97cdd89917522593b84436a2e61bcd6`）；
+  走既有 `AIOS_MINIO_BUILD_HTTPS_PROXY` 显式 socks 代理路径（零 GOPROXY
+  改动）。镜像元数据独立 inspect 复核：User=minio:minio、
+  Entrypoint=/usr/bin/minio、版本 RELEASE.2025-10-15T17-29-55Z + pin 的
+  commit——三轮修正的三个缺陷面（ReleaseTag 注入、代理感知下载器、小写
+  https_proxy 覆盖）均经真实构建闭环验证；
+- **smoke 成功**：`smoke-20260916-202401.json/.md`——cluster_health_200=
+  true、uid1000_data_probe=true、version_reports_pin=true、cleanup_ok=true，
+  零 `aios-m14-40-` 残留（一次性容器/卷清理闭环）；
+- **preflight（只读生产盘点）完成**：`preflight-20260916-202419.json/.md`
+  ——本地镜像在场/user/entrypoint/运行时 uid/版本/compose+Dockerfile 锚点
+  全部 ok，六容器栈 6/6 healthy；**adoption=blocked**，且阻塞原因唯一、
+  如预期：既有生产卷 `minio-data` 属主递归普查的 uid 集合 = `0`（root）
+  ——需后续受控切片先备份、再做 root → uid 1000 一次性迁移后方可采纳
+  （M14-13 生产采纳注记的既定路径）。`production_ready=false` 不变。
+
+M14-40 边界保持不变：本切片**不把镜像采纳进生产、不做任何数据迁移**；
+下一步受控切片 = 备份 + 卷属主迁移 + `up -d --no-build` 固化采纳；此后
+才轮到 push/PR/CI。
+
 ## 验证（Stage 1/1b + Stage 2 复验）
 
 - Stage 1 全量 services/api：**3045 passed / 33 skipped**；
@@ -236,6 +264,9 @@ argv 构造 + 白名单 + 契约锁定，不宣称修正后真实构建已通过
   BuildKit RUN 层 DNS / BusyBox wget 无代理支持（见上「修正回合 2」）；
   第二轮修正（Go fetcher 代理感知）后的两次重建又败于小写 `https_proxy`
   宿主残留覆盖显式代理（见上「修正回合 3」）；第三轮修正（HTTPS_PROXY +
-  https_proxy 双写覆盖）后的**重建镜像、重跑 smoke、真实 preflight、
-  push / PR / CI 未执行**——均为 supervisor 后续动作，三轮修正回合零
-  生产操作。
+  https_proxy 双写覆盖）后的三模式真实执行**已由 supervisor 完成且全部
+  达成各自判定**（见上「supervisor 双写代理真实执行结果」：build 成功
+  207.8s + 元数据复核、smoke 4/4 + 零残留、preflight 全 ok 但
+  **adoption=blocked**——生产卷属主普查 uid 集合 {0}，待迁移）；
+  **生产采纳与数据迁移不在本切片**（下一步受控切片），push/PR/CI 未
+  执行，`production_ready=false` 不变，三轮修正 + 本记录回合零生产操作。
