@@ -7,9 +7,23 @@ Docker/WSL/8010/8011）：
 
 - 恢复顺序：等 Docker 引擎（轮询 ``docker version``，登录自愈给 Docker
   Desktop 留启动时间）→ ``docker compose config --quiet`` 静态校验 →
-  pin check（env 文件 vs 在线容器，键名比对，绝不输出值）→
-  ``up -d --no-build``（幂等：配置未变即 no-op；--env-file 锁定部署事实）→
-  六服务健康等待 → 本地语音调和（status first）。
+  pin check（env 文件 vs 在线容器，键名比对，绝不输出值）→ 只读栈健康
+  快照 → up 决策 → 六服务健康等待 → 本地语音调和（status first）。
+- up 决策（M14-39 恢复边界）：startup recovery 是「恢复健康」，不是部署/
+  config drift 收敛——六服务全部 healthy/running 时，dry-run 与 enforce
+  一致**跳过 compose up**（明确输出健康栈无需 up，继续语音调和与最终
+  判定；拓扑变更由 tools/ops/livekit_lan_cutover.py 显式执行）。栈有
+  缺失/不健康时保留原唯一 up 语义 ``up -d --no-build``（dry-run 附加
+  compose 原生 ``--dry-run``；幂等：配置未变即 no-op；--env-file 锁定
+  部署事实）——不加 ``--no-deps``、不加 ``--no-recreate``、不隐藏漂移
+  （恢复路径整栈 up 口径，与 M14-38 cutover 的最小范围重建分工）。
+- up 前只读本地镜像预检（M14-39）：compose 自建镜像锚点（``aios/minio:
+  <RELEASE>``——M14-13 起本地构建、registry 不可拉取）经
+  ``docker image inspect`` 探测（零 pull/build/stop/restart）；缺失且栈
+  非全健康 → 输出 ``minio-local-image-missing`` 并在 up 之前 fail-closed
+  （本工具绝不 pull/build——缺镜像 = 人工在获准窗口构建后重试；探测
+  失败同样按缺失处理，fail-closed）。栈全健康时跳过 up 即不触发预检
+  （健康栈不因「本机未构建自建镜像」被误伤）。
 - pin check（fail-closed）：``infra/env.production-recovery``（gitignored，
   模板 infra/env.production-recovery.example）缺失、必需键缺失、含模板占位
   值、在线容器事实缺失、或值与在线容器不一致（仅报键名）→ enforce 在 up
@@ -25,11 +39,13 @@ Docker/WSL/8010/8011）：
     manifest（start 一律不调用，由语音工具自身的 fail-closed 语义兜底）；
   * unmanaged-running 非 200 → 不触碰但可见 DEGRADED（拒绝误杀边界，交人工）。
 - 不可触碰边界（源码契约测试锁定）：本工具绝不构造 stop/rm/kill/down/
-  restart 命令；绝不 pkill/按端口杀；Windows 侧子进程恒 CREATE_NO_WINDOW
+  restart 命令；绝不 pkill/按端口杀；绝不 pull/build；恢复路径 up 恒整栈
+  （绝不 --no-deps/--no-recreate）；Windows 侧子进程恒 CREATE_NO_WINDOW
   （无弹窗）。--dry-run 模式全程只读（compose 自带 --dry-run 亦只读）。
 
 退出码：0 恢复完成/无需恢复且全部核查通过；1 可见失败（引擎等待超时/
-compose 失败/健康未达/语音 fail 状态/pin 拒绝/DEGRADED）；2 参数错误。
+compose 失败/健康未达/语音 fail 状态/pin 拒绝/自建镜像缺失
+（minio-local-image-missing）/DEGRADED）；2 参数错误。
 
 用法（仓库根）：
   python tools/ops/production_recovery.py --dry-run   # 只读体检 + 决策预告
@@ -65,6 +81,20 @@ DEFAULT_ENV_FILE = REPO_ROOT / "infra" / "env.production-recovery"
 #: 生产彩排栈（--profile local）的服务集——运行时以 compose config --services
 #: 渲染为准，此集合用于漂移告警（不硬性阻断，可见报告由人裁决）
 EXPECTED_STACK_SERVICES = frozenset({"postgres", "redis", "minio", "api", "web", "livekit"})
+
+#: up 前只读本地镜像预检集（M14-39）：compose 里带 build: 的自建镜像锚点
+#: （registry 拉不到，up -d --no-build 需要本机已构建）。M14-13 起 minio
+#: 为本地自建（infra/minio/Dockerfile，compose image: aios/minio:<RELEASE>）；
+#: 本机未构建该镜像而栈又非全健康时，up 会在重建阶段失败——预检把该失败
+#: 提前为 up 之前的可见拒绝（绝不 pull/build）。镜像引用是 repo 公开 compose
+#: 锚点（非 env secret），升版 = 与 compose image: 同步改此处（契约测试
+#: 交叉锁定）。
+LOCAL_BUILD_IMAGE_REFS: tuple[str, ...] = (
+    "aios/minio:RELEASE.2025-10-15T17-29-55Z",
+)
+
+#: 自建镜像缺失的固定失败词汇（日志可见；镜像引用本身可回显——repo 锚点）
+LOCAL_IMAGE_MISSING = "minio-local-image-missing"
 
 #: pin 必需键（env 文件与在线容器比对；输出仅键名，值绝不落日志）。
 #: M14-09：AIOS_WEB_IMAGE_TAG 独立成键——web 镜像 tag 不再与 api 共用
@@ -523,14 +553,24 @@ def snapshot_health(runner: Runner, compose_file: Path, project: str, profile: s
     return state
 
 
+def stack_health_gaps(health: dict[str, str], expected: set[str]) -> tuple[set[str], set[str]]:
+    """健康快照 vs 预期服务集 → (缺失, 未达 healthy/running)。
+
+    单一判定口径：up 决策（M14-39 健康栈跳过）、dry-run 报告与
+    wait_stack_healthy 共用——running 无 healthcheck 的服务同样达标。
+    """
+    missing = expected - set(health)
+    unhealthy = {name for name in expected - missing if health.get(name) not in ("healthy", "running")}
+    return missing, unhealthy
+
+
 def wait_stack_healthy(runner: Runner, log: RunLog, compose_file: Path, project: str,
                        profile: str, expected: set[str], timeout_seconds: int) -> bool:
     deadline = time.monotonic() + timeout_seconds
     last: dict[str, str] = {}
     while True:
         last = snapshot_health(runner, compose_file, project, profile)
-        missing = expected - set(last)
-        unhealthy = {name for name in expected - missing if last.get(name) not in ("healthy", "running")}
+        missing, unhealthy = stack_health_gaps(last, expected)
         if not missing and not unhealthy:
             log.say(f"stack health: {len(expected)}/{len(expected)} 服务 healthy/running——OK")
             return True
@@ -541,6 +581,26 @@ def wait_stack_healthy(runner: Runner, log: RunLog, compose_file: Path, project:
                 log.say(f"stack health: 服务 {name} 状态 {last.get(name)!r} 非 healthy——可见失败")
             return False
         time.sleep(ENGINE_POLL_SECONDS)
+
+
+def check_local_build_images(runner: Runner, log: RunLog) -> tuple[str, ...]:
+    """up 前只读本地镜像预检：docker image inspect（零 pull/build/stop）。
+
+    返回本机缺失的自建镜像引用（探测失败同样按缺失处理——fail-closed，
+    引擎故障不得伪装成「镜像在场」）；缺失时逐项可见并输出
+    ``minio-local-image-missing`` 固定词汇。调用方据此在 up 之前 fail-closed。
+    仅在将执行 up（栈非全健康）时调用——健康栈跳过 up 即无需预检。
+    """
+    missing: list[str] = []
+    for ref in LOCAL_BUILD_IMAGE_REFS:
+        result = runner.run(["docker", "image", "inspect", ref, "--format", "{{.Id}}"], timeout=30.0)
+        if result.returncode != 0:
+            missing.append(ref)
+            log.say(f"local image: {ref} 本机缺失（compose 自建锚点，registry 不可拉取）")
+    if missing:
+        log.say(f"local image 预检: {LOCAL_IMAGE_MISSING}——up 将在之前拒绝"
+                "（本工具绝不 pull/build；请在获准窗口构建后重试）")
+    return tuple(missing)
 
 
 def compose_up(runner: Runner, log: RunLog, compose_file: Path, project: str, profile: str,
@@ -629,6 +689,7 @@ def run_recovery(*, runner: Runner, voice: VoiceGateway, log: RunLog, dry_run: b
         log.say(f"警告: 渲染服务集与预期漂移（预期 {sorted(EXPECTED_STACK_SERVICES)}）——继续执行并如实报告")
     pin = check_pins(env_file, runner, project, log)
     failures: list[str] = []
+    gaps: tuple[set[str], set[str]] | None = None  # 健康快照缺口（pin ok 时已取）
     if not pin.ok:
         if dry_run:
             log.say("dry-run: enforce 将在 up 之前拒绝（pin 未就绪）——跳过 compose up 计划步骤")
@@ -637,13 +698,34 @@ def run_recovery(*, runner: Runner, voice: VoiceGateway, log: RunLog, dry_run: b
             log.say("enforce: pin 未就绪——拒绝执行 up（fail-closed，零容器改动）")
             return EXIT_ERROR
     else:
-        if not compose_up(runner, log, compose_file, project, profile, env_file, dry_run=dry_run):
-            failures.append("compose-up")
-    if dry_run:
+        # M14-39：up 前只读健康快照——全健康跳过 up（dry-run 与 enforce 同
+        # 语义）；非全健康保留原唯一 up 语义，且 up 之前先做只读镜像预检。
         health = snapshot_health(runner, compose_file, project, profile)
-        log.say(f"stack health 快照（只读）: {json.dumps(dict(sorted(health.items())), ensure_ascii=False)}")
-        missing = set(EXPECTED_STACK_SERVICES) - set(health)
-        unhealthy = {n for n in set(EXPECTED_STACK_SERVICES) - missing if health.get(n) not in ("healthy", "running")}
+        missing, unhealthy = stack_health_gaps(health, set(EXPECTED_STACK_SERVICES))
+        gaps = (missing, unhealthy)
+        if dry_run:
+            log.say(f"stack health 快照（只读）: {json.dumps(dict(sorted(health.items())), ensure_ascii=False)}")
+        if not missing and not unhealthy:
+            log.say(f"stack health: {len(EXPECTED_STACK_SERVICES)}/{len(EXPECTED_STACK_SERVICES)} 服务 "
+                    "healthy/running——健康栈无需 up（dry-run 与 enforce 同语义跳过）")
+            log.say("      恢复边界：startup recovery 恢复健康，不做部署/config drift 收敛；"
+                    "拓扑/配置变更由 tools/ops/livekit_lan_cutover.py 显式执行")
+        elif check_local_build_images(runner, log):
+            if dry_run:
+                log.say("dry-run: enforce 将在 up 之前拒绝（up 所需自建镜像本机缺失）——跳过 compose up 计划步骤")
+                failures.append(f"{LOCAL_IMAGE_MISSING}（dry-run 退出码镜像 enforce 拒绝）")
+            else:
+                log.say(f"enforce: {LOCAL_IMAGE_MISSING}——拒绝执行 up（fail-closed，零容器改动；绝不 pull/build）")
+                return EXIT_ERROR
+        else:
+            if not compose_up(runner, log, compose_file, project, profile, env_file, dry_run=dry_run):
+                failures.append("compose-up")
+    if dry_run:
+        if gaps is None:  # pin 未就绪路径：dry-run 仍给只读健康预告
+            health = snapshot_health(runner, compose_file, project, profile)
+            log.say(f"stack health 快照（只读）: {json.dumps(dict(sorted(health.items())), ensure_ascii=False)}")
+            gaps = stack_health_gaps(health, set(EXPECTED_STACK_SERVICES))
+        missing, unhealthy = gaps
         if missing or unhealthy:
             log.say(f"dry-run: enforce 将等待健康（当前缺失 {sorted(missing)} / 未达 {sorted(unhealthy)}，"
                     f"预算 {health_wait_seconds}s）")

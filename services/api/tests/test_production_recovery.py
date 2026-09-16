@@ -16,7 +16,15 @@ r"""M14-06 tools/ops/production_recovery.py 契约测试：恢复编排决策与
   redact 兜底）；
 - compose 命令纪律：up 恒为 up -d --no-build（绝不 --build）；dry-run 恒带
   --dry-run；enforce 在 pin 未就绪时绝不构造 up（fail-closed 零容器改动）；
-  源码契约：绝不出现 stop/rm/kill/down/restart 子命令字面量；
+  源码契约：绝不出现 stop/rm/kill/down/restart 子命令字面量，绝不出现
+  --no-deps/--no-recreate（恢复路径整栈 up 口径，与 M14-38 cutover 的
+  最小范围重建分工）；
+- M14-39 恢复边界：pin 通过后先做只读栈健康快照——六服务全部
+  healthy/running 时 dry-run 与 enforce 一致跳过 compose up（健康栈无需
+  up；startup recovery 恢复健康，不做部署/config drift 收敛）；栈有缺失/
+  不健康时保留原唯一 up 语义；up 前只读本地镜像预检，aios/minio 自建
+  镜像缺失且栈非全健康 → minio-local-image-missing fail-closed（绝不
+  pull/build）；预检常量与 compose image: 锚点交叉锁定；
 - 端到端（全 fake）：绿灯 enforce / dry-run 计划 / dry-run 镜像拒绝 / 漂移
   拒绝 / 引擎等待超时 / 健康未达超时 / 语音 stopped×2 受控启动 / 语音
   fail 状态不触碰 / DEGRADED 退出。
@@ -39,6 +47,8 @@ SECRET_PATTERNS = ("sk-", "AKIA", "ghp_", "xoxb_", "-----BEGIN")
 MARK_AUTH = "ZX-markerauth-0123456789abcdef"
 MARK_LIVEKIT = "ZX-markerlivekit-0123456789abcdef"
 STACK_SERVICES = ("api", "livekit", "minio", "postgres", "redis", "web")
+#: M14-13 起的 minio 自建镜像锚点（infra/docker-compose.yml image: 同步）
+MINIO_IMAGE = "aios/minio:RELEASE.2025-10-15T17-29-55Z"
 
 
 def _load_module(path: Path, name: str):
@@ -73,7 +83,9 @@ class FakeRunner:
                  live_web_image: str = "aios/web:m14-03-prod-rehearsal",
                  web_port: str = "127.0.0.1:3011", livekit_port: str = "127.0.0.1:7880",
                  up_rc: int = 0,
-                 up_out: str = "Container aios-m14-03-production-rehearsal-api-1  Running\n") -> None:
+                 up_out: str = "Container aios-m14-03-production-rehearsal-api-1  Running\n",
+                 missing_local_images: frozenset[str] = frozenset(),
+                 post_up_ps_health: dict[str, str] | None = None) -> None:
         self.engine_ready = engine_ready
         self.services = services
         self.ps_health = ps_health if ps_health is not None else {name: "healthy" for name in STACK_SERVICES}
@@ -84,6 +96,11 @@ class FakeRunner:
         self.livekit_port = livekit_port
         self.up_rc = up_rc
         self.up_out = up_out
+        # M14-39：本机缺失的本地镜像（docker image inspect rc=1 回放）；
+        # post_up_ps_health = up 之后 ps 事实翻转（enforce 恢复绿灯回放）
+        self.missing_local_images = frozenset(missing_local_images)
+        self.post_up_ps_health = post_up_ps_health
+        self.up_seen = False
         self.calls: list[tuple[str, ...]] = []
 
     def run(self, argv, *, timeout: float = 60.0) -> pr.CommandResult:
@@ -98,6 +115,11 @@ class FakeRunner:
             return pr.CommandResult(argv, 0, "", "")
         if "--services" in argv:
             return pr.CommandResult(argv, 0, "\n".join(sorted(self.services)) + "\n", "")
+        if argv[:3] == ("docker", "image", "inspect"):
+            # M14-39 本地镜像预检回放：缺失集合 → rc=1（Error: No such image）
+            if str(argv[3]) in self.missing_local_images:
+                return pr.CommandResult(argv, 1, "", "Error: No such image")
+            return pr.CommandResult(argv, 0, "sha256:0000000000000000000000000000000000000000\n", "")
         if argv[:2] == ("docker", "inspect") and ".Config.Env" in joined:
             if self.live_env is None:  # 模拟「api 容器不存在」（栈未起）
                 return pr.CommandResult(argv, 1, "", "Error: No such object")
@@ -116,12 +138,15 @@ class FakeRunner:
                 return pr.CommandResult(argv, 0, self.livekit_port + "\n", "")
             return pr.CommandResult(argv, 0, self.web_port + "\n", "")
         if "ps" in argv and "--format" in argv:
+            health = (self.post_up_ps_health if self.up_seen
+                      and self.post_up_ps_health is not None else self.ps_health)
             rows = "".join(
-                json.dumps({"Service": name, "State": "running", "Health": health}) + "\n"
-                for name, health in sorted(self.ps_health.items())
+                json.dumps({"Service": name, "State": "running", "Health": h}) + "\n"
+                for name, h in sorted(health.items())
             )
             return pr.CommandResult(argv, 0, rows, "")
         if "up" in argv:
+            self.up_seen = True
             return pr.CommandResult(argv, self.up_rc, self.up_out, "")
         return pr.CommandResult(argv, 0, "", "")
 
@@ -494,6 +519,11 @@ def test_source_never_issues_destructive_subcommands() -> None:
     source = SCRIPT.read_text(encoding="utf-8")
     for literal in ('"down"', '"stop"', '"kill"', '"rm"', '"restart"', '"reset"'):
         assert literal not in source, f"禁止出现的子命令字面量: {literal}"
+    # M14-39：恢复路径整栈 up 口径——绝不 --no-deps/--no-recreate/pull/build
+    # （--no-deps 是 M14-38 cutover 最小范围重建的分工语义，恢复路径不得
+    # 借它隐藏 depends_on 漂移；--no-recreate 会隐藏计划重建）
+    for literal in ('"--no-deps"', '"--no-recreate"', '"pull"', '"build"'):
+        assert literal not in source, f"禁止出现的命令字面量: {literal}"
     assert "CREATE_NO_WINDOW" in source  # Windows 侧无弹窗纪律
     for pattern in SECRET_PATTERNS:
         assert pattern not in source
@@ -510,31 +540,33 @@ def test_parser_defaults() -> None:
 # ---------------------------------------------------------------- 端到端（全 fake）
 
 def test_e2e_enforce_green_with_matching_pins(tmp_path: Path) -> None:
-    """绿灯 enforce：pin 一致 → up -d --no-build（无 --build）→ 全 healthy → 语音不触碰。"""
+    """绿灯 enforce（栈全健康，M14-39）：pin 一致 → 健康栈无需 up（零 up
+    构造）→ 健康门即过 → 语音不触碰 → OK。up 实际执行路径见
+    test_e2e_unhealthy_stack_keeps_unique_up_semantics。"""
     env_file = tmp_path / "pin.env"
     env_file.write_text(_matching_env_text(), encoding="utf-8")
-    runner = FakeRunner(live_env=_matching_live_env())
+    runner = FakeRunner(live_env=_matching_live_env())  # ps 默认六服务全 healthy
     voice = FakeVoice(_healthy_voice())
     code, log = _run(runner, voice, dry_run=False, env_file=env_file)
     assert code == pr.EXIT_OK
-    ups = _up_calls(runner)
-    assert len(ups) == 1
-    assert ups[0][-3:] == ("up", "-d", "--no-build")
-    assert "--dry-run" not in ups[0] and "--build" not in ups[0]
+    assert _up_calls(runner) == []  # 健康栈绝不构造 up
+    assert any("健康栈无需 up" in line for line in log.lines)
     assert voice.starts == []  # healthy unmanaged-running 恒不触碰
     _assert_no_marker_leak(log)
     assert any("结果: OK" in line for line in log.lines)
 
 
-def test_e2e_dry_run_with_pins_uses_compose_dry_run(tmp_path: Path) -> None:
+def test_e2e_dry_run_healthy_stack_skips_up(tmp_path: Path) -> None:
+    """dry-run（栈全健康，M14-39）：与 enforce 同语义跳过 up——只读快照
+    可见 + 零 up 构造（健康栈 dry-run 不再产出「计划重建」）。"""
     env_file = tmp_path / "pin.env"
     env_file.write_text(_matching_env_text(), encoding="utf-8")
     runner = FakeRunner(live_env=_matching_live_env())
     voice = FakeVoice(_healthy_voice())
     code, log = _run(runner, voice, dry_run=True, env_file=env_file)
     assert code == pr.EXIT_OK
-    ups = _up_calls(runner)
-    assert len(ups) == 1 and "--dry-run" in ups[0]
+    assert _up_calls(runner) == []
+    assert any("健康栈无需 up" in line for line in log.lines)
     assert voice.starts == []
     assert any("stack health 快照" in line for line in log.lines)
 
@@ -643,13 +675,20 @@ def test_e2e_voice_start_failure_visible(tmp_path: Path) -> None:
     assert any("start 失败" in line for line in log.lines)
 
 
-def test_e2e_compose_up_failure_visible(tmp_path: Path) -> None:
+def test_e2e_compose_up_failure_visible(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """栈非全健康 → 走 up 路径：up rc=1 → compose-up 可见失败（M14-39 起
+    up 仅在栈非全健康时构造，故本测试预制 api unhealthy）。"""
+    _no_sleep(monkeypatch)
     env_file = tmp_path / "pin.env"
     env_file.write_text(_matching_env_text(), encoding="utf-8")
-    runner = FakeRunner(live_env=_matching_live_env(), up_rc=1, up_out="")
+    runner = FakeRunner(live_env=_matching_live_env(), up_rc=1, up_out="",
+                        ps_health={**{name: "healthy" for name in STACK_SERVICES},
+                                   "api": "unhealthy"})
     voice = FakeVoice(_healthy_voice())
-    code, log = _run(runner, voice, dry_run=False, env_file=env_file)
+    code, log = _run(runner, voice, dry_run=False, env_file=env_file,
+                     health_wait_seconds=0)
     assert code == pr.EXIT_ERROR
+    assert len(_up_calls(runner)) == 1  # up 已构造且失败（非健康栈不跳过）
     assert any("compose-up" in line for line in log.lines)
 
 
@@ -785,8 +824,8 @@ def test_pin_topology_drift_never_echoes_values(tmp_path: Path) -> None:
 
 
 def test_e2e_lan_topology_green_full_recovery(tmp_path: Path) -> None:
-    """端到端：LAN 拓扑九键全绿 → up 执行 → OK（LAN 不是特殊分支，
-    与 loopback 同码路径）。"""
+    """端到端：LAN 拓扑九键全绿 → OK（LAN 不是特殊分支，与 loopback 同码
+    路径；默认 ps 全 healthy → M14-39 健康栈跳过 up）。"""
     env_file = tmp_path / "lan.env"
     env_file.write_text(_lan_env_text(), encoding="utf-8")
     runner = FakeRunner(live_env=_lan_live_env(), livekit_port=f"{LAN_IP}:7880")
@@ -797,3 +836,138 @@ def test_e2e_lan_topology_green_full_recovery(tmp_path: Path) -> None:
     joined = "\n".join(log.lines)
     assert LAN_IP not in joined  # 全绿路径同样不回显拓扑值
     _assert_no_marker_leak(log)
+
+
+# --------------------------- M14-39：健康栈跳过 up + up 前本地镜像预检
+# 动机：生产彩排栈六容器全 healthy 而本机缺 aios/minio 自建镜像（M14-13
+# 起的本地构建锚点，registry 不可拉取）——旧语义在 pin 9/9 后无条件
+# compose up -d --no-build，计划重建 api/livekit/minio 并因缺镜像 rc=1，
+# 把「栈已健康」误报为恢复失败。固化恢复边界：startup recovery 恢复健康，
+# 不做部署/config drift 收敛（拓扑变更由 M14-38 cutover 工具显式执行）。
+
+def test_local_build_image_refs_pin_compose_anchor() -> None:
+    """预检常量与 infra/docker-compose.yml 的 image: 锚点同步（升版漏改
+    即失败——单一事实源交叉锁定）；预检集至少覆盖 minio 自建镜像。"""
+    compose = (REPO_ROOT / "infra" / "docker-compose.yml").read_text(encoding="utf-8")
+    assert MINIO_IMAGE in pr.LOCAL_BUILD_IMAGE_REFS
+    for ref in pr.LOCAL_BUILD_IMAGE_REFS:
+        assert f"image: {ref}" in compose, f"预检镜像 {ref} 不再是 compose 锚点——两处需同步"
+
+
+def test_snapshot_health_issues_only_readonly_compose_ps() -> None:
+    """健康快照只读：唯一命令形态 = docker compose … ps --format json
+    （M14-39 把快照提前到 up 决策之前，只读纪律不变——无 up/stop/restart）。"""
+    runner = FakeRunner(live_env=None)
+    health = pr.snapshot_health(runner, Path("c.yml"), "proj", "local")
+    assert set(health) == set(STACK_SERVICES)
+    ps_calls = [argv for argv in runner.calls if "ps" in argv]
+    assert len(ps_calls) == 1 and len(runner.calls) == 1
+    argv = ps_calls[0]
+    assert argv[:2] == ("docker", "compose")
+    assert argv[argv.index("ps") + 1:argv.index("ps") + 3] == ("--format", "json")
+
+
+def test_stack_health_gaps_pure_judgement() -> None:
+    """缺口判定纯函数（与 wait_stack_healthy 同口径）：缺失与未达分类、
+    running 也算达标。"""
+    health = {"api": "healthy", "web": "running", "minio": "starting"}
+    missing, unhealthy = pr.stack_health_gaps(health, set(STACK_SERVICES))
+    assert missing == {"postgres", "redis", "livekit"}
+    assert unhealthy == {"minio"}  # api healthy / web running 均达标
+
+
+def test_check_local_build_images_readonly_and_fail_vocabulary() -> None:
+    """预检只读：命令恒为 docker image inspect（零 pull/build/stop）；
+    缺失输出 minio-local-image-missing 固定词汇；在场则静默通过。"""
+    missing_runner = FakeRunner(live_env=None,
+                                missing_local_images=frozenset({MINIO_IMAGE}))
+    log = pr.RunLog(echo=False)
+    assert pr.check_local_build_images(missing_runner, log) == (MINIO_IMAGE,)
+    assert missing_runner.calls, "预检必须真实探测（不得凭空假定在场）"
+    for argv in missing_runner.calls:
+        assert argv[:3] == ("docker", "image", "inspect")
+        assert "pull" not in argv and "build" not in argv
+    joined = "\n".join(log.lines)
+    assert "minio-local-image-missing" in joined and MINIO_IMAGE in joined
+    present_runner = FakeRunner(live_env=None)
+    present_log = pr.RunLog(echo=False)
+    assert pr.check_local_build_images(present_runner, present_log) == ()
+    assert present_log.lines == []  # 在场零噪声
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_e2e_unhealthy_stack_keeps_unique_up_semantics(tmp_path: Path, dry_run: bool) -> None:
+    """栈非全健康（api starting）→ 保留原唯一 up 语义：恰一次
+    up -d --no-build（dry-run 附加 --dry-run）——不加 --no-deps、不加
+    --no-recreate、不隐藏漂移；up 后恢复健康（enforce 健康门过）→ OK。"""
+    env_file = tmp_path / "pin.env"
+    env_file.write_text(_matching_env_text(), encoding="utf-8")
+    runner = FakeRunner(
+        live_env=_matching_live_env(),
+        ps_health={**{name: "healthy" for name in STACK_SERVICES}, "api": "starting"},
+        post_up_ps_health={name: "healthy" for name in STACK_SERVICES})
+    voice = FakeVoice(_healthy_voice())
+    code, log = _run(runner, voice, dry_run=dry_run, env_file=env_file)
+    assert code == pr.EXIT_OK
+    ups = _up_calls(runner)
+    assert len(ups) == 1
+    expected_tail = ("up", "-d", "--no-build", "--dry-run") if dry_run else ("up", "-d", "--no-build")
+    assert ups[0][ups[0].index("up"):] == expected_tail
+    assert "--no-deps" not in ups[0] and "--no-recreate" not in ups[0]
+    assert "--build" not in ups[0]
+    assert not any("健康栈无需 up" in line for line in log.lines)
+    _assert_no_marker_leak(log)
+
+
+@pytest.mark.parametrize("dry_run", [True, False])
+def test_e2e_minio_image_missing_unhealthy_fail_closed(tmp_path: Path, dry_run: bool) -> None:
+    """栈非全健康 + aios/minio 自建镜像本机缺失 → up 之前 fail-closed：
+    输出 minio-local-image-missing、零 up 构造（绝不 pull/build——源码
+    契约锁定）；dry-run 退出码镜像 enforce 拒绝。镜像引用为 repo 公开
+    compose 锚点（非 env secret），可见；env secret 标记仍零泄漏。"""
+    env_file = tmp_path / "pin.env"
+    env_file.write_text(_matching_env_text(), encoding="utf-8")
+    runner = FakeRunner(
+        live_env=_matching_live_env(),
+        ps_health={**{name: "healthy" for name in STACK_SERVICES}, "minio": "unhealthy"},
+        missing_local_images=frozenset({MINIO_IMAGE}))
+    voice = FakeVoice(_healthy_voice())
+    code, log = _run(runner, voice, dry_run=dry_run, env_file=env_file)
+    assert code == pr.EXIT_ERROR
+    assert _up_calls(runner) == []  # up 之前拒绝——零容器改动
+    joined = "\n".join(log.lines)
+    assert "minio-local-image-missing" in joined
+    assert MINIO_IMAGE in joined
+    _assert_no_marker_leak(log)
+
+
+def test_e2e_healthy_stack_minio_image_missing_still_ok(tmp_path: Path) -> None:
+    """栈全健康 + 自建镜像缺失 → 跳过 up 即不受预检阻断（预检只在 up
+    路径上执行）：恢复结果不因「本机未构建 minio 镜像」被健康栈误伤。"""
+    env_file = tmp_path / "pin.env"
+    env_file.write_text(_matching_env_text(), encoding="utf-8")
+    runner = FakeRunner(live_env=_matching_live_env(),
+                        missing_local_images=frozenset({MINIO_IMAGE}))
+    voice = FakeVoice(_healthy_voice())
+    code, log = _run(runner, voice, dry_run=False, env_file=env_file)
+    assert code == pr.EXIT_OK
+    assert _up_calls(runner) == []
+    joined = "\n".join(log.lines)
+    assert "minio-local-image-missing" not in joined
+    assert any("结果: OK" in line for line in log.lines)
+    _assert_no_marker_leak(log)
+
+
+def test_e2e_m14_38_surface_no_regression(tmp_path: Path) -> None:
+    """M14-38 复用面不回归：九键 PIN_KEYS 恒 9、拓扑键子集不变；恢复
+    编排零 up 构造时（健康栈）cutover 依赖的复用函数签名面原样可用。"""
+    assert pr.PIN_KEYS == (
+        "AIOS_IMAGE_TAG", "AIOS_WEB_IMAGE_TAG", "AIOS_APP_ENV", "AIOS_WEB_PORT",
+        "AIOS_AUTH_SECRET", "AIOS_LIVEKIT_API_SECRET",
+        "AIOS_BIND_IP", "AIOS_LIVEKIT_BIND_IP", "AIOS_PUBLIC_LIVEKIT_URL")
+    assert set(pr.TOPOLOGY_PIN_KEYS) <= set(pr.PIN_KEYS)
+    # cutover 复用的导出面在新语义下仍在（签名未变）
+    for name in ("check_pins", "collect_live_pins", "placeholder_pin_keys",
+                 "validate_compose", "wait_docker_engine", "wait_stack_healthy",
+                 "snapshot_health"):
+        assert callable(getattr(pr, name))
