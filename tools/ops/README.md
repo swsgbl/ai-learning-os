@@ -747,3 +747,80 @@ python tools/ops/minio_image_adoption.py preflight --execute \
   由操作者负责）。
 - 退出码统一：`0` 成功；`2` 一切失败（fail-closed，门禁/校验拒绝与
   真实执行失败同码，绝不静默降级）。
+
+## audit_anchor_archive.py（M14-43）
+
+审计锚点 WORM/对象锁归档：把 M14-42 落地的库外锚文件（锚点 JSONL）
+复制进可验证的 WORM 归档并证明归档字节与保留元数据。**preflight /
+archive / verify 三命令**，fail-closed 单文件纯标准库；退出码统一
+`0` 成功 / `2` 一切拒绝。S3 凭据只认环境变量
+`AIOS_AUDIT_ARCHIVE_ACCESS_KEY` / `AIOS_AUDIT_ARCHIVE_SECRET_KEY`
+（绝不接受 CLI 值、绝不记录其值）。
+
+```
+python tools/ops/audit_anchor_archive.py preflight \
+    --anchor-file <锚文件> --endpoint https://<host> --bucket <name>
+python tools/ops/audit_anchor_archive.py archive \
+    --anchor-file <锚文件> --endpoint https://<host> --bucket <name> \
+    --retention-mode COMPLIANCE --retain-until <未来ISO-8601> \
+    --confirm "EXECUTE AUDIT ANCHOR WORM ARCHIVE"   # supervisor 获准窗口
+python tools/ops/audit_anchor_archive.py verify \
+    --anchor-file <锚文件> --endpoint https://<host> --bucket <name> \
+    --report <工件目录内归档报告JSON文件名>
+```
+
+安全性质（契约测试 `services/api/tests/test_audit_anchor_archive.py`
+151 项锁定（Round 3 后）；细节见脚本头注释与
+`docs/evidence/m14-43-audit-worm-archive/README.md`）：
+
+- **preflight（零写操作）**：锚链完整校验与 M14-42 生产端
+  `app.ops.audit_chain_anchor` 同契约（字段集/类型/canonical JSON/
+  anchor_hash 重算/sequence 非负且严格递增——允许跳号不要求 +1
+  连续/anchored_at 必须可按 ISO-8601 解析/previous 链接/sequence 0
+  head 必须是 genesis 常量/symlink 源拒绝）；endpoint 公网必须
+  HTTPS、loopback/RFC1918 可 HTTP、userinfo 内嵌凭据拒绝；凭据
+  缺失 → 零 S3 访问；bucket 必须存在且 versioning `Enabled` +
+  Object Lock enabled。
+- **archive**：先跑全部 preflight 检查；确认短语一字不差 +
+  `--retention-mode COMPLIANCE`（不实现可被绕过的 GOVERNANCE）+
+  tz-aware 严格未来 `--retain-until` 三道参数门（不满足 → 零执行
+  零报告）；对象 key 内容寻址
+  `audit-anchor/<sha256>/audit-anchor.jsonl`；已存在对象字节不符
+  fail-closed、字节相符则核验 retention 事实后**绝不覆盖**；新对象
+  恰好一次 `put_object`（`application/x-ndjson` + SHA-256 checksum
+  + COMPLIANCE + retain-until），put 后重读字节与元数据，任何漂移
+  fail-closed。
+- **verify**：本地校验 + bucket WORM preflight + 归档报告伴生
+  `.json.sha256` sidecar 哈希核验（空/非 UTF-8/畸形 → exit 2 报告
+  problem 绝不抛异常）+ 报告绑定当前调用事实（status/worm_verified/
+  source/endpoint host/bucket/key/对象 hash/size/retention/
+  content-type；跨 bucket/endpoint 或失败归档报告一律拒绝）+
+  head/get 按报告记录的 version 定向 + 对象逐字节 SHA-256、version
+  ID 与报告记录值精确一致、COMPLIANCE/retain-until/content-type/
+  size 精确核验。
+- **S3 API 白名单**：仅 `head_bucket` / `get_bucket_versioning` /
+  `get_object_lock_configuration` / `head_object` / `get_object` /
+  `put_object`（read/head/put）——零 delete/copy/create-bucket/
+  put-bucket-config 任何 API，源码契约测试锁定；**绝不删除、绝不
+  覆盖任何已归档对象**。
+- **报告纪律**：原子写 gitignored
+  `.verify/artifacts/m14-43-audit-worm-archive/`（JSON + Markdown，
+  archive 另附 `.json.sha256` sidecar；字节模式写盘防 Windows
+  行尾翻译破坏哈希）；**报告名
+  `<command>-<stamp>-<随机后缀>` 真正防碰撞**——每份报告名带
+  `secrets.token_hex(16)` CSPRNG 随机后缀（32 位小写 hex chars =
+  128 bits，同 command 同秒并发进程撞名概率约 2**-128；残余假设：
+  探测与写入之间存在非原子窗口、无全局互斥——概率性抗碰撞而非
+  全局互斥保障），存在性探测循环（含残留孤儿工件）仍是
+  fail-closed 兜底、递增 `-2`/`-3` 换名，绝不覆盖既有报告工件；
+  endpoint 只记 host，绝不含凭据/完整 endpoint/
+  原始异常；`redact_secrets` 终防线折叠 key=value / Bearer 形态疑似
+  秘密；S3Client/FS/Clock/env/报告名随机后缀生成器全注入（开发回合
+  零网络），boto3 仅
+  真实执行适配器工厂内懒导入，hex SHA-256 → base64 只在 boto3 边界
+  转换（AWS `ChecksumSHA256`）。
+- **诚实边界**：本回合为开发切片——151 项聚焦契约测试 + 邻居回归
+  全绿，**零真实 WORM 归档执行**（未连接任何真实 S3，M14-42 创世锚
+  未被归档动作触碰）；真实 preflight/archive/verify 由 supervisor
+  在获准窗口执行；`pass` 不等于 production ready，
+  `production_ready=false` 不变。

@@ -9,6 +9,34 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-43 审计锚点 WORM/对象锁归档工具（开发切片，零真实 WORM 执行）**：分支/worktree
+`ops/m14-43-audit-worm-archive` 基于 `35c0875`（M14-42 入库 commit），本 Claude 开发
+回合独占 worktree、单 local commit、不 push——交付 `tools/ops/audit_anchor_archive.py`
+（单文件纯标准库 + boto3 懒导入；S3Client/FS/Clock/env 全注入）+
+`services/api/tests/test_audit_anchor_archive.py`。三命令 preflight/archive/verify 全部
+fail-closed（exit 0/2）：锚链校验与 M14-42 生产端同契约；确认短语 +
+COMPLIANCE-only + tz-aware 严格未来 retain-until 三道参数门（fractional 秒合法——
+报告 canonical UTC 表示保留非零微秒，archive→verify 精确往返）；内容寻址 key
+`audit-anchor/<sha256>/audit-anchor.jsonl`；新对象恰好一次条件创建 put（显式
+`if_none_match="*"` 经注入协议传递、仅在真实适配器边界映射为 PutObject
+`IfNoneMatch="*"`——head 判不存在后被并发抢占时服务端拒绝，fail-closed 绝不覆盖竞态
+写入）；已存在对象绝不覆盖（字节/retention 不符 fail-closed）；verify 按
+sidecar 哈希 + 报告绑定当前调用事实 + 记录 version 定向逐字节核验；报告名防碰撞
+（每份报告名带 `secrets.token_hex(16)` CSPRNG 随机后缀——32 位小写 hex = 128
+bits，同 command 同秒并发撞名概率约 2**-128；探测与写入非原子，属概率性抗碰撞
+而非全局互斥；存在性探测循环含孤儿工件也判碰撞、兜底递增 `-2`/`-3`，绝不覆盖
+既有报告证据）；S3 API 白名单六类只读/put（源码契约测试锁定无 delete/copy/bucket-config），
+凭据只认环境变量且值绝不入报告。supervisor Review Round 1（11 项）+ Round 2
+（3 项：fractional retain-until、报告名防碰撞、条件创建强化）全部落实。验证：
+聚焦套件 **151 passed**（canonical venv 0.28s）、邻居回归
+`test_audit_chain_anchor.py` + `test_release_readiness.py` 90 passed / 3 skipped、
+ruff / py_compile / `git diff --check` / diff secret 扫描干净。**零真实 WORM 归档
+执行**：未连接任何真实 S3/MinIO、未触碰生产——真实 preflight/archive/verify 由
+supervisor 在获准窗口进行；`pass` 不等于 production ready，
+`production_ready=false` 不变。证据：`docs/evidence/m14-43-audit-worm-archive/README.md`。
+
+## 前一任务（M14-42 生产审计链初始锚定记录——docs-only 已闭环；审计锚点 WORM 归档工具由 M14-43 接续）
+
 **M14-42 生产审计链初始锚定记录（docs-only，零代码/零测试/零生产操作）**：分支/worktree
 `docs/m14-42-audit-anchor-record` 基于 `origin/main@8172229`（PR #119 merge），本 Claude
 开发回合独占 worktree、单 local commit、不 push/不建 PR/不动远程——只把 supervisor 已于
