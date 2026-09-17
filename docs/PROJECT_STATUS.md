@@ -9,6 +9,26 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-47 生产 web 容器浏览器验收证据回填（docs-only 已执行，待发布/CI/合并）**：分支/worktree
+`m14-47-production-web-container-acceptance` 基于 `main@c817ade`（PR #124 merge）。本回合零生产触碰、
+零 Docker 操作、零代码改动，只把 supervisor 已于 2026-09-18 完成的生产 web 容器只读浏览器验收事实入库
+（源证据主仓 gitignored `.verify/m14-47-production-web-container-acceptance/`，4 截图 +
+ACCEPTANCE-REPORT.md + MANIFEST.txt，全部 5 文件 SHA-256 回填前 certutil 逐文件复核 5/5 一致）。
+验收对象（只读，未重建/未重启/未重配置）：容器 `aios-m14-03-production-rehearsal-web-1`
+（ID `5be2e19db2e7…94e3`，与 M14-46 时点同 ID；image `aios/web:m14-05-security`，Docker image
+`sha256:793060d…5fc2`，healthy）。验收窗口 04:56–05:02 +08:00：HTTP `/` 200（17759 bytes）、`/login`
+200（16170 bytes）；API `http://127.0.0.1:8000/health` 200（健康端点为 `/health`，非
+`/api/v1/health`）；真实 Chromium 桌面 `/` 与 `/login` 均完整渲染（标题、导航、登录表单），
+pageerror 双 0；匿名 `GET /api/v1/auth/me` 401（预期，无会话）；单次冷加载 404 资源消息未复现、
+不计入判定；mobile 390×844 `/` 与 `/login` 均 200、渲染、pageerror 0、无水平溢出。诚实边界：
+仅覆盖 desktop+390px 匿名 `/`/`/login` 直接渲染，不含认证后流程/其他宽度/跨浏览器/真实负载；web 仅
+绑定 loopback `127.0.0.1:3011`（`192.168.8.3` 为 LiveKit media 绑定，非 web）；不隐含 provider
+smoke；WORM 离线第二副本/定期归档/长稳就绪开放；休眠并行 compose 项目未删除；LAN IP 静态假设；
+release/cutover 未批；`production_ready=false` 不变。证据：
+`docs/evidence/m14-47-production-web-container-acceptance/README.md`。
+
+## 前一任务（M14-46 postgres/redis compose 标签受控调和证据回填——已随 PR #124 合并 main；生产 web 容器浏览器验收证据回填由 M14-47 接续）
+
 **M14-46 postgres/redis compose 标签受控调和证据回填（docs-only 已执行，待发布/CI/合并）**：分支/worktree
 `docs/m14-46-compose-label-reconcile` 基于 `main@a54e1e58`（PR #123 merge）。本回合零生产触碰、
 零 Docker 操作、零代码改动，只把 supervisor 已于 2026-09-18 完成的 postgres/redis compose
