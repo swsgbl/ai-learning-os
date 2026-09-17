@@ -25,11 +25,25 @@
 - 卷采纳套件：106 passed
 - 镜像采纳套件：127 passed
 - Codex 合并运行：233 passed
+- 本地 Windows 卷+镜像组合测试：233 passed
 - ruff / py_compile / git diff --check 全部干净
 - 单一本地提交
 
+## 生产采纳（2026-09-17，已随 PR #118 合并 main `5bc74c4`）
+
+- 合并前完成跨平台测试修正，PR CI run `35172658746` 五个 job 全部通过
+- 合并后 main 真实 `plan` exit 0
+- 真实 `execute` stamp `20260917-020446` 于 2026-09-17T02:05:03Z 判定 pass：
+  - root 普查迁移为 uid 1000
+  - 备份 `minio-data-backup-20260917-020446.tar`（57344 bytes，SHA-256 `c56298300087f1493f59c257f9f65206231aca10c82a4c7f35a6f3806f8a38b8`），tar / .sha256 / .manifest / report 工件齐备
+  - MinIO 以容器 `8e4f3d855ffb` 重建（本地 pin 镜像 `sha256:0f1c79afdb0b5fcdd49e385c46bca065f97cdd89917522593b84436a2e61bcd6`）并 healthy
+  - API `b3e62b355703` / Web `5be2e19db2e7` / LiveKit `49935f127ca0` / Postgres `d17d5a93a079` / Redis `89f3ed0fd02a` 容器 ID 不变且 healthy
+- 采纳后 M14-40 preflight stamp `20260917-020606` 全部检查通过——采纳边界解除
+- 采纳后 `production_recovery --dry-run`（合并后 main）exit OK：compose config OK、pin 9/9、六服务 healthy、健康栈跳过 up、FunASR 与 CosyVoice managed-running health 200 且未触碰
+
 ## 边界
 
-- 开发全程零 Docker、零生产操作，验证全部来自 mock 契约测试
-- 真实 plan/execute/rollback 生产采纳等待 supervisor 执行
+- 开发全程零 Docker、零生产操作，验证全部来自 mock 契约测试；生产执行事实为 supervisor 获准窗口的记录（本回填回合零生产操作）
+- rollback 未在真实生产演练（仅契约测试覆盖）
+- execute pass 与 preflight pass 不等于 production_ready
 - production_ready = false

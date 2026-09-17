@@ -676,8 +676,20 @@ python tools/ops/minio_volume_adoption.py rollback --backup-file <execute-genera
 - **变更面最小**：仅 MinIO 容器被变更，其余五容器只读基线采集。
 - **一次性 helper 容器**：`--user 0:0` + 最小化挂载，停止容器前有
   compose/env 元数据门禁（--env-file + --profile local）。
-- **开发零 Docker/零生产**：验证全部来自 mock 契约测试；真实执行等待
-  supervisor 获准窗口，`production_ready=false` 不变。
+- **开发零 Docker/零生产；生产采纳已闭环（2026-09-17）**：工具已随 PR #118
+  合并 main `5bc74c4`（合并前跨平台测试修正，PR CI run `35172658746` 五 job
+  全部通过；本地 Windows 卷+镜像组合测试 233 passed）；合并后 main 真实
+  `plan` exit 0；真实 `execute` stamp `20260917-020446` 判定 pass——root
+  普查迁移 uid 1000、备份 tar（57344 bytes，SHA-256 入档）与
+  tar/.sha256/.manifest/report 工件齐备、MinIO 以容器 `8e4f3d855ffb` 重建
+  （本地 pin 镜像 `sha256:0f1c79afdb0b5fcdd49e385c46bca065f97cdd89917522593b84436a2e61bcd6`）
+  healthy、其余五容器 ID 不变且 healthy；采纳后 M14-40 preflight stamp
+  `20260917-020606` 全部检查通过（采纳边界解除）、`production_recovery
+  --dry-run` exit OK（pin 9/9、六服务 healthy、健康栈跳过 up、FunASR/CosyVoice
+  managed-running health 200 且未触碰）。rollback 未在真实生产演练（仅契约
+  测试覆盖）；execute pass 与 preflight pass 不等于 production_ready，
+  `production_ready=false` 不变（证据
+  `docs/evidence/m14-41-minio-volume-adoption/README.md`）。
 
 ## minio_image_adoption.py（M14-40）
 
