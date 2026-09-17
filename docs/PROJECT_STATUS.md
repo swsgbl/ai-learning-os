@@ -9,6 +9,35 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-42 生产审计链初始锚定记录（docs-only，零代码/零测试/零生产操作）**：分支/worktree
+`docs/m14-42-audit-anchor-record` 基于 `origin/main@8172229`（PR #119 merge），本 Claude
+开发回合独占 worktree、单 local commit、不 push/不建 PR/不动远程——只把 supervisor 已于
+2026-09-17 执行的生产审计链初始锚定事实入库（源证据主仓只读 gitignored
+`.verify/artifacts/m14-42-audit-chain-anchor/`，工具为已在 main 的 M10-06
+`services/api/app/ops/audit_chain_anchor.py`，Alembic `0027_audit_chain` 生产 current==head）。
+事实链（supervisor 执行，UTC）：**02:28:14Z dry-run valid**——DB 链 0 entries / 0 audit
+rows（全零 genesis），提案 sequence 0 创世锚、未写入；**02:28:50Z `--yes` 写入**库外锚文件
+（生产侧 `/tmp/aios-audit-anchor.jsonl`）——anchor_hash
+`59c672b9be0ea82dddd0d01e2f899b217674a4796b4f91f2381900e0af627c02`（anchored_at
+`2026-09-17T02:28:50.131481+00:00`，schema_version 1 / sha256 / head 与 previous 均为
+genesis 全零常量）；**02:29:48Z production-preflight post-migration 只读复核 5/5 pass、
+0 fail / 0 pending / 0 not_configured**（exit 0，工件 generated_at
+`2026-09-17T02:30:16.065512+00:00`）——db-connect postgresql/ai_learning_os、alembic
+current==head==`0027_audit_chain`、audit-chain 只读校验 valid（0/0）、**治理三项计数均为
+0**（unowned_non_seed_papers / course_generation_null_owner_drafts /
+variant_question_null_owner_drafts）、audit-anchor verify-only up-to-date（1 锚点，DB head
+与最后锚点一致）；写入后 verify-only 复核 problems=[]、proposed_anchor=null。入库证据：
+`docs/evidence/m14-42-audit-chain-anchor/audit-anchor.jsonl` **原样复制**（354 bytes，
+SHA-256 `d2bfd877aa94632e6f68932a4d4bef8d963a6eb61aca12de6429c5fb7873aa4e`，仅
+schema/algorithm/sequence/hash/time 字段无敏感值）+ 同目录 README（事实表 / 只读验证
+口径 / 结论边界；verify-only.json 与 production-preflight.json 留 gitignored 不入库）。
+诚实边界：本回合零生产操作，只记录 supervisor 已执行事实；**tracked anchor + merge
+commit 只能作为 Git 库外见证 / 哈希存证，不等同严格 WORM / 对象锁 / 离线介质，专项
+归档仍开放**；provider 冒烟与发布审批仍未完成；`production_ready=false` 不变。证据：
+`docs/evidence/m14-42-audit-chain-anchor/README.md`。
+
+## 前一任务（M14-41 MinIO 生产卷属主采纳工具——生产采纳已闭环，已随 PR #118 合并 main `5bc74c4`；生产审计链初始锚定记录由 M14-42 接续）
+
 **M14-41 MinIO 生产卷属主采纳工具（生产采纳已闭环）**：分支/worktree `ops/m14-41-minio-volume-adoption`
 单一本地提交——纯标准库 CLI `tools/ops/minio_volume_adoption.py` 交付
 plan/execute/rollback 三阶段：属主迁移 root → uid 1000（方向固定）；chown 前强制
