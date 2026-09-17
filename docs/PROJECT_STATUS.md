@@ -9,6 +9,25 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-45 LiveKit 主仓库受控恢复证据回填（docs-only 已执行，待发布/CI/合并）**：分支/worktree
+`m14-45-livekit-main-recovery` 基于 `main@0185a0f`（PR #122 merge）。本回合零生产触碰、
+零 Docker 操作、零代码改动，只把 supervisor 已于 2026-09-18 完成的 LiveKit 受控恢复与
+真实浏览器验收事实入库（源证据主仓 gitignored `.verify/m14-44-livekit-main-recovery/`，
+15 文件 MANIFEST SHA-256 全量锚定）。根因：旧 livekit 容器 `49935f127ca0…` bind-mount
+指向已删除 M14-38 worktree 的 YAML 路径（源路径变目录）→ OCI "not a directory"
+ExitCode 127、7880/7881 无监听（API /health 200）。恢复（04:25:09–04:25:10 +08:00 单次
+受控操作）：主仓库 compose `up -d --no-deps --force-recreate livekit`（显式
+`-p aios-m14-03-production-rehearsal` + `--profile local`，仅重建 livekit）→ 新容器
+`4aa604546c80…` healthy、挂载改指主仓库 regular file、LAN IP `192.168.8.3` 上
+TCP 7880/7881 + UDP 7882-7892 全 13 条发布，api/web/postgres/redis/minio 容器 ID 逐一
+不变。真实浏览器 default 模式验收 verdict=passed 13/13（token/connect/data/mic/cleanup、
+DOM 无 JWT、console 零错误、`ws://192.168.8.3:7880`）。诚实边界：生产 web 容器未重建
+未直接测试；LAN IP 静态、DHCP 变更仍是风险；postgres/redis label drift 未解决；不隐含
+任何 provider smoke pass；`production_ready=false` 不变。证据：
+`docs/evidence/m14-45-livekit-main-recovery/README.md`。
+
+## 前一任务（M14-44 审计锚点 WORM 真实执行记录——已随 PR #122 合并 main；LiveKit 主仓库恢复证据回填由 M14-45 接续）
+
 **M14-44 审计锚点 WORM 真实执行记录（docs-only 已执行，待发布/CI/合并）**：分支/worktree
 `docs/m14-44-audit-worm-execution-record` 基于 `main@9c21311`（PR #121 merge）。
 本回合零生产触碰，只把 supervisor 已完成的真实 MinIO Object Lock 归档事实入库。

@@ -78,6 +78,10 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-45 状态更新
+
+- M14-45 只做 docs-only 回填，零生产触碰；它把 supervisor 已于 2026-09-18 完成的 LiveKit 主仓库受控恢复（源证据树 `.verify/m14-44-livekit-main-recovery/`）转为可审计仓库证据。根因：旧 livekit 容器 `49935f127ca0…` bind-mount 指向已删除的 M14-38 worktree YAML 路径（源路径变目录）→ OCI runtime "not a directory" ExitCode 127、7880/7881 无监听（API /health 200，其余面正常）。恢复（2026-09-18 04:25:09–04:25:10 +08:00 单次受控操作）：主仓库 compose 受控最小范围重建 `-p aios-m14-03-production-rehearsal -f infra/docker-compose.yml --env-file infra/env.production-recovery --profile local up -d --no-deps --force-recreate livekit` → 新容器 `4aa604546c80…` healthy、挂载改指主仓库 regular file、LAN IP `192.168.8.3` 上 TCP 7880/7881 + UDP 7882-7892 全 13 条发布（docker port + netstat 双确认），api/web/postgres/redis/minio 容器 ID 逐一不变。真实浏览器 default 模式验收 verdict=passed 13/13（token/connect/data/mic/cleanup、DOM 无 JWT、console 零错误、`ws://192.168.8.3:7880`）。诚实边界：生产 web 容器未重建未直接测试；LAN IP 静态、DHCP 变更仍是风险；postgres/redis label drift（指向已删除 m14-06 worktree 的 compose config-file/working-dir 标签）未解决；不隐含任何 provider smoke pass；单次恢复 + 单次验收 ≠ 长期稳定，`production_ready=false` 不变。证据：`docs/evidence/m14-45-livekit-main-recovery/README.md`（原始证据 gitignored 不入库，15 文件 SHA-256 锚定）。
+
 ### M14-44 状态更新
 
 - M14-44 只做 docs-only 回填，零生产触碰；它收口 M14-43 旧清单中的「真实 WORM 归档执行」事实。supervisor 已于 2026-09-17 在真实 MinIO Object Lock 桶 `aios-audit-worm` 完成 `preflight -> archive -> verify`：源锚 `.verify/artifacts/m14-42-audit-chain-anchor/audit-anchor.jsonl` 为 354 bytes、SHA-256 `d2bfd877aa94632e6f68932a4d4bef8d963a6eb61aca12de6429c5fb7873aa4e`；对象 key `audit-anchor/<sha256>/audit-anchor.jsonl`、version `dc704b8d-6ebd-4acb-adb2-2135f89bb703`、`COMPLIANCE` 保留至 `2036-09-17T19:10:00Z`；三步均 pass，archive 与 verify 的 `worm_verified=true`，verify `problems=[]`。业务桶 `aios-objects` 未修改。Windows 工作区 tracked 锚文件因 CRLF 显示 355 bytes / 另一 SHA-256；Git blob 与 `.verify` 源文件仍为 354 bytes / `d2bf…73aa`，与 WORM 对象一致，不是对象漂移。离线第二副本、定期归档调度、provider smoke、release/cutover 审批、长稳剩余面与 AGC 签名链仍开放，`production_ready=false` 不变。证据：`docs/evidence/m14-44-audit-worm-execution/README.md`。
