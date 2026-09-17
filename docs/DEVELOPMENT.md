@@ -226,15 +226,70 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
    整链重算或该位置被重写；锚链「不链接/重算不匹配」= 锚文件本身
    被动过。发现不一致按事故处理：保全 DB 与锚文件证据、比对历史
    备份与归档锚点、追溯时间窗，**不在可疑状态下继续追加锚点**。
-4. **当前生产状态（如实声明）**：生产主库未执行 0027、未创建任何
-   锚点；本切片只交付工具与流程文档，不执行生产锚定。
+4. **当前生产状态（如实声明）**：生产主库已由 supervisor 执行 0027
+   并写入 sequence 0 创世锚（2026-09-17，M14-42 记录入库
+   `docs/evidence/m14-42-audit-chain-anchor/`）；锚文件严格 WORM
+   归档工具已交付（M14-43，见下节）但零真实归档执行。
+
+### 锚文件 WORM 归档（M14-43）
+
+`tools/ops/audit_anchor_archive.py`（fail-closed 单文件纯标准库）把
+库外锚文件复制进可验证的 WORM/对象锁归档并证明归档字节与保留元数据
+——把上节「锚文件必须另行归档到 WORM/对象锁/离线介质」的运维动作
+工具化。三命令 `preflight` / `archive` / `verify`，退出码统一 `0`
+成功 / `2` 一切拒绝；S3 凭据只认环境变量
+`AIOS_AUDIT_ARCHIVE_ACCESS_KEY` / `AIOS_AUDIT_ARCHIVE_SECRET_KEY`
+（绝不接受 CLI 值、绝不记录其值）。
+
+- **preflight（零写操作）**：本地锚链完整校验（与
+  `audit_chain_anchor` 同契约：字段集/类型/canonical JSON/
+  anchor_hash 重算/sequence 非负且严格递增——允许跳号不要求 +1
+  连续/anchored_at 必须可按 ISO-8601 解析/previous 链接/sequence 0
+  head 是 genesis 常量/symlink 源拒绝）+ endpoint 策略（公网必须
+  HTTPS，loopback/RFC1918 可 HTTP，userinfo 内嵌凭据拒绝）+
+  bucket 存在/versioning `Enabled`/Object Lock enabled。
+- **archive**：先跑全部 preflight；三道参数门（确认短语
+  `EXECUTE AUDIT ANCHOR WORM ARCHIVE` 一字不差 + `--retention-mode
+  COMPLIANCE`——不实现可被绕过的 GOVERNANCE + tz-aware 严格未来
+  `--retain-until`）缺一即零执行零报告；对象 key 内容寻址
+  `audit-anchor/<sha256>/audit-anchor.jsonl`；已存在对象字节不符
+  fail-closed、字节相符则核验 retention 事实后绝不覆盖；新对象恰好
+  一次 `put_object`（`application/x-ndjson` + SHA-256 checksum +
+  COMPLIANCE + retain-until），put 后重读字节与元数据，任何漂移
+  fail-closed。
+- **verify**：本地校验 + bucket WORM preflight + 归档报告伴生
+  `.json.sha256` sidecar 哈希核验（空/非 UTF-8/畸形 → exit 2 报告
+  problem）+ 报告绑定当前调用事实（跨 bucket/endpoint 或失败归档
+  报告一律拒绝）+ 按报告记录的 version 定向 head/get + 对象逐字节
+  SHA-256、version ID 与报告记录值精确一致、COMPLIANCE/
+  retain-until/content-type/size 精确核验。
+- **归档 runbook（生产）**：①每次锚定后先 `preflight`（零写）；
+  ②supervisor 获准窗口 `archive`（三道参数门），报告 + sidecar 落
+  gitignored `.verify/artifacts/m14-43-audit-worm-archive/`——报告名
+  `<command>-<stamp>-<随机后缀>`，后缀 `secrets.token_hex(16)` =
+  32 位小写 hex（128 bits），同 command 同秒撞名概率约 2**-128；
+  探测与写入非原子，属概率性抗碰撞而非全局互斥，存在性探测循环
+  （含孤儿工件）保留为 fail-closed 兜底；
+  ③事后任意时点 `verify` 复核（含恢复/审查流程——按归档报告定向
+  重读对象，字节/版本/保留事实一致才 pass）；④离线介质第二副本与
+  介质位置登记仍属运维动作，工具不代管、也不虚报「已归档到 WORM」。
+- **边界（如实声明）**：M14-43 为开发切片——151 项聚焦契约测试 +
+  邻居回归全绿，全部零网络（S3Client/FS/Clock/env 注入，boto3 仅
+  真实执行适配器内懒导入）；**零真实 WORM 归档执行**（M14-42 创世
+  锚尚未归档到任何对象锁桶）；S3 API 白名单仅 read/head/put
+  （head_bucket / get_bucket_versioning / get_object_lock_configuration
+  / head_object / get_object / put_object），零 delete/copy/
+  create-bucket/put-bucket-config，绝不删除/覆盖已归档对象；真实
+  preflight/archive/verify 由 supervisor 在获准窗口进行；
+  `production_ready=false` 不变。
 
 ### 安全边界（M10-03 后更新）
 
 - 已交付：认证基座、三域归属隔离、Web 登录 UI、角色授权+治理审计、
   私有语料与四类草稿归属、试卷 owner 可见性、Web HttpOnly cookie、治理工作台、
-  审计防篡改哈希链与库外锚定工具（M10-04/M10-06；生产主库迁移与首次
-  锚定待执行，见上）、生产切换只读 preflight（M10-07；真实生产执行仍需
+  审计防篡改哈希链与库外锚定工具（M10-04/M10-06；生产迁移与首次
+  锚定已由 M14-42 执行，锚文件 WORM 归档工具见 M14-43 节——零真实
+  归档执行）、生产切换只读 preflight（M10-07；真实生产执行仍需
   用户/运维审批，见「生产切换 preflight」节）；
 - 已知边界：744 张历史试卷与 generation/variant 历史无归属草稿仍待人工归属决策
   （M10-04 已交付 `legacy-paper-report`/`legacy-paper-migrate` 与
