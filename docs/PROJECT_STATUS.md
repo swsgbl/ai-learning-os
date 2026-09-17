@@ -9,6 +9,28 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-44 审计锚点 WORM 真实执行记录（docs-only 已执行，待发布/CI/合并）**：分支/worktree
+`docs/m14-44-audit-worm-execution-record` 基于 `main@9c21311`（PR #121 merge）。
+本回合零生产触碰，只把 supervisor 已完成的真实 MinIO Object Lock 归档事实入库。
+PR #121 feature head `456181e` 的 CI run `35262666887` 与合并后 main CI
+run `35263086947` 均 5/5 SUCCESS。真实执行链：preflight 于
+`2026-09-17T19:08:57Z` pass；archive 于 `19:08:58Z` pass、`created=true`；
+verify 于 `19:09:09Z` pass、`worm_verified=true`、problems=[]。源锚 354
+bytes，SHA-256 `d2bfd877aa94632e6f68932a4d4bef8d963a6eb61aca12de6429c5fb7873aa4e`；
+对象写入专用 bucket `aios-audit-worm`，key 为
+`audit-anchor/<sha256>/audit-anchor.jsonl`，version
+`dc704b8d-6ebd-4acb-adb2-2135f89bb703`，`COMPLIANCE` 保留至
+`2036-09-17T19:10:00Z`。原业务 bucket `aios-objects` versioning/Object Lock
+均 disabled且未修改。Windows 工作区 CRLF 造成 tracked 锚文件显示 355
+bytes / SHA-256 `4a292f…`；Git blob 与 `.verify` 源文件仍为 354 bytes /
+`d2bf…73aa`，与 WORM 对象一致，不是归档漂移。诚实边界：未做破坏性
+delete/overwrite 探针；离线介质第二副本、定期归档调度、provider smoke、
+release/cutover 审批、长稳剩余面与 AGC 签名链仍开放；
+`production_ready=false` 不变。证据：
+`docs/evidence/m14-44-audit-worm-execution/README.md`。
+
+## 前一任务（M14-43 审计锚点 WORM/对象锁归档工具——真实执行已由 M14-44 收口）
+
 **M14-43 审计锚点 WORM/对象锁归档工具（开发切片，零真实 WORM 执行）**：分支/worktree
 `ops/m14-43-audit-worm-archive` 基于 `35c0875`（M14-42 入库 commit），本 Claude 开发
 回合独占 worktree、单 local commit、不 push——交付 `tools/ops/audit_anchor_archive.py`

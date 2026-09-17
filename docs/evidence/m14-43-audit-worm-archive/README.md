@@ -1,5 +1,10 @@
 # M14-43 审计锚点 WORM 归档工具（开发切片证据）
 
+> 后续回填（M14-44）：真实 MinIO Object Lock 归档执行已闭环并 verify
+> pass；下文「零真实 WORM 归档执行」描述的是 M14-43 开发时点历史事实，
+> 不覆盖 M14-44 结论。详见
+> `docs/evidence/m14-44-audit-worm-execution/README.md`。
+
 ## 任务性质
 
 - 开发切片（实现 + 契约测试）：交付 `tools/ops/audit_anchor_archive.py` + `services/api/tests/test_audit_anchor_archive.py`，本 Claude 开发回合独占 worktree 单 local commit 不 push
