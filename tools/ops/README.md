@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -748,7 +748,7 @@ python tools/ops/minio_image_adoption.py preflight --execute \
 - 退出码统一：`0` 成功；`2` 一切失败（fail-closed，门禁/校验拒绝与
   真实执行失败同码，绝不静默降级）。
 
-## audit_anchor_archive.py（M14-43）
+## audit_anchor_archive.py（M14-43 / M14-44）
 
 审计锚点 WORM/对象锁归档：把 M14-42 落地的库外锚文件（锚点 JSONL）
 复制进可验证的 WORM 归档并证明归档字节与保留元数据。**preflight /
@@ -819,8 +819,18 @@ python tools/ops/audit_anchor_archive.py verify \
   零网络），boto3 仅
   真实执行适配器工厂内懒导入，hex SHA-256 → base64 只在 boto3 边界
   转换（AWS `ChecksumSHA256`）。
-- **诚实边界**：本回合为开发切片——151 项聚焦契约测试 + 邻居回归
-  全绿，**零真实 WORM 归档执行**（未连接任何真实 S3，M14-42 创世锚
-  未被归档动作触碰）；真实 preflight/archive/verify 由 supervisor
-  在获准窗口执行；`pass` 不等于 production ready，
+- **真实执行状态（M14-44）**：supervisor 已在真实 MinIO Object Lock
+  桶 `aios-audit-worm` 完成 `preflight -> archive -> verify`。源锚
+  354 bytes、SHA-256
+  `d2bfd877aa94632e6f68932a4d4bef8d963a6eb61aca12de6429c5fb7873aa4e`；
+  对象 key `audit-anchor/<sha256>/audit-anchor.jsonl`、version
+  `dc704b8d-6ebd-4acb-adb2-2135f89bb703`、`COMPLIANCE` 保留至
+  `2036-09-17T19:10:00Z`；三步均 pass，archive/verify
+  `worm_verified=true`，verify `problems=[]`。Windows 工作区 tracked
+  锚文件因 CRLF 显示 355 bytes / 另一 SHA-256；Git blob 与 `.verify`
+  源文件仍为 354 bytes / `d2bf…73aa`，与 WORM 对象一致，不是对象漂移。
+- **诚实边界**：M14-43 开发回合的「零真实 WORM 归档执行」是当时
+  历史事实，已由 M14-44 真实执行收口；离线介质第二副本、定期归档
+  调度、provider smoke、release/cutover 审批、长稳剩余面与 AGC
+  签名链仍开放。`pass` 不等于 production ready，
   `production_ready=false` 不变。

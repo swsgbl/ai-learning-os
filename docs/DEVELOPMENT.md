@@ -228,10 +228,10 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
    备份与归档锚点、追溯时间窗，**不在可疑状态下继续追加锚点**。
 4. **当前生产状态（如实声明）**：生产主库已由 supervisor 执行 0027
    并写入 sequence 0 创世锚（2026-09-17，M14-42 记录入库
-   `docs/evidence/m14-42-audit-chain-anchor/`）；锚文件严格 WORM
-   归档工具已交付（M14-43，见下节）但零真实归档执行。
+   `docs/evidence/m14-42-audit-chain-anchor/`）；锚文件已完成真实
+   WORM 归档并复核通过（M14-43/M14-44，见下节）。
 
-### 锚文件 WORM 归档（M14-43）
+### 锚文件 WORM 归档（M14-43 / M14-44）
 
 `tools/ops/audit_anchor_archive.py`（fail-closed 单文件纯标准库）把
 库外锚文件复制进可验证的 WORM/对象锁归档并证明归档字节与保留元数据
@@ -273,14 +273,27 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   ③事后任意时点 `verify` 复核（含恢复/审查流程——按归档报告定向
   重读对象，字节/版本/保留事实一致才 pass）；④离线介质第二副本与
   介质位置登记仍属运维动作，工具不代管、也不虚报「已归档到 WORM」。
-- **边界（如实声明）**：M14-43 为开发切片——151 项聚焦契约测试 +
+  **真实执行回填（M14-44，2026-09-17）**：源锚 354 bytes、SHA-256
+  `d2bfd877aa94632e6f68932a4d4bef8d963a6eb61aca12de6429c5fb7873aa4e`；
+  专用 Object Lock 桶 `aios-audit-worm` 中对象 key
+  `audit-anchor/<sha256>/audit-anchor.jsonl`、version
+  `dc704b8d-6ebd-4acb-adb2-2135f89bb703`、`COMPLIANCE`
+  保留至 `2036-09-17T19:10:00Z`；preflight、archive、verify 均 pass，
+  archive/verify `worm_verified=true`，verify `problems=[]`。
+  Windows 工作区 tracked 锚文件因 CRLF 显示 355 bytes / 另一 SHA-256；
+  Git blob 与 `.verify` 源文件仍为 354 bytes / `d2bf…73aa`，与 WORM
+  对象一致，不是对象漂移。
+  该闭环不收口离线第二副本、定期归档调度、provider smoke、
+  release/cutover 审批、长稳剩余面与 AGC 签名链。
+- **边界（如实声明）**：M14-43 开发切片当时为 151 项聚焦契约测试 +
   邻居回归全绿，全部零网络（S3Client/FS/Clock/env 注入，boto3 仅
-  真实执行适配器内懒导入）；**零真实 WORM 归档执行**（M14-42 创世
-  锚尚未归档到任何对象锁桶）；S3 API 白名单仅 read/head/put
+  真实执行适配器内懒导入）；其「零真实 WORM 归档执行」是开发时点
+  历史边界，已由 M14-44 的真实 MinIO Object Lock `preflight ->
+  archive -> verify` 闭环收口；S3 API 白名单仅 read/head/put
   （head_bucket / get_bucket_versioning / get_object_lock_configuration
   / head_object / get_object / put_object），零 delete/copy/
-  create-bucket/put-bucket-config，绝不删除/覆盖已归档对象；真实
-  preflight/archive/verify 由 supervisor 在获准窗口进行；
+  create-bucket/put-bucket-config，绝不删除/覆盖已归档对象；后续任何
+  真实 preflight/archive/verify 仍由 supervisor 在获准窗口进行；
   `production_ready=false` 不变。
 
 ### 安全边界（M10-03 后更新）
@@ -288,15 +301,16 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
 - 已交付：认证基座、三域归属隔离、Web 登录 UI、角色授权+治理审计、
   私有语料与四类草稿归属、试卷 owner 可见性、Web HttpOnly cookie、治理工作台、
   审计防篡改哈希链与库外锚定工具（M10-04/M10-06；生产迁移与首次
-  锚定已由 M14-42 执行，锚文件 WORM 归档工具见 M14-43 节——零真实
-  归档执行）、生产切换只读 preflight（M10-07；真实生产执行仍需
+  锚定已由 M14-42 执行，锚文件真实 WORM 归档已由 M14-43/M14-44
+  完成并 verify pass）、生产切换只读 preflight（M10-07；真实生产执行仍需
   用户/运维审批，见「生产切换 preflight」节）；
 - 已知边界：744 张历史试卷与 generation/variant 历史无归属草稿仍待人工归属决策
   （M10-04 已交付 `legacy-paper-report`/`legacy-paper-migrate` 与
   `draft-owner-report`/`draft-owner-migrate` 只读报告 + 默认 dry-run 迁移 CLI，
   生产迁移待人工决策后显式 `--yes` 执行）；
   哈希链整链重算的抵御依赖库外锚定 + WORM/离线归档（M10-06 工具已交付，
-  生产未锚定；非数字签名，见上）；
+  初始锚定与真实 WORM 归档已执行；离线第二副本与定期归档仍待完成；
+  非数字签名，见上）；
   TURN 未内置；云语音/LLM 真实 key 冒烟未执行（云语音 ASR/TTS 冒烟脚本已交付：
   M10-13 `infra/smoke_voice_cloud.sh`；LLM：M10-01 `infra/smoke_llm.sh`——真实
   端点/密钥冒烟待运维显式执行）；检索 cloud-web 已交付真实

@@ -78,6 +78,10 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-44 状态更新
+
+- M14-44 只做 docs-only 回填，零生产触碰；它收口 M14-43 旧清单中的「真实 WORM 归档执行」事实。supervisor 已于 2026-09-17 在真实 MinIO Object Lock 桶 `aios-audit-worm` 完成 `preflight -> archive -> verify`：源锚 `.verify/artifacts/m14-42-audit-chain-anchor/audit-anchor.jsonl` 为 354 bytes、SHA-256 `d2bfd877aa94632e6f68932a4d4bef8d963a6eb61aca12de6429c5fb7873aa4e`；对象 key `audit-anchor/<sha256>/audit-anchor.jsonl`、version `dc704b8d-6ebd-4acb-adb2-2135f89bb703`、`COMPLIANCE` 保留至 `2036-09-17T19:10:00Z`；三步均 pass，archive 与 verify 的 `worm_verified=true`，verify `problems=[]`。业务桶 `aios-objects` 未修改。Windows 工作区 tracked 锚文件因 CRLF 显示 355 bytes / 另一 SHA-256；Git blob 与 `.verify` 源文件仍为 354 bytes / `d2bf…73aa`，与 WORM 对象一致，不是对象漂移。离线第二副本、定期归档调度、provider smoke、release/cutover 审批、长稳剩余面与 AGC 签名链仍开放，`production_ready=false` 不变。证据：`docs/evidence/m14-44-audit-worm-execution/README.md`。
+
 - [x] M14-01 本地真实语音部署第一切片（`feadd75` + `6089eaa` + `0503213` + `66eb080`，已随 **aef48f6**「feat(ops): production resilience recovery」汇总合并 main——local FunASR/CosyVoice adapter + 可复现 bootstrap，主 API 不嵌模型 SDK；详见 PROJECT_STATUS M14-01/02 条目）
 - [x] M14-02 部署验收轮（本机真实部署 + compose 容器内端到端冒烟全过；单机口径，`production_ready=false` 不变——边界详见 PROJECT_STATUS M14-01/02 条目）
 - [x] M14-03 确定性离线 wetext 缓存零网络复用（`78ce29e`，随 aef48f6 合并 main——wetext snapshot_download 绑定 `local_files_only=True` + gitignored artifacts 缓存预热；提交信息记录实测：第二次复用重启零文件下载且零 ModelScope HTTP 请求）
