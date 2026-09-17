@@ -9,6 +9,28 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-46 postgres/redis compose 标签受控调和证据回填（docs-only 已执行，待发布/CI/合并）**：分支/worktree
+`docs/m14-46-compose-label-reconcile` 基于 `main@a54e1e58`（PR #123 merge）。本回合零生产触碰、
+零 Docker 操作、零代码改动，只把 supervisor 已于 2026-09-18 完成的 postgres/redis compose
+标签受控调和事实入库（源证据主仓 gitignored `.verify/m14-46-compose-label-reconcile/`，
+26 文件 + MANIFEST SHA-256 `501edd6b…` 锚定）。根因：postgres/redis 容器的
+config-file/working-dir 不可变标签指向已删除 m14-06 worktree 的 infra 路径——但
+无行为/配置漂移（变更前 dry-run 六容器零 Recreate，config hash 与主仓 compose 对齐）。
+调和（04:45–04:46 +08:00 两次连续受控操作，先 postgres 后 redis）：变更前 PostgreSQL
+自定义备份 70861 bytes / SHA-256 `8E4F27EA…`；主仓 compose `up -d --no-build
+--no-deps --force-recreate`（显式 `-p aios-m14-03-production-rehearsal` +
+`--profile local`，不加 `--renew-anon-volumes`）→ postgres `f928410e404e…`、
+redis `6006a4c551e1…` 均 healthy、标签改指主仓；postgres 命名卷与 redis 匿名卷
+`2d88095b8c2e…` 前后同 ID（数据保留）；api/web/minio/livekit 容器 ID 逐一不变，
+六容器终态 healthy；最终 dry-run 零 Recreate、compose ls 仅主仓 compose 在列。应用面：
+API /health 200 前后一致、unknown-user login probe 预期 401、临时表事务
+create/insert/select/rollback 全过、redis PONG。诚实边界：休眠并行 compose 项目未删除；
+不隐含 provider smoke；生产 web 容器未经浏览器验收；WORM 离线第二副本/定期归档/长稳
+就绪开放；LAN IP 静态假设；release/cutover 未批；`production_ready=false` 不变。证据：
+`docs/evidence/m14-46-compose-label-reconcile/README.md`。
+
+## 前一任务（M14-45 LiveKit 主仓库受控恢复证据回填——已随 PR #123 合并 main；compose 标签受控调和证据回填由 M14-46 接续）
+
 **M14-45 LiveKit 主仓库受控恢复证据回填（docs-only 已执行，待发布/CI/合并）**：分支/worktree
 `m14-45-livekit-main-recovery` 基于 `main@0185a0f`（PR #122 merge）。本回合零生产触碰、
 零 Docker 操作、零代码改动，只把 supervisor 已于 2026-09-18 完成的 LiveKit 受控恢复与
