@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -656,6 +656,28 @@ non-ok 连败 37 恰终止于旧语义最后一轮（09:45:02Z）、恢复转移
   日志行、密钥/secret、生产容器 ID；被拒值不回显。
 - 退出码：0 plan 成功 / execute 成功；2 任何拒绝（门禁、参数超界、源
   缺失/symlink、零样本、malformed、乱序、混档、超 5000、写失败）。
+
+## minio_volume_adoption.py（M14-41）
+
+MinIO 生产卷属主采纳（root → uid 1000）：plan（计划）/ execute（备份 +
+chown + 重建）/ rollback（恢复）三阶段，各阶段产出 JSON+MD 报告。契约
+测试 `services/api/tests/test_minio_volume_adoption.py`；细节见脚本头
+注释与 `docs/evidence/m14-41-minio-volume-adoption/README.md`。
+
+```
+python tools/ops/minio_volume_adoption.py plan
+python tools/ops/minio_volume_adoption.py execute --confirm "EXECUTE MINIO VOLUME ADOPTION"
+python tools/ops/minio_volume_adoption.py rollback --backup-file <execute-generated-tar> --confirm "EXECUTE MINIO VOLUME ROLLBACK"
+```
+
+- **属主迁移**：root → uid 1000（MinIO 运行用户），方向固定。
+- **备份强制**：chown 前必做 tar + SHA-256 + manifest（记录旧镜像 ID 与
+  迁移前属主）；rollback 先校验备份工件与镜像 ID（不符即拒绝）。
+- **变更面最小**：仅 MinIO 容器被变更，其余五容器只读基线采集。
+- **一次性 helper 容器**：`--user 0:0` + 最小化挂载，停止容器前有
+  compose/env 元数据门禁（--env-file + --profile local）。
+- **开发零 Docker/零生产**：验证全部来自 mock 契约测试；真实执行等待
+  supervisor 获准窗口，`production_ready=false` 不变。
 
 ## minio_image_adoption.py（M14-40）
 
