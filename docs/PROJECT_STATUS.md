@@ -9,7 +9,41 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-**M14-50 移动端 current-main 冒烟证据回填（docs-only 已执行，待提交/发布/合并）**：分支/worktree
+**M14-50 Harmony Stage B 模拟器交互验证证据回填（docs-only 已执行，待提交/发布/合并）**：分支/worktree
+`m14-50-harmony-stage-b-backfill`（分支 `docs/m14-50-harmony-stage-b-backfill`）基于
+`main@d613667`（PR #131 merge）。本回合零设备运行、零生产触碰、零代码改动、不 push/不建
+PR，只把 supervisor 已于 2026-09-18 11:54–12:01（GMT+8）完成的 Harmony Stage B 模拟器
+交互验证（判定 **PASS**，源证据为验证 worktree `m14-50-harmony-current-smoke` gitignored
+`.verify/m14-50-harmony-emulator-stage-b/`）转为可审计仓库证据。验证基线为 detached
+`main@b9e8cc8ec7a5e158f1e99468b60b24a27a648c19`（PR #129 merge，起始 clean）；
+`b9e8cc8..d613667` 共 6 提交（全为 docs + 归档调度器工具/测试），对
+`apps/harmony`/`tools/harmony_release` 区间 diff 为空——验证源码与回填基线一致。核心
+事实：预构建未签名 HAP（188,984 bytes、SHA-256
+`9d1b9609017f2b10e675c280f2ec04ef003b7b17b3e9591c4d57207e37534acb`，回填回合 certutil
+独立重哈希一致，与 Stage A 移动端冒烟同一产物）普通 `hdc install -r` 即成功（无签名、
+无绕行），bundle `com.ailearningos.app` v1.0.0 确认；全程唯一目标 `127.0.0.1:5555`
+（所有 hdc 调用带 `-t`）；PID 3198（uid 20020069）单进程稳定无重启，Mission #43
+focused，生命周期 onCreate→onWindowStageCreate→onForeground→WMSFocus→首帧→
+pages/Index；六个 tab（首页/学习/搜索/语音/设置/治理）经 `uinput -T -c` 真实点击，
+7 份 dumpLayout 哈希/尺寸互异（tab6 重试后同尺寸异哈希）；治理「重试」触发全新
+`GET /api/v1/version`（`effective_method:"GET"`、`curl_code:7`/`os_errno:111`、
+NETSTACK `2300007`；URL 在 hilog 中以 netstack CHR 逐字符隔星脱敏骨架呈现、明文
+`api/v1` 0 次出现，掩码逐位还原 + 时间戳/PID/方法互证）；`127.0.0.1:8000` 在模拟器
+内解析到模拟器自身 → 全程预期连接拒绝（只读失败态正确展示，未改任何 API base URL，
+host 侧 8000 从未被接触）；cppcrash/jscrash/appfreeze/FaultLog 全 0（faultlogger 目录
+空；freeze/ shell 无权限列出，hilog 扫描补偿）；卸载后 `bm dump` 错误输出与安装前逐
+字节相同（bundle 不存在验证）、无残留进程、模拟器保持运行。回填前独立复核：源证据
+44 文件 / 4,190,967 bytes 逐文件 SHA-256 全锚定 + 确定性聚合清单 SHA-256
+`3ff6f7b5ac951fc4baf9f1a2ec2942afdc71524717fccdd52d2aac52d01a9f09` 重derive 一致，
+关键原始产物（安装/卸载输出、PID 行、崩溃计数、时间线）抽查全吻合。诚实边界：无成功
+API 数据渲染（模拟器内服务器不可达）、无 tab 栏动画验证、无深层流程（考试查询/设置
+保存未执行）、无签名/AGC/Harmony 真机、`see_image` 无文字描述（dumpLayout ground
+truth + 截屏留档）、治理「审计日志」区块在折叠线下未直接观测；`production_ready=false`
+不变。证据：`docs/evidence/m14-50-harmony-emulator-stage-b/README.md`。
+
+## 前一任务（M14-50 移动端 current-main 冒烟证据回填——已随 PR #131 合并 main；Harmony Stage B 交互验证证据回填由本任务接续）
+
+**M14-50 移动端 current-main 冒烟证据回填（docs-only）**：分支/worktree
 `m14-50-mobile-smoke-backfill`（分支 `docs/m14-50-mobile-smoke-backfill`）基于 `main@15580f2`（PR #130
 merge）。本回合零设备运行、零生产触碰、零代码改动、不 commit/push，只把 supervisor 已于 2026-09-18
 完成的移动端双冒烟事实入库（源证据为两个验证 worktree 的 gitignored `.verify/` 目录）。两次冒烟的
