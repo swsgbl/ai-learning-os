@@ -9,7 +9,29 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-**M14-53 审计归档调度（调度面 readiness 管理器——开发切片，单 local commit 不 push）**：分支/worktree
+**M14-54 审计归档调度器生产验收回填（docs-only，单 local commit 不 push）**：分支/worktree
+`docs/m14-54-audit-archive-scheduler-production` 基于 `main@5ab05c3`（PR #136
+merge，merge 后 main CI run `35362172745` 五项 job 全部 success）。把 supervisor
+于 2026-09-18 在该 canonical main 检出完成的审计归档调度器真实 Task Scheduler
+生产验收转为仓库证据：`plan` 全部 repo/VBS/venv/readiness 预检通过且初始
+status `missing`；exact-owned `install` 携一字不差确认短语在**非提权**
+supervisor shell 成功注册 `AIOS-Audit-Archive-Readiness`（安装后
+status=installed、State Ready、初始 LastTaskResult 267011、NextRunTime
+2026-09-19T00:00:00+08:00）。真实调度**负路径**（2026-09-18T23:31:30+08:00，
+state/policy 缺席）LastTaskResult=2、仅创建 canonical gitignored 工件目录、
+无报告——fail-closed 缺输入行为验证；手工物化 canonical schema-v1 输入
+（内容源自已验证的 M14-42/M14-43/M14-49 事实）后**正路径**
+（2026-09-18T23:32:07+08:00）LastTaskResult=0、readiness.json 955 bytes 与
+sidecar 匹配、overall fresh、problems 空、全部任务 fresh；终态任务
+installed/exact-owned、tracked main 树 clean。
+诚实边界：本回填 docs-only、零生产触碰；state/policy 为手工物化（自动化
+updater 仍缺位，后续运维依赖）；不声称审计归档本身已执行；
+`production_ready=false` 不变。证据：
+`docs/evidence/m14-54-audit-archive-scheduler-production/README.md`。
+
+## 前一任务（M14-53 审计归档调度面 readiness 管理器——已随 PR #136 合并 main；调度器生产验收由 M14-54 接续）
+
+**M14-53 审计归档调度（调度面 readiness 管理器——已随 PR #136 合并 main）**：分支/worktree
 `ops/m14-53-audit-archive-scheduling` 基于 `main@92c8abc`（PR #135 merge）。交付
 `tools/ops/audit_archive_task.py`（Windows Task Scheduler readiness 管理器，纯标准库）、
 `tools/ops/run_audit_archive_readiness_silent.vbs`（隐藏调度 wrapper）、
