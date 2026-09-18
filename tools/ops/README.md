@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -899,3 +899,43 @@ python tools/ops/audit_worm_offline_copy.py verify \
   未在真实可移动介质/网络保险库上落过一份副本；离线介质的物理
   保存策略（防火/异地）、定期重验调度、介质衰减监测仍开放。
   `pass` 不等于 production ready，`production_ready=false`。
+
+## audit_archive_readiness.py（M14-51）
+
+审计归档就绪报告 CLI：M14-50 已合并纯评估器
+`audit_archive_scheduler.evaluate_readiness` 的薄封装（评估语义零新增
+零改动）——读两个本地 schema-v1 文档（`--state`/`--policy`），把每个
+受管任务就 `--now`（缺省当前 UTC；只解析 tz-aware ISO 8601，naive 拒绝）
+确定性分类，再原子写 canonical 就绪报告 + SHA-256 sidecar。
+**local-only 文件输入/报告输出**，单文件纯标准库，**零网络 / 零 env /
+零子进程 / 零 DB/S3 / 零调度器读改 / 零 WORM/离线访问**（源码契约测试
+锁定）；退出码 `0` 成功生成报告（含 readiness 判 `due`/`overdue`/
+`blocked`——状态在报告 `overall` 字段，工具不算失败）/ `2` 一切
+usage/输入/输出拒绝。
+
+```
+python tools/ops/audit_archive_readiness.py \
+    --state <schema-v1 state JSON> --policy <schema-v1 policy JSON> \
+    --output <readiness 报告路径> [--now <tz-aware ISO 8601>]
+```
+
+安全性质（契约测试 `services/api/tests/test_audit_archive_readiness.py`
+44 项锁定；FakeFS 注入 + `tmp_path` 真实盘双轨）：
+
+- **输入纪律（fail-closed 只读）**：仅普通文件——缺失/目录/symlink/
+  未解析不安全路径一律拒绝；单文档保守 1 MiB 上限读前后双检（读中途
+  增长仍拒）；严格 UTF-8 + 严格 JSON——重复键、`NaN`/`Infinity`、非
+  JSON object 全部拒绝；两个输入绝不变异。
+- **报告纪律**：canonical JSON（排序键、紧凑分隔符、UTF-8、恰好一个
+  尾随换行）二进制模式写盘（免疫 Windows `\n`→`\r\n` 翻译）——同输入 +
+  同 `--now` 产出字节相同报告；报告只记输入的逻辑 role + basename +
+  字节数 + SHA-256，**绝不记录绝对本地路径**。
+- **输出守卫**：报告 + `<output>.sha256` sidecar（内容
+  `<report-sha256>  <output-basename>\n`）经 temp 文件 + `os.replace`
+  原子替换，写失败清理 temp 非零退出零残骸；输出、sidecar 及其 tmp
+  中间路径**绝不覆盖任一输入**（supervisor review 落实的 tmp 路径
+  input-collision 守卫有专项回归测试）；工具绝不创建目录。
+- **诚实边界**：开发回合全部为合成文档 + 临时文件验证，未在真实调度
+  链路/真实锚链状态上运行；不自动发现证据文件、不集成 Windows Task
+  Scheduler、不接触 WORM/离线存储、不执行生产、不访问任何 provider、
+  不证明 `production_ready=true`——`production_ready=false` 不变。
