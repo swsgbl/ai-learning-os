@@ -2455,3 +2455,40 @@ python tools/harmony_mock/server.py --host 0.0.0.0 --port 8765
 ### 边界
 
 本切片不改变任何业务能力与签名边界：AGC 发布材料仍缺位（仓库与本机均无发布证书/Profile/密钥库，本机仅 DevEco 本地调试身份）→ **不声称已签名/可发布**——release 构建成功仅证明 `buildMode=release` 可执行，产物仍为 `entry-default-unsigned.hap`，不存在任何已签名 HAP；preflight 通过 ≠ 签名配置正确（材料与 bundleName `com.ailearningos.app` 的匹配、signingConfigs 接入方式属 hmharness 后续切片，均未验证）；未做真机验证与任何运行时验证（release 产物未在任何设备安装）；未启用/验证混淆（release 混淆提示 WARN 为既有 `ruleOptions.enable=false` 配置）；CI 无 HarmonyOS job，PR #69 的 PR CI run `34296903848` 与 merge 后 main CI run `34297190550` 四项 job 全部 success 均不扩大为 HarmonyOS 远端验证（`tests/harmony_release` 未纳入 CI，与 `tests/android_smoke` 同为本地/canonical venv 口径）；仓库状态（已回填 2026-09-09）：已随 PR #69 合并 main（远端功能分支已删除）；未打 tag、未部署；`production_ready=false` 语义不变。剩余生产阻塞：AGC 签名与发布流程（材料创建与 signingConfigs 接入）、真机验证、真实 provider 冒烟、生产后端/生产 DB 接入、HarmonyOS CI 缺位——均待运维显式授权评估。
+
+## HarmonyOS 发布链五阶段 fail-closed 工具（M13-16）
+
+### 范围与实现
+
+- 状态（已回填 2026-09-18）：已随 **PR #127** 合并 main，merge commit `65129876b6b5131470d76241ebc21df0cfcdd52e`；feature commits 共 7 个：`a7553f4` preflight、`10b2c97` release build、`379f6c4` signing wrapper、`5ae56e4` signature verification、`9f86926` device smoke、`38dca1a` layout 证据加固、`7c0f7c2` sign 路径收敛安全修正。PR CI run `35295051405` 五项 job（Docker、Release tools、API、Android、Web）全部 success（较 M13-10 时点的四项多出 Release tools 一项）；CI 结果不扩大为 HarmonyOS 远端验证（仍无 HarmonyOS CI job）。
+- 目标：把 M13-10 的 readiness preflight 扩为完整五阶段发布链工具（`tools/harmony_release/`：`preflight` / `release_build` / `sign_hap` / `verify_signature` / `device_smoke`，配套 `tests/harmony_release/`），以 fail-closed 语义串联：任一阶段违规即失败终止，不静默降级、不带病进入下一阶段；不创建/修改/读取任何真实签名材料（材料缺位本身是显式 blocked 状态，不是 error）。
+- `7c0f7c2` 安全修正：sign 路径收敛（containment），堵住签名路径上的越界面；`38dca1a`：device smoke 的 layout 证据加固（抓取后解析并记录 node_count/字节数/SHA-256）。
+
+### 操作命令顺序与 AGC 材料缺失时的预期状态
+
+canonical venv 下按序执行（任一阶段失败即停，不继续后续阶段）：
+
+1. `python -m tools.harmony_release.preflight`
+2. `python -m tools.harmony_release.release_build`
+3. `python -m tools.harmony_release.sign_hap`
+4. `python -m tools.harmony_release.verify_signature`
+5. `python -m tools.harmony_release.device_smoke`
+
+AGC 材料缺位（当前仓库常态）时各阶段的**预期状态**：
+
+- preflight → `status=blocked_by_external_materials`、exit `0`（不带 `--require-materials`；带则 exit `2`）；`signingConfigs` 保持空数组、unsigned 边界为 true（沿用 M13-10 契约）。
+- release build → `buildMode=release` 构建成功仅证明构建可执行；产物恒为未签名 HAP（如 `entry-default-unsigned.hap`）。
+- sign → 凭据仅经环境变量传入、从不序列化；无材料即无法产出已签名 HAP，链停在 blocked/unsigned，**绝不伪造签名**。诚实限制：hap-sign-tool 为 argv 命令行协议，子进程存活期间传入值可能对本机进程列表可见（见证据 README §6）。
+- verify → 对未签名产物如实报告 unsigned，不冒充已签名。
+- device smoke → 仅显式指定目标（不自动发现所有连接设备）、设备端变更显式 opt-in、收尾清理卸载。
+
+整体预期：链停在 **blocked/unsigned** 状态——不存在任何已签名 HAP，`production_ready=false` 语义不变。
+
+### 验证
+
+- supervisor 门禁（`7c0f7c2` 之后）：`pytest tests/harmony_release -q` → **294 passed**；`python -m compileall tools/harmony_release` 通过；`ruff`（F、E9）通过；`git diff --check` 干净。
+- 修正版 Harmony 模拟器冒烟（`127.0.0.1:5555`）：status ok、exit 0、mutation performed、**6/6 commands、0 failures**、cleanup ok、bundle uninstalled；layout node_count **2708**、**53798 bytes**、SHA-256 `D56825952B806EDDAC50F1AC794CD4C656C3354E60D91012CC5B883A76147E61`；HAP **unsigned**、**452446 bytes**、SHA-256 `6389C7DF066635CCF274D27F918FC610963400AFD9871402D7EFE3DDABBC07E4`（原始证据 15 文件 SHA-256 清单与两份 layout 快照差异说明见证据 README）。
+
+### 边界
+
+本切片交付的是发布链**工具与门禁**，不改变任何业务能力与签名边界：本轮验证仅覆盖 Harmony 模拟器 `127.0.0.1:5555` + 未签名 HAP——无 AGC 发布材料、无真实签名、无 Harmony 真机；签名凭据仅环境变量传入、从不序列化（hap-sign-tool argv 进程列表暴露限制如实记录）；未打 tag、未部署；`production_ready=false` 语义不变。剩余生产阻塞：AGC 发布材料创建、真实签名接入、Harmony 真机验证；其后 backlog：WORM 离线第二副本、定时归档、provider 冒烟外部配置处理、浸泡/真实负载、发布就绪评审与切换——均待运维显式授权评估。证据：`docs/evidence/m13-16-harmony-release-chain/README.md`（`.verify/` 原始证据不入库）。
