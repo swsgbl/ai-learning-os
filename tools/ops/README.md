@@ -804,8 +804,13 @@ python tools/ops/audit_anchor_archive.py verify \
   put-bucket-config 任何 API，源码契约测试锁定；**绝不删除、绝不
   覆盖任何已归档对象**。
 - **报告纪律**：原子写 gitignored
-  `.verify/artifacts/m14-43-audit-worm-archive/`（JSON + Markdown，
-  archive 另附 `.json.sha256` sidecar；字节模式写盘防 Windows
+  `.verify/artifacts/m14-43-audit-worm-archive/`（**三命令统一三工件
+  （M14-58 起）**：JSON + Markdown + 字节精确 `.json.sha256` sidecar
+  （sha256sum 形态；失败证据与成功证据同样可被摘要校验）；M14-58 前
+  仅 archive 写 sidecar——preflight/verify 报告缺伴生摘要，历史真实
+  verify 报告因此被 M14-55 更新器按 `worm-sidecar-missing` fail-closed
+  拒绝（历史工件保持原样、绝不回填伪造 sidecar；历史报告补验需
+  supervisor 获准窗口真实 WORM 重跑）；字节模式写盘防 Windows
   行尾翻译破坏哈希）；**报告名
   `<command>-<stamp>-<随机后缀>` 真正防碰撞**——每份报告名带
   `secrets.token_hex(16)` CSPRNG 随机后缀（32 位小写 hex chars =

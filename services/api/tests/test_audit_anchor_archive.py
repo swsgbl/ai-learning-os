@@ -29,11 +29,15 @@ r"""M14-43 契约：audit anchor WORM/对象锁归档工具（零真实网络 / 
   worm_verified/source/endpoint host/bucket/key/hash/size/retention/
   content-type），跨 bucket/endpoint 或失败归档报告一律拒绝；
 - 报告：原子写 gitignored .verify/artifacts/m14-43-audit-worm-archive/
-  （RealFS 以字节落盘，Windows 不做 \n→\r\n 转换，sidecar 哈希与盘上
-  字节一致），报告名防碰撞——每份报告名带 ``suffix_gen()`` 生成的
-  CSPRNG 随机后缀（默认 ``secrets.token_hex``，32 hex chars = 128 bits，
-  同 command 同秒并发撞名概率约 2**-128），存在性探测循环（含残留孤儿
-  工件如只有 .md）保留为 fail-closed 兜底、递增 ``-2``/``-3`` 换名，
+  三命令（preflight/archive/verify）统一三工件——JSON + Markdown +
+  字节精确 ``.json.sha256`` sidecar（sha256sum 形态；M14-58 修复前仅
+  archive 写 sidecar，verify/preflight 报告缺伴生摘要，M14-55 更新器
+  按 worm-sidecar-missing fail-closed；RealFS 以字节落盘，Windows 不做
+  \n→\r\n 转换，sidecar 哈希与盘上字节一致），报告名防碰撞——每份
+  报告名带 ``suffix_gen()`` 生成的 CSPRNG 随机后缀（默认
+  ``secrets.token_hex``，32 hex chars = 128 bits，同 command 同秒并发
+  撞名概率约 2**-128），存在性探测循环（含残留孤儿工件如只有 .md）
+  保留为 fail-closed 兜底、递增 ``-2``/``-3`` 换名，
   绝不覆盖既有报告证据，endpoint 只记 host（绝不完整 endpoint）、绝不含 access
   key/secret 值，worm_verified 布尔如实（preflight=false：未验证具体
   对象）；报告/文件系统意外异常 fail-closed exit 2，绝不上抛原始
@@ -930,6 +934,60 @@ def test_verify_happy_path_matches_archive_report() -> None:
     assert gets[-1][3] == "ver-0"
 
 
+def test_verify_report_paired_with_matching_sidecar() -> None:
+    """M14-58 回归：verify 成功报告原子配对字节精确的 sidecar。
+
+    曾缺陷：``_write_report`` 仅对 archive 命令写 ``.json.sha256``
+    sidecar，verify 报告缺伴生摘要 → M14-55 更新器对真实 verify 报告
+    按 ``worm-sidecar-missing`` fail-closed 拒绝。修复后三命令统一三
+    工件；sidecar 必须与所写报告字节精确一致（sha256sum 形态
+    ``digest␣␣name.json\\n``）。
+    """
+    rc, _, fs, _ = run_archive_then_verify()
+    assert rc == 0
+    report_json = awa.ARTIFACT_DIR / f"verify-{STAMP}-{TOKEN}.json"
+    report_sha = awa.ARTIFACT_DIR / f"verify-{STAMP}-{TOKEN}.json.sha256"
+    assert report_json in fs.writes and report_sha in fs.writes
+    digest = hashlib.sha256(fs.files[report_json]).hexdigest()
+    assert fs.files[report_sha] == (
+        f"{digest}  verify-{STAMP}-{TOKEN}.json\n").encode()
+
+
+def test_failed_verify_report_also_paired_with_matching_sidecar() -> None:
+    """M14-58 回归：拒绝路径的 verify 报告同样三工件齐全。
+
+    失败证据也必须可被摘要校验（fail-closed 报告不是二等证据）——
+    无归档报告 → exit 2，但落盘报告仍须配对字节精确的 sidecar。
+    """
+    fs = make_fs()  # 无归档报告 → verify fail-closed exit 2
+    rc, _, fs2 = run(verify_args(), s3=FakeS3(), fs=fs)
+    assert rc == 2
+    report_json = awa.ARTIFACT_DIR / f"verify-{STAMP}-{TOKEN}.json"
+    report_sha = awa.ARTIFACT_DIR / f"verify-{STAMP}-{TOKEN}.json.sha256"
+    assert report_json in fs2.writes and report_sha in fs2.writes
+    digest = hashlib.sha256(fs2.files[report_json]).hexdigest()
+    assert fs2.files[report_sha] == (
+        f"{digest}  verify-{STAMP}-{TOKEN}.json\n").encode()
+
+
+def test_failed_archive_report_also_paired_with_matching_sidecar() -> None:
+    """M14-58 回归：拒绝路径的 archive 报告同样三工件齐全。
+
+    与失败 verify 对称（fail-closed 报告不是二等证据）——已存在对象
+    字节不符 → exit 2，但落盘报告仍须配对字节精确的 sidecar。
+    """
+    s3 = FakeS3(objects={KEY: StoredObject(body=b"different bytes")})
+    rc, _, fs = run(archive_args(), s3=s3)
+    assert rc == 2
+    assert puts(s3) == []
+    report_json = awa.ARTIFACT_DIR / f"archive-{STAMP}-{TOKEN}.json"
+    report_sha = awa.ARTIFACT_DIR / f"archive-{STAMP}-{TOKEN}.json.sha256"
+    assert report_json in fs.writes and report_sha in fs.writes
+    digest = hashlib.sha256(fs.files[report_json]).hexdigest()
+    assert fs.files[report_sha] == (
+        f"{digest}  archive-{STAMP}-{TOKEN}.json\n").encode()
+
+
 def test_verify_targets_recorded_version_on_head_and_get() -> None:
     rc, s3, _, _ = run_archive_then_verify()
     assert rc == 0
@@ -1189,6 +1247,18 @@ def test_preflight_report_written_in_artifact_dir() -> None:
         or str(awa.ARTIFACT_DIR).endswith("m14-43-audit-worm-archive")
 
 
+def test_preflight_report_paired_with_matching_sidecar() -> None:
+    """M14-58 回归：preflight 报告同样原子配对字节精确的 sidecar。"""
+    rc, _, fs = run(preflight_args())
+    assert rc == 0
+    assert PREFLIGHT_JSON in fs.writes
+    report_sha = awa.ARTIFACT_DIR / f"preflight-{STAMP}-{TOKEN}.json.sha256"
+    assert report_sha in fs.writes
+    digest = hashlib.sha256(fs.files[PREFLIGHT_JSON]).hexdigest()
+    assert fs.files[report_sha] == (
+        f"{digest}  preflight-{STAMP}-{TOKEN}.json\n").encode()
+
+
 def test_source_reports_are_markdown_rendered() -> None:
     rc, _, fs = run(archive_args())
     assert rc == 0
@@ -1297,6 +1367,24 @@ def test_report_name_treats_partial_artifacts_as_collision() -> None:
             / f"preflight-{STAMP}-{TOKEN}-2.md") in fs.files
 
 
+def test_report_name_treats_orphan_sidecar_only_artifact_as_collision() -> None:
+    """[R3-4 增补] 残留孤儿 sidecar-only 工件（json/md 已失）也算碰撞。
+
+    M14-58 后三命令都写 sidecar，孤儿 ``.json.sha256`` 成为新的残留
+    形态——探测循环必须同样换名（``-2``），绝不覆盖任何残留字节。
+    """
+    stale_sha = awa.ARTIFACT_DIR / f"preflight-{STAMP}-{TOKEN}.json.sha256"
+    stale_bytes = f"{'0' * 64}  preflight-{STAMP}-{TOKEN}.json\n".encode()
+    fs = make_fs(extra={stale_sha: stale_bytes})
+    rc = awa.main(preflight_args(), s3=FakeS3(), fs=fs, clock=FakeClock(),
+                  env=GOOD_ENV, suffix_gen=FakeSuffixGen())
+    assert rc == 0
+    assert fs.files[stale_sha] == stale_bytes  # 孤儿 sidecar 原样保留
+    for ext in (".json", ".md", ".json.sha256"):
+        assert (awa.ARTIFACT_DIR
+                / f"preflight-{STAMP}-{TOKEN}-2{ext}") in fs.files
+
+
 def test_worst_case_colliding_suffix_probe_increments() -> None:
     """最坏情况（随机后缀完全相同的确定性生成器）：探测兜底递增换名。"""
     fs = make_fs()
@@ -1327,7 +1415,11 @@ def test_real_fs_write_text_atomic_preserves_unix_newlines(tmp_path) -> None:
 
 def test_real_fs_archive_roundtrip_sidecar_matches_disk_bytes(
         tmp_path, monkeypatch) -> None:
-    """RealFS 端到端：archive 落盘三工件 → verify 用盘上 sidecar 核验通过。"""
+    """RealFS 端到端：archive 落盘三工件 → verify 用盘上 sidecar 核验通过。
+
+    M14-58：verify 腿自身也必须落盘字节精确的 ``.json.sha256`` sidecar
+    （三命令统一三工件）——真实盘上字节与摘要逐一核对。
+    """
     artifact_dir = tmp_path / "artifacts"
     monkeypatch.setattr(awa, "ARTIFACT_DIR", artifact_dir)
     anchor = tmp_path / "audit-anchor.jsonl"
@@ -1355,6 +1447,12 @@ def test_real_fs_archive_roundtrip_sidecar_matches_disk_bytes(
     rc = awa.main(args_verify, s3=s3, fs=awa.RealFS(),
                   clock=FakeClock(), env=GOOD_ENV, suffix_gen=FakeSuffixGen())
     assert rc == 0  # 真实盘上 sidecar 与报告字节一致 → verify 可复算通过
+    # M14-58：verify 报告自身的 sidecar 也与盘上字节精确一致
+    verify_sha = artifact_dir / f"verify-{STAMP}-{TOKEN}.json.sha256"
+    verify_data = (artifact_dir / f"verify-{STAMP}-{TOKEN}.json").read_bytes()
+    assert verify_sha.read_text(encoding="utf-8") == (
+        f"{hashlib.sha256(verify_data).hexdigest()}"
+        f"  verify-{STAMP}-{TOKEN}.json\n")
 
 
 # ---------------------------------------------------------------- boto3 适配器边界（零网络）

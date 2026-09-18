@@ -78,6 +78,16 @@ WORM。
 - `archive-20260917-190858-92c42ed43b4ebf2dedfd0e3d7b287090.json.sha256`
 - `verify-20260917-190909-84587d5101ad3daea43472cd03938890.json`
 
+按本执行时点（M14-58 前）的工具契约，仅 archive 报告伴生
+`.json.sha256` sidecar——上表 preflight/verify 报告**没有** sidecar
+（历史证据链缺口；M14-55 更新器对真实 verify 报告按
+`worm-sidecar-missing` fail-closed 拒绝，属设计生效而非误报）。
+M14-58 起工具三命令统一三工件（JSON + Markdown + sidecar），未来
+supervisor 获准窗口的真实重跑将产出配对 sidecar 的 verify 报告；
+**历史工件保持原样、绝不回填伪造 sidecar**——历史 verify 报告在
+supervisor 授权的真实 WORM 重跑（真实凭据、真实 MinIO Object Lock
+桶）之前保持不可通过 M14-55 更新器校验。
+
 Archive JSON 复核 SHA-256:
 `66703e41a9287ea2ab1fdab15eaa778d1db2618664e3cc1cb4c2b3d9b9dc4b96`。
 
