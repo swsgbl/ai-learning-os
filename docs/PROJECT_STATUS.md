@@ -9,7 +9,34 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-**M14-51 审计归档就绪报告 CLI（开发切片：实现+测试+文档已执行，单 local commit 不 push）**：分支/worktree
+**M14-52 移动端验证证据回填（docs-only 上下文损坏恢复回合：单 local commit 不 push）**：分支/worktree
+`docs/m14-52-mobile-harmony-evidence-backfill` 基于 `main@fba3bb1`（PR #134 merge）。
+把 supervisor 于 2026-09-18 在独立验证 worktree（detached
+`main@b9e8cc8ec7a5e158f1e99468b60b24a27a648c19`，PR #129 merge，起始 tracked-clean）
+完成的两轮移动端验证独立复核后入库：(1) **Harmony Stage C 模拟器终验**（源
+gitignored `.verify/m14-50-harmony-emulator-stage-c/`）六项 phase 全 PASS——真实 UI
+保存 `http://10.0.2.2:8765/`、五 pane（Home/Study/Search/Voice/Governance）对
+task-owned mock 正向渲染、受控 mock 故障→应用内「重试」恢复（三篇论文 ≤10 s、
+无 App 重启）、hilog `cppcrash`/`jscrash`/`appfreeze`/`FaultLog` 全 0、卸载证明 +
+mock 树三 PID 清理且 `:8765` 监听归零、模拟器保持运行；PID 30005 全程稳定；HAP
+188,984 bytes、SHA-256 `9d1b9609…34acb`（未签名）；(2) **Android current-main
+真机第二次物理冒烟**（源 gitignored
+`.verify/android-smoke-20260918-main-d613667/`）18/18 阶段、mock 契约 19/0/19、
+logcat 阻塞计数全 0（`androidruntime_crash_count=49` 为工具噪音）、
+`adb reverse --list` 空、App 保留；serial `EYFBB22923201473`；APK 11,454,463
+bytes、SHA-256 `da54763f…c570`；与首次冒烟以 summary 哈希/logcat 行数/duration/
+执行窗口四项区分。回填前只读复核：Android 源 20 文件 / 1,885,407 bytes 逐文件
+SHA-256 + 确定性聚合清单 SHA-256 `a7a35fcd…e393`、summary.json 3,455 bytes /
+`"passed"` 恰 18 处；`b9e8cc8..fba3bb1` 10 提交对移动端路径区间 diff 为空。本回合
+零设备/零生产/零代码改动/不 push/不建 PR。诚实边界：两侧均 mock-only（Harmony
+未签名模拟器路径、Android USB loopback mock），不证明真实 provider / 生产 API /
+长稳；`production_ready=false` 不变。证据：
+`docs/evidence/m14-50-harmony-emulator-stage-c/README.md` 与
+`docs/evidence/m14-50-android-current-main-physical-smoke/README.md`。
+
+## 前一任务（M14-51 审计归档就绪报告 CLI——已随 PR #134 合并 main；移动端验证证据回填由 M14-52 接续）
+
+**M14-51 审计归档就绪报告 CLI（开发切片，已随 PR #134 合并 main）**：分支/worktree
 `ops/m14-51-audit-readiness-input` 基于 `main@965eb91`（PR #133 merge）。交付 M14-50
 已合并纯评估器 `audit_archive_scheduler.evaluate_readiness`（PR #132）的薄 CLI 封装
 `tools/ops/audit_archive_readiness.py`（单文件纯标准库：读两个本地 schema-v1 文档 →
