@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -834,3 +834,68 @@ python tools/ops/audit_anchor_archive.py verify \
   调度、provider smoke、release/cutover 审批、长稳剩余面与 AGC
   签名链仍开放。`pass` 不等于 production ready，
   `production_ready=false` 不变。
+
+## audit_worm_offline_copy.py（M14-49）
+
+审计锚点 WORM 离线第二副本：把 M14-42 锚链文件 + M14-43/M14-44
+WORM 归档时绑定的 verify 报告复制到操作者预创建的离线根（可移动
+介质/保险库目录），并以确定性 manifest 把三者字节绑定成可复算
+整体。**preflight / copy / verify 三命令**，fail-closed 单文件纯
+标准库，**零网络 / 零 DB / 零凭据 / 零设备**（源码契约测试锁定）；
+退出码统一 `0` 成功 / `2` 一切拒绝。报告只记路径事实（离线根记
+操作者显式传入的原始绝对路径字符串，可复现），绝不含凭据形态。
+
+```
+python tools/ops/audit_worm_offline_copy.py preflight \
+    --anchor-file <锚文件> --verify-report <M14-43 verify 报告JSON> \
+    --offline-root <离线根绝对路径>
+python tools/ops/audit_worm_offline_copy.py copy \
+    --anchor-file <锚文件> --verify-report <M14-43 verify 报告JSON> \
+    --offline-root <离线根绝对路径> \
+    --confirm "EXECUTE AUDIT ANCHOR WORM OFFLINE COPY"  # supervisor 获准窗口
+python tools/ops/audit_worm_offline_copy.py verify \
+    --anchor-file <锚文件> --verify-report <M14-43 verify 报告JSON> \
+    --offline-root <离线根绝对路径>
+```
+
+安全性质（契约测试 `services/api/tests/test_audit_worm_offline_copy.py`
+119 项锁定；细节见脚本头注释）：
+
+- **marker 契约**：离线根必须由操作者预先创建（本工具绝不建根），
+  且根下预置 marker 文件 `AIOS-OFFLINE-COPY-ROOT.marker`，内容字节
+  精确等于 `AIOS audit anchor WORM offline copy root v1\n`——marker
+  缺失/内容漂移/symlink/非普通文件一律 fail-closed。marker 是
+  「操作者确认此根确为离线副本目标」的物理确认，不是工具产物。
+- **离线根门（三命令统一）**：显式绝对路径（拒绝 CWD 相对歧义）、
+  必须已存在且为普通目录、根与全部祖先无 symlink、resolve 后不得
+  位于仓库内（涵盖 `.verify/artifacts`）、marker 字节精确。
+- **preflight（零离线写入）**：锚链校验与 M14-42/M14-43 生产端
+  同契约 + verify 报告绑定事实核验 + 离线根门 + 只读观察既有副本
+  状态（`absent` / `partial` / `matching` / 字节不符即 `invalid`）。
+- **copy**：先跑全部 preflight 检查；确认短语一字不差三道参数门
+  （不满足 → 零执行零报告写入）；副本布局内容寻址
+  `<root>/audit-anchor/<anchor-sha256>/`，三文件
+  `audit-anchor.jsonl` / `verify-report.json` / `manifest.json`
+  字节模式原子写（防 Windows 行尾翻译破坏哈希）；**幂等且绝不
+  覆盖**——已存在副本逐字节相符则记 `idempotent` 原样保留，任何
+  字节不符 fail-closed 拒绝。
+- **manifest 确定性绑定**：manifest 是纯输入（锚字节 + 绑定事实 +
+  报告字节 + 报告 source_name）的确定性函数，零时钟；幂等 copy 与
+  verify 都按同一函数逐字节复算——不同锚/不同报告字节/不同报告名
+  必然产出不同 manifest，跨参数副本自然被拒。
+- **verify（零离线写入）**：重算锚链 + manifest 复算 + 三文件逐
+  字节比对，任何漂移（含换名报告的同字节副本）exit 2。
+- **报告纪律**：原子写 gitignored
+  `.verify/artifacts/m14-49-audit-worm-offline-copy/`（JSON +
+  Markdown + `.json.sha256` sidecar）；报告名
+  `<command>-<stamp>-<CSPRNG 随机后缀>` 按 command 前缀作用域防
+  碰撞（同 command 撞名才递增 `-2`/`-3`，绝不覆盖既有工件）；
+  `redact_secrets` 终防线折叠 key=value / Bearer 形态疑似秘密
+  （retain_until 等保留策略时间戳是审计事实，不在秘密名单）；
+  FS/Clock/后缀生成器全注入（开发回合零真实介质），异常只记
+  `type(exc).__name__` 绝不带原始消息。
+- **诚实边界**：本切片开发回合**零真实离线介质执行**——119 项
+  契约测试全部在注入 FakeFS 与 `tmp_path` 真实端到端冒烟下通过，
+  未在真实可移动介质/网络保险库上落过一份副本；离线介质的物理
+  保存策略（防火/异地）、定期重验调度、介质衰减监测仍开放。
+  `pass` 不等于 production ready，`production_ready=false`。
