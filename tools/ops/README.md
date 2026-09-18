@@ -1001,3 +1001,21 @@ run_audit_archive_readiness_silent.vbs"`、WorkingDirectory=仓库根。
   安装/零卸载/零注册、未运行真实 readiness、未接触 WORM/离线/S3/
   provider/Docker/生产；实际注册 supervisor-only；
   `production_ready=false` 不变。
+
+生产验收（M14-54 回填记录；supervisor 于 2026-09-18 在 canonical
+`main@5ab05c3`（PR #136 merge）真实执行，证据
+`docs/evidence/m14-54-audit-archive-scheduler-production/README.md`）：
+`plan` 全部 repo/VBS/venv/readiness 预检通过且初始 status `missing` 后，
+exact-owned `install` 携确认短语在**非提权** supervisor shell 成功注册
+（安装后 status=installed、State Ready、初始 LastTaskResult 267011、
+NextRunTime 2026-09-19T00:00:00+08:00）。真实调度**负路径**
+（2026-09-18T23:31:30+08:00，state/policy 缺席）：LastTaskResult=2、
+仅创建 canonical gitignored 工件目录、无报告——fail-closed 缺输入行为
+验证。手工物化 canonical schema-v1 state/policy（内容源自已验证的
+M14-42/M14-43/M14-49 事实）后**正路径**
+（2026-09-18T23:32:07+08:00）：LastTaskResult=0，readiness.json 与
+`.sha256` sidecar 匹配、overall fresh、problems 空、全部任务 fresh。
+终态任务 installed/exact-owned，tracked main 树 clean。边界：
+state/policy 为**手工物化**样本——自动维持这些输入的 updater 仍缺位，
+后续真实运维依赖它补齐；不声称审计归档本身已执行；
+`production_ready=false` 不变。
