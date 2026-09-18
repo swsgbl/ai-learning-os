@@ -403,3 +403,281 @@ class TestCli:
         assert code == 0
         assert payload["build_profile"]["unsigned_boundary"] is True
         assert payload["repo_materials"]["count"] == 0
+
+
+# --- M13-16a slice 1: --expect-signed contract ---------------------------
+
+SIGNED_PROFILE = json.dumps(
+    {
+        "app": {
+            "signingConfigs": [{"name": "release", "type": "HarmonyOS"}],
+            "products": [{"name": "default", "signingConfig": "release"}],
+        }
+    },
+    indent=2,
+)
+
+
+def make_signed_repo(tmp_path: Path) -> Path:
+    """Repo whose build-profile already carries a signingConfigs entry."""
+    return make_repo(tmp_path, SIGNED_PROFILE)
+
+
+class TestExpectSignedMode:
+    """--expect-signed: non-empty signingConfigs + valid external materials.
+
+    Exit-code semantics locked here: absent materials = external blocker
+    (exit 2, status blocked_by_external_materials); present-but-invalid
+    materials or an empty signingConfigs = contract violation (exit 1).
+    """
+
+    def test_missing_materials_blocked_exit_2(self, tmp_path):
+        repo = make_signed_repo(tmp_path)
+        result, code = run_preflight(repo_root=repo, expect_signed=True)
+        assert code == 2
+        assert result["status"] == "blocked_by_external_materials"
+        assert result["failures"] == []
+        assert result["expect_signed"] is True
+        # require_materials was NOT passed: signed mode implies it
+        assert result["require_materials"] is False
+        assert result["signed_contract"] == {
+            "expect_signed": True,
+            "signing_configs_required_non_empty": True,
+            "signing_configs_non_empty": True,
+            "materials_required": True,
+            "materials_present": False,
+            "materials_valid": None,
+            "satisfied": False,
+        }
+
+    def test_signed_success_ok_exit_0(self, tmp_path, monkeypatch):
+        repo = make_signed_repo(tmp_path)
+        set_material_env(monkeypatch, make_outside_materials(tmp_path))
+        result, code = run_preflight(repo_root=repo, expect_signed=True)
+        assert code == 0
+        assert result["status"] == "ok"
+        assert result["failures"] == []
+        assert result["warnings"] == []
+        assert result["build_profile"]["signing_configs_count"] == 1
+        assert result["build_profile"]["unsigned_boundary"] is False
+        assert result["external_materials"]["all_present"] is True
+        assert result["external_materials"]["all_valid"] is True
+        contract = result["signed_contract"]
+        assert contract["signing_configs_non_empty"] is True
+        assert contract["materials_present"] is True
+        assert contract["materials_valid"] is True
+        assert contract["satisfied"] is True
+
+    def test_signed_success_also_with_require_materials_flag(self, tmp_path, monkeypatch):
+        repo = make_signed_repo(tmp_path)
+        set_material_env(monkeypatch, make_outside_materials(tmp_path))
+        result, code = run_preflight(
+            repo_root=repo, expect_signed=True, require_materials=True
+        )
+        assert code == 0
+        assert result["status"] == "ok"
+        assert result["require_materials"] is True
+
+    def test_partial_materials_blocked_exit_2(self, tmp_path, monkeypatch):
+        repo = make_signed_repo(tmp_path)
+        paths = make_outside_materials(tmp_path)
+        monkeypatch.setenv("AIOS_HARMONY_CERT_PATH", str(paths["AIOS_HARMONY_CERT_PATH"]))
+        result, code = run_preflight(repo_root=repo, expect_signed=True)
+        assert code == 2
+        assert result["status"] == "blocked_by_external_materials"
+        assert result["failures"] == []
+        assert result["external_materials"]["all_present"] is False
+        assert result["signed_contract"]["satisfied"] is False
+
+    def test_empty_env_value_is_blocker_not_failure(self, tmp_path, monkeypatch):
+        repo = make_signed_repo(tmp_path)
+        monkeypatch.setenv("AIOS_HARMONY_CERT_PATH", "")
+        result, code = run_preflight(repo_root=repo, expect_signed=True)
+        assert code == 2
+        assert result["status"] == "blocked_by_external_materials"
+        assert result["failures"] == []
+        entry = result["external_materials"]["variables"]["AIOS_HARMONY_CERT_PATH"]
+        assert entry["present"] is False
+        assert entry["error"] == "empty_value"
+
+    def test_invalid_material_wrong_extension_failure_exit_1(self, tmp_path, monkeypatch):
+        repo = make_signed_repo(tmp_path)
+        paths = make_outside_materials(tmp_path)
+        set_material_env(monkeypatch, paths)
+        bad = paths["AIOS_HARMONY_PROFILE_PATH"].with_suffix(".zip")
+        bad.write_bytes(PLACEHOLDER)
+        monkeypatch.setenv("AIOS_HARMONY_PROFILE_PATH", str(bad))
+        result, code = run_preflight(repo_root=repo, expect_signed=True)
+        assert code == 1
+        assert result["status"] == "failure"
+        assert [f["code"] for f in result["failures"]] == ["external_material_invalid"]
+        assert result["external_materials"]["all_present"] is True
+        assert result["external_materials"]["all_valid"] is False
+        assert result["signed_contract"]["materials_valid"] is False
+        assert result["signed_contract"]["satisfied"] is False
+
+    def test_invalid_material_path_not_found_failure_exit_1(self, tmp_path, monkeypatch):
+        repo = make_signed_repo(tmp_path)
+        missing = tmp_path / "outside_materials" / "absent.p12"
+        missing.parent.mkdir(parents=True, exist_ok=True)
+        monkeypatch.setenv("AIOS_HARMONY_KEYSTORE_PATH", str(missing))
+        result, code = run_preflight(repo_root=repo, expect_signed=True)
+        assert code == 1
+        assert result["status"] == "failure"
+        entry = result["external_materials"]["variables"]["AIOS_HARMONY_KEYSTORE_PATH"]
+        assert entry["present"] is True
+        assert entry["error"] == "path_not_found"
+
+    def test_empty_signing_configs_is_failure_not_blocker(self, tmp_path, monkeypatch):
+        repo = make_repo(tmp_path)  # DEFAULT_PROFILE: signingConfigs == []
+        set_material_env(monkeypatch, make_outside_materials(tmp_path))
+        result, code = run_preflight(repo_root=repo, expect_signed=True)
+        assert code == 1
+        assert result["status"] == "failure"
+        assert [f["code"] for f in result["failures"]] == ["signing_configs_empty"]
+        assert result["build_profile"]["unsigned_boundary"] is True
+        contract = result["signed_contract"]
+        assert contract["signing_configs_non_empty"] is False
+        assert contract["satisfied"] is False
+
+    def test_missing_signing_configs_key_still_fails(self, tmp_path, monkeypatch):
+        repo = make_repo(tmp_path, "{\"app\": {\"products\": []}}")
+        set_material_env(monkeypatch, make_outside_materials(tmp_path))
+        result, code = run_preflight(repo_root=repo, expect_signed=True)
+        assert code == 1
+        assert [f["code"] for f in result["failures"]] == ["signing_configs_missing"]
+        assert result["signed_contract"]["signing_configs_non_empty"] is None
+
+    def test_non_empty_signing_configs_verdict_flips_with_mode(self, tmp_path, monkeypatch):
+        """Same repo state: unsigned mode fails, signed mode is ok."""
+        repo = make_signed_repo(tmp_path)
+        set_material_env(monkeypatch, make_outside_materials(tmp_path))
+        default_result, default_code = run_preflight(repo_root=repo)
+        assert default_code == 1
+        assert [f["code"] for f in default_result["failures"]] == [
+            "signing_configs_not_empty"
+        ]
+        assert "expect_signed" not in default_result
+        assert "signed_contract" not in default_result
+        signed_result, signed_code = run_preflight(repo_root=repo, expect_signed=True)
+        assert signed_code == 0
+        assert signed_result["status"] == "ok"
+        assert signed_result["signed_contract"]["satisfied"] is True
+
+    def test_repo_material_leak_still_fails_closed_in_signed_mode(self, tmp_path, monkeypatch):
+        repo = make_signed_repo(tmp_path)
+        (repo / "stray.p12").write_bytes(PLACEHOLDER)
+        set_material_env(monkeypatch, make_outside_materials(tmp_path))
+        result, code = run_preflight(repo_root=repo, expect_signed=True)
+        assert code == 1
+        assert [f["code"] for f in result["failures"]] == [
+            "repo_signing_material_present"
+        ]
+        assert result["repo_materials"]["count"] == 1
+
+    def test_strict_still_upgrades_warnings_in_signed_mode(self, tmp_path, monkeypatch):
+        repo = make_signed_repo(tmp_path)
+        set_material_env(monkeypatch, make_outside_materials(tmp_path))
+        result, code = run_preflight(
+            repo_root=repo,
+            expect_signed=True,
+            strict=True,
+            hap=str(tmp_path / "absent-unsigned.hap"),
+        )
+        assert code == 1
+        assert result["strict"] is True
+        assert result["warnings"] == []
+        assert [f["code"] for f in result["failures"]] == ["hap_path_missing"]
+
+    def test_signed_mode_json_has_no_env_values_or_absolute_paths(self, tmp_path, monkeypatch):
+        repo = make_signed_repo(tmp_path)
+        paths = make_outside_materials(tmp_path)
+        set_material_env(monkeypatch, paths)
+        result, _ = run_preflight(repo_root=repo, expect_signed=True)
+        text = render_json(result)
+        for path in paths.values():
+            assert str(path) not in text
+            assert path.name not in text
+        assert str(tmp_path) not in text
+        assert "outside_materials" not in text
+
+    def test_signed_mode_output_is_deterministic(self, tmp_path):
+        repo = make_signed_repo(tmp_path)
+        first, _ = run_preflight(repo_root=repo, expect_signed=True)
+        second, _ = run_preflight(repo_root=repo, expect_signed=True)
+        assert render_json(first) == render_json(second)
+
+    def test_require_materials_alone_keeps_unsigned_contract(self, tmp_path, monkeypatch):
+        """The pre-existing unsigned mode is untouched by the new mode."""
+        repo = make_repo(tmp_path)
+        set_material_env(monkeypatch, make_outside_materials(tmp_path))
+        result, code = run_preflight(repo_root=repo, require_materials=True)
+        assert code == 0
+        assert result["status"] == "ok"
+        assert result["build_profile"]["unsigned_boundary"] is True
+        assert "expect_signed" not in result
+        assert "signed_contract" not in result
+
+    def test_check_build_profile_expect_signed_keyword_is_additive(self, tmp_path):
+        signed_repo = make_repo(tmp_path / "signed", SIGNED_PROFILE)
+        unsigned_repo = make_repo(tmp_path / "unsigned")
+        _, default_failures = check_build_profile(unsigned_repo)
+        assert default_failures == []
+        _, default_failures = check_build_profile(signed_repo)
+        assert [f["code"] for f in default_failures] == ["signing_configs_not_empty"]
+        _, signed_failures = check_build_profile(signed_repo, expect_signed=True)
+        assert signed_failures == []
+        _, signed_failures = check_build_profile(unsigned_repo, expect_signed=True)
+        assert [f["code"] for f in signed_failures] == ["signing_configs_empty"]
+
+
+class TestExpectSignedCli:
+    def _run_cli(self, repo: Path, *extra: str, env_extra: dict = None) -> tuple:
+        env = {k: v for k, v in os.environ.items() if k not in MATERIAL_ENV_VARS}
+        if env_extra:
+            env.update(env_extra)
+        proc = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "tools/harmony_release/preflight.py"),
+             "--repo-root", str(repo), *extra],
+            capture_output=True, text=True, env=env, cwd=str(REPO_ROOT),
+        )
+        return proc.returncode, json.loads(proc.stdout)
+
+    def test_cli_expect_signed_missing_materials_exit_2(self, tmp_path):
+        repo = make_signed_repo(tmp_path)
+        code, payload = self._run_cli(repo, "--expect-signed")
+        assert code == 2
+        assert payload["exit_code"] == 2
+        assert payload["status"] == "blocked_by_external_materials"
+        assert payload["expect_signed"] is True
+        assert payload["signed_contract"]["satisfied"] is False
+
+    def test_cli_expect_signed_success_exit_0(self, tmp_path):
+        repo = make_signed_repo(tmp_path)
+        paths = make_outside_materials(tmp_path)
+        code, payload = self._run_cli(
+            repo, "--expect-signed",
+            env_extra={name: str(path) for name, path in paths.items()},
+        )
+        assert code == 0
+        assert payload["status"] == "ok"
+        assert payload["signed_contract"]["satisfied"] is True
+
+    def test_cli_expect_unsigned_matches_default(self, tmp_path):
+        repo = make_signed_repo(tmp_path)
+        unsigned_code, unsigned_payload = self._run_cli(repo, "--expect-unsigned")
+        default_code, default_payload = self._run_cli(repo)
+        assert unsigned_code == default_code == 1
+        assert unsigned_payload == default_payload
+
+    def test_cli_expectation_flags_are_mutually_exclusive(self, tmp_path):
+        repo = make_signed_repo(tmp_path)
+        env = {k: v for k, v in os.environ.items() if k not in MATERIAL_ENV_VARS}
+        proc = subprocess.run(
+            [sys.executable, str(REPO_ROOT / "tools/harmony_release/preflight.py"),
+             "--repo-root", str(repo), "--expect-signed", "--expect-unsigned"],
+            capture_output=True, text=True, env=env, cwd=str(REPO_ROOT),
+        )
+        assert proc.returncode == 2
+        assert "not allowed with" in proc.stderr
+        assert proc.stdout == ""

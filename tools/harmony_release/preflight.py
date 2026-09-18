@@ -8,8 +8,23 @@ Safety contract:
 - Never reads the contents of signing material files (stat/suffix only).
 - Deterministic JSON: identical repository state produces identical bytes.
 
+Expectation modes:
+- default / --expect-unsigned: signingConfigs must still be the empty array
+  (the honest unsigned boundary); non-empty configs fail closed.
+- --expect-signed: the repository claims the signed contract, so
+  signingConfigs must be non-empty AND the three external materials
+  referenced by AIOS_HARMONY_CERT_PATH / AIOS_HARMONY_PROFILE_PATH /
+  AIOS_HARMONY_KEYSTORE_PATH must be present and valid. Absent materials are
+  an external blocker (status blocked_by_external_materials, exit 2 - the
+  same signal --require-materials uses); present-but-invalid materials and
+  empty signingConfigs are contract violations, so they fail closed (exit 1).
+- The signed-mode keys (expect_signed, signed_contract) are additive and are
+  emitted only in --expect-signed mode, so default-mode output stays
+  byte-identical to the pre-existing unsigned contract.
+
 Exit codes: 0 = ok or (by default) blocked-by-missing-materials,
-1 = failure (fail-closed), 2 = blocked and --require-materials was given.
+1 = failure (fail-closed), 2 = blocked and materials are required
+(--require-materials, or always in --expect-signed mode).
 """
 
 from __future__ import annotations
@@ -56,8 +71,15 @@ EXIT_FAILURE = 1
 EXIT_MISSING_MATERIALS = 2
 
 
-def check_build_profile(repo_root: Path) -> Tuple[dict, List[dict]]:
-    """Verify signingConfigs is still the empty array (unsigned boundary)."""
+def check_build_profile(
+    repo_root: Path, expect_signed: bool = False
+) -> Tuple[dict, List[dict]]:
+    """Verify signingConfigs against the expected signing boundary.
+
+    expect_signed=False (default): signingConfigs must be the empty array.
+    expect_signed=True: signingConfigs must be non-empty; an empty array is a
+    contract violation because the caller declared the signed state.
+    """
     path = repo_root / BUILD_PROFILE_RELPATH
     result = {
         "path": BUILD_PROFILE_RELPATH.as_posix(),
@@ -85,7 +107,10 @@ def check_build_profile(repo_root: Path) -> Tuple[dict, List[dict]]:
         return result, failures
     result["signing_configs_count"] = len(configs)
     result["unsigned_boundary"] = len(configs) == 0
-    if configs:
+    if expect_signed:
+        if not configs:
+            failures.append({"code": "signing_configs_empty"})
+    elif configs:
         failures.append({
             "code": "signing_configs_not_empty",
             "detail": {"signing_configs_count": len(configs)},
@@ -176,6 +201,28 @@ def _classify_material_path(
     return None
 
 
+def signed_contract_summary(build_profile: dict, external_materials: dict) -> dict:
+    """Additive signed-mode view of the contract (never carries values).
+
+    Derived purely from already-emitted facts, so it can never leak an
+    environment value or a path.
+    """
+    count = build_profile.get("signing_configs_count")
+    configs_non_empty = count > 0 if isinstance(count, int) else None
+    materials_present = bool(external_materials.get("all_present"))
+    materials_valid = external_materials.get("all_valid")
+    return {
+        "expect_signed": True,
+        "signing_configs_required_non_empty": True,
+        "signing_configs_non_empty": configs_non_empty,
+        "materials_required": True,
+        "materials_present": materials_present,
+        "materials_valid": materials_valid,
+        "satisfied": bool(configs_non_empty) and materials_present
+        and materials_valid is True,
+    }
+
+
 def record_hap(hap_arg: Optional[str]) -> Tuple[Optional[dict], List[dict]]:
     """Record artifact facts only; signedness is never inferred."""
     if not hap_arg:
@@ -211,11 +258,16 @@ def run_preflight(
     strict: bool = False,
     require_materials: bool = False,
     hap: Optional[str] = None,
+    expect_signed: bool = False,
 ) -> Tuple[dict, int]:
-    """Run all checks and build the deterministic result + exit code."""
+    """Run all checks and build the deterministic result + exit code.
+
+    expect_signed selects the expectation mode (see the module docstring).
+    It only adds result keys; no existing key changes meaning.
+    """
     failures: List[dict] = []
     warnings: List[dict] = []
-    build_profile, more = check_build_profile(repo_root)
+    build_profile, more = check_build_profile(repo_root, expect_signed=expect_signed)
     failures += more
     repo_materials, more = scan_repo_materials(repo_root)
     failures += more
@@ -235,8 +287,11 @@ def run_preflight(
     else:
         status = "blocked_by_external_materials"
 
+    # --expect-signed always requires the external materials, exactly as
+    # --require-materials does in the unsigned mode.
+    materials_required = require_materials or expect_signed
     exit_code = EXIT_FAILURE if failures else EXIT_OK
-    if exit_code == EXIT_OK and require_materials and status == "blocked_by_external_materials":
+    if exit_code == EXIT_OK and materials_required and status == "blocked_by_external_materials":
         exit_code = EXIT_MISSING_MATERIALS
     result = {
         "schema_version": SCHEMA_VERSION,
@@ -252,6 +307,11 @@ def run_preflight(
         "warnings": warnings,
         "failures": failures,
     }
+    if expect_signed:
+        result["expect_signed"] = True
+        result["signed_contract"] = signed_contract_summary(
+            build_profile, external_materials
+        )
     return result, exit_code
 
 
@@ -281,6 +341,16 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--hap", default=None,
         help="Optional HAP path: record size/SHA256/unsigned-name flag only.",
     )
+    expectations = parser.add_mutually_exclusive_group()
+    expectations.add_argument(
+        "--expect-signed", dest="expect_signed", action="store_true",
+        help="Require non-empty signingConfigs and valid AIOS_HARMONY_* materials.",
+    )
+    expectations.add_argument(
+        "--expect-unsigned", dest="expect_signed", action="store_false",
+        help="Require the empty signingConfigs unsigned boundary (default).",
+    )
+    parser.set_defaults(expect_signed=False)
     return parser.parse_args(argv)
 
 
@@ -291,6 +361,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         strict=args.strict,
         require_materials=args.require_materials,
         hap=args.hap,
+        expect_signed=args.expect_signed,
     )
     sys.stdout.write(render_json(result) + "\n")
     return exit_code
