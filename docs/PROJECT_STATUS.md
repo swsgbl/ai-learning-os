@@ -9,7 +9,28 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-**M14-52 移动端验证证据回填（docs-only 上下文损坏恢复回合：单 local commit 不 push）**：分支/worktree
+**M14-53 审计归档调度（调度面 readiness 管理器——开发切片，单 local commit 不 push）**：分支/worktree
+`ops/m14-53-audit-archive-scheduling` 基于 `main@92c8abc`（PR #135 merge）。交付
+`tools/ops/audit_archive_task.py`（Windows Task Scheduler readiness 管理器，纯标准库）、
+`tools/ops/run_audit_archive_readiness_silent.vbs`（隐藏调度 wrapper）、
+`services/api/tests/test_audit_archive_task.py`（聚焦契约测试，FakeSchtasks 注入，零真实
+schtasks）。调度契约：exact-owned 每日隐藏任务（TimeTrigger 重复间隔 `P1D` 无限期、
+`ExecutionTimeLimit=PT30M`），状态五态 `installed/missing/foreign/malformed/unknown`
+fail-closed，install/uninstall 各需 `--confirm` 一字不差，uninstall 仅删 exact-owned。
+监督修正（Codex Review）四项全部落实：VBS canonical 工件目录逐级创建、测试去除绝对
+路径字面量、exact-owned 校验结构收紧（Task 根元素命名空间+标签名精确，Actions/Exec、
+TimeTrigger、Principal 各恰好一个，多余条目一律 malformed 拒绝）；另经真实 supervisor
+cscript 干净仓库语法探针修正：VBS 内容/注释全 ASCII 重写（非 ASCII 在 cscript 默认
+代码页下编译失败）、artifactsDir 恰三级 stepwise BuildPath（消除多余嵌套）。门禁全
+绿：focused 53 passed、组合回归 78 passed、Ruff 零告警、py_compile 通过、
+`git diff --check` 干净。
+诚实边界：fake scheduler only——零真实调度器读/写、零 readiness/归档/生产操作、
+`production_ready=false` 不变。证据：
+`docs/evidence/m14-53-audit-archive-scheduling/README.md`。
+
+## 前一任务（M14-52 移动端验证证据回填——已随 PR #135 合并 main；调度面 readiness 管理器由 M14-53 接续）
+
+**M14-52 移动端验证证据回填（docs-only 上下文损坏恢复回合；已随 PR #135 合并 main）**：分支/worktree
 `docs/m14-52-mobile-harmony-evidence-backfill` 基于 `main@fba3bb1`（PR #134 merge）。
 把 supervisor 于 2026-09-18 在独立验证 worktree（detached
 `main@b9e8cc8ec7a5e158f1e99468b60b24a27a648c19`，PR #129 merge，起始 tracked-clean）
