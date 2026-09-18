@@ -9,6 +9,30 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-48 Android USB 真机回归验证证据回填（docs-only 已执行，待发布/CI/合并）**：分支/worktree
+`m14-48-android-physical-regression-record` 基于 `main@1b35145`（PR #125 merge）。本回合零代码改动、
+零设备操作、零生产触碰，只把 2026-09-17T23:51Z–23:56Z（UTC）完成的 Android USB 真机回归验证
+（验证-only）事实入库（源证据为另一验证 worktree gitignored `.verify/m14-48-android-physical-regression/`，
+REPORT.md + r1/r2 运行产物；截图、XML dump、原始日志与 mock 日志均不入 git）。验证基点为
+`main@c817ade`（验证分支头 = 基线，零新 commit），与本回填基点间仅 docs 变更，Android 代码面一致——
+APK 11,454,463 bytes、SHA-256 `da54763f…c570` 与 M13-04 归档逐字节一致，构建可复现。设备 Huawei
+MGA-AL00（Android 10，720x1600，serial `EYFBB22923201473`，运行时 `device` 态）。r1 宿主端口冲突
+失败安全：`--port 8000` 因 `WinError 10013`（宿主回环 8000 被用户进程 PID 23940 占用，按边界未停止
+该进程）exit 1、证据保留、**零设备副作用**（bind 失败于 server 构造期，wait-device/reverse/install
+均未执行）；换 `--port 8100` 后 r2 全绿——`overall_status=passed`（142.5s）、**18/18 stage 全 passed**、
+mock 契约 **19 expected / 0 unexpected / 19 total**（与 M13-04 r3 请求形态一致，零写方法，audit
+query_keys 精确 `["limit"]`）、logcat **FATAL 0 / ANR 0（词边界）/ 本包 crash 0**（AndroidRuntime
+52 行为 uiautomator 工具进程 D 级诊断计数，非崩溃，与 M13-04 口径一致）、收尾 `adb reverse --list`
+为空、`pm clear` 已执行、App 保留（versionName 0.1.0，同 M13-04 口径）。最终判定 **PASS（8/8，#6
+error/recovery 附条件）**——附条件依据：直接验证的是环境层（r1 端口冲突失败安全 + 换端口恢复），
+App 内异常分支本轮未触发、仅由 M13-04 r1/r2 历史证据与 `tests/android_smoke` 单测基线（285 passed）
+间接覆盖。诚实边界：**仅代表 loopback mock 冒烟口径通过**——mock 只绑宿主 `127.0.0.1` + `adb reverse`
+通道，不构成真实 provider / 生产 API / 生产 DB / 云语音检索 LLM 的通过证明；真机 USB 存在掉线史
+（M13-04 r1），本轮 r2 未发生；单次验证 ≠ 长期稳定；`production_ready=false` 不变。证据：
+`docs/evidence/m14-48-android-physical-regression/README.md`。
+
+## 前一任务（M14-47 生产 web 容器浏览器验收证据回填——已随 PR #125 合并 main；Android USB 真机回归验证证据回填由 M14-48 接续）
+
 **M14-47 生产 web 容器浏览器验收证据回填（docs-only 已执行，待发布/CI/合并）**：分支/worktree
 `m14-47-production-web-container-acceptance` 基于 `main@c817ade`（PR #124 merge）。本回合零生产触碰、
 零 Docker 操作、零代码改动，只把 supervisor 已于 2026-09-18 完成的生产 web 容器只读浏览器验收事实入库
