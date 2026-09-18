@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -939,3 +939,65 @@ python tools/ops/audit_archive_readiness.py \
   链路/真实锚链状态上运行；不自动发现证据文件、不集成 Windows Task
   Scheduler、不接触 WORM/离线存储、不执行生产、不访问任何 provider、
   不证明 `production_ready=true`——`production_ready=false` 不变。
+
+## audit_archive_task.py + run_audit_archive_readiness_silent.vbs（M14-53）
+
+审计归档**调度面** readiness 管理器：把 M14-51 的
+`audit_archive_readiness.py`（local-only 就绪评估 CLI）经静默 VBS wrapper
+挂到隐藏每日 Windows 计划任务上，用固定 canonical gitignored
+state/policy/output 路径每日生成一次就绪报告。**本工具只管理调度
+readiness，不实现、不执行审计归档本身**。子命令
+`plan`（只读预检 + 注册计划）/ `generate`（导出任务 XML 供审查，UTF-16
+with BOM 字节、零调度器改动）/ `status`（只读五态）/ `install` /
+`uninstall`（均需 `--confirm "EXECUTE AUDIT ARCHIVE READINESS SCHEDULER
+CHANGE"` 一字不差，否则零 schtasks 调用；实际注册 supervisor-only）。
+
+任务身份：`AIOS-Audit-Archive-Readiness` /
+`urn:aios:m14-53:audit-archive-readiness` + Description 精确归属标记
+（点名 M14-53 与本管理文件）；每日 TimeTrigger 重复间隔 `P1D`（无
+Duration = 无限期）；`Hidden=true`、`InteractiveToken`/`LeastPrivilege`、
+`IgnoreNew`、`StartWhenAvailable=true`、`ExecutionTimeLimit=PT30M`、电池
+不禁启不停；Action `wscript.exe //B //Nologo "<repo>\tools\ops\
+run_audit_archive_readiness_silent.vbs"`、WorkingDirectory=仓库根。
+
+安全性质（契约测试 `services/api/tests/test_audit_archive_task.py`
+53 项锁定；全部经注入 FakeSchtasks，零真实 schtasks）：
+
+- **结构性白名单门（GatedSchtasks）**：仅四形态放行——全量列表查询 /
+  单任务 `/XML` 明细 / `/Create /TN <固定名> /XML <单个 .xml 临时件>` /
+  `/Delete /TN <固定名> /F`；`/Run`、`/Change`、`/End`、`/Create` 带 `/F`
+  等一切其它形态在任何执行之前拒绝；plan/status/generate 恒
+  `allow_mutation=False`（结构性零调度器改动）。
+- **绝不覆盖同名任务**：install 预检 + 只读 query + 二次全量列表复核
+  missing + 临时 XML（UTF-16 with BOM，用后即删）+ 安装后 exact-owned
+  复查全过才 `/Create`；uninstall 仅删本工具精确拥有的任务，
+  foreign/missing/malformed/unknown 零删除（missing 幂等 OK）。
+- **exact-owned 精确校验 + 结构收紧（supervisor 修正）**：URI 两种形态
+  之一（写入值或 Task Scheduler 归一化 `\<任务名>`）+ Description 持久
+  标记精确相等 + Action 三件套 + 全部安全设置逐项精确；归一化省略的
+  三个默认值元素仅在其余字段全精确时按 Windows 默认值认可；**Task 根
+  元素必须精确，且恰好一个 `Actions/Exec`、一个 `TimeTrigger`、一个
+  `Principal`**——多余条目（可夹带第二动作/另一套调度/另一身份）一律
+  malformed 拒绝；`/XML` 输出按四字节形态严格解码（LE BOM / BE BOM /
+  UTF-16LE 无 BOM / ASCII-UTF-8 prolog），之外按 unknown fail-closed；
+  解析前拒绝 DOCTYPE/ENTITY；路径经 XML 转义。
+- **VBS wrapper 纪律**：仓库根自脚本位置推导（无盘符硬编码）；隐藏
+  窗口运行 + 等待 + 退出码透传；恒调用 `<repo>\.venv\Scripts\python.exe`
+  与 readiness CLI，无任何 Python/脚本覆盖面；固定 canonical
+  state/policy/output
+  （`.verify\artifacts\m14-53-audit-archive-readiness\`）、不传 `--now`
+  （每次调度运行自然用当前 UTC）；canonical 工件目录由 wrapper 唯一
+  负责**逐级**创建（`.verify` → `.verify\artifacts` → 叶子目录，干净
+  checkout 下 CreateFolder 非递归会失败——supervisor 修正，专项测试
+  锁定），预检专用退出码 2/3/4/5（venv python / readiness CLI / repo
+  根 / 目录链创建失败）；VBS 内容/注释**纯 ASCII** 且 `artifactsDir`
+  恰三级 stepwise `BuildPath` 构建（真实 supervisor cscript 干净仓库
+  语法探针修正：非 ASCII 在 cscript 默认代码页下编译失败、多余嵌套
+  BuildPath 运行时报 invalid arguments——`isascii()` 与精确构建形态
+  契约锁定）。
+- **零 secret/零 env/零网络**（源码契约测试锁定）：不读任何 env 值，
+  无 `--python` 覆盖；报告/日志绝不回显原始调度器输出或秘密形态值。
+- **诚实边界**：开发回合零真实 schtasks 读/写（全部注入 Fake）、零
+  安装/零卸载/零注册、未运行真实 readiness、未接触 WORM/离线/S3/
+  provider/Docker/生产；实际注册 supervisor-only；
+  `production_ready=false` 不变。
