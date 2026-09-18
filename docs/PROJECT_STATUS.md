@@ -9,6 +9,28 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M13-16a Harmony 发布链证据回填（docs-only 已执行，待发布/CI/合并）**：分支/worktree
+`m13-16a-harmony-release-docs` 基于 `main@6512987`（PR #127 merge）。本回合零代码改动、零设备操作、
+零密钥触碰，只把已随 PR #127 合并的 M13-16「Harmony 发布链五阶段 fail-closed 工具」验收事实入库
+（源证据为另一验证 worktree gitignored `.verify/m13-16-harmony-release-chain/harmony-emulator-smoke/`，
+15 文件 SHA-256 全锚定，原始产物不入 git；证据目录 README 为唯一入库证据文件）。M13-16 feature
+commits 共 7 个：`a7553f4` preflight、`10b2c97` release build、`379f6c4` 签名包装、`5ae56e4` 签名校验、
+`9f86926` 设备冒烟、`38dca1a` layout 证据加固、`7c0f7c2` sign 路径收敛安全修正；PR CI run
+`35295051405` 五项 job（Docker/Release tools/API/Android/Web）全部 success；supervisor 门禁
+（`7c0f7c2` 后）：tests/harmony_release 294 passed、compileall 通过、ruff F/E9 通过、git diff
+--check 干净。修正版模拟器冒烟：status ok、exit 0、mutation performed、6/6 commands、0 failures、
+cleanup ok、bundle uninstalled；layout node_count 2708、53798 bytes、SHA-256
+`D56825952B806EDDAC50F1AC794CD4C656C3354E60D91012CC5B883A76147E61`（两份同字节数 layout 快照哈希
+不同，仅 `05_corrected_layout` 与运行 JSON 及锚定哈希一致）；HAP unsigned、452446 bytes、SHA-256
+`6389C7DF066635CCF274D27F918FC610963400AFD9871402D7EFE3DDABBC07E4`。诚实边界：仅 Harmony 模拟器
+`127.0.0.1:5555` + 未签名 HAP——无 AGC 材料、无真实签名、无 Harmony 真机；签名凭据仅环境变量传入、
+从不序列化，但 hap-sign-tool argv 协议在子进程存活期间可对本地进程列表暴露传入值（如实记录）；CI
+五项结果不扩大为 Harmony 远端验证；`production_ready=false` 不变。剩余生产阻塞：AGC 材料、真实签名、
+Harmony 真机；其后：WORM 离线第二副本、定时归档、provider 冒烟外部配置处理、浸泡/真实负载、发布
+就绪评审与切换。证据：`docs/evidence/m13-16-harmony-release-chain/README.md`。
+
+## 前一任务（M14-48 Android USB 真机回归验证证据回填——已随 PR #126 合并 main；Harmony 发布链证据回填由 M13-16a 接续）
+
 **M14-48 Android USB 真机回归验证证据回填（docs-only 已执行，待发布/CI/合并）**：分支/worktree
 `m14-48-android-physical-regression-record` 基于 `main@1b35145`（PR #125 merge）。本回合零代码改动、
 零设备操作、零生产触碰，只把 2026-09-17T23:51Z–23:56Z（UTC）完成的 Android USB 真机回归验证
