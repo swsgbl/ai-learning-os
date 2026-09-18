@@ -20,6 +20,10 @@ Steps and their phases (executed in this order)::
     install    mutation      installs the HAP
     start      foreground    starts the ability (aa start)
     layout     read_only     dumps the UI tree (uitest dumpLayout) and pulls it
+                             (any stale local layout file is removed first;
+                             ``file recv`` exit 0 alone is never success - the
+                             pulled file itself must exist, be non-empty and
+                             parse as JSON)
     background background    leaves the foreground (aa force-stop)
     uninstall  cleanup       removes the bundle again
 
@@ -50,9 +54,14 @@ Safety contract:
   all-devices target, a target that is not a single token, an empty supplied
   device list, a target absent from the supplied list, an ambiguous target
   prefix, a missing/outside-repository/unreadable HAP, and an unresolvable
-  bundle name. Fail closed (exit 1, status ``failure``) on: missing hdc, spawn
-  failure, timeout, a nonzero step exit code, a missing/empty/unreadable layout
-  file, invalid layout JSON, and cleanup (uninstall) failure.
+  bundle name, and a user-supplied ``--layout-dir`` that is not a directory
+  or cannot be created (it is validated - and created when missing - before
+  any device command; a user-provided directory is never deleted). Fail
+  closed (exit 1, status ``failure``) on: missing hdc, spawn failure,
+  timeout, a nonzero step exit code, a layout pull that is never trusted on
+  its exit code alone (any stale local layout file is removed first, then
+  the pulled file itself must exist, be non-empty and parse as valid JSON),
+  an unremovable stale layout file, and cleanup (uninstall) failure.
 - Cleanup semantics: once the run has mutated device state (a successful
   ``install``), uninstall cleanup is attempted even when a later step failed,
   and a cleanup failure is surfaced as its own ``cleanup_failed`` failure - it
@@ -509,6 +518,64 @@ def inspect_layout(path: Path) -> Tuple[Optional[dict], List[dict]]:
     }, []
 
 
+def prepare_layout_dir(
+    layout_dir: Optional[Path],
+) -> Tuple[Optional[Path], List[dict]]:
+    """Validate - and create when missing - a user-supplied layout directory.
+
+    Runs before any device command: ``hdc file recv`` exits 0 even when it
+    cannot write the local file, so the directory must be known-good before
+    the run mutates anything. A user-provided directory is never deleted;
+    only its usability is checked.
+    """
+    if layout_dir is None:
+        return None, []
+    directory = Path(layout_dir)
+    argument = {"argument": "--layout-dir"}
+    try:
+        if directory.is_dir():
+            return directory, []
+        occupied = directory.exists()
+    except OSError:
+        return None, [{"code": "layout_dir_unusable", "detail": argument}]
+    if occupied:
+        # Exists but is not a directory (a regular file or similar).
+        return None, [
+            {"code": "layout_dir_not_a_directory", "detail": argument}
+        ]
+    try:
+        directory.mkdir(parents=True)
+    except FileExistsError:
+        pass  # created concurrently; the re-check below decides
+    except OSError:
+        return None, [{"code": "layout_dir_create_failed", "detail": argument}]
+    try:
+        usable = directory.is_dir()
+    except OSError:
+        return None, [{"code": "layout_dir_unusable", "detail": argument}]
+    if not usable:
+        return None, [{"code": "layout_dir_create_failed", "detail": argument}]
+    return directory, []
+
+
+def remove_stale_layout_file(path: Path) -> List[dict]:
+    """Remove a stale local layout file so it can never satisfy a pull.
+
+    ``hdc file recv`` may exit 0 without writing the local file, and a
+    leftover file from an earlier run would then pass validation as this
+    run's evidence. The local target is therefore unlinked before the pull;
+    a file that cannot be removed fails the step closed.
+    """
+    try:
+        path.unlink(missing_ok=True)
+    except OSError:
+        return [{
+            "code": "layout_stale_file_unremovable",
+            "detail": {"filename": path.name},
+        }]
+    return []
+
+
 def _command_shape(
     program_name: str,
     subcommand: str,
@@ -678,6 +745,16 @@ def run_device_smoke(
             root, bundle
         )
         request_failures += bundle_failures
+    if not request_failures and confirm_mutation and layout_dir is not None:
+        # A user-supplied layout directory is validated - and created when
+        # missing - before the toolchain is probed and before any device
+        # command: ``file recv`` exits 0 even when it cannot write the local
+        # file, so an unusable directory must block before any mutation. A
+        # user-provided directory is never deleted.
+        prepared, layout_dir_failures = prepare_layout_dir(layout_dir)
+        if prepared is not None:
+            layout_dir = prepared
+        request_failures += layout_dir_failures
 
     # 2) Plan shapes (names only) - recorded for every outcome, executed never.
     program_name = Path(hdc).name or DEFAULT_HDC
@@ -786,6 +863,34 @@ def run_device_smoke(
                     name, program_name, tool.path, resolved_target.raw,
                     hap_path, bundle_name, ability, layout_local,
                 )
+
+                if name == STEP_LAYOUT:
+                    # ``file recv`` exiting 0 is never trusted on its own:
+                    # remove any stale local layout file first so a leftover
+                    # from an earlier run cannot satisfy this pull, and fail
+                    # the step before any layout command if it cannot be
+                    # removed.
+                    stale_failures = remove_stale_layout_file(layout_local)
+                    if stale_failures:
+                        steps.append({
+                            "name": name,
+                            "phase": phase,
+                            "status": STEP_STATUS_FAILURE,
+                            "reason": None,
+                            "commands": [
+                                {**item["shape"], "executed": False,
+                                 "exit_code": None, "error": None}
+                                for item in commands
+                            ],
+                            "commands_planned": len(commands),
+                            "commands_attempted": 0,
+                            "commands_executed": 0,
+                            "failures": stale_failures,
+                            "warnings": [],
+                        })
+                        execution_failures += stale_failures
+                        previous_failed = True
+                        continue
 
                 if name == STEP_UNINSTALL:
                     cleanup_attempted = True
@@ -1091,7 +1196,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--layout-dir", type=Path, default=None,
         help="Directory for the pulled layout dump (default: a temporary "
-        "directory that is removed afterwards).",
+        "directory that is removed afterwards). In a confirmed run it is "
+        "validated - and created when missing - before any device command, "
+        "and it is never deleted.",
     )
     parser.add_argument(
         "--timeout-seconds", type=float,

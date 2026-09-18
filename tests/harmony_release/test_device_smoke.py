@@ -23,6 +23,7 @@ from tools.harmony_release.device_smoke import (
     EXIT_FAILURE,
     EXIT_OK,
     FORBIDDEN_TARGETS,
+    LOCAL_LAYOUT_FILENAME,
     MUTATION_CONFIRMATION_FLAG,
     SCRUBBED_ENV_VARS,
     STEP_BACKGROUND,
@@ -1138,3 +1139,214 @@ def test_cli_device_id_option_cross_checks(repo, capsys):
     assert exit_code == EXIT_BLOCKED
     payload = json.loads(capsys.readouterr().out)
     assert payload["failures"][0]["code"] == "target_unknown"
+
+# --------------------------------------------------------------------------
+# 9. Layout directory pre-validation and honest pull verification
+#    (correction for the real-emulator runs: recv exits 0 even when the
+#    local directory is missing, and a stale file must never count)
+# --------------------------------------------------------------------------
+
+
+def test_supplied_nonexistent_layout_dir_is_created_before_device_commands(
+    repo, tmp_path
+):
+    """Run 02 regression: a missing --layout-dir made recv exit 0 write
+    nothing and the layout step fail with layout_file_missing."""
+    target_dir = tmp_path / "nested" / "layout"
+    assert not target_dir.exists()
+    observed = []
+
+    class ProbingRunner(FakeRunner):
+        def __call__(self, argv, cwd, env):
+            observed.append(("runner", target_dir.is_dir()))
+            return super().__call__(argv, cwd, env)
+
+    def probing_tool_resolver(program):
+        observed.append(("tool_resolver", target_dir.is_dir()))
+        return HdcTool(Path(FAKE_TOOL_PATH), "path_lookup"), []
+
+    runner = ProbingRunner(layout_payload=json.dumps(LAYOUT_PAYLOAD).encode())
+    result, exit_code = run_smoke(
+        repo,
+        **fresh_kwargs(
+            target_dir,
+            target=TARGET,
+            hap=HAP_RELPATH.as_posix(),
+            bundle=BUNDLE_NAME,
+            runner=runner,
+            tool_resolver=probing_tool_resolver,
+        ),
+    )
+    assert exit_code == EXIT_OK
+    # Created (parents included) and still there afterwards - never deleted.
+    assert target_dir.is_dir()
+    assert (target_dir / LOCAL_LAYOUT_FILENAME).is_file()
+    # Every device-facing call saw the directory already in place.
+    assert observed
+    assert all(exists for _kind, exists in observed)
+
+
+def test_dry_run_does_not_create_a_supplied_layout_dir(repo, tmp_path):
+    """A plan touches nothing - not even the local filesystem."""
+    target_dir = tmp_path / "nested" / "layout"
+    result, exit_code = run_smoke(
+        repo, **plan_kwargs(repo, layout_dir=target_dir)
+    )
+    assert exit_code == EXIT_OK
+    assert result["status"] == STATUS_PLANNED
+    assert not target_dir.exists()
+
+
+def _layout_dir_that_is_a_regular_file(base):
+    path = base / "not-a-dir"
+    path.write_bytes(b"placeholder")
+    return path
+
+
+def _layout_dir_under_a_regular_file(base):
+    parent = base / "parent-file"
+    parent.write_bytes(b"placeholder")
+    return parent / "layout"
+
+
+@pytest.mark.parametrize(
+    "path_factory,code",
+    [
+        (_layout_dir_that_is_a_regular_file, "layout_dir_not_a_directory"),
+        (_layout_dir_under_a_regular_file, "layout_dir_create_failed"),
+    ],
+)
+def test_unusable_layout_dir_blocks_before_any_device_command(
+    repo, tmp_path, path_factory, code
+):
+    """A layout directory that cannot be used or created blocks the run
+    before the toolchain is probed and before any device command."""
+    bad_dir = path_factory(tmp_path)
+    runner = FakeRunner(layout_payload=json.dumps(LAYOUT_PAYLOAD).encode())
+    resolver = fake_tool_resolver()
+    result, exit_code = run_smoke(
+        repo,
+        **fresh_kwargs(
+            bad_dir,
+            target=TARGET,
+            hap=HAP_RELPATH.as_posix(),
+            bundle=BUNDLE_NAME,
+            runner=runner,
+            tool_resolver=resolver,
+        ),
+    )
+    assert exit_code == EXIT_BLOCKED
+    assert result["status"] == STATUS_BLOCKED
+    assert [item["code"] for item in result["failures"]] == [code]
+    # Blocked before the toolchain probe and before any device command.
+    assert resolver.calls == []
+    assert runner.calls == []
+    assert result["toolchain"]["probed"] is False
+    assert result["device_access"]["commands_attempted"] == 0
+    assert result["device_access"]["commands_executed"] == 0
+    assert result["device_access"]["hardware_touched"] is False
+    assert result["mutation_performed"] is False
+    assert result["not_run"] == [
+        STEP_INSTALL, STEP_START, STEP_LAYOUT, STEP_BACKGROUND, STEP_UNINSTALL
+    ]
+    assert all(step["reason"] == "request_invalid" for step in result["steps"])
+
+
+def test_recv_exit_zero_without_a_written_file_fails_closed(repo, layout_dir):
+    """recv exit 0 alone is never layout success evidence."""
+    runner = FakeRunner()  # every command exits 0; nothing is ever written
+    result, exit_code = run_smoke(
+        repo, **mutation_kwargs(repo, layout_dir, runner=runner)
+    )
+    assert exit_code == EXIT_FAILURE
+    by_name = {step["name"]: step for step in result["steps"]}
+    recv = by_name[STEP_LAYOUT]["commands"][1]
+    assert recv["subcommand"] == "file recv"
+    assert recv["executed"] is True
+    assert recv["exit_code"] == 0
+    assert [item["code"] for item in result["failures"]] == [
+        "layout_file_missing"
+    ]
+    assert result["layout"] is None
+    # Install mutated the device, so uninstall cleanup still happened.
+    assert result["cleanup"]["attempted"] is True
+    assert result["cleanup"]["status"] == STEP_STATUS_OK
+
+
+def test_stale_layout_file_is_not_accepted_after_a_silent_pull(
+    repo, layout_dir
+):
+    """Run 02 shape: recv exits 0, writes nothing, a stale file exists."""
+    stale = layout_dir / LOCAL_LAYOUT_FILENAME
+    stale.write_bytes(json.dumps({"stale": LAYOUT_CONTENT_MARKER}).encode())
+    runner = FakeRunner()  # recv exits 0 without writing anything
+    result, exit_code = run_smoke(
+        repo, **mutation_kwargs(repo, layout_dir, runner=runner)
+    )
+    assert exit_code == EXIT_FAILURE
+    assert [item["code"] for item in result["failures"]] == [
+        "layout_file_missing"
+    ]
+    assert result["layout"] is None
+    # The stale file was removed before the pull and never re-created.
+    assert not stale.exists()
+    assert LAYOUT_CONTENT_MARKER not in render_json(result)
+
+
+def test_stale_layout_file_is_not_accepted_after_a_failed_pull(
+    repo, layout_dir
+):
+    stale = layout_dir / LOCAL_LAYOUT_FILENAME
+    stale.write_bytes(b"{}")
+    runner = FakeRunner(exit_codes={"file recv": 1})
+    result, exit_code = run_smoke(
+        repo, **mutation_kwargs(repo, layout_dir, runner=runner)
+    )
+    assert exit_code == EXIT_FAILURE
+    assert [item["code"] for item in result["failures"]] == ["layout_failed"]
+    assert result["layout"] is None
+    assert not stale.exists()
+
+
+def test_fresh_pull_replaces_a_stale_layout_file(repo, layout_dir):
+    stale = layout_dir / LOCAL_LAYOUT_FILENAME
+    stale.write_bytes(b"{}")
+    runner = FakeRunner(layout_payload=json.dumps(LAYOUT_PAYLOAD).encode())
+    result, exit_code = run_smoke(
+        repo, **mutation_kwargs(repo, layout_dir, runner=runner)
+    )
+    assert exit_code == EXIT_OK
+    assert result["layout"]["node_count"] == 7  # fresh payload, not stale {}
+    assert (layout_dir / LOCAL_LAYOUT_FILENAME).is_file()
+
+
+def test_unremovable_stale_layout_file_fails_closed(
+    repo, layout_dir, monkeypatch
+):
+    stale = layout_dir / LOCAL_LAYOUT_FILENAME
+    stale.write_bytes(json.dumps(LAYOUT_PAYLOAD).encode())
+
+    def deny(self, missing_ok=False):
+        raise OSError("unlink denied")
+
+    monkeypatch.setattr(Path, "unlink", deny)
+    runner = FakeRunner(layout_payload=json.dumps(LAYOUT_PAYLOAD).encode())
+    result, exit_code = run_smoke(
+        repo, **mutation_kwargs(repo, layout_dir, runner=runner)
+    )
+    assert exit_code == EXIT_FAILURE
+    assert [item["code"] for item in result["failures"]] == [
+        "layout_stale_file_unremovable"
+    ]
+    assert stale.exists()  # untouched
+    by_name = {step["name"]: step for step in result["steps"]}
+    layout = by_name[STEP_LAYOUT]
+    assert layout["status"] == STEP_STATUS_FAILURE
+    assert layout["commands_attempted"] == 0  # blocked before any command
+    assert all(
+        command["executed"] is False for command in layout["commands"]
+    )
+    assert by_name[STEP_BACKGROUND]["reason"] == "previous_step_failed"
+    # Install already mutated the device, so cleanup still ran and succeeded.
+    assert result["cleanup"]["attempted"] is True
+    assert result["cleanup"]["status"] == STEP_STATUS_OK
