@@ -9,7 +9,21 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-**M14-50 Harmony Stage B 模拟器交互验证证据回填（docs-only 已执行，待提交/发布/合并）**：分支/worktree
+**M14-51 审计归档就绪报告 CLI（开发切片：实现+测试+文档已执行，单 local commit 不 push）**：分支/worktree
+`ops/m14-51-audit-readiness-input` 基于 `main@965eb91`（PR #133 merge）。交付 M14-50
+已合并纯评估器 `audit_archive_scheduler.evaluate_readiness`（PR #132）的薄 CLI 封装
+`tools/ops/audit_archive_readiness.py`（单文件纯标准库：读两个本地 schema-v1 文档 →
+逐任务确定性分类 → 原子写 canonical JSON 就绪报告 + SHA-256 sidecar；fail-closed
+输入纪律、退出码 0/2、同输入同 `--now` 字节可复现、报告绝不记录绝对本地路径）及
+契约测试 `services/api/tests/test_audit_archive_readiness.py`（合计 978 行）。本回合
+local-only：合成文档 + 临时文件验证，零真实调度器/零生产触碰、不 push/不建 PR
+（remote 发布/CI/合并由 Codex 负责）。门禁全绿：focused readiness 44/44、
+scheduler+readiness 组合 78/78、WORM-neighbor 回归 270/270、Ruff 无告警。
+证据：`docs/evidence/m14-51-audit-readiness-input/README.md`。
+
+## 前一任务（M14-50 Harmony Stage B 模拟器交互验证证据回填——已随 PR #133 合并 main；审计归档就绪报告 CLI 由 M14-51 接续）
+
+**M14-50 Harmony Stage B 模拟器交互验证证据回填（docs-only，已随 PR #133 合并 main）**：分支/worktree
 `m14-50-harmony-stage-b-backfill`（分支 `docs/m14-50-harmony-stage-b-backfill`）基于
 `main@d613667`（PR #131 merge）。本回合零设备运行、零生产触碰、零代码改动、不 push/不建
 PR，只把 supervisor 已于 2026-09-18 11:54–12:01（GMT+8）完成的 Harmony Stage B 模拟器
@@ -41,7 +55,7 @@ API 数据渲染（模拟器内服务器不可达）、无 tab 栏动画验证�
 truth + 截屏留档）、治理「审计日志」区块在折叠线下未直接观测；`production_ready=false`
 不变。证据：`docs/evidence/m14-50-harmony-emulator-stage-b/README.md`。
 
-## 前一任务（M14-50 移动端 current-main 冒烟证据回填——已随 PR #131 合并 main；Harmony Stage B 交互验证证据回填由本任务接续）
+## 前一任务（M14-50 移动端 current-main 冒烟证据回填——已随 PR #131 合并 main；Harmony Stage B 交互验证证据回填由 M14-50 Harmony 接续）
 
 **M14-50 移动端 current-main 冒烟证据回填（docs-only）**：分支/worktree
 `m14-50-mobile-smoke-backfill`（分支 `docs/m14-50-mobile-smoke-backfill`）基于 `main@15580f2`（PR #130
