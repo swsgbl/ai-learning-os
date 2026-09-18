@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -38,8 +37,8 @@ from tools.harmony_release.verify_signature import (
     STATUS_PROFILE_BUNDLE_MISMATCH,
     STATUS_REQUEST_INVALID,
     STATUS_SIGNED_AND_VALID,
-    STATUS_TOOLCHAIN_UNAVAILABLE,
     STATUS_TOOL_FAILURE,
+    STATUS_TOOLCHAIN_UNAVAILABLE,
     STATUS_UNSIGNED,
     STEP_NAME,
     VERIFY_IN_FORM,
@@ -84,6 +83,23 @@ def profile_payload(bundle_name: str = DEFAULT_BUNDLE_NAME, extra: dict | None =
     if extra:
         data.update(extra)
     return json.dumps(data).encode("utf-8")
+
+
+def opaque_profile_payload(size: int = 128) -> bytes:
+    """Deterministic binary placeholder that can never parse as JSON.
+
+    Provably unparseable on both reader paths: the first byte ``0xFF`` is
+    never valid UTF-8 (``utf-8-sig`` included), so the plain decode fails,
+    and the pattern contains no ``{`` or ``}`` byte, so the embedded-JSON
+    slicer finds no candidate either. Unlike ``os.urandom``, the bytes are
+    identical on every run - the reader must report
+    ``profile_payload_not_json`` every time, never a lucky JSON slice.
+    """
+    block = (
+        b"\xff\xfeOPAQUE-BINARY-PROFILE-BYTES_NOT_PLAIN_OR_EMBEDDED_JSON"
+        b"\x00\x01\x02\x03"
+    )
+    return (block * (size // len(block) + 1))[:size]
 
 
 @pytest.fixture(autouse=True)
@@ -184,13 +200,13 @@ class Fixture:
         self.java, self.jar = make_toolchain_files(tmp_path)
         self.runner = overrides.pop("runner", FakeVerifyTool(dump=profile_payload()))
         self.resolver = overrides.pop("resolver", FakeResolver(self.java, self.jar))
-        self.kwargs = dict(
-            hap=str(HAP_RELPATH),
-            java=str(self.java),
-            jar=str(self.jar),
-            runner=self.runner,
-            toolchain_resolver=self.resolver,
-        )
+        self.kwargs = {
+            "hap": str(HAP_RELPATH),
+            "java": str(self.java),
+            "jar": str(self.jar),
+            "runner": self.runner,
+            "toolchain_resolver": self.resolver,
+        }
         self.kwargs.update(overrides)
 
     def run(self, **overrides):
@@ -252,7 +268,7 @@ class TestProfileReader:
 
     def test_opaque_container_is_reported_as_a_category(self, tmp_path):
         path = tmp_path / "profile.p7b"
-        path.write_bytes(os.urandom(256))
+        path.write_bytes(opaque_profile_payload(256))
         facts, error = read_profile_facts(path)
         assert facts is None
         assert error == "profile_payload_not_json"
@@ -609,7 +625,7 @@ class TestProfileBundleName:
         outside = tmp_path / "outside_materials"
         outside.mkdir()
         opaque = outside / "release.p7b"
-        opaque.write_bytes(os.urandom(128))
+        opaque.write_bytes(opaque_profile_payload(128))
         runner = FakeVerifyTool(returncode=1, dump=None, write_cert_chain=False)
         fixture = Fixture(tmp_path, monkeypatch, runner=runner)
         result, code = fixture.run(profile=str(opaque))
@@ -635,7 +651,7 @@ class TestProfileBundleName:
         outside = tmp_path / "outside_materials"
         outside.mkdir()
         opaque = outside / "release.p7b"
-        opaque.write_bytes(os.urandom(128))
+        opaque.write_bytes(opaque_profile_payload(128))
         fixture = Fixture(tmp_path, monkeypatch)
         result, code = fixture.run(profile=str(opaque))
 
@@ -645,7 +661,7 @@ class TestProfileBundleName:
         assert result["signature"]["verified"] is True
 
     def test_unparseable_artifact_profile_is_only_a_warning(self, tmp_path, monkeypatch):
-        runner = FakeVerifyTool(dump=os.urandom(128))
+        runner = FakeVerifyTool(dump=opaque_profile_payload(128))
         fixture = Fixture(tmp_path, monkeypatch, runner=runner)
         result, code = fixture.run()
         assert code == EXIT_VALID
