@@ -9,6 +9,33 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-50 移动端 current-main 冒烟证据回填（docs-only 已执行，待提交/发布/合并）**：分支/worktree
+`m14-50-mobile-smoke-backfill`（分支 `docs/m14-50-mobile-smoke-backfill`）基于 `main@15580f2`（PR #130
+merge）。本回合零设备运行、零生产触碰、零代码改动、不 commit/push，只把 supervisor 已于 2026-09-18
+完成的移动端双冒烟事实入库（源证据为两个验证 worktree 的 gitignored `.verify/` 目录）。两次冒烟的
+验证基线均为 detached `main@b9e8cc8ec7a5e158f1e99468b60b24a27a648c19`（PR #129 merge）；
+`b9e8cc8..15580f2` 仅 docs 变更（M14-49 回填 `849f49f` + PR #130 merge），对
+`apps/harmony`/`apps/android`/`tools/harmony_release` 区间 diff 为空——移动端源码未变。Harmony
+（模拟器 `127.0.0.1:5555` 单目标、无 discovery）：HAP 188,984 bytes、SHA-256
+`9d1b9609017f2b10e675c280f2ec04ef003b7b17b3e9591c4d57207e37534acb`（未签名、零签名材料，
+`signedness_verified: false`）；device smoke 6/6 命令、崩溃指标全 0（cppcrash/jscrash/appfreeze/
+FaultLog）、卸载后 `bm dump` 证实 bundle 不存在、模拟器保持运行；layout 2,708 节点、与 M13-16 语义
+对比结构一致（23/26 文本节点字节相同、3 处仅时钟 `08:31`→`11:00`）；与 M13-16 的 HAP 尺寸差异已解释
+（source map 有无 + modules.abc 尺寸，`7c0f7c2..b9e8cc8` 无源码 diff）。Android（USB 真机
+`EYFBB22923201473` Huawei MGA-AL00）：APK 11,454,463 bytes、SHA-256
+`da54763fd63454aaa80f3d00dac1f1bffeec6d534070cd1d9a34bbb89687c570`（与 M13-04/M14-48 归档哈希相同）；
+`overall_status=passed`（135.09s）、18/18 阶段、mock 契约 19 expected/0 unexpected/19 total、logcat
+FATAL/ANR/本包 crash 全 0（`androidruntime_crash_count=47` 为 uiautomator 诊断噪音）、收尾
+`adb reverse --list` 空、App 按物理冒烟 teardown 策略保留。回填前独立复核：HAP/APK 哈希与字节数实测
+一致；Harmony 清单 11/11、Android 清单 19/19（含 `summary.json` SHA-256
+`fccca9a20222bbffef6bdb018381c95d77c15ac6d2e05532a010eb5b87740496`）逐条重验全 OK（两清单 CRLF
+行尾，核验需 `tr -d '\r'`）；secret 扫描通过。诚实边界：Harmony 仅为模拟器 + 未签名 HAP（无 AGC、
+无真实签名、无 Harmony 真机）；Android 仅为 USB 真机 loopback mock 回归口径——均不构成真实
+provider / 生产 API / 生产 DB / 云语音检索 LLM / 长稳 / 生产就绪证明；`production_ready=false` 不变。
+证据：`docs/evidence/m14-50-current-main-mobile-smoke/README.md`。
+
+## 前一任务（M13-16a Harmony 发布链证据回填——已随 PR #127 合并 main；移动端 current-main 冒烟证据回填由 M14-50 接续）
+
 **M13-16a Harmony 发布链证据回填（docs-only 已执行，待发布/CI/合并）**：分支/worktree
 `m13-16a-harmony-release-docs` 基于 `main@6512987`（PR #127 merge）。本回合零代码改动、零设备操作、
 零密钥触碰，只把已随 PR #127 合并的 M13-16「Harmony 发布链五阶段 fail-closed 工具」验收事实入库
