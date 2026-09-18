@@ -74,7 +74,7 @@ import shutil
 import subprocess
 import sys
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 try:  # package import (pytest, python -m)
@@ -292,15 +292,47 @@ def _resolve_in_repo(repo_root: Path, raw: str) -> Path:
     """Resolve a path against the repository root (absolute paths allowed).
 
     Relative paths are interpreted relative to ``repo_root`` (not the caller's
-    cwd) so the same invocation means the same thing anywhere.
+    cwd) so the same invocation means the same thing anywhere. Separators are
+    normalized first, so ``../x.hap`` and ``..\\x.hap`` are judged identically
+    on Linux and Windows.
+
+    A Windows drive (``C:/x``) or UNC (``//host/share/x``) absolute form is
+    detected with ``PureWindowsPath`` *before* any boundary decision. On
+    POSIX ``Path("C:/x").is_absolute()`` is false; such a form must never
+    be joined onto ``repo_root`` (that would forge containment) and is
+    returned unresolved so the documented containment check fails closed
+    with the existing outside-repository code. No prefix guessing is
+    involved.
     """
-    candidate = Path(raw).expanduser()
+    normalized = _normalize_separators(raw)
+    candidate = Path(normalized).expanduser()
+    if PureWindowsPath(normalized).is_absolute() and not candidate.is_absolute():
+        # Windows drive/UNC form on a POSIX host: never join it onto the
+        # repo root - that would forge containment - and never resolve()
+        # it (POSIX would anchor it under the process cwd). Returning it
+        # unresolved keeps the boundary check fail-closed.
+        return candidate
     if not candidate.is_absolute():
         candidate = Path(repo_root) / candidate
     try:
         return candidate.resolve()
     except OSError:
         return candidate
+
+
+def _normalize_separators(raw: str) -> str:
+    """Map ``\\`` separators to ``/`` before any repository-boundary decision.
+
+    On POSIX a backslash is an ordinary filename character, so without this
+    mapping a Windows-style traversal such as ``..\\outside-signed.hap`` looks
+    like one long in-repo filename and slips past the containment check.
+    Absolute paths stay absolute after the mapping (``C:\\x`` -> ``C:/x``),
+    and in-repo ``..`` segments that resolve back inside the repository
+    remain allowed.
+    Windows drive/UNC absolute forms are then recognized by
+    ``PureWindowsPath`` in ``_resolve_in_repo`` - never by prefix guessing.
+    """
+    return raw.replace("\\", "/")
 
 
 def _inside(path: Path, root: Path) -> bool:

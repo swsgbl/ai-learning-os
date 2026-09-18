@@ -303,6 +303,20 @@ class TestSuccess:
         assert code == 0
         assert result["artifact"]["relpath"] == default_output_relpath()
 
+    def test_in_repo_backslash_traversal_that_stays_inside_is_allowed(
+        self, tmp_path, monkeypatch
+    ):
+        """Windows-style separators must not break documented in-repo ``..``."""
+        fixture = Fixture(tmp_path, monkeypatch)
+        dotted = (
+            "apps\\harmony\\entry\\build\\default\\outputs\\default\\..\\default\\"
+            "entry-default-signed.hap"
+        )
+        result, code = fixture.run(out=dotted)
+        assert code == 0
+        assert result["output"]["path_explicit"] is True
+        assert result["artifact"]["relpath"] == default_output_relpath()
+
     def test_unchanged_output_bytes_are_recorded_not_hidden(self, tmp_path, monkeypatch):
         fixture = Fixture(tmp_path, monkeypatch)
         result, code = fixture.run(runner=FakeSignTool(output_bytes=UNSIGNED_BYTES))
@@ -560,6 +574,18 @@ class TestRequestValidation:
         assert [f["code"] for f in result["failures"]] == ["output_outside_repository"]
         assert fixture.runner.calls == []
 
+    @pytest.mark.parametrize("hap", ["../outside-unsigned.hap", "..\\outside-unsigned.hap"])
+    def test_input_traversal_outside_repository(self, tmp_path, monkeypatch, hap):
+        """Both separator styles must be judged as traversal everywhere."""
+        fixture = Fixture(tmp_path, monkeypatch)
+        outside = tmp_path / "outside-unsigned.hap"
+        outside.write_bytes(UNSIGNED_BYTES)
+        result, code = fixture.run(hap=hap)
+        assert code == 1
+        assert [f["code"] for f in result["failures"]] == ["input_hap_outside_repository"]
+        assert fixture.runner.calls == []
+        assert str(tmp_path) not in render_json(result)
+
     def test_absolute_output_outside_repository(self, tmp_path, monkeypatch):
         fixture = Fixture(tmp_path, monkeypatch)
         result, code = fixture.run(out=str(tmp_path / "evil-signed.hap"))
@@ -567,6 +593,60 @@ class TestRequestValidation:
         assert [f["code"] for f in result["failures"]] == ["output_outside_repository"]
         assert fixture.runner.calls == []
         assert str(tmp_path) not in render_json(result)
+
+    @pytest.mark.parametrize(
+        "out",
+        [
+            "C:\\outside-signed.hap",
+            "C:/outside-signed.hap",
+            "\\\\fileserver\\release\\outside-signed.hap",
+            "//fileserver/release/outside-signed.hap",
+        ],
+    )
+    def test_windows_drive_or_unc_output_is_outside_everywhere(
+        self, tmp_path, monkeypatch, out
+    ):
+        """Drive and UNC forms must fail containment on Linux and Windows.
+
+        On POSIX ``Path("C:/x").is_absolute()`` is false; joining it onto
+        the repo root used to forge containment for drive-absolute paths.
+        ``PureWindowsPath`` now catches the drive/UNC form before any
+        boundary decision.
+        """
+        fixture = Fixture(tmp_path, monkeypatch)
+        result, code = fixture.run(out=out)
+        assert code == 1
+        assert [f["code"] for f in result["failures"]] == [
+            "output_outside_repository"
+        ]
+        assert fixture.runner.calls == []
+        text = render_json(result)
+        assert str(tmp_path) not in text
+        assert "outside-signed" not in text
+
+    @pytest.mark.parametrize(
+        "hap",
+        [
+            "C:\\outside-unsigned.hap",
+            "C:/outside-unsigned.hap",
+            "\\\\fileserver\\release\\outside-unsigned.hap",
+            "//fileserver/release/outside-unsigned.hap",
+        ],
+    )
+    def test_windows_drive_or_unc_input_is_outside_everywhere(
+        self, tmp_path, monkeypatch, hap
+    ):
+        """Same containment rule for the input HAP, on both platforms."""
+        fixture = Fixture(tmp_path, monkeypatch)
+        result, code = fixture.run(hap=hap)
+        assert code == 1
+        assert [f["code"] for f in result["failures"]] == [
+            "input_hap_outside_repository"
+        ]
+        assert fixture.runner.calls == []
+        text = render_json(result)
+        assert str(tmp_path) not in text
+        assert "outside-unsigned" not in text
 
     def test_output_equals_input_is_refused_even_with_opt_in(self, tmp_path, monkeypatch):
         fixture = Fixture(tmp_path, monkeypatch)
@@ -607,6 +687,9 @@ class TestRequestValidation:
             {"hap": None},
             {"hap": str(tmp_path / "outside-unsigned.hap")},
             {"out": "../outside-signed.hap"},
+            {"out": "..\\outside-signed.hap"},
+            {"out": "C:/outside-signed.hap"},
+            {"out": "\\\\fileserver\\release\\outside-signed.hap"},
             {"hap": HAP_RELPATH.as_posix(), "out": HAP_RELPATH.as_posix()},
         ]
         for request in bad_requests:
@@ -863,6 +946,7 @@ class TestJsonSafety:
             {"hap": str(tmp_path / "outside-unsigned.hap")},
             {"out": str(tmp_path / "evil-signed.hap")},
             {"out": "../evil-signed.hap"},
+            {"out": "..\\evil-signed.hap"},
         ):
             result, code = fixture.run(**request)
             assert code == 1
