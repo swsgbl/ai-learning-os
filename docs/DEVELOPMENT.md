@@ -933,6 +933,40 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   唯一 caller-supplied 路径字段，可能含本机路径，供人工复核定位；`--output`
   仅允许 artifacts/temp 护栏并原子写入，symlink fail-closed。
 
+## 生产收口 manifest release-closure-manifest（M14-68）
+
+- **CLI**：`python -m app.ops.cli release-closure-manifest
+  --evidence-dir <path> --output-json <artifacts路径>.json
+  --output-md <artifacts路径>.md [--git-head <40/64位hex>] [--json]`，
+  实现文件 `services/api/app/ops/release_closure_manifest.py`。
+- **定位**：只读聚合器——把切换窗口前的收口状态收敛为一份确定性
+  JSON/Markdown manifest。只消费 `release-readiness`（M10-11）与
+  `production-evidence-gap`（M11-18）对证据目录的既有结论子集（计数、
+  未过门清单、类别状态），**不重复实现任何 gate 语义**。不连 DB/网络/
+  API、不读环境变量、对证据目录零写入、无 `--yes` 执行形态。
+- **git HEAD**：显式 `--git-head`（40/64 位 hex，格式 fail-closed）优先；
+  缺省时从仓库根以固定 argv、无 shell、10s 超时运行 `git rev-parse HEAD`
+  发现，输出记录来源（`explicit`/`discovered`）与发现命令。
+- **证据清单**：对 evidence 目录生成有界清单——相对 posix 文件名、
+  字节数、逐文件 SHA-256；文件数/字节超上限、非常规文件、路径含
+  symlink/reparse 组件即 fail-closed。
+- **诚实合取**：`production_ready = readiness.release_ready AND
+  gap.overall==pass`；任一侧未全 pass 即 false，blockers 逐条透出
+  （readiness 必需门未过 + gap 类别未过），并输出六条占位符下一步命令
+  （`<evidence-dir>`/`<artifacts-dir>` 由运维替换；不代签、不代批）。
+- **输出护栏**：`--output-json`/`--output-md` 仅允许 artifacts/temp
+  下、两路径互不相同、不得位于 evidence 目录内；护栏检查先于证据读取；
+  逐文件原子落盘，写失败 exit 2 且不打印收口结论。
+- **退出码**：`0`=production_ready=true / `1`=聚合未全 pass /
+  `2`=输入或路径与 IO 问题（与 `agc-closure-manifest` 的 1/2 语义相反，
+  见文末该节）。
+- **验证**：聚焦测试 37 passed（矩阵/边界）；full API 3722 passed /
+  33 skipped（3 个 Windows WSL 存量失败在 main 复现，远程 Linux CI 绿）。
+  真实收口冒烟（main@`3211336`）：消费 15 文件 / 12863 字节，产出
+  JSON 6874 字节 / MD 5104 字节（SHA-256 见证据页），预期 exit 1、
+  `production_ready=false`、4 项 blockers。证据：
+  `docs/evidence/m14-68-production-closure-manifest/README.md`。
+
 ## 生产切换演练编排器（M10-15）
 
 - **CLI**：`python -m app.ops.cli cutover-rehearsal --evidence-dir <path>
@@ -2543,3 +2577,30 @@ AGC 材料缺位（当前仓库常态）时各阶段的**预期状态**：
 ### 边界
 
 本切片交付的是发布链**工具与门禁**，不改变任何业务能力与签名边界：本轮验证仅覆盖 Harmony 模拟器 `127.0.0.1:5555` + 未签名 HAP——无 AGC 发布材料、无真实签名、无 Harmony 真机；签名凭据仅环境变量传入、从不序列化（hap-sign-tool argv 进程列表暴露限制如实记录）；未打 tag、未部署；`production_ready=false` 语义不变。剩余生产阻塞：AGC 发布材料创建、真实签名接入、Harmony 真机验证；其后 backlog：WORM 离线第二副本、定时归档、provider 冒烟外部配置处理、浸泡/真实负载、发布就绪评审与切换——均待运维显式授权评估。证据：`docs/evidence/m13-16-harmony-release-chain/README.md`（`.verify/` 原始证据不入库）。
+
+## HarmonyOS AGC 收口 manifest（M14-68H2）
+
+- **CLI**：`python -m tools.harmony_release.agc_closure_manifest
+  --input <report.json>（可重复） [--json-output <path>]
+  [--markdown-output <path>]`，实现文件
+  `tools/harmony_release/agc_closure_manifest.py`。
+- **定位**：把发布链六工具（`preflight` / `release_build` / `sign_hap` /
+  `verify_signature` / `device_preflight` / `device_smoke`）的 JSON 证据
+  聚合为一份确定性 AGC 收口 manifest（JSON + Markdown），供 AGC 发布
+  材料口径核对。按证据内的 `tool` 字段分类，`--input` 可重复提供多份。
+- **签名性零推断**：signedness 只认 `verify_signature` 的
+  `signed_and_valid`；`claimed_signed`（release_build 自报）单独永不
+  pass。缺 `sign_hap`/`verify_signature` 证据即签名性 blocked。
+- **fail-closed**：任一工具证据缺失、重复、未 pass（非 `exit==0` /
+  `ok`）或不可分类，整体即 blocked；本切片 `production_ready` 构造上
+  恒 `false`（AGC 收口只是发布材料子集，不代表生产就绪）。
+- **路径与落盘安全**：输入必须是常规文件且路径全组件拒绝
+  symlink/reparse；输出路径互不重叠、不得覆盖任何输入；原子落盘，
+  失败时逐字节回滚既有文件。输出只含 human-safe 标签（无 secret、
+  无绝对路径）。
+- **退出码**：`0`=全门 pass / `1`=failure（未写 manifest）/
+  `2`=manifest 产出但 blocked——**与 release-closure-manifest（M14-68）
+  的 1/2 语义相反**，脚本调用方必须按各工具文档核对退出码约定。
+- **验证**：Harmony 套件 417 passed / 1 skipped（skip 为 symlink/mkfifo
+  用例在 Windows 宿主的既有 `pytest.skip` 幂等跳过）。证据：
+  `docs/evidence/m14-68-production-closure-manifest/README.md`。
