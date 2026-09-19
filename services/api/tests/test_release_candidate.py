@@ -20,7 +20,11 @@
 7. build 脚本契约：bash -n 语法、tag 正则、VERSION 比对、干净 worktree、
    AIOS_IMAGE_TAG + --no-build、smoke 默认 infra/smoke_docker.sh、
    down --remove-orphans 且绝无 -v、docker save 独立归档、manifest/verify
-   子命令、symlink 组件检查、compose project name 由 tag 就地推导（点 ->
+   子命令、minio 镜像 compose 锚定构建（tag/context 从 docker-compose.yml
+   提取、零硬编码 pin 副本——M14-62 回归：run 35423807031 "No such
+   image"；提取 awk 先剥记录尾 CR，LF/CRLF 两种检出形态行为一致——
+   M14-62 R2：GNU awk 保留 \r 曾使 WSL 下提取返回空）、symlink 组件检查、
+   compose project name 由 tag 就地推导（点 ->
    连字符，bash 参数展开，不引入 Python/tr；禁止未消毒 ${TAG} 直用——
    M11-02 B-1 回归：run 33938835814 invalid project name）、代码行零
    git tag/git push/docker push/docker login/gh release；
@@ -28,7 +32,9 @@
    快乐路径全序列、脏 worktree 早退、tag 失配早退、非空目录拒绝且不动
    既有文件、护栏外拒绝、smoke 失败清理 compose 且不留半成品包、
    每次 docker compose 调用都在合法 COMPOSE_PROJECT_NAME（不含点）下执行
-   且 tag -> project name 映射与脚本推导语义逐字一致（M11-02 B-1 回归）；
+   且 tag -> project name 映射与脚本推导语义逐字一致（M11-02 B-1 回归）、
+   minio 镜像按 compose 当前 pin 构建（tag/context 与 minio 服务声明逐字
+   一致）且先于 up -d --no-build（M14-62 回归）；
 9. 工作流契约：仅 workflow_dispatch（无 push/pull_request/schedule）、
    最小权限、Linux runner、upload-artifact 上传且零发布动词；
 10. 真实 Docker 构建冒烟只在 AIOS_RELEASE_SMOKE=1 时执行（默认 skip）。
@@ -72,7 +78,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 BUILD_SCRIPT = REPO_ROOT / "infra" / "build_release_candidate.sh"
 BUILD_SCRIPT_RELATIVE = "infra/build_release_candidate.sh"
 WORKFLOW_FILE = REPO_ROOT / ".github" / "workflows" / "release-candidate.yml"
-BASH = shutil.which("bash")
+# bash 可经 AIOS_TEST_BASH 显式指定（如 C:\WINDOWS\system32\bash.exe 跑 WSL
+# bash 全套），缺省找 PATH 里的 bash——同一测试面可在两种 bash 下复验。
+BASH = shutil.which(os.environ.get("AIOS_TEST_BASH", "bash"))
 
 GIT_SHA = "a" * 40
 API_ID = "sha256:" + "b" * 64
@@ -1014,6 +1022,115 @@ def test_workflow_and_script_declare_local_scope_boundary() -> None:
     assert "不推" in script or "不发布" in script
 
 
+# --- 7b. M14-62 回归：minio 镜像 compose 锚定构建（--no-build 前置）-----------
+
+_COMPOSE_FILE = REPO_ROOT / "infra" / "docker-compose.yml"
+
+
+def _compose_minio_pin() -> tuple[str, str]:
+    """从真实 compose 文件解析 minio 服务的 image pin 与 build context。
+
+    yaml 是真值源：行为面断言的期望值由它派生——compose 升版 pin 后测试
+    期望自动跟随，测试内不保留 pin 副本（与构建器同一防漂移纪律）。"""
+    import yaml
+
+    data = yaml.safe_load(_COMPOSE_FILE.read_text(encoding="utf-8"))
+    minio = data["services"]["minio"]
+    image, context = minio["image"], minio["build"]["context"]
+    assert isinstance(image, str) and image.startswith("aios/minio:")
+    assert isinstance(context, str) and context.startswith("./")
+    return image, context
+
+
+def test_compose_minio_service_keeps_local_build_pin_premise() -> None:
+    """构建器提取逻辑的前提：compose 的 minio 服务仍钉本地自建镜像
+    （aios/minio:<tag> 形态 + 相对 infra/ 的 build.context + context 根有
+    Dockerfile——M14-13 起自建，无官方镜像可拉）。前提消失（改回 registry
+    镜像/context 形态变化）时红，提示同步审视构建器的锚定提取。"""
+    image, context = _compose_minio_pin()
+    assert re.fullmatch(r"aios/minio:\S+", image)
+    context_dir = REPO_ROOT / "infra" / context[2:]
+    assert (context_dir / "Dockerfile").is_file(), (
+        f"compose 声明的 minio 构建上下文缺 Dockerfile: {context_dir}"
+    )
+
+
+def test_build_script_minio_build_is_compose_anchored() -> None:
+    """M14-62 回归（RC run 35423807031：compose 冒烟 `No such image:
+    aios/minio:…`——`--no-build` 所需的本地 minio 镜像从未被构建）：
+    构建器必须从 infra/docker-compose.yml 的 minio 服务块就地提取 image
+    tag 与 build context（compose 锚定），脚本内零硬编码 pin 副本——
+    升版只改 compose tag + Dockerfile ARG，脚本不漂移。"""
+    source = BUILD_SCRIPT.read_text(encoding="utf-8")
+    # 提取逻辑就位且锚定真实 compose 文件（image 与 build.context 两个键）
+    assert "compose_minio_field" in source
+    assert '$(compose_minio_field "    " image)' in source
+    assert '$(compose_minio_field "      " context)' in source
+    # awk 程序以 ' 结束、文件为末参数：' infra/docker-compose.yml（无尾引号）
+    assert "' infra/docker-compose.yml" in source
+    # 构建命令引用提取变量（tag 与 context 都来自 compose，非硬编码）
+    assert 'docker build -t "$MINIO_IMAGE"' in source
+    assert '"$MINIO_CONTEXT_DIR"' in source
+    # 零硬编码 pin 副本：脚本内不得出现任何具体 aios/minio:<tag> 形态
+    # （case 校验 glob `aios/minio:*` 的 * 不匹配 [A-Za-z0-9]，不误伤）
+    assert re.search(r"aios/minio:[A-Za-z0-9]", source) is None, (
+        "脚本内出现硬编码 minio tag——必须经 compose 提取，防升版漂移"
+    )
+    # CRLF 检出可移植（M14-62 R2）：awk 程序第一条规则必须是「无 pattern 的
+    # CR 归一化」——对每条记录执行 sub(/\r$/, "")，GNU awk（Linux/WSL）保留
+    # 记录尾 \r 时等值/锚定匹配才不失配；剥 CR 后同记录后续规则用新 $0 匹配，
+    # LF 检出下是 no-op，两端行为一致
+    assert "{ sub(/\\r$/, \"\") }" in source, (
+        "awk 提取缺 CR 归一化首规则——CRLF 检出的 compose 下提取会返回空"
+    )
+
+
+_MINIO_FUNC_RE = re.compile(
+    r"^compose_minio_field\(\) \{$.*?^\}$", re.MULTILINE | re.DOTALL
+)
+
+
+@pytest.mark.skipif(BASH is None, reason="bash 不可用")
+@pytest.mark.parametrize("checkout", ["lf", "crlf"])
+def test_compose_minio_field_parses_crlf_and_lf_checkouts(
+    tmp_path: Path, checkout: str
+) -> None:
+    """行为面回归（M14-62 R2）：CRLF 检出的 compose 下 compose_minio_field
+    必须照样解析——GNU awk（Linux/WSL）保留记录尾 \\r 使等值/锚定匹配失配
+    （本 Windows worktree 实测：WSL 下提取返回空、5 个行为测试失败），MSYS
+    文本模式剥 \\r 造成本地假绿。做法：从真实构建脚本提取函数定义（行为与
+    脚本本体零漂移）、在 tmp 构造 LF/CRLF 两种检出形态的 compose 副本
+    （不提交生产 compose 的换行转换）、以独立脚本文件执行（规避 WSL
+    bash.exe 启动器对 -c 的 $var 预展开与 \\r 反斜杠伪影）。
+    """
+    image_expected, context_expected = _compose_minio_pin()
+    match = _MINIO_FUNC_RE.search(BUILD_SCRIPT.read_text(encoding="utf-8"))
+    assert match is not None, "构建脚本缺 compose_minio_field() 定义"
+    func_text = match.group(0)  # read_text 已按 universal newlines 归一为 LF
+    assert "{ sub(/\\r$/, \"\") }" in func_text, "awk 程序缺 CR 归一化首规则"
+    work = tmp_path / "infra"
+    work.mkdir()
+    raw = _COMPOSE_FILE.read_bytes().replace(b"\r\n", b"\n")  # 先归一防混合
+    if checkout == "crlf":
+        raw = raw.replace(b"\n", b"\r\n")
+    (work / "docker-compose.yml").write_bytes(raw)
+    dir_posix = _bash_path(tmp_path)
+    if dir_posix is None:
+        pytest.skip("无法把临时目录转成 bash 路径（缺 cygpath/wslpath）")
+    script = tmp_path / "extract-minio-pin.sh"
+    script.write_text(
+        f"cd {_sh_sq(dir_posix)} || exit 1\n"
+        + func_text
+        + '\nprintf \'%s\\n\' "$(compose_minio_field "    " image)"\n'
+        '\nprintf \'%s\\n\' "$(compose_minio_field "      " context)"\n',
+        encoding="utf-8", newline="\n",
+    )
+    script.chmod(0o755)
+    result = run_bash([BASH, script.name], timeout=60, cwd=tmp_path)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == [image_expected, context_expected]
+
+
 # --- 8. build 脚本行为面（stub git/docker/python；不调用真实 Docker）-------------
 
 
@@ -1470,6 +1587,40 @@ def test_build_script_smoke_failure_cleanup_uses_legal_project_name(
             assert COMPOSE_PROJECT_NAME_RE.fullmatch(name)
     finally:
         env.cleanup()
+
+
+@pytest.mark.skipif(BASH is None, reason="bash 不可用")
+def test_build_script_builds_pinned_minio_before_no_build_smoke(
+    stub_env,
+) -> None:
+    """行为面回归（M14-62，RC run 35423807031）：compose up -d --no-build
+    之前，构建器必须已按 compose 当前 pin 构建 minio 镜像——build 调用的
+    tag 与构建上下文同 compose minio 服务声明逐字一致（期望值由 yaml 真值
+    源派生，改 pin 自动跟随），且调用序先于 up -d --no-build（干净 Docker
+    主机上 --no-build 的镜像前置条件由该步骤满足）。"""
+    image, context = _compose_minio_pin()
+    tag = _version_tag()
+    result = stub_env.run_builder("--tag", tag, "--output-dir", _out_rel(stub_env))
+    assert result.returncode == 0, result.stdout + result.stderr
+    calls = stub_env.calls()
+    minio_builds = [
+        c for c in calls
+        if c.startswith("docker build") and f"-t {image}" in c
+    ]
+    assert minio_builds, f"缺少按 compose pin（{image}）的 minio 镜像构建调用"
+    # 构建上下文 = compose 声明的 ./minio 相对 infra/ 解析（锚定 context，
+    # 用路径后缀比对——msys/WSL 桩日志记 POSIX 形态，前缀因平台而异）
+    expected_tail = f"/infra/{context[2:]}"
+    assert any(c.endswith(expected_tail) for c in minio_builds), minio_builds
+    # 顺序：minio 构建必须先于任何 up -d --no-build（--no-build 前置条件）
+    up_indices = [
+        i for i, c in enumerate(calls)
+        if c.startswith("docker compose") and "up -d --no-build" in c
+    ]
+    assert up_indices, calls
+    assert calls.index(minio_builds[0]) < up_indices[0], (
+        f"minio 构建必须先于 up -d --no-build: {minio_builds[0]}"
+    )
 
 
 # --- 9. 工作流静态契约（仅 workflow_dispatch 手动触发）--------------------------

@@ -10,7 +10,7 @@
 #   2. 校验 git worktree 干净，记录完整 commit SHA；
 #   3. 校验输出目录在 gitignore 的 artifacts/ 或 temp/ 内（symlink 组件/
 #      .. 越界/非空已存在目录/artifacts-temp 本身一律拒绝）；
-#   4. 同一源码树构建两个镜像并钉本地 tag（aios/api:<tag>、aios/web:<tag>）；
+#   4. 构建 api/web 镜像（钉本地 tag）+ minio 镜像（按 compose 锚定 tag）；
 #   5. 以 AIOS_IMAGE_TAG=<tag> + AIOS_WEB_IMAGE_TAG=<tag>（同 tag 显式双变量，
 #      M14-09 起 web 不再跟随 AIOS_IMAGE_TAG）+ --no-build 启动既有 compose local profile
 #      （隔离项目名 aios-rc-<tag 中的点替换为连字符，如 v0.1.0 ->
@@ -119,6 +119,47 @@ say "building aios/web:$TAG（context=仓库根，NEXT_PUBLIC_API_BASE_URL=$WEB_
 docker build -f apps/web/Dockerfile \
   --build-arg "NEXT_PUBLIC_API_BASE_URL=$WEB_BUILD_ARG" \
   -t "aios/web:$TAG" "$REPO_ROOT"
+
+# M14-62（RC run 35423807031）：compose local profile 的 minio 服务钉本地
+# 自建镜像（M14-13 起 MinIO 官方无镜像可拉），干净 Docker 主机上 --no-build
+# 冒烟的镜像前置条件必须由本脚本满足——从 compose 的 minio 服务块就地提取
+# image tag 与 build.context（compose 锚定：升版只改 compose tag 与
+# Dockerfile ARG，本脚本零硬编码 pin 副本），--no-build 引用的即此镜像。
+compose_minio_field() {
+  # $1 = 字段行缩进（image 为 4 空格；build.context 为 6 空格）、$2 = 字段名
+  awk -v prefix="$1" -v key="$2" '
+    # Windows worktree 下 compose 可能以 CRLF 检出；GNU awk（Linux/WSL）保留
+    # 记录尾 \r 使等值/锚定匹配失配（MSYS 文本模式剥 \r 故本地曾假绿）——
+    # 每条记录先剥 CR 再匹配，LF/CRLF 两种检出形态行为一致（M14-62 R2）
+    { sub(/\r$/, "") }
+    $0 == "  minio:" { in_minio = 1; next }
+    in_minio && /^  [A-Za-z0-9_-]+:$/ { in_minio = 0 }
+    in_minio && index($0, prefix key ":") == 1 {
+      sub("^" prefix key ":[ \t]*", "")
+      gsub(/^["\047]|["\047]$/, "")
+      print
+      exit
+    }
+  ' infra/docker-compose.yml
+}
+MINIO_IMAGE="$(compose_minio_field "    " image)"
+[ -n "$MINIO_IMAGE" ] || fail "compose 未给 minio 服务声明 image pin（无法锚定本地构建）"
+case "$MINIO_IMAGE" in
+  aios/minio:*) ;;
+  *) fail "compose minio image pin 形态异常（预期 aios/minio:<tag>）: $MINIO_IMAGE" ;;
+esac
+MINIO_CONTEXT="$(compose_minio_field "      " context)"
+[ -n "$MINIO_CONTEXT" ] || fail "compose 未给 minio 服务声明 build.context（无法定位构建上下文）"
+case "$MINIO_CONTEXT" in
+  ./*) ;;
+  *) fail "compose minio build.context 必须形如 ./minio（相对 infra/）: $MINIO_CONTEXT" ;;
+esac
+MINIO_CONTEXT_DIR="$REPO_ROOT/infra/${MINIO_CONTEXT#./}"
+[ -d "$MINIO_CONTEXT_DIR" ] || fail "minio 构建上下文不存在: $MINIO_CONTEXT_DIR"
+[ -f "$MINIO_CONTEXT_DIR/Dockerfile" ] \
+  || fail "minio 构建上下文缺 Dockerfile: $MINIO_CONTEXT_DIR/Dockerfile"
+say "building $MINIO_IMAGE（context=infra/${MINIO_CONTEXT#./}，compose 锚定）"
+docker build -t "$MINIO_IMAGE" "$MINIO_CONTEXT_DIR"
 
 API_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "aios/api:$TAG")"
 WEB_IMAGE_ID="$(docker image inspect --format '{{.Id}}' "aios/web:$TAG")"
