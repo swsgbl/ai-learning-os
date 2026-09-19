@@ -1476,6 +1476,103 @@ def _run_production_evidence_gap(args) -> int:
     return exit_code
 
 
+def _run_release_closure_manifest(args) -> int:
+    """python -m app.ops.cli release-closure-manifest --evidence-dir DIR
+    [--git-head SHA] [--output-json <artifacts/temp路径>]
+    [--output-md <artifacts/temp路径>] [--json]
+
+    M14-68 生产收口 manifest（只读聚合器、fail-closed）：把「切换窗口前的
+    收口状态」收敛为一份确定性 JSON / Markdown closure manifest——git HEAD
+    （显式 --git-head 优先，缺省固定 argv/cwd/超时的安全发现）、证据目录
+    逐文件有界清单（相对 posix 名/字节/SHA-256，超上限 fail-closed）、
+    release-readiness 与 production-evidence-gap 两个既有聚合器的结论子集
+    （只消费既有评估结果，不重复实现任何 gate 语义）、诚实合取的
+    production_ready（readiness.release_ready 且 gap overall=pass 才 true，
+    否则恒 false——本清单不创建审批文件、不替代人工审批、不授权任何生产
+    操作）、blockers 与六条占位符形态下一步命令。不连接数据库、不调用
+    API、不访问网络、不读取任何环境变量；对证据目录零写入；命令没有
+    --yes 执行形态。--output-json/--output-md 必须位于 gitignore 的
+    artifacts/temp（任何已存在 symlink 组件拒绝、已存在非常规文件拒绝），
+    不得位于证据目录内、两输出不得同路径；护栏先于任何证据读取；逐文件
+    原子落盘（JSON 与 Markdown 跨文件非事务），写入失败 exit 2 且不打印
+    收口结论。
+    退出码：production_ready=true=0 / 聚合未全 pass=1 / 输入或路径与 IO
+    问题=2。
+    """
+    import json as _json
+
+    from app.ops.evidence_kit import EvidenceInputError
+    from app.ops.legacy_papers import is_safe_artifact_path
+    from app.ops.release_closure_manifest import (
+        ClosureManifestInputError,
+        build_release_closure_manifest,
+        format_closure_markdown,
+    )
+
+    for label, output in (
+        ("--output-json", args.output_json),
+        ("--output-md", args.output_md),
+    ):
+        if output and not is_safe_artifact_path(output):
+            print(
+                f"拒绝写入 {output}：收口清单只能写入 gitignore 的 "
+                f"artifacts/ 或 temp/ 目录（{label}）"
+            )
+            return 2
+    try:
+        report, exit_code = build_release_closure_manifest(
+            args.evidence_dir,
+            args.output_json,
+            args.output_md,
+            args.git_head,
+        )
+    except (ClosureManifestInputError, EvidenceInputError) as cause:
+        print(f"证据输入无效（目录或路径问题，未产生 manifest）: {cause}")
+        return 2
+    except OSError as cause:
+        print(
+            "证据读取失败（IO 问题，未产生 manifest）: "
+            f"{type(cause).__name__}: {cause}"
+        )
+        return 2
+    if args.output_json or args.output_md:
+        try:
+            for output, text in (
+                (
+                    args.output_json,
+                    _json.dumps(report, ensure_ascii=False, indent=2),
+                ),
+                (args.output_md, format_closure_markdown(report)),
+            ):
+                if not output:
+                    continue
+                output_path = Path(output)
+                output_path.parent.mkdir(parents=True, exist_ok=True)
+                _write_report_atomic(output_path, text)
+        except OSError as cause:
+            # 目录无法创建/权限/磁盘满/replace 失败：清单未落盘或旧文件
+            # 原样保留（原子写不产生 partial），不得再打印收口结论。
+            print(
+                f"报告写入失败（路径/权限/磁盘问题，未产生报告文件）: "
+                f"{type(cause).__name__}: {cause}"
+            )
+            return 2
+        written = [
+            str(output)
+            for output in (args.output_json, args.output_md)
+            if output
+        ]
+        print(
+            "报告已写入: " + ", ".join(written),
+            file=sys.stderr if args.as_json else sys.stdout,
+        )
+    if args.as_json:
+        print(_json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(format_closure_markdown(report))
+    return exit_code
+
+
 def _run_evidence_inventory(args) -> int:
     """python -m app.ops.cli evidence-inventory --evidence-dir DIR
     [--evidence-dir DIR ...] [--output <artifacts/temp路径>] [--json]
@@ -2218,6 +2315,56 @@ def main() -> None:
         action="store_true",
         help="stdout 输出纯 JSON manifest（提示走 stderr）",
     )
+    p_cm = sub.add_parser(
+        "release-closure-manifest",
+        help=(
+            "生产收口 manifest（M14-68；只读聚合 release-readiness 与 "
+            "production-evidence-gap 为确定性 JSON/Markdown 收口清单：git "
+            "HEAD+证据哈希清单+诚实合取 production_ready+blockers+下一步"
+            "占位命令；不连 DB/网络、不读密钥、不执行任何生产操作，"
+            "无 --yes 形态）"
+        ),
+    )
+    p_cm.add_argument(
+        "--evidence-dir",
+        required=True,
+        help=(
+            "本地证据目录（复用 readiness/gap 既有目录护栏与证据校验，"
+            "本工具不重复实现任何 gate 语义）"
+        ),
+    )
+    p_cm.add_argument(
+        "--git-head",
+        default=None,
+        help=(
+            "显式提供 git HEAD commit SHA（40/64 位十六进制；缺省在仓库根"
+            "固定 argv、无 shell、10s 超时安全发现 git rev-parse HEAD）"
+        ),
+    )
+    p_cm.add_argument(
+        "--output-json",
+        default=None,
+        help=(
+            "写 JSON manifest 到文件（必须位于 gitignore 的 artifacts/ 或 "
+            "temp/ 目录，且不得位于证据目录内；原子落盘：临时文件 + "
+            "rename，失败保留旧报告、symlink 拒绝；默认不落盘）"
+        ),
+    )
+    p_cm.add_argument(
+        "--output-md",
+        default=None,
+        help=(
+            "写 Markdown manifest 到文件（护栏同 --output-json；与 "
+            "--output-json 不得指向同一路径；逐文件原子落盘，两文件跨"
+            "文件非事务）"
+        ),
+    )
+    p_cm.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="stdout 输出纯 JSON manifest（提示走 stderr；默认输出 Markdown）",
+    )
     p_ei = sub.add_parser(
         "evidence-inventory",
         help=(
@@ -2414,6 +2561,8 @@ def main() -> None:
         raise SystemExit(_run_provider_smoke_aggregate(args))
     if args.command == "production-evidence-gap":
         raise SystemExit(_run_production_evidence_gap(args))
+    if args.command == "release-closure-manifest":
+        raise SystemExit(_run_release_closure_manifest(args))
     if args.command == "evidence-inventory":
         raise SystemExit(_run_evidence_inventory(args))
     if args.command == "cutover-evidence-pack":
