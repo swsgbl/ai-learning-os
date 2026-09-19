@@ -37,8 +37,11 @@ r"""M14-43 审计锚点 WORM/对象锁归档工具（fail-closed，单文件纯�
 设计纪律（与 tools/ops 既有工具同款）：S3Client/FS/Clock/env/报告名
 随机后缀生成器全注入，开发回合零网络零真实 S3；boto3 仅在真实执行
 适配器工厂函数体内懒导入；报告原子写 gitignored
-``.verify/artifacts/m14-43-audit-worm-archive/``
-（JSON + Markdown，archive 另附 ``.json.sha256`` sidecar）。报告名
+``.verify/artifacts/m14-43-audit-worm-archive/``（三命令统一三工件：
+JSON + Markdown + 字节精确 ``.json.sha256`` sidecar——sha256sum 形态；
+M14-58 前仅 archive 写 sidecar，preflight/verify 报告缺伴生摘要，
+M14-55 更新器对历史真实 verify 报告按 ``worm-sidecar-missing``
+fail-closed 拒绝；失败证据与成功证据同样可被摘要校验）。报告名
 ``<command>-<stamp>-<随机后缀>`` 真正防碰撞：每份报告名带
 ``secrets.token_hex`` CSPRNG 随机后缀——仅靠顺序探测防不了并发（两个
 进程可在各自探测-写入窗口内同时观察到同一候选名不存在而双双选中、
@@ -423,7 +426,15 @@ def _unique_report_name(fs, command: str, clock, suffix_gen) -> str:
 
 
 def _write_report(fs, clock, report: dict, suffix_gen) -> int:
-    """原子写 JSON + Markdown（archive 另附 .sha256 sidecar）并定退出码。"""
+    """原子写 JSON + Markdown + 字节精确 .sha256 sidecar 并定退出码。
+
+    M14-58 起三命令（preflight/archive/verify）统一三工件：M14-58 前
+    仅 archive 命令写 ``.json.sha256`` sidecar，verify/preflight 报告缺
+    伴生摘要——M14-55 更新器对真实 verify 报告按 ``worm-sidecar-missing``
+    fail-closed 拒绝。失败证据与成功证据同样可被摘要校验（fail-closed
+    报告不是二等证据）。sidecar 为 sha256sum 形态
+    ``digest␣␣name.json\\n``，摘要对所写 JSON 字节精确计算。
+    """
     report["status"] = "fail" if report["problems"] else "pass"
     report["ended_at_utc"] = clock.utc_now_iso()
     name = _unique_report_name(fs, report["command"], clock, suffix_gen)
@@ -432,10 +443,9 @@ def _write_report(fs, clock, report: dict, suffix_gen) -> int:
     fs.mkdirs(ARTIFACT_DIR)
     fs.write_text_atomic(ARTIFACT_DIR / f"{name}.json", json_text)
     fs.write_text_atomic(ARTIFACT_DIR / f"{name}.md", _render_markdown(report))
-    if report["command"] == "archive":
-        digest = hashlib.sha256(json_text.encode("utf-8")).hexdigest()
-        fs.write_text_atomic(ARTIFACT_DIR / f"{name}.json.sha256",
-                             f"{digest}  {name}.json\n")
+    digest = hashlib.sha256(json_text.encode("utf-8")).hexdigest()
+    fs.write_text_atomic(ARTIFACT_DIR / f"{name}.json.sha256",
+                         f"{digest}  {name}.json\n")
     return EXIT_REJECT if report["problems"] else EXIT_OK
 
 
