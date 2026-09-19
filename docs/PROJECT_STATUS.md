@@ -9,6 +9,34 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-60 Harmony current-main 设备预检（dry-run）证据回填（docs-only，单 local commit 不 push）**：分支/worktree
+`docs/m14-60-harmony-current-main-preflight` 基于 `main@1233ef0`（PR #142
+merge）。把 supervisor 在 current main 完成的 Harmony 设备预检（PR #139
+引入的 `tools/harmony_release` 只读预检工具）只读干跑验证转为仓库证据：
+plan 干跑（目标 `127.0.0.1:5555`）mode plan / status planned / exit 0、
+2 条命令 planned / 0 attempted / 0 executed、`hardware_touched=false`；
+带 bundle `com.ailearningos.app` 的 plan 干跑 3 planned / 0 attempted /
+0 executed；check 门对同目标 blocked、exit 2、failures
+`signature_report_unreadable` + `target_loopback_forbidden`、0 条命令
+执行——loopback 目标不可覆盖 fail-closed 拒绝的安全语义实证；
+`hdc list targets` 仅 `127.0.0.1:15566` 与 `127.0.0.1:5555` 两个
+loopback 目标（本机无非 loopback 物理设备）；stderr 0 bytes。源码等价：
+`2839114..1233ef0` 恰 2 提交（`7e2d54f` docs(android) + `1233ef0` merge
+PR #142）对 `apps/harmony`/`tools/harmony_release` 区间 diff 为空——预检
+即 current-main 口径。回填前只读复核：5 个源证据文件（gitignored
+canonical `.verify/m14-60-harmony-current-main-preflight/`）逐文件
+SHA-256 锚定（plan 5,067 bytes / `12bd5454…b496`、plan-with-bundle
+5,075 bytes / `854ffa38…4a95`、check 3,100 bytes / `acaabc5b…8e0c`、
+hdc-list-targets 33 bytes / `091c7de8…e0f0`、stderr 0 bytes / 空串标准
+值；不设聚合清单哈希）。诚实边界：无 AGC / 签名 / 签名 HAP、无非
+loopback 物理真机、零设备命令执行（plan 与 check 均 0 executed——无设备
+身份/日志采集、无安装/卸载、无运行时验收）、零生产访问；本回填零设备
+运行、零生产触碰、零代码改动、不 push、不建 PR；
+`production_ready=false` 不变。证据：
+`docs/evidence/m14-60-harmony-current-main-preflight/README.md`。
+
+## 前一任务（M14-59 Android current-main 真机物理冒烟证据回填——已随 PR #142 合并 main；Harmony current-main 设备预检回填由 M14-60 接续）
+
 **M14-59 Android current-main 真机物理冒烟证据回填（docs-only，单 local commit 不 push）**：分支/worktree
 `docs/m14-59-android-current-main-physical-smoke` 基于 `main@028e4bb`（PR #140
 merge）。把 supervisor 于 2026-09-19 04:03:13–04:05:34（GMT+8；UTC
