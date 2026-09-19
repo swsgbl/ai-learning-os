@@ -423,9 +423,9 @@ def build_governance_evidence(
     返回 (evidence, exit_code)：``pending_count=0`` -> 0；``>0`` -> 1
     （证据照常返回，由 CLI 原子落盘——如实记录，不伪装 pass）。
     任何护栏/结构/失败批次违例抛 :class:`GovernanceInputError`（CLI exit 2）。
+    批次是条件必需：报告仍有待决策项时至少一个成功批次；报告已归零
+    （明细为空）时允许零批次——治理完成后重跑的报告本就没有历史批次文件。
     """
-    if not batch_paths:
-        raise GovernanceInputError("至少提供一个成功 migrate 批次（--batch 可重复）")
     report = _check_input_file(report_path, "报告")
     batches = [
         _check_input_file(batch_path, f"批次[{index}]")
@@ -453,6 +453,12 @@ def build_governance_evidence(
         step_id = DRAFT_STEP
         pending_ids = _load_draft_report(report_obj)
         load_batch = _load_draft_batch
+    # 批次条件必需：报告仍有待决策项却没有任何成功批次 => 无法推导归零，
+    # fail-closed 拒绝；报告明细为空时零批次是合法自然形态（M14-67）。
+    if pending_ids and not batches:
+        raise GovernanceInputError(
+            "报告仍有待决策项，至少需要一个成功 migrate 批次（--batch 可重复）"
+        )
     # 输出护栏只做校验（路径/文件名/symlink）；落盘由 CLI 原子完成
     _check_output_path(output_path, step_id)
 
@@ -470,6 +476,7 @@ def build_governance_evidence(
     evidence: dict[str, Any] = {
         "tool": TOOL_ID,
         "step": step_id,
+        "gate": step_id,
         "pending_count": pending_count,
         "batches": [{"executed": True} for _ in batches],
         "batches_executed": len(batches),

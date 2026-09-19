@@ -366,14 +366,17 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
 ## 治理证据推导 governance-evidence（M11-12）
 
 - **CLI**：`python -m app.ops.cli governance-evidence --report <报告JSON>
-  --batch <批次JSON> [--batch ...] --output <artifacts>/legacy-papers.json
-  |draft-ownership.json [--json]`，实现文件
+  [--batch <批次JSON> ...] --output <artifacts>/legacy-papers.json
+  |draft-ownership.json [--json]`（批次条件必需，M14-67：报告仍有待决策项
+  时至少一个；报告已归零时可省略），实现文件
   `services/api/app/ops/governance_evidence.py`。
 - **定位**：cutover-rehearsal（M10-15）/ release-readiness（M10-11）的
   `legacy-papers` / `draft-ownership` 治理步需要 `pending_count` + `batches`
   证据；此前只能人工从报告抄录计数拼装（转抄没有任何交叉校验，抄错即
-  证据失真）。本工具把「一份完整治理报告 + 一或多个成功 migrate 批次」
-  确定性推导为同契约脱敏证据——与 backup-restore-evidence（M11-04）
+  证据失真）。本工具把「一份完整治理报告 + 零或多个成功 migrate 批次」
+  确定性推导为同契约脱敏证据（零批次仅当报告明细已归零时合法，否则
+  fail-closed 拒绝——M14-67；治理完成后重跑的报告本就没有历史批次文件）
+  ——与 backup-restore-evidence（M11-04）
   同一动机：人工拼装改为机器可复现导出。操作链：`legacy-paper-report
   --output` / `draft-owner-report --output` 出报告（artifacts/temp）→
   逐批 `legacy-paper-migrate --yes --output <artifacts路径>` /
@@ -426,7 +429,8 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   输出原子落盘（同目录临时文件 + fsync + os.replace，失败旧文件字节
   原样、无 `.tmp` 残留、不打印推导结论）。
 - **输出零业务 ID/零敏感值且契约最小化**：证据只含白名单标量
-  （step/pending_count/`batches[].executed`——每项仅此一键——与聚合计数
+  （step 与 gate（同 step 值，供聚合器按 gate 归口——M14-67）/
+  pending_count/`batches[].executed`——每项仅此一键——与聚合计数
   `batches_executed`/报告聚合计数/源报告 sha256/时间戳），**不输出任何
   逐批迁移路径、逐批解决计数、逐批文件哈希或其它批次细节**（人类摘要
   同样只打印聚合计数）；报告与批次正文一律不透传；输出可过下游装载层

@@ -504,12 +504,29 @@ def test_one_bad_batch_among_good_rejects_all(tmp_path) -> None:
     assert not output.exists()
 
 
-def test_no_batch_rejected(tmp_path) -> None:
+def test_zero_report_no_batch_passes(tmp_path, capsys) -> None:
+    """报告已归零 + 无任何批次 => 合法自然形态（M14-67）：exit 0、
+    pending_count=0、batches_executed=0——治理完成后重跑的报告
+    本就没有历史批次文件可提供。"""
     artifacts = _artifacts(tmp_path)
     report = _write_json(artifacts, "report.json", _legacy_report([]))
     output = artifacts / "legacy-papers.json"
+    assert _cli(report, [], output) == 0
+    evidence = json.loads(output.read_text(encoding="utf-8"))
+    assert evidence["pending_count"] == 0
+    assert evidence["batches"] == []
+    assert evidence["batches_executed"] == 0
+    assert "治理计数已归零" in capsys.readouterr().out
+
+
+def test_nonzero_report_no_batch_rejected(tmp_path, capsys) -> None:
+    """报告仍有待决策项 + 无批次 => 无法推导归零，fail-closed 拒绝。"""
+    artifacts = _artifacts(tmp_path)
+    report = _write_json(artifacts, "report.json", _legacy_report(["p1"]))
+    output = artifacts / "legacy-papers.json"
     assert _cli(report, [], output) == 2
     assert not output.exists()
+    assert "至少需要一个成功 migrate 批次" in capsys.readouterr().out
 
 
 # --- 5. 结构校验 ---------------------------------------------------------------
@@ -815,6 +832,7 @@ def test_output_written_atomically_no_tmp_leftover(tmp_path) -> None:
 EXPECTED_TOP_LEVEL_KEYS = {
     "tool",
     "step",
+    "gate",
     "pending_count",
     "batches",
     "batches_executed",
@@ -1072,3 +1090,20 @@ def test_build_evidence_injected_clock_and_error_type(tmp_path) -> None:
         build_governance_evidence(
             tmp_path / "outside.json", [batch], artifacts / "legacy-papers.json"
         )
+
+
+def test_build_evidence_gate_equals_step(tmp_path) -> None:
+    """M14-67：证据输出含 gate 且与 step 同值，供聚合器按 gate 归口。"""
+    artifacts = _artifacts(tmp_path)
+    report = _write_json(artifacts, "report.json", _legacy_report(["p1"]))
+    batch = _write_json(artifacts, "batch.json", _legacy_batch(["p1"]))
+    evidence, _ = build_governance_evidence(
+        report, [batch], artifacts / "legacy-papers.json"
+    )
+    assert evidence["gate"] == evidence["step"] == "legacy-papers"
+
+    draft_report = _write_json(artifacts, "report.json", _draft_report([]))
+    evidence2, _ = build_governance_evidence(
+        draft_report, [], artifacts / "draft-ownership.json"
+    )
+    assert evidence2["gate"] == evidence2["step"] == "draft-ownership"

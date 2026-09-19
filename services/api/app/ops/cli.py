@@ -1199,15 +1199,17 @@ def _run_cutover_evidence_pack(args) -> int:
 
 def _run_governance_evidence(args) -> int:
     """python -m app.ops.cli governance-evidence --report <报告JSON>
-    --batch <批次JSON> [--batch ...] --output <artifacts路径> [--json]
+    [--batch <批次JSON> ...] --output <artifacts路径> [--json]
 
     M11-12 治理证据推导器：从 artifacts/temp 内的 legacy-paper-report /
-    draft-owner-report 完整 JSON 与一或多个成功 migrate 批次 JSON 确定性
+    draft-owner-report 完整 JSON 与零或多个成功 migrate 批次 JSON 确定性
     推导 pending_count（报告明细 ID 集合 - 成功批次 eligible ID 并集，
     非转抄报告计数），原子生成 cutover-rehearsal / release-readiness 可
     直接消费且不含业务 ID/敏感值的 legacy-papers.json / draft-ownership.json。
     纯本地文件推导：不连数据库、不读环境变量、不访问网络、不执行任何
     迁移/治理/锚定/部署（无 --yes 执行形态）；报告与批次文件零写入。
+    批次是条件必需（M14-67）：报告仍有待决策项时至少一个成功批次，
+    否则 fail-closed 拒绝；报告已归零时允许零批次（pending_count=0）。
 
     护栏先于推导（exit 2、不写输出、输入字节不变）：报告/批次/输出都必须
     位于 gitignore 的 artifacts/temp 且为常规文件、任何已存在路径组件是
@@ -2089,13 +2091,14 @@ def main() -> None:
     p_ge.add_argument(
         "--batch",
         action="append",
-        required=True,
+        default=[],
         metavar="PATH",
         help=(
             "成功 migrate 批次 JSON 路径（legacy-paper-migrate / "
             "draft-owner-migrate 的 plan 输出；可重复提供多批；必须位于 "
             "gitignore 的 artifacts/temp；dry-run 或任何失败批次 fail-closed "
-            "拒绝推导）"
+            "拒绝推导）。报告仍有待决策项时必需；报告已归零时可省略"
+            "（零批次 + 零待决策 => pending_count=0，M14-67）"
         ),
     )
     p_ge.add_argument(
