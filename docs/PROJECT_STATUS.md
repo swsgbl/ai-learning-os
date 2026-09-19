@@ -9,6 +9,34 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-69 production current-main 切换证据回填（docs-only）**：worktree
+`D:\AI Learning OS\ai-learning-os\.claude\worktrees\m14-69-production-current-main-cutover` 分支
+`docs/m14-69-production-current-main-cutover` 基于 `main@99bcd4fe`（PR
+#154 merge，M14-68 合入后 final main）。supervisor 已完成第二次生产最小化
+切换（继 M14-61 后）：canonical main
+`99bcd4fe62b03742336eaf529f4dd6b4a199a5b1` tracked-clean 口径构建
+`aios/api:m14-69-production`（digest `sha256:8f509e22…56c41d1`）与
+`aios/web:m14-69-production`（digest `sha256:7e88583…0dd4347`）；compose
+仅重建 api/web 两容器（旧 `8bb0ade786a6`/`bb6ca07483f6` → 新
+`3ddde9463a1f`/`1dc9ec94435d`，均 healthy、api 先过健康门禁再放行
+web），postgres/redis/livekit/minio/searxng 五容器 ID 未动且 healthy。
+切换前后端点各 6 URL 全 200（API `/health`+`/api/v1/version`、Web
+`/`+`/login`、本地语音 8010、SearXNG 8878），匿名 `POST
+/api/v1/sources` 预期 401；真实 Chromium desktop 1440x900 + mobile
+390x844 加载 `/` 与 `/login`：pageerror=0、unexpected console error=0、
+横向 overflow=0（匿名 401 资源按预期容忍）；
+`production_recovery.py --dry-run --no-log-file` 通过（pin 9/9、
+local-profile 6/6 healthy、FunASR/CosyVoice leave 不触碰）。生产 env 仅
+`AIOS_IMAGE_TAG`/`AIOS_WEB_IMAGE_TAG` 两键变更（行数 15→15），gitignored
+备份含密钥零读取、哈希锚定（源/备份 `1161A54C…A361`、更新后
+`F2931CC2…8A5`）。运行时 `/api/v1/version` 内 commit 为
+`not_available`（`.git` 有意不入镜像）——源头证明=canonical 构建+
+digest。不声称 provider 冒烟/审批/soak；`production_ready=false`
+不变。本回填 docs-only 单 local commit；push/PR/CI/merge 由 supervisor
+收口。证据：`docs/evidence/m14-69-production-current-main-cutover/README.md`。
+
+## 前一任务（M14-68 生产收口 manifest 证据回填——已随 PR #154 合并 main；production current-main 切换证据回填由 M14-69 接续）
+
 **M14-68 生产收口 manifest（AGC 收口 builder + release-closure-manifest 只读聚合器 + 真实收口冒烟 + docs 回填）**：worktree
 `D:\AI Learning OS\ai-learning-os\.claude\worktrees\m14-68-production-closure-docs` 分支
 `docs/m14-68-production-closure-evidence` 基于 `main@3211336`。两个代码 PR 已合
