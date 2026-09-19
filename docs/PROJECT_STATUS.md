@@ -9,6 +9,38 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-61 production current-main 切换证据回填（docs-only，单 local commit 不 push）**：分支/worktree
+`docs/m14-61-production-current-main-cutover` 基于 `main@44af53f`（PR #143
+merge `44af53fa`）。把 supervisor 在 current main 完成的生产栈最小化切换
+转为仓库证据：生产 API/Web 容器切至 `aios/api:m14-60-production`（digest
+`sha256:8e7e16e7…345c8`）与 `aios/web:m14-60-production`（digest
+`sha256:7cf12f0d…5eb99c`），新容器 `44076753e543` / `bb6ca07483f6` 均
+healthy（捕获时 Up 2 minutes）；postgres `f928410e404e` / redis
+`6006a4c551e1` / livekit `4aa604546c80` / minio `8e4f3d855ffb` 未动
+（Up 30–45 hours、healthy）。合入后 main CI run `35417197684` 5 job 全
+success（PR CI run `35416912719` 为 supervisor 交接口径）。切换后验证：
+9 URL 端点全 200（API `/health`、`/api/v1/version`，Web `/`、`/login`，
+FunASR 直连 8010、CosyVoice 直连 8011、sidecar 18010/18011 与
+`/health/live`）；未认证 POST `/api/v1/search/queries`、
+`/api/v1/voice/sessions` 均 401；真实浏览器验收（标题 `AI Learning OS`、
+登录控件、未认证 `/api/v1/auth/me` 401 ×2、0 阻塞页面错误）；
+`production_recovery --dry-run` 只读 OK（pin 9/9、stack 6/6 healthy
+健康栈跳过 up、FunASR/CosyVoice leave）；生产监控 34 ok / 0 warn /
+0 critical（2026-09-19T03:04:59Z–03:05:01Z **固定源快照口径、非持续
+状态**——其后 11:15 自然轮 warn-only：仅 API/Web 容器重建预期差异
+container-recreated/started_at_changed、六服务五端点仍 healthy）；
+审计归档 readiness overall fresh。生产 env 仅改 `AIOS_IMAGE_TAG` 与
+`AIOS_WEB_IMAGE_TAG` 两键（备份与更新后 env SHA-256 见证据 README；
+env 文件含密钥，回填零读取零打开）。源证据 16 文件 / 52,203 bytes
+逐文件 SHA-256 锚定（gitignored
+`.verify/m14-61-production-current-main-cutover/`）。诚实边界：11 键
+provider 凭证与端点全 UNSET——不声称真实 provider 冒烟；无 soak
+长稳；release readiness / cutover 与 Harmony 真机收口仍开放；本回填
+零生产触碰、零代码改动、不 push、不建 PR；`production_ready=false`
+不变。证据：`docs/evidence/m14-61-production-current-main-cutover/README.md`。
+
+## 前一任务（M14-60 Harmony current-main 设备预检（dry-run）证据回填——已随 PR #143 合并 main；production current-main 切换证据回填由 M14-61 接续）
+
 **M14-60 Harmony current-main 设备预检（dry-run）证据回填（docs-only，单 local commit 不 push）**：分支/worktree
 `docs/m14-60-harmony-current-main-preflight` 基于 `main@1233ef0`（PR #142
 merge）。把 supervisor 在 current main 完成的 Harmony 设备预检（PR #139
