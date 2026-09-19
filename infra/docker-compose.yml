@@ -136,6 +136,38 @@ services:
       TTS_LOCAL_ENDPOINT: ${AIOS_TTS_LOCAL_ENDPOINT:-}
       TTS_LOCAL_MODEL: ${AIOS_TTS_LOCAL_MODEL:-Fun-CosyVoice3-0.5B-2512}
       TTS_LOCAL_API_KEY: ${AIOS_TTS_LOCAL_API_KEY:-}
+      # M14-64: cloud/search/LLM provider 与隐私路由配置透传（对齐
+      # services/api/app/core/config.py Settings 槽位；容器内变量名 = 字段
+      # 大写）。默认渲染与应用默认严格一致：不启用云端能力、不含任何真实
+      # key/endpoint/model——部署时经 AIOS_* 部署变量显式注入（真实凭据只放
+      # 部署 secret/.env，不入库不入码；infra/smoke_llm.sh / smoke_search.sh /
+      # smoke_voice_cloud.sh 真实端点冒烟通过后注入生效）。
+      MODEL_ROUTE: ${AIOS_MODEL_ROUTE:-hybrid}
+      SEARCH_MODE: ${AIOS_SEARCH_MODE:-local}
+      PRIVACY_STORE_AUDIO: ${AIOS_PRIVACY_STORE_AUDIO:-false}
+      PRIVACY_SEND_CONTEXT_TO_CLOUD: ${AIOS_PRIVACY_SEND_CONTEXT_TO_CLOUD:-true}
+      # M14-64: 显式 provider selector（routing.py：覆盖 VOICE_MODE 默认选择；
+      # PRIVACY.md 同款语义）。默认空 = 不覆盖，按模式路由
+      ASR_PROVIDER: ${AIOS_ASR_PROVIDER:-}
+      TTS_PROVIDER: ${AIOS_TTS_PROVIDER:-}
+      # M4-02 云端语音槽位（OpenAI 兼容端点）：endpoint/key 默认空
+      ASR_CLOUD_ENDPOINT: ${AIOS_ASR_CLOUD_ENDPOINT:-}
+      ASR_CLOUD_API_KEY: ${AIOS_ASR_CLOUD_API_KEY:-}
+      ASR_CLOUD_MODEL: ${AIOS_ASR_CLOUD_MODEL:-whisper-1}
+      TTS_CLOUD_ENDPOINT: ${AIOS_TTS_CLOUD_ENDPOINT:-}
+      TTS_CLOUD_API_KEY: ${AIOS_TTS_CLOUD_API_KEY:-}
+      TTS_CLOUD_MODEL: ${AIOS_TTS_CLOUD_MODEL:-tts-1}
+      # M10-01 LLM 槽位（OpenAI 兼容端点）：全部默认空 = 未配置云端 LLM
+      LLM_PROVIDER: ${AIOS_LLM_PROVIDER:-}
+      LLM_ENDPOINT: ${AIOS_LLM_ENDPOINT:-}
+      LLM_API_KEY: ${AIOS_LLM_API_KEY:-}
+      LLM_MODEL: ${AIOS_LLM_MODEL:-}
+      # 部署 runbook 与 LLM_PROVIDER 并列的 embedding selector：默认空
+      EMBEDDING_PROVIDER: ${AIOS_EMBEDDING_PROVIDER:-}
+      # M5-01 cloud-web 搜索槽位：全部默认空 = 未配置云端搜索
+      SEARCH_PROVIDER: ${AIOS_SEARCH_PROVIDER:-}
+      SEARCH_CLOUD_ENDPOINT: ${AIOS_SEARCH_CLOUD_ENDPOINT:-}
+      SEARCH_CLOUD_API_KEY: ${AIOS_SEARCH_CLOUD_API_KEY:-}
     # M14-01: Linux 引擎上 host.docker.internal 需显式 host-gateway 映射
     # （Docker Desktop 自带；此行使 compose 在两类引擎上行为一致，不暴露引擎端口）
     extra_hosts:
