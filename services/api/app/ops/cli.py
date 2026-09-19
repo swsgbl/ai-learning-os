@@ -1271,14 +1271,16 @@ def _run_governance_evidence(args) -> int:
 
 
 def _run_provider_smoke_export(args) -> int:
-    """python -m app.ops.cli provider-smoke-export <search|cloud-voice|llm>
-    --output PATH [--json]
+    """python -m app.ops.cli provider-smoke-export
+    <search|cloud-voice|local-voice|llm> --output PATH [--json]
 
     M11-16 单 provider 冒烟证据导出器：以 bash 运行既有冒烟脚本
-    （infra/smoke_search.sh / smoke_voice_cloud.sh / smoke_llm.sh，cwd=仓库根、
-    相对 POSIX 路径，子进程整体继承当前环境与终端——脚本脱敏摘要直通运维
-    终端，不捕获不保存），把真实执行结论导出为 cutover-rehearsal 对应步
-    （search-smoke/cloud-voice-smoke/llm-smoke）可直接消费的脱敏原子证据。
+    （infra/smoke_search.sh / smoke_voice_cloud.sh / smoke_voice_local.sh /
+    smoke_llm.sh，cwd=仓库根、相对 POSIX 路径，子进程整体继承当前环境与
+    终端——脚本脱敏摘要直通运维终端，不捕获不保存），把真实执行结论导出
+    为 cutover-rehearsal 对应步（search-smoke/cloud-voice-smoke/llm-smoke）
+    可直接消费的脱敏原子证据；M14-70 起另有 local-voice-smoke 单步证据
+    （provider-smoke-aggregate --voice-mode local 的语音聚合输入）。
     证据只含 tool/schema_version/step/executed/result/exit_code/起止时间与
     耗时——无 stdout/stderr、命令行、endpoint、模型名或任何摘要文本；本
     命令不读取任何敏感环境变量（冒烟所需 key/端点由运维在调用前显式注入；
@@ -1338,13 +1340,22 @@ def _run_provider_smoke_export(args) -> int:
 
 def _run_provider_smoke_aggregate(args) -> int:
     """python -m app.ops.cli provider-smoke-aggregate --search PATH
-    --cloud-voice PATH --llm PATH --output PATH [--json]
+    (--voice PATH | --cloud-voice PATH) --llm PATH --output PATH
+    [--voice-mode {local,hybrid,cloud}] [--json]
 
     M11-16 provider 冒烟聚合证据导出器：把三份**本工具导出的**单步证据
     （provider-smoke-export 产物）确定性聚合为 release-readiness 的
     provider-smoke 门可直接消费的 provider-smoke.json——providers.voice/
-    search/llm 每项仅 executed 与 result，不透传单步 exit_code/时间/脚本
-    细节。三份输入必须都位于 artifacts/temp 且通过本工具形态校验
+    search/llm 每项仅 executed 与 result（M14-70 起另含 evidence_step），
+    不透传单步 exit_code/时间/脚本细节。语音拓扑（M14-70 slice 4）：
+    语音单步证据必须恰好提供一个——新形态 ``--voice``（local/hybrid/cloud
+    拓扑通用）或兼容形态 ``--cloud-voice``（只承载 cloud/hybrid 拓扑的
+    cloud-voice 证据；``--voice-mode local`` 时必须改用 ``--voice`` 传
+    local-voice-smoke.json）；``--voice-mode`` 默认 cloud（兼容既有无旗标
+    调用），local 换用 local-voice 槽位、hybrid/cloud 恒用 cloud-voice
+    槽位——同给/都不给/local 模式误用 legacy 旗标一律 exit 2、不写输出。
+
+    三份输入必须都位于 artifacts/temp 且通过本工具形态校验
     （exact schema：顶层键集合恰为九键白名单、tool/schema_version 精确
     匹配、step 与槽位精确匹配、executed=true、result 只能 pass/fail 且与
     exit_code 结论一致、起止时间 timezone-aware 且不倒置、duration_ms
@@ -1365,14 +1376,41 @@ def _run_provider_smoke_aggregate(args) -> int:
         format_aggregate_summary,
     )
 
+    # 语音拓扑旗标校验先于一切聚合输入处理（M14-70 slice 4）：恰好一个
+    # 语音输入；--voice-mode local 的语音证据必须经 --voice 提供（legacy
+    # --cloud-voice 只承载 cloud-voice 拓扑轨道）。违例 exit 2、不写输出。
+    if args.voice and args.cloud_voice:
+        print(
+            "拒绝执行（输入或路径问题，未写输出）: --voice 与 --cloud-voice "
+            "只能提供一个（语音证据槽位唯一，同给不得虚增拓扑覆盖面）"
+        )
+        return 2
+    if not args.voice and not args.cloud_voice:
+        print(
+            "拒绝执行（输入或路径问题，未写输出）: 必须恰好提供一个语音单步"
+            "证据路径（--voice 新形态或 --cloud-voice 兼容形态）"
+        )
+        return 2
+    if args.voice_mode == "local" and not args.voice:
+        print(
+            "拒绝执行（输入或路径问题，未写输出）: --voice-mode local 的语音"
+            "证据必须经 --voice 提供（--cloud-voice 只承载 cloud-voice 拓扑"
+            "轨道）"
+        )
+        return 2
+    # 拓扑选轨与核心函数槽位契约一致：local -> local-voice 槽位；hybrid/
+    # cloud 把接受的语音输入（--voice 优先，否则 legacy --cloud-voice）
+    # 映射到 cloud-voice 槽位。
+    voice_slot = "local-voice" if args.voice_mode == "local" else "cloud-voice"
     try:
         evidence, exit_code = build_provider_smoke_evidence(
             {
+                voice_slot: args.voice or args.cloud_voice,
                 "search": args.search,
-                "cloud-voice": args.cloud_voice,
                 "llm": args.llm,
             },
             args.output,
+            voice_mode=args.voice_mode,
         )
     except ProviderSmokeInputError as cause:
         print(f"拒绝执行（输入或路径问题，未写输出）: {cause}")
@@ -2217,24 +2255,28 @@ def main() -> None:
         "provider-smoke-export",
         help=(
             "单 provider 冒烟证据导出（M11-16；以 bash 运行既有冒烟脚本并"
-            "导出脱敏原子单步证据，不改变冒烟判定逻辑；pass=0 / fail=1"
-            "（证据照常落盘）/ 护栏或编排问题=2）"
+            "导出脱敏原子单步证据，不改变冒烟判定逻辑；M14-70 起含 local-voice"
+            " 本地语音拓扑轨道；pass=0 / fail=1（证据照常落盘）/ 护栏或编排"
+            "问题=2）"
         ),
     )
     p_ps.add_argument(
         "provider",
-        choices=sorted(("search", "cloud-voice", "llm")),
-        help="provider 槽位：search / cloud-voice / llm（各自对应既有冒烟脚本）",
+        choices=sorted(("search", "cloud-voice", "local-voice", "llm")),
+        help=(
+            "provider 槽位：search / cloud-voice / local-voice / llm"
+            "（各自对应既有冒烟脚本，与 PROVIDERS 注册一致）"
+        ),
     )
     p_ps.add_argument(
         "--output",
         required=True,
         help=(
             "单步证据输出路径（必须位于 gitignore 的 artifacts/temp，文件名"
-            "恰为 search-smoke.json / cloud-voice-smoke.json / llm-smoke.json；"
-            "原子落盘：临时文件 + rename，失败保留旧文件、symlink 拒绝；"
-            "冒烟所需的 key/端点由运维在调用前显式注入环境，本命令不读取"
-            "任何环境变量、不自动补跑）"
+            "恰为 search-smoke.json / cloud-voice-smoke.json / "
+            "local-voice-smoke.json / llm-smoke.json；原子落盘：临时文件 + "
+            "rename，失败保留旧文件、symlink 拒绝；冒烟所需的 key/端点由运维"
+            "在调用前显式注入环境，本命令不读取任何环境变量、不自动补跑）"
         ),
     )
     p_ps.add_argument(
@@ -2247,7 +2289,8 @@ def main() -> None:
         "provider-smoke-aggregate",
         help=(
             "provider 冒烟聚合证据导出（M11-16；三份本工具导出的单步证据 -> "
-            "provider-smoke.json，providers 每项仅 executed/result；全 pass=0 / "
+            "provider-smoke.json，providers 每项仅 executed/result；M14-70 起"
+            "语音拓扑可选 local/hybrid/cloud（--voice-mode）；全 pass=0 / "
             "任一 fail=1（证据照常落盘）/ 输入或路径问题=2）"
         ),
     )
@@ -2258,16 +2301,40 @@ def main() -> None:
         help="search 单步证据路径（provider-smoke-export 产物 search-smoke.json）",
     )
     p_pa.add_argument(
-        "--cloud-voice",
-        required=True,
+        "--voice",
+        default=None,
         metavar="PATH",
-        help="cloud-voice 单步证据路径（provider-smoke-export 产物 cloud-voice-smoke.json）",
+        help=(
+            "语音单步证据路径（M14-70 新形态：--voice-mode local 传"
+            " local-voice-smoke.json，cloud/hybrid 传 cloud-voice-smoke.json；"
+            "与 --cloud-voice 互斥、必居其一）"
+        ),
+    )
+    p_pa.add_argument(
+        "--cloud-voice",
+        default=None,
+        metavar="PATH",
+        help=(
+            "cloud-voice 单步证据路径（兼容形态：provider-smoke-export 产物"
+            " cloud-voice-smoke.json，只承载 cloud/hybrid 拓扑——"
+            "--voice-mode local 时必须改用 --voice；与 --voice 互斥、必居其一）"
+        ),
     )
     p_pa.add_argument(
         "--llm",
         required=True,
         metavar="PATH",
         help="llm 单步证据路径（provider-smoke-export 产物 llm-smoke.json）",
+    )
+    p_pa.add_argument(
+        "--voice-mode",
+        default="cloud",
+        choices=("local", "hybrid", "cloud"),
+        help=(
+            "语音拓扑（M14-70）：local=聚合消费 local-voice 单步证据（须配"
+            " --voice）；cloud/hybrid=聚合消费 cloud-voice 单步证据（hybrid "
+            "的本地轨道由单步导出独立承载）；默认 cloud（兼容既有无旗标调用）"
+        ),
     )
     p_pa.add_argument(
         "--output",

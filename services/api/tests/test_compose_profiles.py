@@ -161,6 +161,7 @@ PROVIDER_PASSTHROUGH_ENV_KEYS = (
     "AIOS_LLM_ENDPOINT",
     "AIOS_LLM_API_KEY",
     "AIOS_LLM_MODEL",
+    "AIOS_RUBRIC_JUDGE",
     "AIOS_SEARCH_PROVIDER",
     "AIOS_SEARCH_CLOUD_ENDPOINT",
     "AIOS_SEARCH_CLOUD_API_KEY",
@@ -192,6 +193,7 @@ def test_provider_env_passthrough_synthetic_injection() -> None:
         "AIOS_LLM_ENDPOINT": "https://llm.example.invalid/v1",
         "AIOS_LLM_API_KEY": "synthetic-llm-key",
         "AIOS_LLM_MODEL": "synthetic-llm-model",
+        "AIOS_RUBRIC_JUDGE": "llm",
         "AIOS_EMBEDDING_PROVIDER": "synthetic-embedding-provider",
         "AIOS_SEARCH_PROVIDER": "synthetic-search-provider",
         "AIOS_SEARCH_CLOUD_ENDPOINT": "https://search.example.invalid",
@@ -220,6 +222,8 @@ def test_provider_env_passthrough_synthetic_injection() -> None:
     assert env["LLM_ENDPOINT"] == "https://llm.example.invalid/v1"
     assert env["LLM_API_KEY"] == "synthetic-llm-key"
     assert env["LLM_MODEL"] == "synthetic-llm-model"
+    # M14-70: 判分 judge selector 显式注入切换 LLM judge（keyword 默认见下方 defaults 测试）
+    assert env["RUBRIC_JUDGE"] == "llm"
     # 云端搜索槽位逐项透传
     assert env["SEARCH_PROVIDER"] == "synthetic-search-provider"
     assert env["SEARCH_CLOUD_ENDPOINT"] == "https://search.example.invalid"
@@ -243,6 +247,9 @@ def test_provider_env_defaults_do_not_enable_cloud() -> None:
     assert env["LLM_ENDPOINT"] == ""
     assert env["LLM_API_KEY"] == ""
     assert env["LLM_MODEL"] == ""
+    # M14-70: 判分 judge selector 默认 keyword（与 config.py rubric_judge 应用默认
+    # 严格一致——keyword = 内置确定性 judge，不隐式启用 LLM judge）
+    assert env["RUBRIC_JUDGE"] == "keyword"
     # provider selector 默认空 = 不覆盖模式默认路由（不启用任何云端能力）
     assert env["ASR_PROVIDER"] == ""
     assert env["TTS_PROVIDER"] == ""

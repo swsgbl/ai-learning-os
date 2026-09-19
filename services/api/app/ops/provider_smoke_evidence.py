@@ -19,6 +19,12 @@
   ``provider-smoke.json``（``providers.voice/search/llm`` 每项仅 ``executed``
   与 ``result``——release-readiness 既有 evaluator 直接消费；不透传单步
   exit_code/时间/脚本细节）；任一 fail => 聚合证据照常落盘、CLI exit 1。
+- M14-70 local-voice evidence track：``PROVIDERS`` 额外注册 ``local-voice``
+  （step ``local-voice-smoke``、脚本 ``infra/smoke_voice_local.sh``、
+  gate_key ``voice``——voice 门槽位的本地拓扑轨道），单步导出与既有三
+  provider 同一证据形态；CLI choices、聚合槽位（``voice_mode`` 选轨，
+  local 换用 local-voice 槽位）与 release-readiness 门（``evidence_step``
+  拓扑校验）均已接入。
 
 安全护栏（全部先于 runner 执行；违例 exit 2、不运行冒烟、不写证据、不创建
 输出/父目录）：
@@ -122,13 +128,24 @@ PROVIDERS: dict[str, ProviderSpec] = {
     "cloud-voice": ProviderSpec(
         "cloud-voice", "infra/smoke_voice_cloud.sh", "cloud-voice-smoke", "voice"
     ),
+    # M14-70 slice 2：local-voice evidence track——与 cloud-voice 同属 voice
+    # 门槽位（gate_key 同为 voice）的本地拓扑轨道，可单步导出；不进
+    # AGGREGATE_PROVIDERS（cloud/hybrid 拓扑槽位契约），voice_mode=local
+    # 时聚合选轨换用本槽位，CLI choices 与 readiness 门均已接入。
+    "local-voice": ProviderSpec(
+        "local-voice", "infra/smoke_voice_local.sh", "local-voice-smoke", "voice"
+    ),
     "llm": ProviderSpec("llm", "infra/smoke_llm.sh", "llm-smoke", "llm"),
 }
 
-#: step -> rehearsal 精确证据文件名（与 cutover_rehearsal.STEPS 同步）
+#: step -> 精确证据文件名（search/cloud-voice/llm 三步与
+#: cutover_rehearsal.STEPS 同步；local-voice-smoke 是 M14-70 evidence
+#: track 步——rehearsal 尚无该步，文件名沿用 ``{step}.json`` 惯例，供
+#: 单步导出的输出文件名护栏使用）
 STEP_OUTPUT_FILES: dict[str, str] = {
     "search-smoke": "search-smoke.json",
     "cloud-voice-smoke": "cloud-voice-smoke.json",
+    "local-voice-smoke": "local-voice-smoke.json",
     "llm-smoke": "llm-smoke.json",
 }
 
@@ -153,6 +170,17 @@ STEP_EVIDENCE_KEYS = (
 
 #: 聚合输出 providers 的键序（release-readiness SMOKE_PROVIDERS 同序）
 GATE_PROVIDER_KEYS = ("voice", "search", "llm")
+
+#: 聚合输入槽位（M14-70 slice 2 起 PROVIDERS 含 local-voice evidence track，
+#: 但 release-readiness provider-smoke 门当前消费的仍是这三类；本槽位集合
+#: 即 voice_mode="cloud"/"hybrid" 下的聚合输入契约——M14-70 slice 3 起聚合
+#: 槽位随 :data:`VOICE_MODES` 拓扑选择，local 拓扑换用 local-voice 槽位）
+AGGREGATE_PROVIDERS = ("cloud-voice", "llm", "search")
+
+#: 语音拓扑模式（M14-70 slice 3）：local=聚合消费 local-voice 单步证据；
+#: cloud/hybrid=聚合消费 cloud-voice 单步证据（hybrid 拓扑的本地轨道证据
+#: 由单步导出独立承载，不进聚合）。精确枚举，集合之外一律拒绝。
+VOICE_MODES = ("local", "hybrid", "cloud")
 
 
 def _utc_now() -> datetime:
@@ -438,23 +466,40 @@ def build_provider_smoke_evidence(
     step_evidence: Mapping[str, str | Path],
     output_path: str | Path,
     *,
+    voice_mode: str = "cloud",
     clock: Callable[[], datetime] | None = None,
 ) -> tuple[dict[str, Any], int]:
-    """把三份本工具导出的单步证据聚合为 ``provider-smoke.json`` 证据
-    （不写文件；落盘由 CLI 原子完成）。
+    """把三份本工具导出的单步证据按语音拓扑聚合为 ``provider-smoke.json``
+    证据（不写文件；落盘由 CLI 原子完成）。
+
+    ``voice_mode``（M14-70 slice 3，默认 ``"cloud"`` 向后兼容）：``"local"``
+    聚合消费 local-voice 单步证据；``"cloud"``/``"hybrid"`` 聚合消费
+    cloud-voice 单步证据（hybrid 的本地轨道由单步导出独立承载）。输入槽位
+    恰为所选语音 provider + search + llm——多/缺/错放语音证据一律
+    fail-closed。``voice_mode`` 校验先于一切输入处理。
 
     返回 (evidence, exit_code)：任一 provider fail -> (证据, 1)（照常返回，
     由 CLI 原子落盘——如实记录）；全 pass -> 0。输入校验违例抛
     :class:`ProviderSmokeInputError`（CLI exit 2、不写输出、输入字节不变）。
     """
-    if set(step_evidence) != set(PROVIDERS):
+    # 拓扑校验先于一切输入处理：非法 mode 不触碰任何路径/文件。
+    if voice_mode not in VOICE_MODES:
         raise ProviderSmokeInputError(
-            "聚合需要恰为三个 provider 槽位（--search/--cloud-voice/--llm）的"
-            f"单步证据，实际槽位: {sorted(step_evidence)}"
+            f"未知 voice_mode: {voice_mode!r}（合法值: {list(VOICE_MODES)}）"
+        )
+    # 拓扑选轨：local 换用 local-voice 槽位，cloud/hybrid 保持 cloud-voice
+    # （AGGREGATE_PROVIDERS 即 cloud 拓扑槽位契约）。
+    voice_provider = "local-voice" if voice_mode == "local" else "cloud-voice"
+    slots = (voice_provider, "search", "llm")
+    if set(step_evidence) != set(slots):
+        raise ProviderSmokeInputError(
+            f"voice_mode={voice_mode} 聚合需要恰为三个 provider 槽位"
+            f"（--search/--{voice_provider}/--llm）的单步证据，"
+            f"实际槽位: {sorted(step_evidence)}"
         )
     inputs = {
         key: _check_input_file(step_evidence[key], f"{key} 单步证据")
-        for key in sorted(PROVIDERS)
+        for key in sorted(slots)
     }
     # 冲突护栏先于任何内容读取与写入：输出不得覆盖输入；同一输入不得重复。
     _reject_output_overlapping_input(
@@ -464,23 +509,27 @@ def build_provider_smoke_evidence(
         key: _require_step_result(
             _load_json_object(inputs[key], f"{key} 单步证据"), PROVIDERS[key]
         )
-        for key in sorted(PROVIDERS)
+        for key in sorted(slots)
     }
-    # 聚合契约最小化：providers 每项仅 executed 与 result——单步 exit_code/
-    # 起止时间/脚本细节一律不透传（release-readiness evaluator 不需要）。
-    # 键序按 GATE_PROVIDER_KEYS（SMOKE_PROVIDERS 同序）组装，不随 CLI
-    # provider 名的字母序漂移。
-    provider_by_gate_key = {
-        spec.gate_key: key for key, spec in PROVIDERS.items()
-    }
+    # 聚合契约最小化：providers 每项仅 executed/result/evidence_step——单步
+    # exit_code/起止时间/脚本细节一律不透传（release-readiness evaluator
+    # 只消费 executed/result，evidence_step 是拓扑溯源的精确 step id）。
+    # 只从聚合槽位构建 gate_key 映射：local-voice 与 cloud-voice 同属 voice
+    # 门槽位的拓扑轨道（gate_key 同为 voice），全量构建会相互覆盖——聚合
+    # 输出的 voice 槽位恒由当前拓扑选中的语音轨道提供。键序按
+    # GATE_PROVIDER_KEYS（SMOKE_PROVIDERS 同序）组装，不随 CLI provider
+    # 名的字母序漂移。
+    slot_specs = {PROVIDERS[key].gate_key: PROVIDERS[key] for key in slots}
     evidence: dict[str, Any] = {
         "tool": TOOL_ID,
         "schema_version": SCHEMA_VERSION,
         "gate": GATE_ID,
+        "topology": {"voice_mode": voice_mode},
         "providers": {
             gate_key: {
                 "executed": True,
-                "result": results[provider_by_gate_key[gate_key]],
+                "result": results[slot_specs[gate_key].provider],
+                "evidence_step": slot_specs[gate_key].step,
             }
             for gate_key in GATE_PROVIDER_KEYS
         },

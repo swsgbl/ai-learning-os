@@ -106,10 +106,20 @@ CI_CONCLUSIONS = (
     "action_required",
 )
 
-#: provider 冒烟覆盖的三类云 provider（缺任一 = malformed，不虚报覆盖面）。
-#: 三类要求不同：voice/LLM 需运维部署 key；search 打真实端点
-#: （SEARCH_CLOUD_API_KEY 可选——无鉴权 SearXNG 合法，M10-12）。
+#: provider 冒烟聚合覆盖的三类 provider 槽位（多任一/缺任一 = malformed，
+#: 不虚报覆盖面）。三类要求不同：voice 按拓扑选轨（local=本地语音链路，
+#: 无需云 key；hybrid/cloud=云 voice 部署 key）；LLM 需运维部署 key；search
+#: 打真实端点（SEARCH_CLOUD_API_KEY 可选——无鉴权 SearXNG 合法，M10-12）。
 SMOKE_PROVIDERS = ("voice", "search", "llm")
+
+#: M14-70 聚合契约：topology 恰为 voice_mode 单键，取值恰为三拓扑之一
+#: （与 provider_smoke_evidence.VOICE_MODES 同步，防漂移）。
+SMOKE_VOICE_MODES = ("local", "hybrid", "cloud")
+
+#: M14-70 聚合契约：providers 每项键恰为 executed/result/evidence_step
+#: （evidence_step 是拓扑溯源的精确 step id；单步 exit_code/脚本细节不
+#: 透传，多余键 = malformed）。
+SMOKE_ENTRY_KEYS = ("executed", "result", "evidence_step")
 
 #: 公网 TURN/TLS 验证的三项检查
 TURN_CHECKS = ("stun_binding", "tls_relay", "symmetric_nat_e2e")
@@ -192,13 +202,17 @@ GATES: tuple[GateSpec, ...] = (
     ),
     GateSpec(
         "provider-smoke",
-        "云 voice/LLM 部署 key 冒烟 + search 真实端点冒烟（只收脱敏结果文件）",
+        "voice 按拓扑冒烟（local/hybrid/cloud）+ LLM 部署 key 冒烟 + search "
+        "真实端点冒烟（只收脱敏结果文件）",
         "provider-smoke.json",
         True,
-        "voice 需运维执行 bash infra/smoke_voice_cloud.sh 冒烟通过（部署 key + 真实"
-        "短语音 WAV，ASR/TTS 双探针）；LLM 需运维以部署 key 冒烟通过；search 需打"
-        "真实端点冒烟通过（SEARCH_CLOUD_API_KEY 可选，无鉴权端点可空）；"
-        "证据文件不得携带任何 key",
+        "语音冒烟按拓扑选轨（M14-70 topology.voice_mode）：local 需运维执行 "
+        "bash infra/smoke_voice_local.sh 冒烟通过（本地语音链路 ASR/TTS 探针，"
+        "无需云 key，evidence_step=local-voice-smoke）；hybrid/cloud 需运维执行 "
+        "bash infra/smoke_voice_cloud.sh 冒烟通过（部署 key + 真实短语音 WAV，"
+        "ASR/TTS 双探针，evidence_step=cloud-voice-smoke）；LLM 需运维以部署 key "
+        "冒烟通过；search 需打真实端点冒烟通过（SEARCH_CLOUD_API_KEY 可选，"
+        "无鉴权端点可空）；证据文件不得携带任何 key",
     ),
     GateSpec(
         "turn-tls",
@@ -484,16 +498,51 @@ def _eval_draft_ownership(obj: dict[str, Any], root: Path, sha: Mapping[str, str
 
 def _eval_provider_smoke(obj: dict[str, Any], root: Path, sha: Mapping[str, str]):
     _require_gate_self_id(obj, "provider-smoke")
+    # M14-70 聚合契约 fail-closed：topology 恰为 voice_mode 单键且为合法拓扑；
+    # providers 键恰为三类槽位；每项键恰为 executed/result/evidence_step 且
+    # evidence_step 与拓扑配对正确。缺 topology/step、多余键、拓扑与 step 配对
+    # 错误一律 malformed——聚合器是本门证据的唯一合法生产者，旁路拼装不收。
+    topology = req_dict(obj, "topology")
+    if set(topology) != {"voice_mode"}:
+        raise MalformedEvidence(
+            f"topology 键必须恰为 ['voice_mode']（M14-70 聚合契约），"
+            f"实际: {sorted(topology)}"
+        )
+    voice_mode = req_choice(topology, "voice_mode", SMOKE_VOICE_MODES)
+    expected_steps = {
+        "voice": "local-voice-smoke" if voice_mode == "local" else "cloud-voice-smoke",
+        "search": "search-smoke",
+        "llm": "llm-smoke",
+    }
     providers = req_dict(obj, "providers")
-    data: dict[str, dict[str, Any]] = {}
+    if set(providers) != set(SMOKE_PROVIDERS):
+        raise MalformedEvidence(
+            f"providers 键必须恰为 {list(SMOKE_PROVIDERS)}（M14-70 聚合契约），"
+            f"实际: {sorted(providers)}"
+        )
+    data: dict[str, Any] = {
+        "topology": {"voice_mode": voice_mode},
+        "providers": {},
+    }
     fails: list[str] = []
     not_run: list[str] = []
     for name in SMOKE_PROVIDERS:
         entry = providers.get(name)
         if not isinstance(entry, dict):
             raise MalformedEvidence(f"providers.{name} 缺失或不是对象")
+        if set(entry) != set(SMOKE_ENTRY_KEYS):
+            raise MalformedEvidence(
+                f"providers.{name} 键必须恰为 {list(SMOKE_ENTRY_KEYS)}"
+                f"（M14-70 聚合契约），实际: {sorted(entry)}"
+            )
         executed = req_bool(entry, "executed")
         result = req_choice(entry, "result", ("pass", "fail", "not_executed"))
+        step = req_str(entry, "evidence_step")
+        if step != expected_steps[name]:
+            raise MalformedEvidence(
+                f"providers.{name}.evidence_step={step} 与 topology.voice_mode="
+                f"{voice_mode} 拓扑不符（应为 {expected_steps[name]}）"
+            )
         if executed and result == "not_executed":
             raise MalformedEvidence(
                 f"providers.{name}.executed=true 但 result=not_executed（自相矛盾）"
@@ -502,20 +551,40 @@ def _eval_provider_smoke(obj: dict[str, Any], root: Path, sha: Mapping[str, str]
             raise MalformedEvidence(
                 f"providers.{name}.executed=false 但 result={result}（自相矛盾）"
             )
-        data[name] = {"executed": executed, "result": result}
+        data["providers"][name] = {
+            "executed": executed,
+            "result": result,
+            "evidence_step": step,
+        }
         if result == "fail":
             fails.append(name)
         elif result == "not_executed":
             not_run.append(name)
+    # 措辞按拓扑选轨（M14-70）：local 只指向本地语音链路，不声称 cloud-voice
+    # 被测；hybrid/cloud 仍指向 smoke_voice_cloud.sh 与部署 key。
+    local_track = voice_mode == "local"
+    voice_fail_hint = (
+        "voice 排查本地语音链路（bash infra/smoke_voice_local.sh 本地 ASR/TTS"
+        " 探针，无需云 key）"
+        if local_track
+        else "voice 排查部署 key（bash infra/smoke_voice_cloud.sh 重跑）"
+    )
+    voice_pending_hint = (
+        "voice 需运维执行 bash infra/smoke_voice_local.sh（本地语音链路 ASR/TTS"
+        " 探针，无需云 key）"
+        if local_track
+        else "voice 需运维执行 bash infra/smoke_voice_cloud.sh（部署 key + 真实"
+        "短语音 WAV，key 不入库不入码）"
+    )
     if fails:
         return (
             STATUS_BLOCKED,
             (
-                f"provider 冒烟失败: {', '.join(fails)}——voice/LLM 排查部署 key"
-                "（voice 用 bash infra/smoke_voice_cloud.sh 重跑）、search 排查"
-                "真实端点（SEARCH_CLOUD_API_KEY 可选）后重跑冒烟，并以 "
-                "provider-smoke-export 重新导出单步证据、provider-smoke-"
-                "aggregate 重新聚合本门证据（M11-16：机器导出，不接受手工"
+                f"provider 冒烟失败: {', '.join(fails)}——{voice_fail_hint}、"
+                "search 排查真实端点（SEARCH_CLOUD_API_KEY 可选）、LLM 排查部署"
+                " key；排查后重跑冒烟，并以 provider-smoke-export 逐 provider "
+                f"重新导出单步证据、provider-smoke-aggregate --voice-mode "
+                f"{voice_mode} 重新聚合本门证据（M11-16：机器导出，不接受手工"
                 "拼装）"
             ),
             data,
@@ -525,26 +594,29 @@ def _eval_provider_smoke(obj: dict[str, Any], root: Path, sha: Mapping[str, str]
         return (
             STATUS_PENDING,
             (
-                f"未执行冒烟: {', '.join(not_run)}——voice 需运维执行 bash "
-                "infra/smoke_voice_cloud.sh（部署 key + 真实短语音 WAV，key 不入库"
-                "不入码）；LLM 需运维以部署 key 执行（key 不入库不入码）；"
-                "search 需打真实端点冒烟（SEARCH_CLOUD_API_KEY 可选）；"
-                "冒烟通过后以 provider-smoke-export 逐 provider 导出单步证据、"
-                "provider-smoke-aggregate 聚合为本门脱敏证据（M11-16：机器"
-                "导出，不接受手工拼装）"
+                f"未执行冒烟: {', '.join(not_run)}——{voice_pending_hint}；LLM 需"
+                "运维以部署 key 执行（key 不入库不入码）；search 需打真实端点"
+                "冒烟（SEARCH_CLOUD_API_KEY 可选）；冒烟通过后以 "
+                "provider-smoke-export 逐 provider 导出单步证据、"
+                f"provider-smoke-aggregate --voice-mode {voice_mode} 聚合为本门"
+                "脱敏证据（M11-16：机器导出，不接受手工拼装）"
             ),
             data,
             [],
         )
-    return (
-        STATUS_PASS,
-        (
-            "voice/LLM 部署 key 冒烟 + search 真实端点冒烟"
-            "（SEARCH_CLOUD_API_KEY 可选）全部通过（脱敏结果文件）"
-        ),
-        data,
-        [],
-    )
+    if local_track:
+        pass_reason = (
+            "voice 本地语音链路冒烟（拓扑 local，local-voice-smoke）+ LLM 部署"
+            " key 冒烟 + search 真实端点冒烟（SEARCH_CLOUD_API_KEY 可选）全部"
+            "通过（脱敏结果文件）"
+        )
+    else:
+        pass_reason = (
+            "voice 云链路部署 key 冒烟（bash infra/smoke_voice_cloud.sh，拓扑 "
+            f"{voice_mode}，cloud-voice-smoke）+ LLM 部署 key 冒烟 + search 真实"
+            "端点冒烟（SEARCH_CLOUD_API_KEY 可选）全部通过（脱敏结果文件）"
+        )
+    return STATUS_PASS, pass_reason, data, []
 
 
 def _eval_turn_tls(obj: dict[str, Any], root: Path, sha: Mapping[str, str]):
