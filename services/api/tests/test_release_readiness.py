@@ -4,8 +4,11 @@
 1. 门矩阵与 CLI 注册：GATES 覆盖十个发布审批门（无漏项/无虚设）、
    required/optional 划分、EVALUATORS 全覆盖、证据文件名唯一；CLI 子命令
    注册、无 --yes 执行形态（argparse exit 2）、main 分发；provider-smoke
-   措辞口径：voice 指向确切冒烟命令（M10-13 smoke_voice_cloud.sh）、LLM 需部署
-   key、search 需真实端点冒烟且 SEARCH_CLOUD_API_KEY 可选（M10-12，不得回退
+   M14-70 聚合拓扑契约（topology.voice_mode 选轨 + evidence_step 配对 +
+   键集合精确 fail-closed）与措辞口径：voice 按拓扑指向确切冒烟命令
+   （local=smoke_voice_local.sh 本地链路探针；hybrid/cloud=M10-13
+   smoke_voice_cloud.sh 部署 key + 真实短语音 WAV）、LLM 需部署 key、
+   search 需真实端点冒烟且 SEARCH_CLOUD_API_KEY 可选（M10-12，不得回退
    「三类统一真实 key」旧口径）；
 2. 全 pass：齐备证据 + 哈希绑定审批 -> release_ready=True / exit 0；每门
    evidence sha256 与文件字节独立重算一致；审批 data 记录覆盖门与零失配；
@@ -91,6 +94,35 @@ def _write_json(directory: Path, name: str, payload) -> None:
     )
 
 
+def _smoke_providers(mode: str = "local", **overrides) -> dict[str, dict]:
+    """M14-70 聚合契约的 providers 满配形态（全 pass、evidence_step 按拓扑
+    配对）；overrides 整项替换（构造 malformed/not_executed 形态用）。"""
+    voice_step = "local-voice-smoke" if mode == "local" else "cloud-voice-smoke"
+    steps = {"voice": voice_step, "search": "search-smoke", "llm": "llm-smoke"}
+    providers = {
+        name: {"executed": True, "result": "pass", "evidence_step": step}
+        for name, step in steps.items()
+    }
+    providers.update(overrides)
+    return providers
+
+
+def _not_executed(step: str) -> dict:
+    """聚合契约下的 not_executed 声明形态（executed=false 配对一致）。"""
+    return {"executed": False, "result": "not_executed", "evidence_step": step}
+
+
+def _smoke_document(
+    mode: str = "local", providers: dict[str, dict] | None = None
+) -> dict:
+    """M14-70 聚合契约的 provider-smoke.json 形态（默认 local 拓扑）。"""
+    return {
+        "gate": "provider-smoke",
+        "topology": {"voice_mode": mode},
+        "providers": providers if providers is not None else _smoke_providers(mode),
+    }
+
+
 def _passing_evidence() -> dict[str, dict]:
     """九门齐备且全部满足 pass 形态的证据（不含 release-approval）。"""
     return {
@@ -135,14 +167,7 @@ def _passing_evidence() -> dict[str, dict]:
             "pending_count": 0,
             "batches": [],
         },
-        "provider-smoke.json": {
-            "gate": "provider-smoke",
-            "providers": {
-                "voice": {"executed": True, "result": "pass"},
-                "search": {"executed": True, "result": "pass"},
-                "llm": {"executed": True, "result": "pass"},
-            },
-        },
+        "provider-smoke.json": _smoke_document(),
         "turn-tls.json": {
             "gate": "turn-tls",
             "checks": {
@@ -255,36 +280,48 @@ def test_gate_matrix_complete_no_phantom() -> None:
 
 
 def test_provider_smoke_wording_matches_provider_requirements(tmp_path) -> None:
-    """provider-smoke 措辞与三类 provider 的真实要求一致：voice 指向确切冒烟
-    命令（M10-13 bash infra/smoke_voice_cloud.sh，部署 key + 真实短语音 WAV），
-    LLM 需部署 key，search 需真实端点冒烟且 SEARCH_CLOUD_API_KEY 可选（M10-12：
-    无鉴权 SearXNG 合法，不得把 search 冒烟说成必须有 key，也不得把「真实 key
-    冒烟」口径统一套在三类上）。措辞只是口径修正——门语义不放宽：仍是 required
-    gate，not_executed -> pending、fail -> blocked 由既有语义测试守卫。"""
+    """provider-smoke 措辞与三类 provider 的真实要求一致，且语音指引按拓扑
+    选轨（M14-70）：local 指向 bash infra/smoke_voice_local.sh 本地语音链路
+    探针（无需云 key，evidence_step=local-voice-smoke）；hybrid/cloud 指向
+    M10-13 bash infra/smoke_voice_cloud.sh（部署 key + 真实短语音 WAV，
+    evidence_step=cloud-voice-smoke）；LLM 需部署 key，search 需真实端点冒烟
+    且 SEARCH_CLOUD_API_KEY 可选（M10-12：无鉴权 SearXNG 合法，不得把 search
+    冒烟说成必须有 key，也不得把「真实 key 冒烟」口径统一套在三类上）。
+    措辞只是口径修正——门语义不放宽：仍是 required gate，not_executed ->
+    pending、fail -> blocked 由既有语义测试守卫。"""
     spec = next(s for s in GATES if s.gate_id == "provider-smoke")
     assert spec.required is True
-    # title 保持一行可读的合并口径；basis 按 provider 拆分（M10-13 voice 独立命令）
-    assert "voice/LLM" in spec.title and "部署 key" in spec.title
+    # title 保持一行可读的合并口径；basis 按 provider 拆分（voice 按拓扑双轨）
+    assert "voice" in spec.title and "按拓扑" in spec.title
+    assert "部署 key" in spec.title
     assert "search" in spec.title and "真实端点" in spec.title
     for provider in ("voice", "LLM"):
         assert provider in spec.basis, spec.basis
     assert "部署 key" in spec.basis, spec.basis
     assert "search" in spec.basis and "真实端点" in spec.basis, spec.basis
-    # voice 冒烟的确切命令与输入在 basis 里显式给出（M10-13）
+    # 两条 voice 冒烟命令与各自 evidence_step 在 basis 里显式给出并配对
+    # （M14-70 local 探针 + M10-13 云链路）
+    assert "smoke_voice_local.sh" in spec.basis
+    assert "local-voice-smoke" in spec.basis
     assert "smoke_voice_cloud.sh" in spec.basis
+    assert "cloud-voice-smoke" in spec.basis
     assert "真实短语音" in spec.basis
     # key 可选语义在 basis 里显式声明（title 保持一行可读）
     assert "SEARCH_CLOUD_API_KEY" in spec.basis
     assert "可选" in spec.basis
 
-    # pending：search/llm 未执行——指引区分部署 key 与真实端点（key 可选）
+    # pending（cloud 拓扑）：search/llm 未执行——指引区分部署 key 与真实
+    # 端点（key 可选），voice 指向云链路命令
     directory = _evidence_dir(tmp_path, "smoke-wording-pending")
     evidence = _passing_evidence()
-    evidence["provider-smoke.json"]["providers"] = {
-        "voice": {"executed": True, "result": "pass"},
-        "search": {"executed": False, "result": "not_executed"},
-        "llm": {"executed": False, "result": "not_executed"},
-    }
+    evidence["provider-smoke.json"] = _smoke_document(
+        mode="cloud",
+        providers=_smoke_providers(
+            "cloud",
+            search=_not_executed("search-smoke"),
+            llm=_not_executed("llm-smoke"),
+        ),
+    )
     _write_evidence(directory, evidence)
     _write_approval(directory)
     gate = _gate(_run(directory), "provider-smoke")
@@ -295,13 +332,35 @@ def test_provider_smoke_wording_matches_provider_requirements(tmp_path) -> None:
     assert "smoke_voice_cloud.sh" in gate["reason"]
     assert "SEARCH_CLOUD_API_KEY" in gate["reason"] and "可选" in gate["reason"]
 
+    # pending（local 拓扑）：voice 未执行——指引只指向本地探针，不声称需要
+    # 云 key，也不得把 cloud 命令错挂到 local 拓扑
+    evidence["provider-smoke.json"] = _smoke_document(
+        providers=_smoke_providers(
+            "local", voice=_not_executed("local-voice-smoke")
+        ),
+    )
+    _write_evidence(directory, evidence)
+    gate = _gate(_run(directory), "provider-smoke")
+    assert gate["status"] == "pending"
+    assert "未执行冒烟: voice" in gate["reason"]
+    assert "smoke_voice_local.sh" in gate["reason"]
+    assert "无需云 key" in gate["reason"]
+    assert "smoke_voice_cloud.sh" not in gate["reason"]
+
     # blocked：search 冒烟失败（无 key 合法端点也可能失败）——指引同口径区分
     directory = _evidence_dir(tmp_path, "smoke-wording-fail")
     evidence = _passing_evidence()
-    evidence["provider-smoke.json"]["providers"]["search"] = {
-        "executed": True,
-        "result": "fail",
-    }
+    evidence["provider-smoke.json"] = _smoke_document(
+        mode="cloud",
+        providers=_smoke_providers(
+            "cloud",
+            search={
+                "executed": True,
+                "result": "fail",
+                "evidence_step": "search-smoke",
+            },
+        ),
+    )
     _write_evidence(directory, evidence)
     _write_approval(directory)
     gate = _gate(_run(directory), "provider-smoke")
@@ -311,18 +370,172 @@ def test_provider_smoke_wording_matches_provider_requirements(tmp_path) -> None:
     assert "smoke_voice_cloud.sh" in gate["reason"]
     assert "SEARCH_CLOUD_API_KEY" in gate["reason"] and "可选" in gate["reason"]
 
-    # pass：全部通过——通过口径同样区分三类要求，不虚称「真实 key 冒烟」
+    # pass：全部通过（默认 local 拓扑）——通过口径区分三类要求并声明当前
+    # 拓扑与 voice 证据源，不虚称「真实 key 冒烟」
     directory = _evidence_dir(tmp_path, "smoke-wording-pass")
     _write_evidence(directory)
     _write_approval(directory)
     report = _run(directory)
     gate = _gate(report, "provider-smoke")
     assert gate["status"] == "pass"
+    assert "本地语音链路" in gate["reason"]
+    assert "local-voice-smoke" in gate["reason"]
     assert "部署 key" in gate["reason"] and "真实端点" in gate["reason"]
     assert "SEARCH_CLOUD_API_KEY" in gate["reason"] and "可选" in gate["reason"]
     # 旧口径（三类统一「真实 key 冒烟」）不得回流到门文案
     assert "真实 key" not in gate["reason"]
     assert "真实 key" not in spec.title and "真实 key" not in spec.basis
+
+
+@pytest.mark.parametrize("mode", ["local", "hybrid", "cloud"])
+def test_provider_smoke_topology_tracks_all_pass(tmp_path, mode) -> None:
+    """M14-70 聚合契约：三种拓扑全 pass 均放行——voice 的 evidence_step 按
+    拓扑配对（local=local-voice-smoke，hybrid/cloud=cloud-voice-smoke），
+    data 完整透出 topology 与逐 provider evidence_step。"""
+    directory = _evidence_dir(tmp_path, f"smoke-topology-{mode}")
+    evidence = _passing_evidence()
+    evidence["provider-smoke.json"] = _smoke_document(mode)
+    _write_evidence(directory, evidence)
+    _write_approval(directory)
+
+    gate = _gate(_run(directory), "provider-smoke")
+    assert gate["status"] == "pass", gate["reason"]
+    expected_voice_step = (
+        "local-voice-smoke" if mode == "local" else "cloud-voice-smoke"
+    )
+    assert gate["data"]["topology"] == {"voice_mode": mode}
+    assert gate["data"]["providers"]["voice"]["evidence_step"] == (
+        expected_voice_step
+    )
+    assert gate["data"]["providers"]["search"]["evidence_step"] == "search-smoke"
+    assert gate["data"]["providers"]["llm"]["evidence_step"] == "llm-smoke"
+    # 通过口径声明当前拓扑与对应 voice 证据源
+    assert mode in gate["reason"]
+    assert expected_voice_step in gate["reason"]
+
+
+@pytest.mark.parametrize(
+    ("smoke_doc", "reason_fragment"),
+    [
+        # 缺 topology：M14-70 之前的旧形态整份证据直接 fail-closed
+        (
+            {"gate": "provider-smoke", "providers": _smoke_providers()},
+            "缺字段 topology",
+        ),
+        # topology 多余键：恰为 voice_mode 单键
+        (
+            {
+                "gate": "provider-smoke",
+                "topology": {"voice_mode": "local", "region": "cn"},
+                "providers": _smoke_providers(),
+            },
+            "topology 键必须恰为",
+        ),
+        # 非法 voice_mode 取值
+        (
+            {
+                "gate": "provider-smoke",
+                "topology": {"voice_mode": "cloud-only"},
+                "providers": _smoke_providers(),
+            },
+            "voice_mode 必须是",
+        ),
+        # 缺 evidence_step：entry 键集合恰为 executed/result/evidence_step
+        (
+            _smoke_document(
+                providers=_smoke_providers(
+                    "local", voice={"executed": True, "result": "pass"}
+                )
+            ),
+            "providers.voice 键必须恰为",
+        ),
+        # entry 多余键：单步 exit_code 等脚本细节不进本门证据
+        (
+            _smoke_document(
+                providers=_smoke_providers(
+                    "local",
+                    voice={
+                        "executed": True,
+                        "result": "pass",
+                        "evidence_step": "local-voice-smoke",
+                        "exit_code": 0,
+                    },
+                )
+            ),
+            "providers.voice 键必须恰为",
+        ),
+        # providers 多余槽位
+        (
+            _smoke_document(
+                providers={
+                    **_smoke_providers(),
+                    "tts": {
+                        "executed": True,
+                        "result": "pass",
+                        "evidence_step": "local-voice-smoke",
+                    },
+                }
+            ),
+            "providers 键必须恰为",
+        ),
+        # 拓扑与 step 配对错误：local 声称 cloud-voice-smoke
+        (
+            _smoke_document(
+                providers=_smoke_providers(
+                    "local",
+                    voice={
+                        "executed": True,
+                        "result": "pass",
+                        "evidence_step": "cloud-voice-smoke",
+                    },
+                )
+            ),
+            "拓扑不符（应为 local-voice-smoke）",
+        ),
+        # 反向配对错误：cloud 拓扑声称 local-voice-smoke
+        (
+            _smoke_document(
+                mode="cloud",
+                providers=_smoke_providers(
+                    "cloud",
+                    voice={
+                        "executed": True,
+                        "result": "pass",
+                        "evidence_step": "local-voice-smoke",
+                    },
+                ),
+            ),
+            "拓扑不符（应为 cloud-voice-smoke）",
+        ),
+    ],
+    ids=[
+        "missing-topology",
+        "extra-topology-key",
+        "invalid-voice-mode",
+        "missing-evidence-step",
+        "extra-entry-key",
+        "extra-provider-key",
+        "local-claims-cloud-step",
+        "cloud-claims-local-step",
+    ],
+)
+def test_provider_smoke_contract_violations_are_malformed(
+    tmp_path, smoke_doc, reason_fragment
+) -> None:
+    """M14-70 聚合契约 fail-closed：缺 topology/evidence_step、topology 或
+    entry/providers 多余键、非法 voice_mode、拓扑与 step 配对错误一律
+    malformed——聚合器是本门证据的唯一合法生产者，旁路拼装不收。"""
+    directory = _evidence_dir(tmp_path, "smoke-contract-malformed")
+    evidence = _passing_evidence()
+    evidence["provider-smoke.json"] = smoke_doc
+    _write_evidence(directory, evidence)
+    _write_approval(directory)
+
+    report = _run(directory)
+    gate = _gate(report, "provider-smoke")
+    assert gate["status"] == "malformed"
+    assert reason_fragment in gate["reason"], gate["reason"]
+    assert report["exit_code"] == 1
 
 
 def test_cli_registered_and_has_no_execute_flag(tmp_path, monkeypatch) -> None:
@@ -697,14 +910,13 @@ def test_pending_semantics_each_gate(tmp_path) -> None:
         ),
         "provider-smoke": (
             "provider-smoke.json",
-            {
-                "gate": "provider-smoke",
-                "providers": {
-                    "voice": {"executed": True, "result": "pass"},
-                    "search": {"executed": False, "result": "not_executed"},
-                    "llm": {"executed": False, "result": "not_executed"},
-                },
-            },
+            _smoke_document(
+                providers=_smoke_providers(
+                    "local",
+                    search=_not_executed("search-smoke"),
+                    llm=_not_executed("llm-smoke"),
+                )
+            ),
         ),
     }
     for gate_id, (filename, payload) in cases.items():
@@ -881,14 +1093,16 @@ def test_blocked_semantics(tmp_path) -> None:
         ),
         "provider-smoke": (
             "provider-smoke.json",
-            {
-                "gate": "provider-smoke",
-                "providers": {
-                    "voice": {"executed": True, "result": "pass"},
-                    "search": {"executed": True, "result": "fail"},
-                    "llm": {"executed": True, "result": "pass"},
-                },
-            },
+            _smoke_document(
+                providers=_smoke_providers(
+                    "local",
+                    search={
+                        "executed": True,
+                        "result": "fail",
+                        "evidence_step": "search-smoke",
+                    },
+                )
+            ),
         ),
     }
     for gate_id, (filename, payload) in cases.items():

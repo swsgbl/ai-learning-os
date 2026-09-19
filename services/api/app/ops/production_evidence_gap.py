@@ -174,29 +174,39 @@ CATEGORY_SPECS: tuple[CategorySpec, ...] = (
     ),
     CategorySpec(
         "provider-smoke",
-        "真实 provider 冒烟证据（search / cloud-voice / llm）",
-        "三类 provider 需以真实端点与部署 key 冒烟通过，结论由"
-        " provider-smoke-export 从真实退出码机器导出（不接受人工抄录拼装），"
-        "并聚合为 release-readiness 的 provider-smoke 门证据",
+        "真实 provider 冒烟证据（search / 语音 local|hybrid|cloud 拓扑 / llm）",
+        "三类 provider 需以真实端点与部署 key 冒烟通过（语音按拓扑选轨："
+        "local=本地语音链路探针，无需云 key；hybrid/cloud=部署 key + 真实短"
+        "语音），结论由 provider-smoke-export 从真实退出码机器导出（不接受"
+        "人工抄录拼装），并聚合为 release-readiness 的 provider-smoke 门证据。"
+        "本类别步骤沿用演练时间线的云语音步（cloud-voice-smoke 是"
+        " cutover-rehearsal 步骤，local-voice-smoke 只是 M14-70 聚合证据轨道"
+        "、不是新演练步）：release 门按聚合证据 topology.voice_mode 选轨"
+        "——local 拓扑聚合消费 local-voice 单步证据，hybrid/cloud 拓扑聚合"
+        "消费 cloud-voice 单步证据（hybrid 的本地轨道由单步导出独立承载）",
         ("search-smoke", "cloud-voice-smoke", "llm-smoke"),
         (
             (
-                "provider-smoke-export search|cloud-voice|llm --output <步证据文件>"
-                "（M11-16）"
+                "provider-smoke-export search|cloud-voice|local-voice|llm"
+                " --output <步证据文件>（M11-16；local-voice 是 M14-70 本地"
+                "拓扑语音轨道的单步导出）"
             ),
             (
-                "provider-smoke-aggregate --search --cloud-voice --llm --output "
-                "provider-smoke.json（M11-16）"
+                "provider-smoke-aggregate --search <search-smoke.json> --voice"
+                " <语音单步证据> --llm <llm-smoke.json> --voice-mode"
+                " local|hybrid|cloud --output provider-smoke.json（M11-16/M14-70；"
+                "--voice-mode local 必须以 --voice 传 local-voice-smoke.json，"
+                "--cloud-voice 是仅承载 cloud/hybrid 拓扑的兼容形态）"
             ),
             (
-                "infra/smoke_search.sh / smoke_voice_cloud.sh / smoke_llm.sh"
-                "（真实端点冒烟脚本）"
+                "infra/smoke_search.sh / smoke_voice_cloud.sh /"
+                " smoke_voice_local.sh / smoke_llm.sh（真实端点/本地链路冒烟脚本）"
             ),
         ),
         (
             (
-                "从运维已导出的三份单步证据聚合 provider-smoke.json（纯本地文件"
-                "聚合，不运行冒烟）"
+                "从运维已导出的单步证据按语音拓扑聚合 provider-smoke.json"
+                "（纯本地文件聚合，不运行冒烟）"
             ),
         ),
         "真实 provider key 与端点由运维显式注入并亲自执行冒烟；agent 不"

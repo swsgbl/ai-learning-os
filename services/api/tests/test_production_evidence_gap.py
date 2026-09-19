@@ -6,7 +6,10 @@
 2. 类别矩阵：恰四类（governance / audit-chain / provider-smoke /
    cutover-approval）且顺序固定，steps 全部是 cutover-rehearsal step id、
    类别间无重叠、并集恰为 8 步白名单（与 rehearsal 13 步交叉锁定），
-   spec 静态字段齐备；
+   spec 静态字段齐备；provider-smoke 文案钉住 M14-70 拓扑聚合指引
+   （--voice/--voice-mode 用法 + local-voice 单步导出），类别步骤仍精确
+   为 search-smoke/cloud-voice-smoke/llm-smoke（local-voice-smoke 只是
+   聚合证据轨道，不是新演练步）；
 3. 状态聚合矩阵：类别内全 pass 才 pass；blocked > pending > not_executed
    （参数化直调 + 真实 fixture 行为级验证）；
 4. 四类映射形态：全 pass fixture => 四类全 pass / exit 0；空目录 => 四类
@@ -344,6 +347,40 @@ def test_category_matrix_is_four_categories_over_eight_steps() -> None:
         all_steps.extend(spec.steps)
     assert len(all_steps) == len(set(all_steps)), "类别间步骤不得重叠"
     assert len(all_steps) == 8
+
+
+def test_provider_smoke_category_copy_pins_topology_guidance() -> None:
+    """provider-smoke 类别文案承载 M14-70 拓扑聚合指引：语音按拓扑选轨
+    （local=本地语音链路探针，hybrid/cloud=部署 key + 真实短语音），修复命令
+    给出 --voice/--voice-mode 聚合用法与 local-voice 单步导出；同时类别步骤
+    保持演练时间线的云语音步——cloud-voice-smoke 是 cutover-rehearsal 步骤、
+    local-voice-smoke 只是聚合证据轨道（不是新演练步），类别步骤清单不因
+    拓扑拆分而放宽。"""
+    spec = next(s for s in CATEGORY_SPECS if s.category == "provider-smoke")
+    # 步骤仍精确为三步（与 EXPECTED_CATEGORY_STEPS 同步的显式重复断言）
+    assert spec.steps == ("search-smoke", "cloud-voice-smoke", "llm-smoke")
+    # 类别名义显式承载三拓扑选轨
+    assert "local|hybrid|cloud" in spec.title
+    # basis 说明按拓扑选轨与演练步兼容性（local-voice-smoke 不是新演练步）
+    assert "topology.voice_mode" in spec.basis
+    assert "local-voice-smoke" in spec.basis
+    assert "cloud-voice-smoke" in spec.basis
+    assert "不是新演练步" in spec.basis
+    # 修复命令：local-voice 单步导出 + --voice/--voice-mode 聚合用法 + 本地
+    # 探针脚本
+    tools_text = "\n".join(spec.existing_tools)
+    assert "provider-smoke-export search|cloud-voice|local-voice|llm" in (
+        tools_text
+    )
+    assert "provider-smoke-aggregate" in tools_text
+    assert "--voice " in tools_text
+    assert "--voice-mode local|hybrid|cloud" in tools_text
+    assert "--voice-mode local 必须以 --voice 传 local-voice-smoke.json" in (
+        tools_text
+    )
+    assert "smoke_voice_local.sh" in tools_text
+    # 旧「三类统一真实 key 冒烟」口径不得回流到类别文案
+    assert "真实 key" not in spec.title and "真实 key" not in spec.basis
 
 
 def test_source_counts_pin_rehearsal_step_totals(tmp_path) -> None:

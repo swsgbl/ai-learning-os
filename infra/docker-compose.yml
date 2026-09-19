@@ -166,6 +166,11 @@ services:
       LLM_ENDPOINT: ${AIOS_LLM_ENDPOINT:-}
       LLM_API_KEY: ${AIOS_LLM_API_KEY:-}
       LLM_MODEL: ${AIOS_LLM_MODEL:-}
+      # M14-70 主观题判分 judge selector（config.py rubric_judge 槽位）：默认
+      # keyword = 内置确定性 judge，与应用默认严格一致；AIOS_RUBRIC_JUDGE=llm
+      # 显式切换 LLM judge（复用上方 LLM_* 槽位）。`:-` 语义与 TTS_CLOUD_VOICE
+      # 一致——未设或置空均回落默认
+      RUBRIC_JUDGE: ${AIOS_RUBRIC_JUDGE:-keyword}
       # 部署 runbook 与 LLM_PROVIDER 并列的 embedding selector：默认空
       EMBEDDING_PROVIDER: ${AIOS_EMBEDDING_PROVIDER:-}
       # M5-01 cloud-web 搜索槽位：全部默认空 = 未配置云端搜索。
