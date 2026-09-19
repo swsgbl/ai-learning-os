@@ -29,13 +29,22 @@ def _compose_available() -> bool:
     return shutil.which("docker") is not None and COMPOSE_FILE.is_file()
 
 
-def _render(profile: str | None = None, extra_env: dict[str, str] | None = None) -> dict:
-    """docker compose config --format json：渲染合并后的 compose model（不启动容器）。"""
+def _render(
+    profile: str | None = None,
+    extra_env: dict[str, str] | None = None,
+    unset: tuple[str, ...] | None = None,
+) -> dict:
+    """docker compose config --format json：渲染合并后的 compose model（不启动容器）。
+
+    unset 显式剔除宿主侧变量（默认渲染断言不受本机环境污染）。
+    """
     cmd = ["docker", "compose", "-f", str(COMPOSE_FILE)]
     if profile:
         cmd += ["--profile", profile]
     cmd += ["config", "--format", "json"]
     merged = dict(os.environ)
+    for key in unset or ():
+        merged.pop(key, None)
     merged.update(extra_env or {})
     result = subprocess.run(
         cmd, check=False, capture_output=True, text=True, encoding="utf-8", timeout=120, env=merged,
@@ -129,6 +138,124 @@ def test_local_voice_env_passthrough_and_host_gateway() -> None:
     default_env = _api_env(defaults)
     assert default_env["ASR_LOCAL_ENDPOINT"] == ""  # 默认留空 → 降级替身（不虚报）
     assert default_env["TTS_LOCAL_ENDPOINT"] == ""
+
+
+# M14-64: cloud/search/LLM provider 与隐私路由透传的宿主侧 AIOS_* 变量全集
+# （默认渲染测试显式剔除，隔离本机环境——compose 子进程本就继承宿主 env）
+PROVIDER_PASSTHROUGH_ENV_KEYS = (
+    "AIOS_MODEL_ROUTE",
+    "AIOS_SEARCH_MODE",
+    "AIOS_PRIVACY_STORE_AUDIO",
+    "AIOS_PRIVACY_SEND_CONTEXT_TO_CLOUD",
+    "AIOS_ASR_PROVIDER",
+    "AIOS_TTS_PROVIDER",
+    "AIOS_EMBEDDING_PROVIDER",
+    "AIOS_ASR_CLOUD_ENDPOINT",
+    "AIOS_ASR_CLOUD_API_KEY",
+    "AIOS_ASR_CLOUD_MODEL",
+    "AIOS_TTS_CLOUD_ENDPOINT",
+    "AIOS_TTS_CLOUD_API_KEY",
+    "AIOS_TTS_CLOUD_MODEL",
+    "AIOS_LLM_PROVIDER",
+    "AIOS_LLM_ENDPOINT",
+    "AIOS_LLM_API_KEY",
+    "AIOS_LLM_MODEL",
+    "AIOS_SEARCH_PROVIDER",
+    "AIOS_SEARCH_CLOUD_ENDPOINT",
+    "AIOS_SEARCH_CLOUD_API_KEY",
+)
+
+
+@pytest.mark.skipif(not _compose_available(), reason="需要 docker compose CLI")
+def test_provider_env_passthrough_synthetic_injection() -> None:
+    """M14-64：AIOS_* provider/隐私路由注入逐项透传到 api 容器 environment。
+
+    测试值全部为 synthetic（example.invalid / synthetic-* marker）——只验证
+    插值链路，不含任何真实 endpoint/key/model。
+    """
+    model = _render("local", {
+        "AIOS_MODEL_ROUTE": "cloud",
+        "AIOS_SEARCH_MODE": "cloud",
+        "AIOS_PRIVACY_STORE_AUDIO": "true",
+        "AIOS_PRIVACY_SEND_CONTEXT_TO_CLOUD": "false",
+        "AIOS_ASR_PROVIDER": "synthetic-asr-provider",
+        "AIOS_TTS_PROVIDER": "synthetic-tts-provider",
+        "AIOS_ASR_CLOUD_ENDPOINT": "https://asr.example.invalid/v1",
+        "AIOS_ASR_CLOUD_API_KEY": "synthetic-asr-cloud-key",
+        "AIOS_ASR_CLOUD_MODEL": "synthetic-asr-cloud-model",
+        "AIOS_TTS_CLOUD_ENDPOINT": "https://tts.example.invalid/v1",
+        "AIOS_TTS_CLOUD_API_KEY": "synthetic-tts-cloud-key",
+        "AIOS_TTS_CLOUD_MODEL": "synthetic-tts-cloud-model",
+        "AIOS_LLM_PROVIDER": "synthetic-llm-provider",
+        "AIOS_LLM_ENDPOINT": "https://llm.example.invalid/v1",
+        "AIOS_LLM_API_KEY": "synthetic-llm-key",
+        "AIOS_LLM_MODEL": "synthetic-llm-model",
+        "AIOS_EMBEDDING_PROVIDER": "synthetic-embedding-provider",
+        "AIOS_SEARCH_PROVIDER": "synthetic-search-provider",
+        "AIOS_SEARCH_CLOUD_ENDPOINT": "https://search.example.invalid",
+        "AIOS_SEARCH_CLOUD_API_KEY": "synthetic-search-key",
+    })
+    env = _api_env(model)
+    # 模式与隐私路由按注入值渲染
+    assert env["MODEL_ROUTE"] == "cloud"
+    assert env["SEARCH_MODE"] == "cloud"
+    assert env["PRIVACY_STORE_AUDIO"] == "true"
+    assert env["PRIVACY_SEND_CONTEXT_TO_CLOUD"] == "false"
+    # 显式 provider selector 逐项透传（routing.py：覆盖 VOICE_MODE 默认选择）
+    assert env["ASR_PROVIDER"] == "synthetic-asr-provider"
+    assert env["TTS_PROVIDER"] == "synthetic-tts-provider"
+    assert env["EMBEDDING_PROVIDER"] == "synthetic-embedding-provider"
+    # 云端语音槽位逐项透传
+    assert env["ASR_CLOUD_ENDPOINT"] == "https://asr.example.invalid/v1"
+    assert env["ASR_CLOUD_API_KEY"] == "synthetic-asr-cloud-key"
+    assert env["ASR_CLOUD_MODEL"] == "synthetic-asr-cloud-model"
+    assert env["TTS_CLOUD_ENDPOINT"] == "https://tts.example.invalid/v1"
+    assert env["TTS_CLOUD_API_KEY"] == "synthetic-tts-cloud-key"
+    assert env["TTS_CLOUD_MODEL"] == "synthetic-tts-cloud-model"
+    # LLM 槽位逐项透传
+    assert env["LLM_PROVIDER"] == "synthetic-llm-provider"
+    assert env["LLM_ENDPOINT"] == "https://llm.example.invalid/v1"
+    assert env["LLM_API_KEY"] == "synthetic-llm-key"
+    assert env["LLM_MODEL"] == "synthetic-llm-model"
+    # 云端搜索槽位逐项透传
+    assert env["SEARCH_PROVIDER"] == "synthetic-search-provider"
+    assert env["SEARCH_CLOUD_ENDPOINT"] == "https://search.example.invalid"
+    assert env["SEARCH_CLOUD_API_KEY"] == "synthetic-search-key"
+
+
+@pytest.mark.skipif(not _compose_available(), reason="需要 docker compose CLI")
+def test_provider_env_defaults_do_not_enable_cloud() -> None:
+    """M14-64 默认渲染：cloud/LLM/search 的 endpoint/key 全空，模式与模型默认
+    与 Settings 应用默认一致（不虚报云端能力）。显式剔除宿主 AIOS_* 变量，
+    断言结果不依赖本机环境。
+    """
+    model = _render("local", unset=PROVIDER_PASSTHROUGH_ENV_KEYS)
+    env = _api_env(model)
+    # 云端语音/LLM/搜索的 endpoint 与 key 默认全空（未注入即不启用）
+    assert env["ASR_CLOUD_ENDPOINT"] == ""
+    assert env["ASR_CLOUD_API_KEY"] == ""
+    assert env["TTS_CLOUD_ENDPOINT"] == ""
+    assert env["TTS_CLOUD_API_KEY"] == ""
+    assert env["LLM_PROVIDER"] == ""
+    assert env["LLM_ENDPOINT"] == ""
+    assert env["LLM_API_KEY"] == ""
+    assert env["LLM_MODEL"] == ""
+    # provider selector 默认空 = 不覆盖模式默认路由（不启用任何云端能力）
+    assert env["ASR_PROVIDER"] == ""
+    assert env["TTS_PROVIDER"] == ""
+    assert env["EMBEDDING_PROVIDER"] == ""
+    assert env["SEARCH_PROVIDER"] == ""
+    assert env["SEARCH_CLOUD_ENDPOINT"] == ""
+    assert env["SEARCH_CLOUD_API_KEY"] == ""
+    # 模式/隐私/模型默认与 config.py Settings 应用默认一致
+    assert env["MODEL_ROUTE"] == "hybrid"
+    assert env["SEARCH_MODE"] == "local"
+    assert env["PRIVACY_STORE_AUDIO"] == "false"
+    assert env["PRIVACY_SEND_CONTEXT_TO_CLOUD"] == "true"
+    assert env["ASR_CLOUD_MODEL"] == "whisper-1"
+    assert env["TTS_CLOUD_MODEL"] == "tts-1"
+    # local voice 透传不受本次变更影响（M14-01 原有契约保持）
+    assert env["VOICE_MODE"] == "local"
 
 
 # ---------------------------------------------------------------- 门控真启动冒烟
