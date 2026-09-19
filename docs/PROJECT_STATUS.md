@@ -9,6 +9,31 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-59 Android current-main 真机物理冒烟证据回填（docs-only，单 local commit 不 push）**：分支/worktree
+`docs/m14-59-android-current-main-physical-smoke` 基于 `main@028e4bb`（PR #140
+merge）。把 supervisor 于 2026-09-19 04:03:13–04:05:34（GMT+8；UTC
+2026-09-18T20:03:13–20:05:34，duration 140.267316 s、exit_code 0）在同一
+worktree（冒烟时 detached `main@38de33f`，PR #139 squash，接手时
+tracked-clean）完成的第三次 Android current-main 真机物理冒烟转为仓库
+证据：18/18 阶段全 passed、mock 契约 19 expected / 0 unexpected / 19 total
+（task-owned mock 仅绑 `127.0.0.1:8110` + `adb reverse`，零生产请求）、
+logcat 阻塞计数（fatal/ANR/本包 crash）全 0、`has_blocking_issue=false`
+（`androidruntime_crash_count=42` 为 uiautomator I/D 级噪音）；Huawei
+MGA-AL00 serial `EYFBB22923201473`、APK 11,454,463 bytes / SHA-256
+`da54763f…c570`（与 M13-04/M14-48/M14-50 同哈希）。源码等价：
+`38de33f..028e4bb` 恰 2 提交对 `apps/android`/`tools/android_smoke`/
+`tests/android_smoke` 区间 diff 为空。回填前只读复核：源证据 19 文件 /
+1,815,238 bytes 逐文件 SHA-256 + 确定性聚合清单 SHA-256 `74cc3883…a8708f`、
+summary.json 3,455 bytes；与 M14-50 已归档 run 五项区分（summary 哈希 /
+logcat 行数 / duration / 执行窗口 / mock 端口），本 run 无 REPORT.md。
+诚实边界：仅证明 USB 真机 loopback mock 冒烟——不证明真实 provider /
+生产 API / 生产 DB / 云语音检索 LLM / 长期稳定性；本回填回合零设备
+运行、零生产触碰、零代码改动、不 push、不建 PR；
+`production_ready=false` 不变。证据：
+`docs/evidence/m14-59-android-current-main-physical-smoke/README.md`。
+
+## 前一任务（M14-54 审计归档调度器生产验收回填——已随 PR #137 合并 main；Android current-main 真机物理冒烟回填由 M14-59 接续）
+
 **M14-54 审计归档调度器生产验收回填（docs-only，单 local commit 不 push）**：分支/worktree
 `docs/m14-54-audit-archive-scheduler-production` 基于 `main@5ab05c3`（PR #136
 merge，merge 后 main CI run `35362172745` 五项 job 全部 success）。把 supervisor
