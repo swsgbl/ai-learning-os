@@ -168,7 +168,12 @@ services:
       LLM_MODEL: ${AIOS_LLM_MODEL:-}
       # 部署 runbook 与 LLM_PROVIDER 并列的 embedding selector：默认空
       EMBEDDING_PROVIDER: ${AIOS_EMBEDDING_PROVIDER:-}
-      # M5-01 cloud-web 搜索槽位：全部默认空 = 未配置云端搜索
+      # M5-01 cloud-web 搜索槽位：全部默认空 = 未配置云端搜索。
+      # M14-66: 本地 SearXNG 栈（searxng 服务，--profile search 启用）的
+      # compose 网络内端点是 http://searxng:8080——显式注入
+      # AIOS_SEARCH_MODE=cloud + AIOS_SEARCH_CLOUD_ENDPOINT=http://searxng:8080
+      # 后 cloud-web 才出站（providers.py 三门判定缺一 fail-closed，默认
+      # 渲染零变化，非搜索路径不隐式启用 context 出站）
       SEARCH_PROVIDER: ${AIOS_SEARCH_PROVIDER:-}
       SEARCH_CLOUD_ENDPOINT: ${AIOS_SEARCH_CLOUD_ENDPOINT:-}
       SEARCH_CLOUD_API_KEY: ${AIOS_SEARCH_CLOUD_API_KEY:-}
@@ -251,6 +256,54 @@ services:
       api:
         condition: service_healthy
 
+  searxng:
+    # M14-66: 本地 SearXNG 元搜索（cloud-web 搜索源的自托管后端）。官方镜像
+    # digest pin（supervisor 核验）——不可变供应链锚点，升级 = 显式改 digest。
+    # 容器端口保持官方 8080；宿主 8878（8080 已被本机无关进程占用，绝不映射）。
+    # API 侧不经宿主端口访问——compose 网络内用 http://searxng:8080（见 api
+    # 服务 SEARCH_CLOUD_ENDPOINT 注释的显式接线配方）。
+    # 详见 docs/evidence/m14-66-searxng-local-provider/
+    image: docker.io/searxng/searxng@sha256:6869f20676fd91e3f856bcaefc510bc363fdd126f7bd860f49f2ffcb3b305da0
+    restart: unless-stopped
+    environment:
+      # 生产 secret 注入路径：AIOS_SEARXNG_SECRET 优先，回落通用
+      # SEARXNG_SECRET，均未设 = dev 占位（与 ./searxng/settings.yml 的
+      # server.secret_key 回退同一字面量，静态测试锁两处一致防漂移）。
+      # 镜像在加载期以 SEARXNG_SECRET 覆盖 server.secret_key（与 :ro
+      # 挂载兼容）；真实 secret 只放部署 secret/.env，不入库
+      SEARXNG_SECRET: ${AIOS_SEARXNG_SECRET:-${SEARXNG_SECRET:-aios-searxng-local-secret-8e4b2c91d7f3}}
+      # M14-66 出站代理显式控制（可选）：受管网络直连上游引擎超时的部署，
+      # 经部署 env 注入 AIOS_SEARXNG_HTTP_PROXY / AIOS_SEARXNG_HTTPS_PROXY
+      # / AIOS_SEARXNG_NO_PROXY——compose 不硬编码任何代理地址/端口（静态
+      # 与渲染测试双锁），默认恒空 = 直连出站（空值被 urllib getproxies 忽略
+      # ，不产生代理行为）。刻意不设通用 HTTP_PROXY 回落链：代理启用恒为
+      # 部署显式行为，绝不隐式继承宿主 shell 的通用代理 env。仅大写单形：
+      # SearXNG 出站栈 httpx 经 urllib getproxies 大小写不敏感读取，单形即
+      # 全量生效；不镜像小写双形（徒增漂移面，且只读小写的客户端会把容器
+      # 内回环健康检查送进代理）。NO_PROXY 同链显式透传（不经代理的目标）
+      HTTP_PROXY: ${AIOS_SEARXNG_HTTP_PROXY:-}
+      HTTPS_PROXY: ${AIOS_SEARXNG_HTTPS_PROXY:-}
+      NO_PROXY: ${AIOS_SEARXNG_NO_PROXY:-}
+    volumes:
+      # 仓库受控配置只读挂载（formats html+json / limiter false / 私有实例）
+      - ./searxng/settings.yml:/etc/searxng/settings.yml:ro
+      # 命名缓存卷：容器重建/镜像升级不丢搜索缓存
+      - searxng-cache:/var/cache/searxng
+    ports:
+      # 恒绑 loopback：仅本机使用，绝不暴露 LAN/外网（与数据服务同款边界；
+      # AIOS_BIND_IP 边缘绑定语义不适用于本服务——搜索栈无 LAN 暴露需求）
+      - "127.0.0.1:8878:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:8080/healthz || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    # 显式部署控制：仅 --profile search 启动（搜索是显式启用的出站能力，
+    # 不随基础栈隐式拉起；不挂 local/hybrid/cloud 语音 profile——语音模式
+    # 与搜索模式是两独立开关，互不隐含）
+    profiles: ["search"]
+
 volumes:
   postgres-data:
   minio-data:
+  searxng-cache:

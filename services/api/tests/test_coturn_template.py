@@ -79,7 +79,7 @@ def test_main_compose_has_no_coturn_service() -> None:
     raw = MAIN_COMPOSE.read_text(encoding="utf-8")
     assert "coturn" not in raw.lower()
     model = yaml.safe_load(raw)
-    assert set(model["services"]) == {"postgres", "redis", "minio", "api", "livekit", "web"}
+    assert set(model["services"]) == {"postgres", "redis", "minio", "api", "livekit", "web", "searxng"}
     assert "include" not in model, "主栈不得经 include 引入 coturn 文件"
 
 

@@ -1190,6 +1190,53 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
 - 冒烟脚本契约由 `services/api/tests/test_smoke_search_script.py` 锁定（不触网：
   env 缺失 FAIL、探针失败传播、文本契约与零敏感回显）。
 
+## 本地 SearXNG provider 栈与搜索 profile（M14-66）
+
+- 生产本地版可用自有 SearXNG 替代外部公共检索端点：`docker compose -f
+  infra/docker-compose.yml --profile search up -d`——searxng 挂独立 `search`
+  profile（与语音 profile 相互独立，不挂即不拉起），官方镜像 digest 精确 pin、
+  仓库配置 `infra/searxng/settings.yml` 只读挂载（`use_default_settings: true` +
+  `formats: [html, json]`——json 是 CloudWebProvider 可用性硬前提，未启用 JSON
+  API 返回 403；`limiter/public_instance: false` 私有本地实例语义）、命名缓存卷
+  `searxng-cache`、healthcheck 探官方 `/healthz`、宿主暴露恒 `127.0.0.1:8878:8080`
+  （loopback-only；本机 8080 被无关进程占用，绝不映射）。
+- API 接线是部署侧显式注入（fail-closed 不变——`SEARCH_CLOUD_ENDPOINT` 默认恒
+  空，providers.py 三门判定缺一不启用）：`AIOS_SEARCH_MODE=cloud` +
+  `AIOS_SEARCH_CLOUD_ENDPOINT=http://searxng:8080`（compose 网络内端点，API 不经
+  宿主端口）；secret 经 `AIOS_SEARXNG_SECRET`（或通用 `SEARXNG_SECRET`）注入，
+  真实 secret 只放部署 secret/.env，不入库（compose 插值默认与 settings.yml
+  回退是同一 dev 占位，跨文件漂移锁强制成对修改）。
+- 宿主侧冒烟：`SEARCH_CLOUD_ENDPOINT=http://127.0.0.1:8878 bash
+  infra/smoke_search.sh`——脚本对 NO_PROXY 与 no_proxy 双变量幂等追加回环条目
+  （127.0.0.1、localhost；仅追加不删改既有条目，不触碰 HTTP_PROXY 代理变量
+  本体）：WSL 继承代理下 loopback 请求会被发给系统代理而必然失败，双变量
+  缺一即失效（不同 HTTP 客户端读取大小写不一）；行为由 env-dump 桩测试 +
+  假代理对抗性复跑双重锁定。
+- **出站代理显式部署控制**（修正轮产品化）：受管/受限网络下容器直连上游
+  引擎可能超时（本机初始轮实证全引擎 timeout；修正轮同机直连却又可通——
+  本机出站边界随系统级网络/代理姿态漂移，如实记录），故代理启用必须是部署
+  **显式**行为——compose 经三个部署变量注入：`AIOS_SEARXNG_HTTP_PROXY` /
+  `AIOS_SEARXNG_HTTPS_PROXY` / `AIOS_SEARXNG_NO_PROXY`（容器访问宿主代理时
+  形如 `AIOS_SEARXNG_HTTPS_PROXY=http://host.docker.internal:<宿主代理端口>`，
+  api 服务已有 host-gateway 映射，searxng 侧同理需部署者保证可达性）。语义
+  （静态 + 渲染测试双锁）：默认恒空 = **直连出站**（空值被 urllib getproxies
+  忽略，不产生代理行为）；AIOS 单链、无通用 `HTTP_PROXY` 回落（宿主 shell
+  代理 env 绝不隐式进容器）；容器侧仅大写单形（SearXNG 出站栈 httpx 经
+  urllib getproxies 大小写不敏感读取，单形即全量生效；镜像 busybox wget
+  只读小写——容器内回环健康检查恒不经代理）；compose 零硬编码代理地址/
+  端口。**本机部署需要显式代理设置：具体地址/端口只放部署 env/secret，
+  绝不入库、不在文档回显**（两轮 live 全程未输出真实代理值）；
+  `smoke_search.sh` 的 NO_PROXY/no_proxy 回环旁路在代理形态下原样生效
+  （修正轮 compose 形态 live 验证：代理注入容器 healthy、healthz 200、真实
+  查询 results=20、smoke 全过 EXIT=0）。
+- 契约测试（聚焦六件套 **96 passed / 2 skipped**）：
+  `services/api/tests/test_searxng_local_provider.py`（静态面 16 项，含代理
+  槽位 AIOS 单链空默认形态 + searxng 服务面零硬编码代理地址）+
+  `test_compose_profiles.py` 的 M14-66 渲染断言（profile 门控 / secret 插值 /
+  端点接线 / 代理默认直连与显式透传 / unless-stopped，不启动容器）；证据见
+  `docs/evidence/m14-66-searxng-local-provider/README.md`（含修正轮 compose
+  形态 live 验证记录）。
+
 ## 云语音 provider 失败语义与真实端点冒烟（M10-13）
 
 - CloudOpenAiAsrProvider / CloudOpenAiTtsProvider（`app/voice/providers.py`）失败
