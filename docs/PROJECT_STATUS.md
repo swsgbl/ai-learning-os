@@ -9,6 +9,34 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-67 Release Readiness 证据链汇总（治理契约小修 + 真实产物聚合）**：worktree
+`D:\AI Learning OS\ai-learning-os\.claude\worktrees\m14-67-release-readiness` 分支
+`worktree-m14-67-release-readiness` 基于 `origin/main@a813b3b`（PR #149 merge
+commit `a813b3bfbd33a9f6318e21cbfd4b06d083b2c3ef`）。治理契约聚焦修复三文件
+（`app/ops/cli.py`、`app/ops/governance_evidence.py`、
+`tests/test_governance_evidence.py`）：governance-evidence 证据输出补
+`gate=step_id` 字段供聚合器按 gate 归口；批次改为条件必需——报告归零后零批次
+合法、报告仍有待决策项时仍强制至少一个成功 migrate 批次（fail-closed）。聚焦
+治理测试 82 passed、ruff 通过。证据目录
+`.verify/m14-67-release-readiness/evidence/` 15 文件（全部来自真实运行产物或据
+其确定性包装，无发明 pass）：release-check all_green 10/10（API 3687
+passed/33 skipped）、CI run 35441378690 @ a813b3b… success、backup-restore
+verified（manifest SHA 772c76c9…，回灌 32 行）、preflight pre 4/1/0、post
+5/0/0、审计链 valid（0 entries）+ anchor up-to-date（1 锚）+ WORM archived、
+治理两步 pending=0、provider 冒烟 search=pass / cloud-voice=fail / llm=fail
+（云凭证缺失，如实记录）。三聚合器输出（artifacts/temp/m14-67/，gitignored）：
+cutover-rehearsal exit 1（10/13 pass；blocked: cloud-voice-smoke、llm-smoke；
+not_executed: cutover-approval）、release-readiness exit 1（pass=7/blocked=1/
+missing=2；provider-smoke blocked、turn-tls 与 release-approval missing）、
+production-evidence-gap exit 1（production_ready=false 固定）。诚实边界：未重跑
+release-check-isolated 与生产 backup/restore（沿用既有真实产物）；生产栈
+（aios-m14-03-production-rehearsal，7 healthy）零触碰；cutover-approval 与
+release-approval 按流程由审批人填写（本任务不创建）；turn-tls optional 缺失
+如实透出。production_ready=false。证据：
+`docs/evidence/m14-67-release-readiness/README.md`。
+
+## 前一任务（M14-66 本地 SearXNG provider 栈——单 local commit 完成、不 push；release readiness 证据链由 M14-67 接续）
+
 **M14-66 本地 SearXNG provider 栈（开发切片，单 local commit 不 push）**：worktree
 `D:\AI Learning OS\ai-learning-os-worktrees\m14-66-searxng-local-provider` 分支
 `feature/m14-66-searxng-local-provider` 基于 `origin/main@13fdcbe`。给
@@ -55,62 +83,6 @@ live 验证用任务自有隔离容器（非 compose 全栈真启动，后者是
 `docs/evidence/m14-66-searxng-local-provider/README.md`（两轮 live 原始
 证据分别 gitignored `.verify/m14-66-searxng-local-provider-live/` 与
 `.verify/m14-66-searxng-local-provider-compose-live/`）。
-
-## 前一任务（M14-65 云端 TTS 音色配置——单 local commit 完成、不 push；本地 SearXNG 搜索栈由 M14-66 接续）
-
-**M14-65 云端 TTS 音色配置（开发切片，单 local commit 不 push）**：worktree
-`D:\AI Learning OS\ai-learning-os-worktrees\m14-65-cloud-tts-voice` 分支
-`feature/m14-65-cloud-tts-voice` 基于
-`origin/main@cdd27ae90414ea2639086c9a8d111b9081d5bf40`。闭合 M4-02 云端 TTS
-槽位缺口：OpenAI 兼容 `POST {endpoint}/audio/speech` 请求体此前不带 `voice`
-字段，BigModel 官方端点无法按预置音色发音。新增端到端 `AIOS_TTS_CLOUD_VOICE`
-（默认 `tongtong`——BigModel 官方 `glm-tts` 预置音色，开发前 web 检索官方文档
-核实）：`config.py` Settings `tts_cloud_voice` 剥空白归一（空=请求不带
-voice，端点侧默认音色）→ `CloudOpenAiTtsProvider` 加可选 `voice` 参数纯透传
-（默认值单一来源在 Settings）→ `_build_tts` 云端分支布线 → compose
-`TTS_CLOUD_VOICE: ${AIOS_TTS_CLOUD_VOICE:-tongtong}`（未设/置空均回落，容器
-形态无省略表示）→ `smoke_voice_cloud.sh` 第三个可选覆盖（置空回落，不回显）。
-本地 CosyVoice 请求体逐字节不变（共用实现 `voice=None` 省略键，云端音色绝不
-发给本地 provider，测试锁定）；失败文案脱敏与 RIFF/WAV 校验不变。测试（主仓
-canonical venv）：provider 聚焦 35 passed（+5 新增）、smoke 脚本契约 + 隐私
-守卫 13 passed、compose 渲染 8 passed 1 skipped（`AIOS_COMPOSE_SMOKE` 门控真
-启动，环境性跳过）。诚实边界：本切片零真实 provider 调用（全部
-MockTransport），真实 BigModel 端点（`glm-tts` + `tongtong`）冒烟留给运维显式
-执行 `bash infra/smoke_voice_cloud.sh`；`TTS_CLOUD_MODEL` 默认 `tts-1` 不变
-（BigModel 部署按 runbook 显式注入）；PRIVACY_RELEVANT 不变（voice 非隐私
-边界，数据流向不变）。证据：
-`docs/evidence/m14-65-cloud-tts-voice/README.md`。
-
-**M14-63 Release Candidate 独立验收证据回填（docs-only，单 local commit 不 push）**：分支/worktree
-`docs/m14-63-release-candidate-evidence` 基于
-`main@6ef12f878e1e3c774404478dc80099208edcbb57`（PR #145 merge；功能提交
-`b5d458ef66d1d7e780f066ca18658904c6ea22a8`——RC builder 冒烟前按 compose
-锚定构建本地 MinIO 镜像，MinIO 不入 API/Web 归档与 manifest；PR #145
-checks 与合并后 main CI 两组五项 job 均 all-success）。把 supervisor 完成
-的 v0.1.0 Release Candidate 构建与独立文件级校验转为仓库证据：RC
-workflow run `35425921605`（`Release Candidate (manual only)` 手动触发，
-head=main `6ef12f8…`，tag `v0.1.0`，06:11–06:15Z）conclusion success；
-artifact `10579069779` `release-candidate-v0.1.0` outer 197,012,661
-bytes，GitHub API digest 与本地 gh API 原样下载实测 SHA-256
-`097b324a…c46b0` 逐字节互证一致；包内恰 4 文件逐档哈希锚定：
-`aios-api-v0.1.0.tar` 331,864,576 B / `61881604…4402`、
-`aios-web-v0.1.0.tar` 239,172,096 B / `8adf4466…9f50`、
-`release-manifest.json` 2,022 B / `03d5113b…a4e5`、`SHA256SUMS` 260 B /
-`b7ea75b2…def93`（两个 `.tar` 未打开未解析，内容事实来自 manifest 与
-哈希互证）；独立校验（主仓 canonical venv，于 services/api）
-`python -m app.ops.cli release-candidate verify` exit 0、`ok=true`、
-6/6 checks pass（version_tag_consistency、version_file_consistency、
-checksums_coverage、archive_hash ×3），未加载任何 Docker 镜像（verify
-设计即文件级校验；镜像可运行性以 RC workflow 内 compose 冒烟 smoke
-passed 为准）。诚实边界：RC 是 workflow artifact 而非 GitHub
-Release——无 registry push、无 git tag 创建、无 GitHub Release 发布、
-无发布审批；artifact 保留期 expires_at 2026-10-03T06:15:30Z，到期后需
-重新触发再验收；local Release Candidate 口径不是 production readiness、
-不授权任何部署；真实 provider 凭证与冒烟、soak 长稳、release
-readiness / 发布审批与 Harmony 真机收口仍开放；本回填零生产触碰、零
-代码/测试/工作流改动、不 push、不建 PR；`production_ready=false`
-不变。证据：`docs/evidence/m14-63-release-candidate-verification/README.md`
-（README 为唯一入库证据文件）。
 
 ## 前一任务（M14-61 production current-main 切换证据回填——已随 PR #144 合并 main；release candidate 验证证据回填由 M14-63 接续）
 
