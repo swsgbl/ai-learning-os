@@ -7,7 +7,8 @@
 - 探针成功（stub python exit 0）：脚本打印 ALL VOICE CLOUD SMOKE CHECKS PASSED；
 - 文本契约：真实 CloudOpenAiAsrProvider/CloudOpenAiTtsProvider 导入、ASR/TTS 双
   探针、必填 env 名、RIFF/WAV 判据、非空转写与 casefold 期望文本、VOICE_SMOKE_TEXT
-  覆盖、脚本源码无 Authorization/Bearer/密钥形态回显。
+  覆盖、TTS_CLOUD_VOICE 音色覆盖（M14-65，默认 tongtong）、脚本源码无
+  Authorization/Bearer/密钥形态回显。
 
 真实端点冒烟留给运维显式执行（bash infra/smoke_voice_cloud.sh）——本套件不发起
 任何网络请求（探针 python 以 true/false 替身代替，全部 env 检查在 bash 层失败或
@@ -52,11 +53,13 @@ SMOKE_ENV_KEYS = (
     "ASR_SMOKE_AUDIO",
     "VOICE_SMOKE_TEXT",
     "ASR_SMOKE_EXPECTED_TEXT",
+    "TTS_CLOUD_VOICE",
     "PYTHON",
 )
 
-#: 七个必填键（脚本对每个都显式 FAIL）；VOICE_SMOKE_TEXT / ASR_SMOKE_EXPECTED_TEXT
-#: 是窄口径可选覆盖，PYTHON 是测试注入替身用的执行器覆盖。
+#: 七个必填键（脚本对每个都显式 FAIL）；VOICE_SMOKE_TEXT / ASR_SMOKE_EXPECTED_TEXT /
+#: TTS_CLOUD_VOICE 是窄口径可选覆盖（M14-65 音色，默认 tongtong），PYTHON 是
+#: 测试注入替身用的执行器覆盖。
 REQUIRED_ENV_KEYS = SMOKE_ENV_KEYS[:7]
 
 #: 环境变量名白名单形态（键来自测试自身，注入 bash -c 前校验防拼接）
@@ -77,6 +80,7 @@ STUB_ENV = {
     "TTS_CLOUD_API_KEY": "stub-tts-key",
     "TTS_CLOUD_MODEL": "stub-tts-model",
     "ASR_SMOKE_AUDIO": "README.md",
+    "TTS_CLOUD_VOICE": "stub-tts-voice",
 }
 
 
@@ -156,6 +160,9 @@ def test_script_text_contract() -> None:
     assert "AI Learning OS cloud voice smoke" in text
     assert "ASR_SMOKE_EXPECTED_TEXT" in text
     assert "casefold" in text
+    # M14-65: 云端 TTS 音色可选覆盖（默认 tongtong，随 provider 构造透传）
+    assert "TTS_CLOUD_VOICE" in text
+    assert "tongtong" in text
     # PASS 门槛：非空转写 + RIFF/WAV 头（response_format=wav）
     assert "非空" in text
     assert "RIFF" in text

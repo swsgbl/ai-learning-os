@@ -17,14 +17,16 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.core.config import get_settings
+from app.core.config import Settings, get_settings
 from app.main import create_app
 from app.voice.providers import (
     LOCAL_ASR,
     LOCAL_TTS,
+    TTS_LOCAL_COSYVOICE,
     CloudOpenAiAsrProvider,
     CloudOpenAiTtsProvider,
     FakeAsrProvider,
+    LocalCosyVoiceTtsProvider,
     ProviderUnavailable,
     ToneTtsProvider,
     _sine_wav,
@@ -520,3 +522,109 @@ def test_synthesize_fallback_header_when_cloud_unconfigured(monkeypatch) -> None
         response = client.post("/api/v1/voice/synthesize", json={"text": "混合模式"})
         assert response.headers["x-voice-provider"] == "tone"
         assert response.headers["x-voice-fallback"] == "1"
+
+
+# ---------- M14-65：云端 TTS 音色透传（voice 字段） ----------
+
+
+def test_settings_tts_cloud_voice_default_and_normalization() -> None:
+    """Settings：默认 tongtong（BigModel glm-tts 预置音色）；空白剥除；
+    显式置空合法 = 请求不带 voice 字段（端点侧默认音色决定）。"""
+    assert Settings(_env_file=None).tts_cloud_voice == "tongtong"
+    assert Settings(_env_file=None, tts_cloud_voice="  tongtong  ").tts_cloud_voice == "tongtong"
+    assert Settings(_env_file=None, tts_cloud_voice="   ").tts_cloud_voice == ""
+
+
+def test_cloud_tts_sends_voice_in_request_body() -> None:
+    """voice 非空 → /audio/speech 请求体带 voice 字段（音色随合成请求出站）。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["voice"] == "tongtong"
+        assert payload["model"] == "glm-tts"
+        assert payload["response_format"] == "wav"  # WAV 契约不因音色改变
+        return httpx.Response(200, content=_sine_wav(0.4), headers={"Content-Type": "audio/wav"})
+
+    async def body() -> None:
+        provider = CloudOpenAiTtsProvider(
+            "https://cloud.example.invalid/v1",
+            "test-key",
+            "glm-tts",
+            voice="tongtong",
+            transport=httpx.MockTransport(handler),
+        )
+        result = await provider.synthesize("文本")
+        assert result.audio[:4] == b"RIFF" and result.audio[8:12] == b"WAVE"
+
+    asyncio.run(body())
+
+
+def test_cloud_tts_omits_voice_field_when_unset_or_blank() -> None:
+    """voice 未传/空串/纯空白 → 请求体不带 voice 键（中性默认：端点侧音色）。"""
+    seen: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, content=_sine_wav(0.4), headers={"Content-Type": "audio/wav"})
+
+    async def body() -> None:
+        for voice in (None, "", "   "):
+            provider = CloudOpenAiTtsProvider(
+                "https://cloud.example.invalid/v1",
+                "test-key",
+                "tts-1",
+                voice=voice,
+                transport=httpx.MockTransport(handler),
+            )
+            await provider.synthesize("文本")
+
+    asyncio.run(body())
+    assert len(seen) == 3
+    for payload in seen:
+        assert "voice" not in payload
+        assert payload["response_format"] == "wav"
+
+
+def test_local_tts_request_body_does_not_include_voice() -> None:
+    """本地 CosyVoice TTS 请求体不含 voice 键——云端音色只属于 cloud-openai-tts，
+    共用实现的本地行为保持逐字节不变。"""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert "voice" not in payload
+        return httpx.Response(200, content=_sine_wav(0.4), headers={"Content-Type": "audio/wav"})
+
+    async def body() -> None:
+        provider = LocalCosyVoiceTtsProvider(
+            "http://127.0.0.1:8011/v1",
+            transport=httpx.MockTransport(handler),
+        )
+        result = await provider.synthesize("文本")
+        assert result.audio[:4] == b"RIFF"
+
+    asyncio.run(body())
+
+
+def test_build_tts_wires_cloud_voice_from_settings() -> None:
+    """_build_tts：云端分支透传 settings.tts_cloud_voice（默认单一来源 tongtong）；
+    本地分支不消费云端音色。"""
+    from app.api.routes.voice import _build_tts
+
+    settings = Settings(
+        _env_file=None,
+        tts_cloud_endpoint="https://cloud.example.invalid/v1",
+        tts_cloud_api_key="test-key",
+        tts_cloud_model="glm-tts",
+        tts_cloud_voice="chuichui",
+    )
+    provider = _build_tts(settings, "cloud-openai-tts")
+    assert isinstance(provider, CloudOpenAiTtsProvider)
+    assert provider._voice == "chuichui"
+
+    default_provider = _build_tts(Settings(_env_file=None), "cloud-openai-tts")
+    assert isinstance(default_provider, CloudOpenAiTtsProvider)
+    assert default_provider._voice == "tongtong"  # Settings 默认 = 构造默认
+
+    local = _build_tts(Settings(_env_file=None, tts_local_endpoint="http://127.0.0.1:8011/v1"), TTS_LOCAL_COSYVOICE)
+    assert isinstance(local, LocalCosyVoiceTtsProvider)
+    assert not hasattr(local, "_voice")  # 本地 provider 无音色槽位

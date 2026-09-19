@@ -9,6 +9,31 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-65 云端 TTS 音色配置（开发切片，单 local commit 不 push）**：worktree
+`D:\AI Learning OS\ai-learning-os-worktrees\m14-65-cloud-tts-voice` 分支
+`feature/m14-65-cloud-tts-voice` 基于
+`origin/main@cdd27ae90414ea2639086c9a8d111b9081d5bf40`。闭合 M4-02 云端 TTS
+槽位缺口：OpenAI 兼容 `POST {endpoint}/audio/speech` 请求体此前不带 `voice`
+字段，BigModel 官方端点无法按预置音色发音。新增端到端 `AIOS_TTS_CLOUD_VOICE`
+（默认 `tongtong`——BigModel 官方 `glm-tts` 预置音色，开发前 web 检索官方文档
+核实）：`config.py` Settings `tts_cloud_voice` 剥空白归一（空=请求不带
+voice，端点侧默认音色）→ `CloudOpenAiTtsProvider` 加可选 `voice` 参数纯透传
+（默认值单一来源在 Settings）→ `_build_tts` 云端分支布线 → compose
+`TTS_CLOUD_VOICE: ${AIOS_TTS_CLOUD_VOICE:-tongtong}`（未设/置空均回落，容器
+形态无省略表示）→ `smoke_voice_cloud.sh` 第三个可选覆盖（置空回落，不回显）。
+本地 CosyVoice 请求体逐字节不变（共用实现 `voice=None` 省略键，云端音色绝不
+发给本地 provider，测试锁定）；失败文案脱敏与 RIFF/WAV 校验不变。测试（主仓
+canonical venv）：provider 聚焦 35 passed（+5 新增）、smoke 脚本契约 + 隐私
+守卫 13 passed、compose 渲染 8 passed 1 skipped（`AIOS_COMPOSE_SMOKE` 门控真
+启动，环境性跳过）。诚实边界：本切片零真实 provider 调用（全部
+MockTransport），真实 BigModel 端点（`glm-tts` + `tongtong`）冒烟留给运维显式
+执行 `bash infra/smoke_voice_cloud.sh`；`TTS_CLOUD_MODEL` 默认 `tts-1` 不变
+（BigModel 部署按 runbook 显式注入）；PRIVACY_RELEVANT 不变（voice 非隐私
+边界，数据流向不变）。证据：
+`docs/evidence/m14-65-cloud-tts-voice/README.md`。
+
+## 前一任务（M14-63 Release Candidate 独立验收证据回填——单 local commit 完成、不 push；云端 TTS 音色配置由 M14-65 接续）
+
 **M14-63 Release Candidate 独立验收证据回填（docs-only，单 local commit 不 push）**：分支/worktree
 `docs/m14-63-release-candidate-evidence` 基于
 `main@6ef12f878e1e3c774404478dc80099208edcbb57`（PR #145 merge；功能提交

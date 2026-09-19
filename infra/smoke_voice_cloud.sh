@@ -5,9 +5,11 @@
 #   ASR_CLOUD_MODEL、TTS_CLOUD_ENDPOINT、TTS_CLOUD_API_KEY、TTS_CLOUD_MODEL（OpenAI
 #   兼容 /audio/transcriptions 与 /audio/speech 端点）与 ASR_SMOKE_AUDIO（真实短
 #   WAV 文件路径，内容应是含语音的音频——key 只经环境变量注入，不回显）。
-# 可选覆盖（窄口径，仅这两个）：VOICE_SMOKE_TEXT（TTS 合成文本，默认
+# 可选覆盖（窄口径，仅这三个）：VOICE_SMOKE_TEXT（TTS 合成文本，默认
 #   "AI Learning OS cloud voice smoke"）；ASR_SMOKE_EXPECTED_TEXT（设置时要求其
-#   casefold 文本出现在 casefold 转写中——用于锁定真实可懂转写而非任意输出）。
+#   casefold 文本出现在 casefold 转写中——用于锁定真实可懂转写而非任意输出）；
+#   TTS_CLOUD_VOICE（云端 TTS 音色，默认 tongtong——BigModel 官方 glm-tts 预置
+#   音色；置空回落该默认，不回显）。
 # PASS 门槛：ASR 转写非空（设置了期望文本则 casefold 包含）且 TTS 响应非空并带
 #   RIFF/WAV 头（请求 response_format=wav）——绝不虚构「通过」。
 # 输出脱敏：只打印 provider/转写长度/TTS 字节数等摘要，不打印 endpoint、key、
@@ -49,8 +51,9 @@ tts = CloudOpenAiTtsProvider(
     os.environ["TTS_CLOUD_ENDPOINT"].strip(),
     os.environ["TTS_CLOUD_API_KEY"].strip(),
     os.environ["TTS_CLOUD_MODEL"].strip(),
+    voice=(os.environ.get("TTS_CLOUD_VOICE") or "").strip() or "tongtong",
 )
-# 可选覆盖的窄口径默认值（不引入第三个开关）
+# 可选覆盖的窄口径默认值（不引入第四个开关）
 text = os.environ.get("VOICE_SMOKE_TEXT") or "AI Learning OS cloud voice smoke"
 expected = (os.environ.get("ASR_SMOKE_EXPECTED_TEXT") or "").strip()
 
