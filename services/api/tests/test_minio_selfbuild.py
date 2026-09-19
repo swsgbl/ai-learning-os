@@ -56,7 +56,10 @@ EXPECTED_HEALTHCHECK_CMD = (
     "wget -q -O /dev/null http://127.0.0.1:9000/minio/health/cluster || exit 1"
 )
 
-SIX_SERVICES = {"postgres", "redis", "minio", "api", "livekit", "web"}
+#: M14-66: compose 静态服务全集——基础 5 + livekit（语音 profile）+
+#: searxng（search profile）。渲染面按 profile 门控（渲染测试见
+#: test_compose_restart_policy.py / test_compose_profiles.py），此处锁 YAML 全集。
+COMPOSE_SERVICES = {"postgres", "redis", "minio", "api", "livekit", "web", "searxng"}
 
 
 @pytest.fixture(scope="module")
@@ -326,9 +329,11 @@ def test_api_depends_on_minio_healthy(compose: dict) -> None:
     assert depends["minio"] == {"condition": "service_healthy"}
 
 
-def test_six_service_set_unchanged(compose: dict) -> None:
-    """六服务集合与各服务 profile 归属不变（minio 属无 profile 基础面）。"""
-    assert set(compose["services"]) == SIX_SERVICES
+def test_service_set_and_profile_membership_unchanged(compose: dict) -> None:
+    """服务全集与各服务 profile 归属不变（minio 属无 profile 基础面；
+    searxng 属独立 search profile——M14-66，不随语音/基础栈隐式拉起）。"""
+    assert set(compose["services"]) == COMPOSE_SERVICES
     for name in ("postgres", "redis", "minio", "api", "web"):
         assert "profiles" not in compose["services"][name], name
     assert set(compose["services"]["livekit"]["profiles"]) == {"local", "hybrid", "cloud"}
+    assert compose["services"]["searxng"]["profiles"] == ["search"]

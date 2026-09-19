@@ -1,0 +1,25 @@
+# M14-66: 本地 SearXNG 私有实例配置（compose 只读挂载 /etc/searxng/settings.yml）。
+# 官方镜像默认 search.formats 只有 html——JSON API（CloudWebProvider format=json）
+# 未显式启用时一律 403，故本文件必须显式列出 html+json。只覆盖私有本地实例
+# 必需的最小键，其余继承上游默认（use_default_settings）。
+use_default_settings: true
+
+server:
+  # secret_key 回退占位（与 docker-compose.yml searxng 服务 SEARXNG_SECRET
+  # 插值默认是同一字面量——静态测试锁两处一致防漂移）：仅供 loopback 私有
+  # 实例与直连 docker run 场景，不是生产凭据。生产经部署 secret 注入
+  # AIOS_SEARXNG_SECRET / SEARXNG_SECRET 覆盖（镜像 settings_defaults 按
+  # environ_name=SEARXNG_SECRET 在加载期覆盖 server.secret_key，与 :ro
+  # 挂载兼容）。真实 secret 绝不入库。
+  secret_key: "aios-searxng-local-secret-8e4b2c91d7f3"
+  # 私有实例：无外部爬虫面——limiter 关闭（bot 防护语义面向公网部署）
+  limiter: false
+  # 非公开实例：不参与公开实例清单语义
+  public_instance: false
+
+search:
+  # html（浏览器人用）+ json（cloud-web 搜索源 API 用）——json 是
+  # CloudWebProvider 可用性的硬前提（默认只 html 时 JSON 请求 403）
+  formats:
+    - html
+    - json

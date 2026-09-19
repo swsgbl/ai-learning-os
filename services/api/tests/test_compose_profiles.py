@@ -272,6 +272,142 @@ def test_provider_env_empty_tts_voice_falls_back_to_default() -> None:
     assert env["TTS_CLOUD_VOICE"] == "tongtong"
 
 
+# ------------------------------------------------- M14-66 本地 SearXNG 搜索栈
+
+#: searxng secret 注入链的宿主侧变量（渲染断言显式剔除，隔离本机环境）
+SEARXNG_SECRET_ENV_KEYS = ("AIOS_SEARXNG_SECRET", "SEARXNG_SECRET")
+
+#: M14-66 出站代理透传的宿主侧变量（默认渲染断言显式剔除，隔离本机环境）
+SEARXNG_PROXY_ENV_KEYS = (
+    "AIOS_SEARXNG_HTTP_PROXY",
+    "AIOS_SEARXNG_HTTPS_PROXY",
+    "AIOS_SEARXNG_NO_PROXY",
+)
+
+#: compose 插值默认回落占位（与 infra/searxng/settings.yml 的 server.secret_key
+#: 同一字面量——静态一致性锁见 test_searxng_local_provider.py）
+SEARXNG_FALLBACK_SECRET = "aios-searxng-local-secret-8e4b2c91d7f3"
+
+#: supervisor 核验的官方镜像 digest pin（不可变供应链锚点）
+SEARXNG_IMAGE = (
+    "docker.io/searxng/searxng@sha256:"
+    "6869f20676fd91e3f856bcaefc510bc363fdd126f7bd860f49f2ffcb3b305da0"
+)
+
+
+def _searxng_env(model: dict) -> dict[str, str]:
+    env = model["services"]["searxng"]["environment"]
+    return env if isinstance(env, dict) else dict(entry.split("=", 1) for entry in env)
+
+
+@pytest.mark.skipif(not _compose_available(), reason="需要 docker compose CLI")
+def test_search_profile_renders_local_searxng_provider() -> None:
+    """M14-66：--profile search 渲染 searxng（digest pin / loopback 8878 /
+    unless-stopped）——基础 5 服务 + searxng，语音 livekit 不隐含（两独立开关）。"""
+    model = _render("search")
+    assert _services(model) == {"postgres", "redis", "minio", "api", "web", "searxng"}
+    svc = model["services"]["searxng"]
+    assert svc["image"] == SEARXNG_IMAGE
+    assert svc["restart"] == "unless-stopped"
+    # 宿主暴露恒为 loopback:8878 → 容器 8080（8080 被本机无关进程占用，绝不映射）
+    (port,) = svc["ports"]
+    assert port["host_ip"] == "127.0.0.1"
+    assert port["published"] == "8878"
+    assert port["target"] == 8080
+
+
+@pytest.mark.skipif(not _compose_available(), reason="需要 docker compose CLI")
+def test_searxng_absent_without_search_profile() -> None:
+    """M14-66：searxng 仅随 --profile search 渲染——无 profile 与三个语音
+    profile（local/hybrid/cloud）均不含它（搜索是显式部署控制，不随栈隐式拉起，
+    默认渲染零变化）。"""
+    for profile in (None, "local", "hybrid", "cloud"):
+        assert "searxng" not in _services(_render(profile)), profile
+
+
+@pytest.mark.skipif(not _compose_available(), reason="需要 docker compose CLI")
+def test_searxng_secret_passthrough_and_fallback() -> None:
+    """M14-66：secret 注入链 = AIOS_SEARXNG_SECRET 优先 → 通用 SEARXNG_SECRET
+    回落 → 双未设回落占位（`:-` 语义：置空同回落）。真实 secret 只经部署
+    secret/.env 注入，占位仅供本地 dev/直连 docker run。"""
+    aios = _render("search", {"AIOS_SEARXNG_SECRET": "synthetic-aios-secret"}, unset=SEARXNG_SECRET_ENV_KEYS)
+    assert _searxng_env(aios)["SEARXNG_SECRET"] == "synthetic-aios-secret"
+    generic = _render("search", {"SEARXNG_SECRET": "synthetic-generic-secret"}, unset=SEARXNG_SECRET_ENV_KEYS)
+    assert _searxng_env(generic)["SEARXNG_SECRET"] == "synthetic-generic-secret"
+    fallback = _render("search", unset=SEARXNG_SECRET_ENV_KEYS)
+    assert _searxng_env(fallback)["SEARXNG_SECRET"] == SEARXNG_FALLBACK_SECRET
+    emptied = _render("search", {"AIOS_SEARXNG_SECRET": ""}, unset=SEARXNG_SECRET_ENV_KEYS)
+    assert _searxng_env(emptied)["SEARXNG_SECRET"] == SEARXNG_FALLBACK_SECRET
+
+
+@pytest.mark.skipif(not _compose_available(), reason="需要 docker compose CLI")
+def test_local_searxng_endpoint_injection_renders_internal_url() -> None:
+    """M14-66：本地 SearXNG 接线配方渲染验证——显式注入 AIOS_SEARCH_MODE=cloud +
+    AIOS_SEARCH_CLOUD_ENDPOINT=http://searxng:8080（compose 网络内端点，API 不经
+    宿主端口）后两项透传 api env；不注入则默认空（providers.py 三门判定
+    fail-closed，非搜索路径不隐式启用 context 出站）。"""
+    wired = _render("search", {
+        "AIOS_SEARCH_MODE": "cloud",
+        "AIOS_SEARCH_CLOUD_ENDPOINT": "http://searxng:8080",
+    }, unset=PROVIDER_PASSTHROUGH_ENV_KEYS)
+    env = _api_env(wired)
+    assert env["SEARCH_MODE"] == "cloud"
+    assert env["SEARCH_CLOUD_ENDPOINT"] == "http://searxng:8080"
+
+    defaults = _render("search", unset=PROVIDER_PASSTHROUGH_ENV_KEYS)
+    default_env = _api_env(defaults)
+    assert default_env["SEARCH_MODE"] == "local"
+    assert default_env["SEARCH_CLOUD_ENDPOINT"] == ""
+
+
+@pytest.mark.skipif(not _compose_available(), reason="需要 docker compose CLI")
+def test_searxng_outbound_proxy_defaults_render_direct() -> None:
+    """M14-66 默认渲染：出站代理三槽位恒空 = 直连出站（空值被 httpx/urllib
+    忽略，不产生代理行为）——未注入部署变量时 compose 不引入任何代理；且
+    代理控制只属 searxng 出站栈，api 服务不沾代理变量（api→searxng 走
+    compose 网络内直连，绝不经代理路由）。"""
+    model = _render("search", unset=SEARXNG_PROXY_ENV_KEYS)
+    env = _searxng_env(model)
+    assert env["HTTP_PROXY"] == ""
+    assert env["HTTPS_PROXY"] == ""
+    assert env["NO_PROXY"] == ""
+    api_env = _api_env(model)
+    assert "HTTP_PROXY" not in api_env
+    assert "HTTPS_PROXY" not in api_env
+
+
+@pytest.mark.skipif(not _compose_available(), reason="需要 docker compose CLI")
+def test_searxng_outbound_proxy_explicit_passthrough() -> None:
+    """M14-66 显式注入：AIOS_SEARXNG_*_PROXY / NO_PROXY → 容器侧三槽位
+    原样透传（合成值断言，不涉真实代理地址）；容器侧仅大写单形——httpx
+    经 urllib getproxies 大小写不敏感读取，单形即全量生效（镜像小写双形
+    只添漂移面）；槽位独立，可只注入其一。"""
+    synthetic = "http://synthetic-proxy.invalid:1080"
+    wired = _render("search", {
+        "AIOS_SEARXNG_HTTP_PROXY": synthetic,
+        "AIOS_SEARXNG_HTTPS_PROXY": synthetic,
+        "AIOS_SEARXNG_NO_PROXY": "10.0.0.0/8,.internal.example",
+    }, unset=SEARXNG_PROXY_ENV_KEYS)
+    env = _searxng_env(wired)
+    assert env["HTTP_PROXY"] == synthetic
+    assert env["HTTPS_PROXY"] == synthetic
+    assert env["NO_PROXY"] == "10.0.0.0/8,.internal.example"
+    for lower in ("http_proxy", "https_proxy", "no_proxy"):
+        assert lower not in env, lower
+    # 注入代理后 api 服务仍不沾代理变量（作用域限定 searxng 出站栈）
+    api_env = _api_env(wired)
+    assert "HTTP_PROXY" not in api_env
+    assert "HTTPS_PROXY" not in api_env
+    # 槽位独立：仅注入 HTTPS 代理（最常见形态）时其余槽位保持空
+    https_only = _render(
+        "search", {"AIOS_SEARXNG_HTTPS_PROXY": synthetic}, unset=SEARXNG_PROXY_ENV_KEYS,
+    )
+    partial = _searxng_env(https_only)
+    assert partial["HTTPS_PROXY"] == synthetic
+    assert partial["HTTP_PROXY"] == ""
+    assert partial["NO_PROXY"] == ""
+
+
 # ---------------------------------------------------------------- 门控真启动冒烟
 
 def _wait_healthy(deadline_s: float = 420.0) -> dict[str, str]:

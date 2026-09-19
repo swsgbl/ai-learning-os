@@ -3,8 +3,11 @@
 - SEARCH_CLOUD_ENDPOINT 未设置：明确 FAIL（exit 1），绝不虚构「通过」；
 - 探针失败（stub python exit 1）：脚本 exit 1——fail-closed 传播；
 - 探针成功（stub python exit 0）：脚本打印 ALL SEARCH SMOKE CHECKS PASSED；
+- M14-66 回环代理绕过：env-dump 桩捕获脚本导出的 NO_PROXY/no_proxy——
+  空起点补齐回环条目、既有条目保留、幂等不重复、双变量（大小写）同步；
 - 文本契约：默认查询词、SEARCH_SMOKE_QUERY 覆盖、SEARCH_CLOUD_API_KEY 可选、
-  probe 使用真实 CloudWebProvider、脚本源码无 Authorization/密钥形态回显。
+  probe 使用真实 CloudWebProvider、脚本源码无 Authorization/密钥形态回显、
+  代理绕过只动 NO_PROXY/no_proxy（不触碰 HTTP_PROXY 代理变量本体）。
 
 真实端点冒烟留给运维显式执行（bash infra/smoke_search.sh）——本套件不发起
 任何网络请求（探针 python 以 true/false 替身代替，endpoint 检查在 env 层失败）。
@@ -36,8 +39,17 @@ SCRIPT_RELATIVE = "infra/smoke_search.sh"
 BASH = shutil.which("bash")
 
 #: 脚本感知的全部输入环境键——调用前在 bash 内 unset，保证宿主残留
-#: （含经 WSLENV 之类透传的）不影响各用例的起点环境。
-SMOKE_ENV_KEYS = ("SEARCH_CLOUD_ENDPOINT", "SEARCH_CLOUD_API_KEY", "SEARCH_SMOKE_QUERY", "PYTHON")
+#: （含经 WSLENV 之类透传的）不影响各用例的起点环境。M14-66: 代理绕过
+#: 修正读取并改写 NO_PROXY/no_proxy，这两个键也纳入确定性基线（env-dump
+#: 桩用例依赖空起点）。
+SMOKE_ENV_KEYS = (
+    "SEARCH_CLOUD_ENDPOINT",
+    "SEARCH_CLOUD_API_KEY",
+    "SEARCH_SMOKE_QUERY",
+    "PYTHON",
+    "NO_PROXY",
+    "no_proxy",
+)
 
 #: 环境变量名白名单形态（键来自测试自身，注入 bash -c 前校验防拼接）
 _ENV_KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
@@ -78,6 +90,33 @@ def _run_script(env_overrides: dict[str, str]) -> subprocess.CompletedProcess:
     return run_bash([BASH, "-c", command], timeout=60, cwd=REPO_ROOT)
 
 
+def _run_script_with_env_stub(env_overrides: dict[str, str]) -> subprocess.CompletedProcess:
+    """以 env-dump 桩 python 运行脚本：桩打印 NO_PROXY/no_proxy 导出值后 exit 0。
+
+    代理绕过修正发生在探针 exec 之前——桩在探针位置读到的是修正后的导出值，
+    据此锁定脚本对两个变量的实际改写（空起点补齐/保留追加/幂等）。桩文件在
+    bash 会话内 mktemp 创建、调用后清理（WSL 不继承 Windows env/路径，桩的
+    创建与引用全部发生在 bash 内；PYTHON 指桩需 export，非 export 赋值
+    不进子进程环境）。
+    """
+    for key in env_overrides:
+        assert _ENV_KEY_RE.fullmatch(key), f"非法环境变量名: {key}"
+    # 桩脚本两行：shebang + 单行 printf（[] 包值方便断言空串/精确串）
+    stub_setup = (
+        '_stub="$(mktemp)" && '
+        'printf \'%s\\n\' \'#!/usr/bin/env bash\' '
+        '\'printf "NO_PROXY=[%s] no_proxy=[%s]\\n" "$NO_PROXY" "$no_proxy"\' '
+        '> "$_stub" && chmod +x "$_stub"'
+    )
+    command = "; ".join(
+        [f"unset {' '.join(SMOKE_ENV_KEYS)}", stub_setup]
+        + [f"export {key}={shlex.quote(value)}" for key, value in env_overrides.items()]
+        # $_stub 是 mktemp 生成的 bash 变量，不能经 shlex.quote（保持引用原样）
+        + ['export PYTHON="$_stub"', shlex.quote(SCRIPT_RELATIVE), 'rc=$?', 'rm -f "$_stub"', 'exit $rc']
+    )
+    return run_bash([BASH, "-c", command], timeout=60, cwd=REPO_ROOT)
+
+
 def test_script_fails_when_endpoint_missing() -> None:
     """SEARCH_CLOUD_ENDPOINT 未设置：exit 1 + FAIL 消息（不虚构通过）。"""
     result = _run_script({})
@@ -105,6 +144,40 @@ def test_script_passes_when_probe_succeeds() -> None:
     assert "ALL SEARCH SMOKE CHECKS PASSED" in result.stdout
 
 
+# ------------------------------------------------- M14-66 回环代理绕过（env-dump 桩）
+
+def test_loopback_no_proxy_injected_from_empty() -> None:
+    """空起点：脚本为 NO_PROXY/no_proxy 双变量补齐回环条目（WSL 继承代理下
+    发往 127.0.0.1 的请求此前会被交给系统代理而必然失败）。"""
+    result = _run_script_with_env_stub({"SEARCH_CLOUD_ENDPOINT": "https://stub.invalid"})
+    assert result.returncode == 0, result.stderr
+    assert "NO_PROXY=[127.0.0.1,localhost] no_proxy=[127.0.0.1,localhost]" in result.stdout
+
+
+def test_loopback_no_proxy_preserves_existing_entries() -> None:
+    """既有条目保留：预置 corp 代理绕过条目时仅追加回环（不删改——非回环
+    endpoint 的代理行为不变）。"""
+    result = _run_script_with_env_stub({
+        "SEARCH_CLOUD_ENDPOINT": "https://stub.invalid",
+        "NO_PROXY": "corp.example,10.0.0.0/8",
+    })
+    assert result.returncode == 0, result.stderr
+    assert "NO_PROXY=[corp.example,10.0.0.0/8,127.0.0.1,localhost]" in result.stdout
+    assert "no_proxy=[127.0.0.1,localhost]" in result.stdout
+
+
+def test_loopback_no_proxy_idempotent_and_cross_case() -> None:
+    """幂等 + 双变量同步：仅小写预置 localhost 时，小写不重复（幂等追加
+    127.0.0.1），大写从零补齐（不同客户端读取大小写不一，缺一即失效）。"""
+    result = _run_script_with_env_stub({
+        "SEARCH_CLOUD_ENDPOINT": "https://stub.invalid",
+        "no_proxy": "localhost",
+    })
+    assert result.returncode == 0, result.stderr
+    assert "NO_PROXY=[127.0.0.1,localhost]" in result.stdout
+    assert "no_proxy=[localhost,127.0.0.1]" in result.stdout
+
+
 def test_script_text_contract() -> None:
     """脚本源码契约：必填 endpoint、可选 key、默认查询词、真实 provider、无敏感回显。"""
     text = SCRIPT.read_text(encoding="utf-8")
@@ -125,3 +198,11 @@ def test_script_text_contract() -> None:
     assert "Bearer" not in text
     for pattern in SECRET_PATTERNS:
         assert pattern not in text
+    # M14-66 回环代理绕过：双变量（大小写）与回环条目显式出现在源码中
+    assert "NO_PROXY" in text
+    assert "no_proxy" in text
+    assert "127.0.0.1" in text
+    assert "localhost" in text
+    # 代理变量本体不被触碰（只追加绕过条目，不改写代理行为）
+    assert "HTTP_PROXY" not in text
+    assert "http_proxy" not in text

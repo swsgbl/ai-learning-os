@@ -19,6 +19,25 @@ PYTHON="${PYTHON:-.venv/Scripts/python.exe}"
 [ -x "$PYTHON" ] || PYTHON=".venv/bin/python"
 [ -x "$PYTHON" ] || fail "找不到项目 venv python（用 PYTHON= 指定）"
 
+# M14-66: 回环端点绕过系统代理 —— WSL/开发机继承的 http(s)_proxy 会把发往
+# 127.0.0.1/localhost 的请求交给代理（代理多拒绝回环目标），本地 SearXNG
+# 冒烟必然失败。NO_PROXY 与 no_proxy 双变量同步补齐回环条目（不同客户端
+# 读取大小写不一）；仅追加不删改既有条目，非回环 endpoint 的代理行为不变。
+_ensure_loopback_no_proxy() {
+  local _cur _next _host
+  _cur="${!1:-}"
+  _next="$_cur"
+  for _host in 127.0.0.1 localhost; do
+    case ",$_next," in
+      *",$_host,"*) ;;
+      *) _next="$_next${_next:+,}$_host" ;;
+    esac
+  done
+  export "$1=$_next"
+}
+_ensure_loopback_no_proxy NO_PROXY
+_ensure_loopback_no_proxy no_proxy
+
 SEARCH_CLOUD_ENDPOINT="$SEARCH_CLOUD_ENDPOINT" SEARCH_CLOUD_API_KEY="${SEARCH_CLOUD_API_KEY:-}" SEARCH_SMOKE_QUERY="$QUERY" \
 "$PYTHON" - <<'PROBE_EOF'
 import asyncio

@@ -9,6 +9,55 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-66 本地 SearXNG provider 栈（开发切片，单 local commit 不 push）**：worktree
+`D:\AI Learning OS\ai-learning-os-worktrees\m14-66-searxng-local-provider` 分支
+`feature/m14-66-searxng-local-provider` 基于 `origin/main@13fdcbe`。给
+CloudWebProvider 补生产安全的本地检索源：生产本地版一条 `--profile search`
+拉起自有 SearXNG，云端搜索不再依赖外部公共服务。compose 新增 `searxng` 服务
+（官方镜像 digest 精确 pin、仓库 settings 只读挂载、命名缓存卷、`/healthz`
+健康检查、宿主暴露恒 `127.0.0.1:8878:8080` loopback-only——本机 8080 被无关
+进程占用绝不映射、`unless-stopped`）挂独立 `search` profile（与语音 profile
+相互独立，不挂不拉起，默认渲染零变化）；`infra/searxng/settings.yml` 最小覆盖
+（`use_default_settings: true` + `formats: [html, json]`——json 未启用 JSON
+API 即 403；`limiter/public_instance: false` 私有实例语义）；secret 注入链
+`AIOS_SEARXNG_SECRET:-SEARXNG_SECRET:-dev 占位` 嵌套插值——占位在 compose 与
+settings.yml 是同一字面量（跨文件漂移锁强制成对修改），零真实 secret 入库；
+api 接线是部署侧显式注入（`AIOS_SEARCH_MODE=cloud` +
+`AIOS_SEARCH_CLOUD_ENDPOINT=http://searxng:8080`），fail-closed 三门判定与
+默认空槽位原样保留——非搜索路径零隐式出站；修复 `infra/smoke_search.sh` WSL
+继承代理下 loopback 请求被发给系统代理的缺陷（NO_PROXY/no_proxy 双变量幂等
+追加回环条目，仅追加不删改、不触碰代理变量本体）。测试（主仓 canonical
+venv）：聚焦六件套 96 passed 2 skipped（新增静态契约 16 项 + 渲染面 6 项 +
+冒烟契约 3 行为 + restart/minio 扩展）+ ruff / `git diff --check` / compose
+config 双形态全过。**监督修正轮（出站代理显式透传产品化）**：compose 新增
+`AIOS_SEARXNG_HTTP_PROXY` / `AIOS_SEARXNG_HTTPS_PROXY` /
+`AIOS_SEARXNG_NO_PROXY` 三槽位——默认恒空 = 直连出站（空值被 urllib
+getproxies 忽略，不产生代理行为）；AIOS 单链、无通用回落（宿主 shell 代理
+env 绝不隐式进容器）；仅大写单形（SearXNG 出站栈 httpx 经 urllib getproxies
+大小写不敏感读取即全量生效；镜像 busybox wget 只读小写故容器内回环健康
+检查恒不经代理）；compose 零硬编码代理地址/端口（静态 + 渲染测试双锁）；
+`smoke_search.sh` 回环旁路原样未改。修正轮 compose 形态 live 验证（任务
+自有隔离 compose 项目 `--profile search` 只拉 searxng，gitignored
+`.verify/m14-66-searxng-local-provider-compose-live/`，真实代理值全程未
+回显）：默认直连渲染 healthy@20s + 容器代理 env 全空 + 全新查询 results=19
+（本机直连当前可通——与初始轮相反，边界随网络姿态漂移如实记录）；显式
+代理注入（部署 env 注入，容器内透传且无小写镜像）healthy@20s + healthz
+200 + results=20 + 真实 CloudWebProvider 冒烟全过 EXIT=0；NO_PROXY 槽位
+原样透传实证；`down -v` 清理零残留、生产容器全程未动。诚实边界：初始轮
+live 验证用任务自有隔离容器（非 compose 全栈真启动，后者是
+`AIOS_COMPOSE_SMOKE` 门控测试本环境跳过）——`/healthz` 200、JSON API 未
+403、真实 CloudWebProvider 冒烟两段如实（直连出站 engine timeout → 宿主
+代理形态重建后 `results=5` PASS）+ 假代理敌意环境复跑仍 PASS（绕过修复
+对抗性证明），容器/卷清理零残留；本机出站边界随系统级网络/代理姿态漂移
+（初始轮直连全引擎 timeout、修正轮同机直连可通）——**本机部署需要显式
+代理设置时，具体地址/端口只放部署 env/secret，绝不入库、不回显**；
+`production_ready=false` 不变。证据：
+`docs/evidence/m14-66-searxng-local-provider/README.md`（两轮 live 原始
+证据分别 gitignored `.verify/m14-66-searxng-local-provider-live/` 与
+`.verify/m14-66-searxng-local-provider-compose-live/`）。
+
+## 前一任务（M14-65 云端 TTS 音色配置——单 local commit 完成、不 push；本地 SearXNG 搜索栈由 M14-66 接续）
+
 **M14-65 云端 TTS 音色配置（开发切片，单 local commit 不 push）**：worktree
 `D:\AI Learning OS\ai-learning-os-worktrees\m14-65-cloud-tts-voice` 分支
 `feature/m14-65-cloud-tts-voice` 基于
@@ -31,8 +80,6 @@ MockTransport），真实 BigModel 端点（`glm-tts` + `tongtong`）冒烟留�
 （BigModel 部署按 runbook 显式注入）；PRIVACY_RELEVANT 不变（voice 非隐私
 边界，数据流向不变）。证据：
 `docs/evidence/m14-65-cloud-tts-voice/README.md`。
-
-## 前一任务（M14-63 Release Candidate 独立验收证据回填——单 local commit 完成、不 push；云端 TTS 音色配置由 M14-65 接续）
 
 **M14-63 Release Candidate 独立验收证据回填（docs-only，单 local commit 不 push）**：分支/worktree
 `docs/m14-63-release-candidate-evidence` 基于
