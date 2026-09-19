@@ -9,6 +9,47 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-68 生产收口 manifest（AGC 收口 builder + release-closure-manifest 只读聚合器 + 真实收口冒烟 + docs 回填）**：worktree
+`D:\AI Learning OS\ai-learning-os\.claude\worktrees\m14-68-production-closure-docs` 分支
+`docs/m14-68-production-closure-evidence` 基于 `main@3211336`。两个代码 PR 已合
+main：PR #152（head `fa1b9ee`、merge `50c9110`）M14-68H2 AGC 收口 manifest
+builder（`tools/harmony_release/agc_closure_manifest.py` + 测试，+1432 行）——
+聚合发布链六工具（preflight/release_build/sign_hap/verify_signature/
+device_preflight/device_smoke）JSON 证据为确定性 AGC 收口 manifest；签名性只认
+verify_signature 的 `signed_and_valid`（claimed_signed 单独永不 pass），
+缺失/重复/未 pass/不可分类即整体 blocked，本切片 production_ready 构造上恒
+false；路径全组件拒绝 symlink、输出与输入不重叠、原子落盘失败逐字节回滚。
+PR #153（head `c89abe1`、merge `3211336` = final main）release-closure-manifest
+只读收口聚合器（`services/api/app/ops/release_closure_manifest.py` + cli 接线 +
+测试，+1455 行）——把切换窗口前收口状态收敛为确定性 JSON/Markdown manifest：
+git HEAD（显式 `--git-head` 优先，缺省固定 argv/无 shell/10s 超时安全发现）、
+证据目录逐文件有界清单（相对 posix 名/字节/SHA-256）、只消费
+release-readiness 与 production-evidence-gap 既有结论子集（不重复实现 gate
+语义）、诚实合取 production_ready、blockers + 六条占位符下一步命令；不连
+DB/网络/API、不读环境变量、对证据目录零写入、无 --yes；输出护栏
+artifacts/temp + symlink 组件拒绝 + 逐文件原子落盘（写失败 exit 2 不打印
+收口结论）。CI 四 run 全绿（均 5 job success）：#152 PR `35458613813` / main
+`35458835384`；#153 PR `35459552349` / main `35459754814`。本地（PR #153
+口径）：聚焦 37 passed + ruff + py_compile + git diff --check；full API 3722
+passed / 33 skipped（3 个失败为 Windows WSL 存量、main 复现同样失败、远程
+Linux CI 绿）；Harmony 套件 417 passed / 1 skipped（symlink/mkfifo 用例
+Windows 幂等 skip）。真实收口冒烟（main@`3211336af6bf…4f782`）：消费 M14-67
+证据集 15 文件 / 12863 字节（SHA-256 与 M14-67 证据页逐一相同），产出
+`artifacts/temp/m14-68/release-closure.json`（6874 字节，SHA-256
+`2332F478…C600D86`）与 `release-closure.md`（5104 字节，SHA-256
+`098F8D8F…EFAFFF3B`），预期 exit 1、`production_ready=false`：readiness
+release_ready=false（pass=7/blocked=1/missing=2；未过必需门 provider-smoke、
+release-approval；optional turn-tls）、gap overall=blocked（governance/
+audit-chain=pass、provider-smoke=blocked、cutover-approval=not_executed）、
+4 项 blockers。不创建审批文件、不代签、不代批；provider 凭证缺口如实维持
+（cloud-voice/llm 冒烟未重跑，证据与 M14-67 字节一致）。生产栈零触碰
+（aios-m14-03-production-rehearsal 7 healthy，API/Web probe 200）。本 docs
+回填 docs-only 单 local commit；push/PR/CI/merge 由 supervisor 收口；
+production_ready=false 不变。证据：
+`docs/evidence/m14-68-production-closure-manifest/README.md`。
+
+## 前一任务（M14-67 Release Readiness 证据链汇总——已随 PR #150/#151 合并 main；生产收口 manifest 与收口证据回填由 M14-68 接续）
+
 **M14-67 Release Readiness 证据链汇总（治理契约小修 + 真实产物聚合）**：worktree
 `D:\AI Learning OS\ai-learning-os\.claude\worktrees\m14-67-release-readiness` 分支
 `worktree-m14-67-release-readiness` 基于 `origin/main@a813b3b`（PR #149 merge
