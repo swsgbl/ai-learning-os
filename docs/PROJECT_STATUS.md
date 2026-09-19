@@ -9,6 +9,39 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-63 Release Candidate 独立验收证据回填（docs-only，单 local commit 不 push）**：分支/worktree
+`docs/m14-63-release-candidate-evidence` 基于
+`main@6ef12f878e1e3c774404478dc80099208edcbb57`（PR #145 merge；功能提交
+`b5d458ef66d1d7e780f066ca18658904c6ea22a8`——RC builder 冒烟前按 compose
+锚定构建本地 MinIO 镜像，MinIO 不入 API/Web 归档与 manifest；PR #145
+checks 与合并后 main CI 两组五项 job 均 all-success）。把 supervisor 完成
+的 v0.1.0 Release Candidate 构建与独立文件级校验转为仓库证据：RC
+workflow run `35425921605`（`Release Candidate (manual only)` 手动触发，
+head=main `6ef12f8…`，tag `v0.1.0`，06:11–06:15Z）conclusion success；
+artifact `10579069779` `release-candidate-v0.1.0` outer 197,012,661
+bytes，GitHub API digest 与本地 gh API 原样下载实测 SHA-256
+`097b324a…c46b0` 逐字节互证一致；包内恰 4 文件逐档哈希锚定：
+`aios-api-v0.1.0.tar` 331,864,576 B / `61881604…4402`、
+`aios-web-v0.1.0.tar` 239,172,096 B / `8adf4466…9f50`、
+`release-manifest.json` 2,022 B / `03d5113b…a4e5`、`SHA256SUMS` 260 B /
+`b7ea75b2…def93`（两个 `.tar` 未打开未解析，内容事实来自 manifest 与
+哈希互证）；独立校验（主仓 canonical venv，于 services/api）
+`python -m app.ops.cli release-candidate verify` exit 0、`ok=true`、
+6/6 checks pass（version_tag_consistency、version_file_consistency、
+checksums_coverage、archive_hash ×3），未加载任何 Docker 镜像（verify
+设计即文件级校验；镜像可运行性以 RC workflow 内 compose 冒烟 smoke
+passed 为准）。诚实边界：RC 是 workflow artifact 而非 GitHub
+Release——无 registry push、无 git tag 创建、无 GitHub Release 发布、
+无发布审批；artifact 保留期 expires_at 2026-10-03T06:15:30Z，到期后需
+重新触发再验收；local Release Candidate 口径不是 production readiness、
+不授权任何部署；真实 provider 凭证与冒烟、soak 长稳、release
+readiness / 发布审批与 Harmony 真机收口仍开放；本回填零生产触碰、零
+代码/测试/工作流改动、不 push、不建 PR；`production_ready=false`
+不变。证据：`docs/evidence/m14-63-release-candidate-verification/README.md`
+（README 为唯一入库证据文件）。
+
+## 前一任务（M14-61 production current-main 切换证据回填——已随 PR #144 合并 main；release candidate 验证证据回填由 M14-63 接续）
+
 **M14-61 production current-main 切换证据回填（docs-only，单 local commit 不 push）**：分支/worktree
 `docs/m14-61-production-current-main-cutover` 基于 `main@44af53f`（PR #143
 merge `44af53fa`）。把 supervisor 在 current main 完成的生产栈最小化切换
