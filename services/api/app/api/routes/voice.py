@@ -224,6 +224,7 @@ def _build_tts(settings, choice_provider: str):
             settings.tts_cloud_endpoint or "",
             settings.tts_cloud_api_key or "",
             settings.tts_cloud_model,
+            settings.tts_cloud_voice,  # M14-65: 音色透传（默认 tongtong；空=不带 voice 字段）
         )
     raise HTTPException(status_code=422, detail=f"未知 TTS provider: {choice_provider}")
 

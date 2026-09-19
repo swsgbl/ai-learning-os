@@ -177,6 +177,7 @@ async def _openai_compatible_synthesize(
     label: str,
     transport=None,
     timeout: float = 60.0,
+    voice: str | None = None,
 ) -> SynthesisResult:
     """OpenAI 兼容 /audio/speech 请求（云端与本地真实引擎共用实现）。
 
@@ -184,16 +185,23 @@ async def _openai_compatible_synthesize(
     ProviderUnavailable（不把非 WAV 字节冒充 wav 结果）；网络/HTTP 失败用固定
     脱敏文案（不嵌 endpoint）。api_key 为空时不发 Authorization 头（本地
     bridge 可选鉴权；云端调用方恒传 key）。
+
+    M14-65 voice：可选音色名（如 BigModel glm-tts 的 tongtong）——非空才写入
+    请求体 voice 字段；None/空串不带该键（本地真实引擎与既有端点的请求体
+    保持逐字节不变，云端中性默认由调用方以空值表达）。
     """
     import httpx
 
     started = time.perf_counter()
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    payload = {"model": model, "input": text, "response_format": "wav"}
+    if voice:
+        payload["voice"] = voice
     try:
         async with httpx.AsyncClient(timeout=timeout, transport=transport, headers=headers) as client:
             response = await client.post(
                 f"{endpoint.rstrip('/')}/audio/speech",
-                json={"model": model, "input": text, "response_format": "wav"},
+                json=payload,
             )
     except httpx.HTTPError as cause:
         # str(cause) 含请求 URL（endpoint）——固定文案，不回显敏感值
@@ -242,14 +250,20 @@ class CloudOpenAiAsrProvider:
 
 
 class CloudOpenAiTtsProvider:
-    """OpenAI 兼容语音合成端点（/audio/speech，返回音频字节，M10-13 口径）。"""
+    """OpenAI 兼容语音合成端点（/audio/speech，返回音频字节，M10-13 口径）。
+
+    M14-65 voice：可选音色名透传到请求体 voice 字段（如 BigModel glm-tts 的
+    tongtong）；None/空串不带该键（端点侧默认音色）。默认值只在 Settings
+    （tts_cloud_voice=tongtong）——provider 是纯透传，不内置云端默认。
+    """
 
     name = "cloud-openai-tts"
 
-    def __init__(self, endpoint: str, api_key: str, model: str, transport=None) -> None:
+    def __init__(self, endpoint: str, api_key: str, model: str, voice: str | None = None, transport=None) -> None:
         self._endpoint = endpoint.rstrip("/")
         self._api_key = api_key
         self._model = model
+        self._voice = (voice or "").strip()  # 空 = 请求不带 voice 字段
         self._transport = transport
         self.name = "cloud-openai-tts"
 
@@ -263,6 +277,7 @@ class CloudOpenAiTtsProvider:
             label="cloud TTS",
             transport=self._transport,
             timeout=60.0,
+            voice=self._voice,
         )
 
 

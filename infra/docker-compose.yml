@@ -157,6 +157,10 @@ services:
       TTS_CLOUD_ENDPOINT: ${AIOS_TTS_CLOUD_ENDPOINT:-}
       TTS_CLOUD_API_KEY: ${AIOS_TTS_CLOUD_API_KEY:-}
       TTS_CLOUD_MODEL: ${AIOS_TTS_CLOUD_MODEL:-tts-1}
+      # M14-65 云端 TTS 音色（/audio/speech 请求体 voice 字段）：默认 tongtong
+      # （BigModel 官方 glm-tts 预置音色）；`:-` 语义与 TTS_CLOUD_MODEL 一致——
+      # 未设或置空均回落默认
+      TTS_CLOUD_VOICE: ${AIOS_TTS_CLOUD_VOICE:-tongtong}
       # M10-01 LLM 槽位（OpenAI 兼容端点）：全部默认空 = 未配置云端 LLM
       LLM_PROVIDER: ${AIOS_LLM_PROVIDER:-}
       LLM_ENDPOINT: ${AIOS_LLM_ENDPOINT:-}

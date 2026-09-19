@@ -41,6 +41,10 @@ class Settings(BaseSettings):
     tts_cloud_endpoint: str | None = None
     tts_cloud_api_key: str | None = None
     tts_cloud_model: str = "tts-1"
+    # M14-65 云端 TTS 音色：透传到 OpenAI 兼容 /audio/speech 请求体 voice 字段；
+    # 默认 tongtong（BigModel 官方 glm-tts 预置音色）。仅作用于 cloud-openai-tts，
+    # 本地 TTS provider 不消费该值；显式置空 = 请求不带 voice（由端点侧默认决定）
+    tts_cloud_voice: str = "tongtong"
     # M14-01 本地真实语音引擎槽位：OpenAI 兼容本机服务（tools/voice/ 部署，仅绑
     # 127.0.0.1）。endpoint 未配置 = local/hybrid ASR 降级零依赖替身并在 provider
     # 视图/响应头透出 fallback；key 可选（本地服务默认无鉴权），真实 key 只放部署
@@ -95,6 +99,13 @@ class Settings(BaseSettings):
     def validate_auth_cookie_name(cls, value: str) -> str:
         if not value.strip():
             raise ValueError("auth_cookie_name must not be blank")
+        return value.strip()
+
+    @field_validator("tts_cloud_voice")
+    @classmethod
+    def strip_tts_cloud_voice(cls, value: str) -> str:
+        # M14-65: 音色名剥除空白（与 auth_cookie_name 同款归一化）。空白串归一为
+        # 空字符串——这是合法值：请求不带 voice 字段（由端点侧默认音色决定）
         return value.strip()
 
     @field_validator("cors_origins")

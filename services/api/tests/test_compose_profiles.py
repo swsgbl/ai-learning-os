@@ -156,6 +156,7 @@ PROVIDER_PASSTHROUGH_ENV_KEYS = (
     "AIOS_TTS_CLOUD_ENDPOINT",
     "AIOS_TTS_CLOUD_API_KEY",
     "AIOS_TTS_CLOUD_MODEL",
+    "AIOS_TTS_CLOUD_VOICE",
     "AIOS_LLM_PROVIDER",
     "AIOS_LLM_ENDPOINT",
     "AIOS_LLM_API_KEY",
@@ -186,6 +187,7 @@ def test_provider_env_passthrough_synthetic_injection() -> None:
         "AIOS_TTS_CLOUD_ENDPOINT": "https://tts.example.invalid/v1",
         "AIOS_TTS_CLOUD_API_KEY": "synthetic-tts-cloud-key",
         "AIOS_TTS_CLOUD_MODEL": "synthetic-tts-cloud-model",
+        "AIOS_TTS_CLOUD_VOICE": "synthetic-tts-cloud-voice",
         "AIOS_LLM_PROVIDER": "synthetic-llm-provider",
         "AIOS_LLM_ENDPOINT": "https://llm.example.invalid/v1",
         "AIOS_LLM_API_KEY": "synthetic-llm-key",
@@ -212,6 +214,7 @@ def test_provider_env_passthrough_synthetic_injection() -> None:
     assert env["TTS_CLOUD_ENDPOINT"] == "https://tts.example.invalid/v1"
     assert env["TTS_CLOUD_API_KEY"] == "synthetic-tts-cloud-key"
     assert env["TTS_CLOUD_MODEL"] == "synthetic-tts-cloud-model"
+    assert env["TTS_CLOUD_VOICE"] == "synthetic-tts-cloud-voice"
     # LLM 槽位逐项透传
     assert env["LLM_PROVIDER"] == "synthetic-llm-provider"
     assert env["LLM_ENDPOINT"] == "https://llm.example.invalid/v1"
@@ -254,8 +257,19 @@ def test_provider_env_defaults_do_not_enable_cloud() -> None:
     assert env["PRIVACY_SEND_CONTEXT_TO_CLOUD"] == "true"
     assert env["ASR_CLOUD_MODEL"] == "whisper-1"
     assert env["TTS_CLOUD_MODEL"] == "tts-1"
+    # M14-65: 云端 TTS 音色默认与 config.py Settings 应用默认一致（tongtong）
+    assert env["TTS_CLOUD_VOICE"] == "tongtong"
     # local voice 透传不受本次变更影响（M14-01 原有契约保持）
     assert env["VOICE_MODE"] == "local"
+
+
+@pytest.mark.skipif(not _compose_available(), reason="需要 docker compose CLI")
+def test_provider_env_empty_tts_voice_falls_back_to_default() -> None:
+    """M14-65：AIOS_TTS_CLOUD_VOICE 置空 → `:-` 插值语义回落默认 tongtong
+    （与 TTS_CLOUD_MODEL 同款行为锁定；容器形态无「不带 voice」的空值形态）。"""
+    model = _render("local", {"AIOS_TTS_CLOUD_VOICE": ""}, unset=PROVIDER_PASSTHROUGH_ENV_KEYS)
+    env = _api_env(model)
+    assert env["TTS_CLOUD_VOICE"] == "tongtong"
 
 
 # ---------------------------------------------------------------- 门控真启动冒烟
