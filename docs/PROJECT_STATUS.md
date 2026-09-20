@@ -9,6 +9,32 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-70 production current-main 切换证据回填（docs-only）**：分支
+`docs/m14-70-production-cutover` 基于 `main@976798f`（PR #156
+merge，provider smoke voice topology 合入后 final main）。supervisor
+已完成第三次生产最小化切换（继 M14-61、M14-69 后）：切换前后 git
+HEAD `976798f2567018552b2e892bc334a66098cb951a`、tracked-clean
+双锚，构建 `aios/api:m14-70-production`（digest
+`sha256:9a4e4e16…9179c8`）与 `aios/web:m14-70-production`（digest
+`sha256:083a525c…f19006`）；compose 仅重建 api/web 两容器（api
+`3ddde9463a1f`→`95e45740cc08`、web `1dc9ec94435d`→`fcce394b1a56`，
+均 healthy、api 先过健康门禁再放行 web），
+postgres/redis/livekit/minio/searxng 五容器 ID 未动且 healthy（七
+容器全绿）。匿名端点 6 GET 全 200（API `/health`+`/api/v1/version`、
+Web `/`+`/login`、本地语音 8010、SearXNG 8878）+ 匿名 `POST
+/api/v1/sources` 预期 401；真实 Chromium desktop 1440x900 + mobile
+390x844 双视口验收 OVERALL=PASS；`production_recovery.py --dry-run
+--no-log-file` exit 0；生产监控一轮 ok=34/warn=0/critical=0；源证据
+MANIFEST 35 条目独立核验 35/35 哈希/大小全符。诚实边界：不声称真实
+provider 冒烟、release/cutover 审批、soak 长稳，`production_ready=false`
+不变；Web 镜像内容与 M14-69 字节等价（构建区间 `99bcd4fe..976798f2`
+`apps/web` 零改动、BuildKit 全层缓存命中，sha256 差异仅 tag/label 元
+数据），升级点仅在 api 侧。本回填 docs-only 单 local commit；
+push/PR/CI/merge 由 supervisor 收口。证据：
+`docs/evidence/m14-70-production-cutover/README.md`。
+
+## 前一任务（M14-69 production current-main 切换证据回填——已随 PR #155 合并 main；第三次 production current-main 切换证据回填由 M14-70 接续）
+
 **M14-69 production current-main 切换证据回填（docs-only）**：worktree
 `D:\AI Learning OS\ai-learning-os\.claude\worktrees\m14-69-production-current-main-cutover` 分支
 `docs/m14-69-production-current-main-cutover` 基于 `main@99bcd4fe`（PR
