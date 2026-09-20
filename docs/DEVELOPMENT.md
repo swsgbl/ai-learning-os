@@ -513,38 +513,57 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   runner/stub 与本地文件，不执行任何真实外网冒烟**（唯一真实子进程是
   `python -c` 探针，仅验证 cwd=仓库根与环境继承，零网络）。
 
-## 生产证据缺口清单 production-evidence-gap（M11-18）
+## 生产证据缺口清单 production-evidence-gap（M11-18/M14-74）
 
 - **CLI**：`python -m app.ops.cli production-evidence-gap --evidence-dir <path>
   [--output <artifacts/temp路径>] [--json]`，实现文件
   `services/api/app/ops/production_evidence_gap.py`。
 - **定位**：cutover-rehearsal（M10-15）回答「13 步演练时间线证据齐不齐」，
   本工具回答「离实际生产切换还差哪几块证据」——把台账「下一任务」定义的
-  四类生产前置证据缺口从 rehearsal 的**只读评估结果**中聚合为逐类缺口清单
-  （不是 rehearsal 的改名复制：不重新解析证据文件、不重复实现证据 schema
-  校验，`build` 恰调用一次 `run_cutover_rehearsal`，步骤状态与
-  reason/next_action 全部复用其白名单提取）。四类之外的 5 步（CI、
-  release-check、preflight×2、备份恢复）不在本清单范围，`source.`
-  `steps_covered`/`steps_total` 如实透出覆盖面，完整时间线仍以
-  cutover-rehearsal manifest 为准——**四类全 pass 不代表 13 步全 pass**。
-- **类别矩阵**（输出顺序固定；steps 必须是 rehearsal step id，测试与
-  `STEP_IDS` 交叉锁定防漂移）：`governance`（历史治理批次执行与计数归零：
-  legacy-papers、draft-ownership）、`audit-chain`（0027 建链、校验与库外
-  锚定：audit-chain-verify、audit-chain-anchor）、`provider-smoke`（真实
-  provider 冒烟证据：search/cloud-voice/llm 三冒烟步）、`cutover-approval`
-  （切换审批与发布窗口）。
+  四类生产前置证据缺口聚合为逐类缺口清单（不是任何聚合器的改名复制：
+  不重新解析证据文件、不重复实现证据 schema 校验或 provider 聚合语义，
+  `build` 恰调用一次 `run_cutover_rehearsal` 与一次 `run_release_readiness`）。
+  数据源按类别分轨（M14-74）：`governance`/`audit-chain`/`cutover-approval`
+  三类复用 rehearsal 的只读评估结果（覆盖 5 步；rehearsal 的 step 状态与
+  reason/next_action 全部复用其白名单提取）；`provider-smoke` 类别 **defer
+  到 release-readiness 的 provider-smoke 门**（`provider-smoke.json` 聚合，
+  M14-70 拓扑感知语义：local 拓扑聚合消费 local-voice 单步证据、无需云
+  key，hybrid/cloud 聚合消费 cloud-voice 单步证据）——本地拓扑语音证据经
+  聚合门闭合即 pass，不再因演练时间线的云语音步而缺口；演练云语音步是否
+  齐备仍由 cutover-rehearsal manifest 如实回答，互不替代。四类之外的
+  8 步（CI、release-check、preflight×2、备份恢复、provider 三演练步）不在
+  本清单范围，`source.steps_covered`/`steps_total` 如实透出覆盖面，完整
+  时间线仍以 cutover-rehearsal manifest 为准——**四类全 pass 不代表
+  13 步全 pass**。
+- **类别矩阵**（输出顺序固定）：rehearsal-backed 三类的 steps 必须是
+  rehearsal step id（测试与 `STEP_IDS` 交叉锁定防漂移）——`governance`
+  （历史治理批次执行与计数归零：legacy-papers、draft-ownership）、
+  `audit-chain`（0027 建链、校验与库外锚定：audit-chain-verify、
+  audit-chain-anchor）、`cutover-approval`（切换审批与发布窗口）；
+  `provider-smoke`（真实 provider 冒烟证据）的 steps 是 **provider 槽位**
+  （voice/search/llm，测试与 `release_readiness.SMOKE_PROVIDERS` 交叉锁定，
+  与演练 step id 不交）。
 - **输出语义（每类固定白名单字段）**：`category`/`title`/`basis`/`status`/
-  `gap`/`covered_steps`（每项仅 `step`/`status`/`reason`/`next_action`）/
-  `existing_tools`（证据从哪来的既有工具与 runbook）/`missing_evidence`
-  （非 pass 步清单，每项仅 `step`/`status`）/`operator_actions`（非 pass 步
-  的运维动作，来自 rehearsal 的 next_action——真实执行全归运维）/
-  `agent_safe_actions`（agent 可安全执行的只读/本地动作，如纯本地文件
-  推导与 DRAFT 底稿生成）/`authorization_required`（必须运维显式授权的
-  边界：真实 key、生产连接、`--yes` 执行、审批签署）。
-- **状态聚合（诚实优先）**：类别内全部步骤 pass 才 pass；有 blocked 优先
-  blocked（敏感键/结构不符/结论为否/哈希失配——rehearsal 的 malformed/
-  tampered/fail 已统一映射为 blocked，透传即可）；否则 pending；否则
-  not_executed（missing/冒烟 not run/缺审批）。绝不把部分通过伪装成
+  `gap`/`covered_steps`（每项仅 `step`/`status`/`reason`/`next_action`；
+  provider 槽位项的 `step` 是槽位名，reason 透出聚合 result 与
+  evidence_step 轨道）/`existing_tools`（证据从哪来的既有工具与
+  runbook）/`missing_evidence`（非 pass 步/槽位清单，每项仅 `step`/
+  `status`）/`operator_actions`（非 pass 项的运维动作——真实执行全归
+  运维）/`agent_safe_actions`（agent 可安全执行的只读/本地动作，如纯本地
+  文件聚合与 DRAFT 底稿生成）/`authorization_required`（必须运维显式授权
+  的边界：真实 key、生产连接、`--yes` 执行、审批签署）。顶层另有
+  `provider_smoke` 块（`source.tool/gate/evidence_file`、`gate_status`
+  权威门状态原词汇、`voice_mode`/`voice_track` 语音拓扑与轨道——证据
+  缺失或结构不符时如实为 null、静态 note）。
+- **状态聚合（诚实优先）**：rehearsal-backed 类别内全部步骤 pass 才
+  pass；有 blocked 优先 blocked（敏感键/结构不符/结论为否/哈希失配——
+  rehearsal 的 malformed/tampered/fail 已统一映射为 blocked，透传即可）；
+  否则 pending；否则 not_executed（missing/冒烟 not run/缺审批）。
+  `provider-smoke` 类别 **defer**：状态是权威门六态的固定映射
+  （pass/pending/blocked 同名透传；missing -> not_executed；
+  malformed/tampered -> blocked），不从槽位重新聚合——门级 pending 语义
+  （待运维执行冒烟）不得被槽位词表吞掉；槽位明细按聚合 result 透出
+  （fail -> blocked，not_executed -> not_executed）。绝不把部分通过伪装成
   pass；跨类组合同理（一类 blocked + 一类 pending => overall=blocked）。
 - **`production_ready` 恒为 `false`**：本输出是缺口清单，不构成生产放行、
   不构成 production readiness，也不授权任何生产操作（全 pass 时 exit 0
@@ -553,18 +572,18 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   不读取任何环境变量（`os.environ` 零引用）；不执行任何迁移/治理/锚定/
   备份/部署/启停/发布/回滚、不运行任何 provider 冒烟——命令没有 `--yes`
   执行形态，是纯汇总器；对证据目录零写入。输出零敏感、零生产业务 ID：
-  只透传 rehearsal 白名单文本 + 模块静态指引常量；来自 rehearsal 的
-  reason/next_action 逐字段过 `scrub_sensitive` 纵深防御（静态常量是代码
+  只透传两个聚合器白名单文本 + 模块静态指引常量；来自聚合器的动态文本
+  逐字段过 `scrub_sensitive` 纵深防御（静态常量是代码
   内字面量零敏感、不经运行时 scrub——通用 scrub 会按敏感**键名**模式把
-  `authorization_required` 这类白名单字段误抹成占位符）；证据目录内的
-  敏感键证据已由 rehearsal 按 blocked（malformed）语义处理，值从不回显。
+  `authorization_required` 这类白名单字段误抹为占位符）；证据目录内的
+  敏感键证据已由聚合器按 blocked（malformed）语义处理，值从不回显。
 - **路径护栏与 IO（exit 2）**：`--evidence-dir` 护栏复用 rehearsal
   （不存在/普通文件/symlink/目录内 symlink 拒绝）；`--output` 必须位于
   gitignore 的 artifacts/temp（复用 `is_safe_artifact_path`）、任何已存在
   路径组件是 symlink 即拒绝、已存在且不是常规文件拒绝、**不得位于证据
   目录内或等于证据目录**（拒绝覆盖证据输入，`resolve` +
   `os.path.normcase` 归一比较，Windows 大小写/`..` 折叠不构成绕过）——
-  输出护栏先于任何证据内容读取（冲突形态下 rehearsal 零调用，测试锁定）；
+  输出护栏先于任何证据内容读取（冲突形态下两个聚合器零调用，测试锁定）；
   落盘复用 CLI 共享原子写（同目录临时文件 + fsync + os.replace，失败旧
   文件字节原样、无 `.tmp` 残留、不打印缺口结论）。退出码：四类全
   pass=0 / 任一类非 pass=1 / 目录或路径与 IO 问题=2。
@@ -574,21 +593,27 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   推导导出；② 审计锚定——按「审计」节 `0027_audit_chain` 生产迁移
   runbook 对主库建链（备份 -> quiesce -> upgrade -> verify -> 锚定 -> WORM
   归档，head_hash 库外存证）；③ 真实 provider 冒烟——运维显式注入
-  key/端点并执行三个冒烟脚本，以 provider-smoke-export 导出单步证据、
-  provider-smoke-aggregate 聚合；④ 审批与发布窗口——审批人从
+  key/端点并按语音拓扑执行冒烟脚本（local=smoke_voice_local.sh 本地链路
+  探针；hybrid/cloud=smoke_voice_cloud.sh 部署 key），以
+  provider-smoke-export 导出单步证据、provider-smoke-aggregate
+  --voice-mode 聚合；④ 审批与发布窗口——审批人从
   approval-draft 底稿从零组装 cutover-approval.json 并确认回滚预案与
   发布窗口（外部 coturn 部署模板同步纳入评估）。硬边界：真实 key、生产
   连接与执行批准必须由运维显式提供与授予，agent 不得虚拟生产就绪或代行
   任何生产操作。
 - **测试**：`services/api/tests/test_production_evidence_gap.py`
-  （覆盖矩阵：CLI 注册/分发、类别矩阵与 rehearsal `STEP_IDS` 交叉锁定、
-  状态聚合参数化矩阵、四类映射形态（全 pass/空目录/pending/敏感键 blocked/
-  链 invalid/冒烟 fail/缺审批/跨类组合优先级）、exact allowlist schema、
-  `production_ready` 恒 false、路径/原子写/symlink/覆盖输入护栏（护栏先于
-  证据读取）、零敏感三面 marker 扫描、只读性（输入字节不变）、源码级守卫
-  （零 env/DB/网络引用、import 面恰为三个共享层、不含证据校验原语——
-  复用而非重实现）、`--json` 纯 JSON 与落盘一致、build 恰调用一次
-  rehearsal、covered 状态与独立 rehearsal 运行逐步一致）——全部用临时
+  （覆盖矩阵：CLI 注册/分发、类别矩阵与 rehearsal `STEP_IDS`/readiness
+  `SMOKE_PROVIDERS` 交叉锁定、状态聚合参数化矩阵、四类映射形态（全
+  pass/空目录/pending/敏感键 blocked/链 invalid/聚合槽 fail/缺审批/跨类
+  组合优先级）、provider defer 语义（本地拓扑聚合 pass 即使演练云语音步
+  fail、缺聚合文件 not_executed、矛盾/错轨/旧形态聚合 blocked、单槽未执行
+  pending、hybrid/cloud 云轨道、provider_smoke 块透出拓扑）、exact
+  allowlist schema、`production_ready` 恒 false、路径/原子写/symlink/覆盖
+  输入护栏（护栏先于证据读取、两个聚合器零调用）、零敏感三面 marker
+  扫描、只读性（输入字节不变）、源码级守卫（零 env/DB/网络引用、import
+  面恰为四个共享层、不含证据校验原语与聚合器符号——复用而非重实现）、
+  `--json` 纯 JSON 与落盘一致、build 恰调用一次 rehearsal 与一次
+  readiness、covered 状态与独立聚合器运行逐步/逐槽一致）——全部用临时
   目录与本地文件，不连数据库、不发网络请求。
 
 ## 生产证据目录只读索引器 evidence-inventory（M11-20）
@@ -920,12 +945,17 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   不再被接受），生成的 `soak-audit-report.json` 必须**逐字节复制重命名**为
   `<evidence-dir>/long-soak.json`，绝不由手工编辑/重序列化产生（见
   tools/ops/README.md 的 `soak_stability_audit.py` 节）。
-  `provider-smoke` 门的证据来源口径（M11-16）：来源命令是
-  `provider-smoke-aggregate --search <PATH> --cloud-voice <PATH> --llm <PATH>
-  --output <artifacts>/provider-smoke.json`——三份输入必须是
-  `provider-smoke-export` 导出的单步证据（形态校验 fail-closed，不接受
-  手工拼装），`providers.voice/search/llm` 每项仅 `executed`/`result`
-  （见「provider 冒烟证据导出与聚合 provider-smoke-evidence」节）。
+  `provider-smoke` 门的证据来源口径（M11-16/M14-70）：来源命令是
+  `provider-smoke-aggregate --search <PATH> --voice <PATH> --llm <PATH>
+  --voice-mode local|hybrid|cloud --output <artifacts>/provider-smoke.json`
+  ——三份输入必须是 `provider-smoke-export` 导出的单步证据（形态校验
+  fail-closed，不接受手工拼装），聚合按 `topology.voice_mode` 拓扑选轨
+  （local 必须以 `--voice` 传 local-voice-smoke.json；hybrid/cloud 传
+  cloud-voice-smoke.json，`--cloud-voice` 为兼容形态），`topology` 恰为
+  `voice_mode` 单键，`providers.voice/search/llm` 每项恰为
+  `executed`/`result`/`evidence_step` 且与拓扑配对（M14-74 起
+  production-evidence-gap 的 provider-smoke 类别直接 defer 本门结论，
+  见「生产证据缺口清单」节）。
 - **状态语义**：`missing` / `malformed` / `tampered` / `blocked` / `pending` /
   `pass`，不得把 pending 包装成 pass。`release_ready=true` 仅表示全部 required
   gates `pass` 且 `release-approval` 的 gate id + evidence sha256 集合与当前证据
@@ -958,8 +988,12 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   symlink/reparse 组件即 fail-closed。
 - **诚实合取**：`production_ready = readiness.release_ready AND
   gap.overall==pass`；任一侧未全 pass 即 false，blockers 逐条透出
-  （readiness 必需门未过 + gap 类别未过），并输出七条占位符下一步命令
+  （readiness 必需门未过 + gap 类别未过），并输出八条占位符下一步命令
   （`<evidence-dir>`/`<artifacts-dir>` 由运维替换；不代签、不代批）。
+  M14-74 起 provider 相关命令按 M14-70 拓扑选轨（语音单步导出
+  local-voice/cloud-voice 二选一、聚合显式 `--voice-mode`）；provider
+  聚合语义不在本清单重复——结论一律以 gap 透出的 provider-smoke 门状态
+  为准。
 - **输出护栏**：`--output-json`/`--output-md` 仅允许 artifacts/temp
   下、两路径互不相同、不得位于 evidence 目录内；护栏检查先于证据读取；
   逐文件原子落盘，写失败 exit 2 且不打印收口结论。

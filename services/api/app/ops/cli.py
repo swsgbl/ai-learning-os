@@ -1444,13 +1444,18 @@ def _run_production_evidence_gap(args) -> int:
     """python -m app.ops.cli production-evidence-gap --evidence-dir DIR
     [--output <artifacts/temp路径>] [--json]
 
-    M11-18 生产证据缺口 manifest（只读聚合器、fail-closed）：只消费
-    cutover-rehearsal（M10-15）对本地 evidence 目录的只读评估结果，把四类
-    生产前置证据缺口（governance：legacy-papers/draft-ownership；audit-chain：
-    audit-chain-verify/anchor；provider-smoke：search/cloud-voice/llm 三冒烟；
+    M11-18/M14-74 生产证据缺口 manifest（只读聚合器、fail-closed）：只消费
+    cutover-rehearsal（M10-15）与 release-readiness（M10-11）对本地
+    evidence 目录的只读评估结果，把四类生产前置证据缺口（governance：
+    legacy-papers/draft-ownership；audit-chain：audit-chain-verify/anchor；
+    provider-smoke：voice/search/llm 三槽位，M14-74 起状态 defer 到
+    release-readiness 的 provider-smoke 门——provider-smoke.json 聚合按
+    topology.voice_mode 拓扑选轨，本地拓扑语音证据经聚合门闭合；
     cutover-approval）聚合为逐类缺口清单（状态/缺口/已覆盖步骤/既有工具/
     缺失证据/运维动作/agent 可安全动作/授权边界）。状态聚合诚实优先：类别
-    内全 pass 才 pass，blocked > pending > not_executed；production_ready 恒为
+    内全 pass 才 pass，blocked > pending > not_executed（provider-smoke
+    类别映射权威门六态：missing -> not_executed，malformed/tampered ->
+    blocked）；production_ready 恒为
     false——缺口清单不构成生产放行。不连接数据库、不调用 API、不访问网络、
     不读取任何环境变量；不执行任何迁移/治理/锚定/备份/部署/启停/发布/回滚、
     不运行任何 provider 冒烟——命令没有 --yes 执行形态。--output 必须位于

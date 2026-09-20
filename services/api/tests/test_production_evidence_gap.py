@@ -1,43 +1,53 @@
-"""M11-18 production-evidence-gap：生产证据缺口 manifest 的矩阵/聚合/边界。
+"""M11-18/M14-74 production-evidence-gap：生产证据缺口 manifest 的矩阵/聚合/边界。
 
 覆盖矩阵：
 1. CLI 注册与分发：子命令注册、无 --yes 执行形态（argparse 未知旗标
    exit 2）、--evidence-dir 必填、main 分发、--output 越界拒绝；
 2. 类别矩阵：恰四类（governance / audit-chain / provider-smoke /
-   cutover-approval）且顺序固定，steps 全部是 cutover-rehearsal step id、
-   类别间无重叠、并集恰为 8 步白名单（与 rehearsal 13 步交叉锁定），
-   spec 静态字段齐备；provider-smoke 文案钉住 M14-70 拓扑聚合指引
-   （--voice/--voice-mode 用法 + local-voice 单步导出），类别步骤仍精确
-   为 search-smoke/cloud-voice-smoke/llm-smoke（local-voice-smoke 只是
-   聚合证据轨道，不是新演练步）；
+   cutover-approval）且顺序固定；governance/audit-chain/cutover-approval
+   三类 steps 全部是 cutover-rehearsal step id、类别间无重叠、并集恰为
+   5 步；provider-smoke 的 steps 是 provider 槽位（voice/search/llm，
+   与 release_readiness.SMOKE_PROVIDERS 交叉锁定）且与演练 step id 不交
+   ——M14-74 起 provider 类别状态以 release-readiness 的 provider-smoke
+   门（provider-smoke.json 聚合）为权威：本地拓扑语音证据走
+   local-voice-smoke 轨道，本地拓扑不再要求演练时间线的云语音步；
+   spec 静态字段齐备，provider-smoke 文案钉住聚合权威与拓扑选轨指引；
 3. 状态聚合矩阵：类别内全 pass 才 pass；blocked > pending > not_executed
    （参数化直调 + 真实 fixture 行为级验证）；
-4. 四类映射形态：全 pass fixture => 四类全 pass / exit 0；空目录 => 四类
-   not_executed / exit 1；治理 pending_count>0 => governance=pending；
-   敏感键证据 => 对应类 blocked（rehearsal malformed 语义透传）；链
-   invalid / 冒烟 fail => blocked；缺审批 => cutover-approval=
-   not_executed；跨类组合 blocked 优先 pending；
-5. 输出 schema exact allowlist：顶层 / source / 每类 / covered_steps /
-   missing_evidence 键集合恰为白名单（多键少键都红），tool 自声明，
-   source.steps_covered 与类别并集、steps_total 与 rehearsal STEPS 同步；
+4. 四类映射形态：全 pass fixture（12 步 + 本地拓扑聚合）=> 四类全 pass /
+   exit 0；空目录 => 四类 not_executed / exit 1；治理 pending_count>0 =>
+   governance=pending；敏感键聚合 => provider-smoke blocked（readiness
+   malformed 语义透传，值从不回显）；链 invalid => blocked；聚合 search
+   槽 fail / 矛盾聚合 / 错轨聚合 => provider-smoke blocked；聚合单槽未
+   执行 => pending；缺聚合文件（含旧版云端时间线步齐备但无聚合）=>
+   provider-smoke not_executed；hybrid/cloud 聚合按云语音轨道评估；缺
+   审批 => cutover-approval=not_executed；跨类组合 blocked 优先 pending；
+5. 输出 schema exact allowlist：顶层 / source / provider_smoke / 每类 /
+   covered_steps / missing_evidence 键集合恰为白名单（多键少键都红），
+   tool 自声明，source.steps_covered 只计 rehearsal-backed 类别并集、
+   steps_total 与 rehearsal STEPS 同步，provider_smoke 块透出权威门
+   状态与语音拓扑/轨道；
 6. production_ready 恒 false：全 pass fixture 下仍 false 且 note 声明
    缺口清单不构成生产放行（人类摘要同步含 production_ready=false）；
 7. 路径与 IO 护栏（exit 2）：--output 越界、输出位于证据目录内（含
    ``..`` 折叠与大小写变体）、symlink 输出（含中间组件）、已存在目录
-   目标；输出护栏先于证据读取（冲突形态下 rehearsal 零调用）；原子写
-   失败旧文件字节原样、无 .tmp 残留、不打印缺口结论；
+   目标；输出护栏先于证据读取（冲突形态下 rehearsal 与 readiness 两个
+   聚合器零调用）；原子写失败旧文件字节原样、无 .tmp 残留、不打印缺口
+   结论；
 8. 零敏感与只读：毒化 marker（生产 ID/密码/key/token）在 JSON manifest、
    人类摘要与输出文件零泄漏（敏感键证据只透出 blocked 状态，值从不
    回显）；全部证据文件字节在运行（含 --output 落盘）前后不变；
 9. 源码守卫：模块零 os.environ/getenv/DB/网络/subprocess/asyncio 引用；
-   import 面恰为 cutover_rehearsal/evidence_kit/legacy_papers + 标准库；
-   源码不含证据装载/schema 校验原语调用（不重复实现，全部复用
-   cutover-rehearsal）；CLI 注册块无 --yes 旗标；
+   import 面恰为 cutover_rehearsal/evidence_kit/legacy_papers/
+   release_readiness + 标准库；源码不含证据装载/schema 校验原语调用
+   （不重复实现，全部复用 cutover-rehearsal 与 release-readiness）；
+   CLI 注册块无 --yes 旗标；
 10. --json 模式：stdout 纯 JSON、与 --output 文件逐字一致、人读提示走
     stderr；
-11. 端到端与复用证明：build 恰调用一次 run_cutover_rehearsal（复用而非
-    重复实现）；全 pass fixture 下本工具的 covered 步状态与独立运行的
-    rehearsal manifest 逐步一致。
+11. 端到端与复用证明：build 恰调用一次 run_cutover_rehearsal 与一次
+    run_release_readiness（复用而非重复实现，不自行解析聚合文件）；
+    rehearsal-backed 三类 covered 步状态与独立运行的 rehearsal manifest
+    逐步一致，provider-smoke 槽位状态与独立运行的 readiness 门一致。
 
 全部测试只用临时目录与本地文件，不连接任何数据库、不发任何网络请求、
 不读取任何环境变量。
@@ -63,6 +73,8 @@ from app.ops.production_evidence_gap import (
     build_production_evidence_gap,
     format_gap_summary,
 )
+from app.ops.release_readiness import SMOKE_PROVIDERS
+from app.ops.release_readiness import run_release_readiness as run_readiness
 
 #: 生产数据/密钥 marker：任何输出（JSON / 人类摘要 / 输出文件）都不得包含
 PAPER_ID_MARKER = "PROD-PAPER-ID-77c1"
@@ -74,9 +86,12 @@ EXPECTED_CATEGORIES = ("governance", "audit-chain", "provider-smoke", "cutover-a
 EXPECTED_CATEGORY_STEPS = {
     "governance": ("legacy-papers", "draft-ownership"),
     "audit-chain": ("audit-chain-verify", "audit-chain-anchor"),
-    "provider-smoke": ("search-smoke", "cloud-voice-smoke", "llm-smoke"),
+    # provider-smoke 不是演练步骤：是 provider 槽位（见 EXPECTED_SMOKE_SLOTS）
     "cutover-approval": ("cutover-approval",),
 }
+#: M14-74：provider-smoke 类别步骤是 provider 槽位（与 readiness
+#: SMOKE_PROVIDERS 交叉锁定），状态以 provider-smoke.json 聚合为权威
+EXPECTED_SMOKE_SLOTS = ("voice", "search", "llm")
 
 TOP_LEVEL_KEYS = {
     "generated_at",
@@ -87,6 +102,7 @@ TOP_LEVEL_KEYS = {
     "no_execution_note",
     "scope_note",
     "source",
+    "provider_smoke",
     "categories",
     "summary",
     "overall_status",
@@ -101,6 +117,8 @@ SOURCE_KEYS = {
     "rehearsal_overall_status",
     "note",
 }
+PROVIDER_SMOKE_KEYS = {"source", "gate_status", "voice_mode", "voice_track", "note"}
+PROVIDER_SMOKE_SOURCE_KEYS = {"tool", "gate", "evidence_file"}
 CATEGORY_KEYS = {
     "category",
     "title",
@@ -221,11 +239,30 @@ def _approval_payload(directory: Path) -> dict:
     }
 
 
+def _smoke_aggregate(mode: str = "local", **provider_overrides) -> dict:
+    """最小合法形态的 provider-smoke.json 聚合（M14-70 契约；形态与
+    test_release_readiness 的夹具同源）：三槽全 pass、语音按拓扑选轨。"""
+    voice_step = "local-voice-smoke" if mode == "local" else "cloud-voice-smoke"
+    providers = {
+        "voice": {"executed": True, "result": "pass", "evidence_step": voice_step},
+        "search": {"executed": True, "result": "pass", "evidence_step": "search-smoke"},
+        "llm": {"executed": True, "result": "pass", "evidence_step": "llm-smoke"},
+    }
+    providers.update(provider_overrides)
+    return {
+        "gate": "provider-smoke",
+        "topology": {"voice_mode": mode},
+        "providers": providers,
+    }
+
+
 def _full_passing_dir(tmp_path: Path, name: str = "evidence") -> Path:
     directory = _evidence_dir(tmp_path, name)
     for filename, payload in _passing_steps_evidence().items():
         _write_json(directory, filename, payload)
     _write_json(directory, "cutover-approval.json", _approval_payload(directory))
+    # M14-74：本地拓扑全 pass 聚合是 provider-smoke 类别的权威证据
+    _write_json(directory, "provider-smoke.json", _smoke_aggregate())
     return directory
 
 
@@ -335,37 +372,49 @@ def test_cli_output_outside_artifacts_rejected(tmp_path, capsys) -> None:
 # --- 2. 类别矩阵 ----------------------------------------------------------------
 
 
-def test_category_matrix_is_four_categories_over_eight_steps() -> None:
-    """恰四类、顺序固定、步骤是 rehearsal step id、无重叠、并集为 8 步。"""
+def test_category_matrix_categories_steps_and_slots() -> None:
+    """恰四类、顺序固定；rehearsal-backed 三类 steps 是 rehearsal step id、
+    无重叠、并集恰为 5 步；provider-smoke 的 steps 是 provider 槽位（与
+    readiness SMOKE_PROVIDERS 交叉锁定）且与演练 step id 不交。"""
     assert CATEGORY_ORDER == EXPECTED_CATEGORIES
-    all_steps: list[str] = []
+    rehearsal_backed: list[str] = []
     for spec in CATEGORY_SPECS:
-        assert spec.steps == EXPECTED_CATEGORY_STEPS[spec.category]
-        assert set(spec.steps) <= cr.STEP_IDS, "步骤必须是 rehearsal step id"
         assert spec.title and spec.basis and spec.authorization_required
         assert spec.existing_tools and spec.agent_safe_actions
-        all_steps.extend(spec.steps)
-    assert len(all_steps) == len(set(all_steps)), "类别间步骤不得重叠"
-    assert len(all_steps) == 8
+        if spec.category == "provider-smoke":
+            assert spec.steps == EXPECTED_SMOKE_SLOTS
+            assert spec.steps == SMOKE_PROVIDERS, "槽位与 readiness 同步防漂移"
+            assert not (set(spec.steps) & cr.STEP_IDS), "槽位不得混入演练 step id"
+            continue
+        assert spec.steps == EXPECTED_CATEGORY_STEPS[spec.category]
+        assert set(spec.steps) <= cr.STEP_IDS, "步骤必须是 rehearsal step id"
+        rehearsal_backed.extend(spec.steps)
+    assert len(rehearsal_backed) == len(set(rehearsal_backed)), "类别间步骤不得重叠"
+    assert len(rehearsal_backed) == 5
+    # provider 三步（search/cloud-voice/llm 演练步）不再被清单类别覆盖：
+    # 语音缺口改由聚合门按拓扑闭合，search/llm 单步状态由聚合证据承载
+    assert not ({"search-smoke", "cloud-voice-smoke", "llm-smoke"} & set(rehearsal_backed))
 
 
 def test_provider_smoke_category_copy_pins_topology_guidance() -> None:
-    """provider-smoke 类别文案承载 M14-70 拓扑聚合指引：语音按拓扑选轨
-    （local=本地语音链路探针，hybrid/cloud=部署 key + 真实短语音），修复命令
-    给出 --voice/--voice-mode 聚合用法与 local-voice 单步导出；同时类别步骤
-    保持演练时间线的云语音步——cloud-voice-smoke 是 cutover-rehearsal 步骤、
-    local-voice-smoke 只是聚合证据轨道（不是新演练步），类别步骤清单不因
-    拓扑拆分而放宽。"""
+    """provider-smoke 类别文案承载 M14-74 defer 契约与 M14-70 拓扑聚合指引：
+    状态以 release-readiness 的 provider-smoke 门（provider-smoke.json 聚合）
+    为权威，语音按拓扑选轨（local=本地语音链路探针，hybrid/cloud=部署 key +
+    真实短语音），修复命令给出 --voice/--voice-mode 聚合用法与 local-voice
+    单步导出；步骤是 provider 槽位（voice/search/llm），不是演练步骤。"""
     spec = next(s for s in CATEGORY_SPECS if s.category == "provider-smoke")
-    # 步骤仍精确为三步（与 EXPECTED_CATEGORY_STEPS 同步的显式重复断言）
-    assert spec.steps == ("search-smoke", "cloud-voice-smoke", "llm-smoke")
+    # 步骤精确为三槽位（与 EXPECTED_SMOKE_SLOTS 同步的显式重复断言）
+    assert spec.steps == ("voice", "search", "llm")
     # 类别名义显式承载三拓扑选轨
     assert "local|hybrid|cloud" in spec.title
-    # basis 说明按拓扑选轨与演练步兼容性（local-voice-smoke 不是新演练步）
+    # basis 说明 defer 权威与拓扑选轨（local-voice-smoke 不是新演练步）
+    assert "release-readiness" in spec.basis
+    assert "provider-smoke.json" in spec.basis
     assert "topology.voice_mode" in spec.basis
     assert "local-voice-smoke" in spec.basis
     assert "cloud-voice-smoke" in spec.basis
     assert "不是新演练步" in spec.basis
+    assert "不再从" in spec.basis and "聚合" in spec.basis
     # 修复命令：local-voice 单步导出 + --voice/--voice-mode 聚合用法 + 本地
     # 探针脚本
     tools_text = "\n".join(spec.existing_tools)
@@ -384,14 +433,25 @@ def test_provider_smoke_category_copy_pins_topology_guidance() -> None:
 
 
 def test_source_counts_pin_rehearsal_step_totals(tmp_path) -> None:
-    """source.steps_total 与 rehearsal STEPS 同步、steps_covered 与类别并集同步。"""
+    """source.steps_total 与 rehearsal STEPS 同步；steps_covered 只计
+    rehearsal-backed 三类并集（provider 槽位不在演练覆盖面内）。"""
     report = _build(_full_passing_dir(tmp_path))
-    covered = {step for spec in CATEGORY_SPECS for step in spec.steps}
+    covered = {
+        step
+        for spec in CATEGORY_SPECS
+        if spec.category != "provider-smoke"
+        for step in spec.steps
+    }
     assert report["source"]["steps_total"] == len(cr.STEPS)
     assert report["source"]["steps_covered"] == len(covered)
+    assert report["source"]["steps_covered"] == 5
     assert report["source"]["tool"] == "cutover-rehearsal"
-    # 演练时间线中确有四类之外的步骤（清单是聚焦视图，不是完整 rehearsal）
+    # 演练时间线中确有清单之外的步骤（含 provider 三演练步——语音缺口由
+    # 聚合门按拓扑闭合，不再从演练云语音步聚合）
     assert cr.STEP_IDS - covered
+    assert {"search-smoke", "cloud-voice-smoke", "llm-smoke"} <= (
+        cr.STEP_IDS - covered
+    )
 
 
 # --- 3. 状态聚合矩阵 ------------------------------------------------------------
@@ -473,14 +533,12 @@ def test_governance_pending_when_counts_not_zero(tmp_path) -> None:
 
 
 def test_sensitive_key_evidence_maps_to_blocked(tmp_path) -> None:
-    """敏感键证据按 rehearsal blocked（malformed）语义映射；值从不回显。"""
+    """敏感键聚合证据按 readiness malformed -> blocked 语义映射；值从不回显。"""
     directory = _mutated_passing_dir(
         tmp_path,
         {
-            "llm-smoke.json": {
-                "step": "llm-smoke",
-                "executed": True,
-                "result": "pass",
+            "provider-smoke.json": {
+                **_smoke_aggregate(),
                 "api_key": API_KEY_MARKER,
             },
         },
@@ -489,10 +547,12 @@ def test_sensitive_key_evidence_maps_to_blocked(tmp_path) -> None:
     assert _statuses(report)["provider-smoke"] == "blocked"
     assert report["overall_status"] == "blocked"
     provider = _category(report, "provider-smoke")
-    assert any(
-        item["status"] == "blocked" for item in provider["covered_steps"]
-    )
+    assert {item["status"] for item in provider["covered_steps"]} == {"blocked"}
     assert provider["operator_actions"]
+    # 权威门状态原词汇透出（readiness malformed），拓扑不可知
+    assert report["provider_smoke"]["gate_status"] == "malformed"
+    assert report["provider_smoke"]["voice_mode"] is None
+    assert report["provider_smoke"]["voice_track"] is None
 
 
 def test_audit_chain_invalid_maps_to_blocked(tmp_path) -> None:
@@ -509,18 +569,22 @@ def test_audit_chain_invalid_maps_to_blocked(tmp_path) -> None:
     assert _statuses(_build(directory))["audit-chain"] == "blocked"
 
 
-def test_search_smoke_fail_maps_to_blocked(tmp_path) -> None:
+def test_aggregate_search_slot_fail_maps_to_blocked(tmp_path) -> None:
+    """聚合 search 槽 result=fail => provider-smoke blocked（结论为否先停下）。"""
     directory = _mutated_passing_dir(
         tmp_path,
         {
-            "search-smoke.json": {
-                "step": "search-smoke",
-                "executed": True,
-                "result": "fail",
-            },
+            "provider-smoke.json": _smoke_aggregate(
+                search={"executed": True, "result": "fail", "evidence_step": "search-smoke"}
+            ),
         },
     )
-    assert _statuses(_build(directory))["provider-smoke"] == "blocked"
+    report = _build(directory)
+    assert _statuses(report)["provider-smoke"] == "blocked"
+    provider = _category(report, "provider-smoke")
+    slot_statuses = {item["step"]: item["status"] for item in provider["covered_steps"]}
+    assert slot_statuses == {"voice": "pass", "search": "blocked", "llm": "pass"}
+    assert "search=blocked" in provider["gap"]
 
 
 def test_missing_approval_maps_to_not_executed(tmp_path) -> None:
@@ -538,11 +602,9 @@ def test_blocked_takes_precedence_over_pending_across_categories(tmp_path) -> No
                 "pending_count": 5,
                 "batches": [{"executed": True}],
             },
-            "search-smoke.json": {
-                "step": "search-smoke",
-                "executed": True,
-                "result": "fail",
-            },
+            "provider-smoke.json": _smoke_aggregate(
+                llm={"executed": True, "result": "fail", "evidence_step": "llm-smoke"}
+            ),
         },
     )
     report = _build(directory)
@@ -552,6 +614,196 @@ def test_blocked_takes_precedence_over_pending_across_categories(tmp_path) -> No
     assert report["overall_status"] == "blocked"
 
 
+# --- 4b. provider-smoke defer 语义（M14-74） ------------------------------------
+
+
+def test_local_topology_aggregate_passes_despite_cloud_step_failure(
+    tmp_path,
+) -> None:
+    """拓扑感知闭合核心：本地聚合全 pass 时，即使演练云语音步 fail，
+    provider-smoke 仍 pass（语音缺口由聚合门按 topology.voice_mode=local
+    闭合，本地拓扑不要求云 key）；演练步状态仍由 rehearsal manifest 如实
+    回答，不在本清单 covered 步内。"""
+    directory = _mutated_passing_dir(
+        tmp_path,
+        {
+            "cloud-voice-smoke.json": {
+                "step": "cloud-voice-smoke",
+                "executed": True,
+                "result": "fail",
+            },
+        },
+    )
+    report, exit_code = build_production_evidence_gap(directory)
+    assert _statuses(report)["provider-smoke"] == "pass"
+    provider = _category(report, "provider-smoke")
+    assert provider["missing_evidence"] == []
+    slot_statuses = {
+        item["step"]: item["status"] for item in provider["covered_steps"]
+    }
+    assert slot_statuses == {"voice": "pass", "search": "pass", "llm": "pass"}
+    assert all(item["next_action"] is None for item in provider["covered_steps"])
+    assert report["provider_smoke"]["gate_status"] == "pass"
+    assert report["provider_smoke"]["voice_mode"] == "local"
+    assert report["provider_smoke"]["voice_track"] == "local-voice-smoke"
+    voice = next(
+        item
+        for item in provider["covered_steps"]
+        if item["step"] == "voice"
+    )
+    assert "local-voice-smoke" in voice["reason"]
+    # 旧口径（从演练云语音步聚合）会把本类别拖成 blocked；defer 后四类
+    # 全 pass（exit 0 只说明无缺口，production_ready 仍恒 false）
+    assert report["overall_status"] == "pass"
+    assert exit_code == 0
+    assert report["production_ready"] is False
+
+
+def test_missing_aggregate_maps_to_not_executed_even_with_legacy_cloud_timeline(
+    tmp_path,
+) -> None:
+    """缺聚合文件：即使演练 provider 三步齐备（旧版云端时间线形态），
+    provider-smoke 仍 not_executed——聚合门是唯一权威，单步证据不构成门
+    证据（M11-16：不接受旁路拼装）。"""
+    directory = _full_passing_dir(tmp_path)
+    (directory / "provider-smoke.json").unlink()
+    report = _build(directory)
+    assert _statuses(report)["provider-smoke"] == "not_executed"
+    provider = _category(report, "provider-smoke")
+    assert {
+        item["step"]: item["status"] for item in provider["covered_steps"]
+    } == {
+        "voice": "not_executed",
+        "search": "not_executed",
+        "llm": "not_executed",
+    }
+    assert provider["missing_evidence"] == [
+        {"step": slot, "status": "not_executed"} for slot in EXPECTED_SMOKE_SLOTS
+    ]
+    assert provider["operator_actions"], "缺聚合文件须给出聚合指引"
+    assert "聚合" in provider["operator_actions"][0]
+    assert report["provider_smoke"]["gate_status"] == "missing"
+    assert report["provider_smoke"]["voice_mode"] is None
+    assert report["provider_smoke"]["voice_track"] is None
+    assert "provider-smoke.json" in provider["covered_steps"][0]["reason"]
+
+
+@pytest.mark.parametrize(
+    ("label", "payload"),
+    [
+        (
+            "contradictory-executed-not-run",
+            _smoke_aggregate(
+                voice={
+                    "executed": True,
+                    "result": "not_executed",
+                    "evidence_step": "local-voice-smoke",
+                }
+            ),
+        ),
+        (
+            "wrong-track-local-with-cloud-step",
+            _smoke_aggregate(
+                voice={
+                    "executed": True,
+                    "result": "pass",
+                    "evidence_step": "cloud-voice-smoke",
+                }
+            ),
+        ),
+        (
+            "legacy-no-topology",
+            {
+                "gate": "provider-smoke",
+                "providers": {
+                    "voice": {
+                        "executed": True,
+                        "result": "pass",
+                        "evidence_step": "cloud-voice-smoke",
+                    },
+                    "search": {
+                        "executed": True,
+                        "result": "pass",
+                        "evidence_step": "search-smoke",
+                    },
+                    "llm": {
+                        "executed": True,
+                        "result": "pass",
+                        "evidence_step": "llm-smoke",
+                    },
+                },
+            },
+        ),
+    ],
+    ids=["contradictory", "wrong-track", "legacy-no-topology"],
+)
+def test_malformed_aggregate_maps_to_blocked(tmp_path, label, payload) -> None:
+    """矛盾聚合（executed=true 配 result=not_executed）、错轨聚合（local
+    拓扑配 cloud-voice-smoke）、旧版无 topology 形态均 malformed =>
+    blocked（结构不可信先停下，不给「待补」的宽松读法）。"""
+    directory = _mutated_passing_dir(
+        tmp_path, {"provider-smoke.json": payload}
+    )
+    report = _build(directory)
+    assert _statuses(report)["provider-smoke"] == "blocked"
+    provider = _category(report, "provider-smoke")
+    assert {item["status"] for item in provider["covered_steps"]} == {"blocked"}
+    assert report["provider_smoke"]["gate_status"] == "malformed"
+    assert report["provider_smoke"]["voice_mode"] is None
+    assert report["overall_status"] == "blocked"
+
+
+def test_single_slot_not_executed_maps_to_pending(tmp_path) -> None:
+    """聚合单槽 not_executed（诚实配对 executed=false）：门 pending =>
+    provider-smoke pending（待运维执行冒烟），不是 not_executed——门级
+    pending 语义不被槽位词表吞掉（defer 而非重新聚合）。"""
+    directory = _mutated_passing_dir(
+        tmp_path,
+        {
+            "provider-smoke.json": _smoke_aggregate(
+                llm={
+                    "executed": False,
+                    "result": "not_executed",
+                    "evidence_step": "llm-smoke",
+                }
+            ),
+        },
+    )
+    report = _build(directory)
+    assert _statuses(report)["provider-smoke"] == "pending"
+    provider = _category(report, "provider-smoke")
+    assert {
+        item["step"]: item["status"] for item in provider["covered_steps"]
+    } == {"voice": "pass", "search": "pass", "llm": "not_executed"}
+    assert provider["missing_evidence"] == [
+        {"step": "llm", "status": "not_executed"}
+    ]
+    assert "llm=not_executed" in provider["gap"]
+    assert provider["operator_actions"], "pending 槽位须透出运维指引"
+    assert report["provider_smoke"]["gate_status"] == "pending"
+    assert report["provider_smoke"]["voice_mode"] == "local"
+
+
+@pytest.mark.parametrize("mode", ["hybrid", "cloud"])
+def test_cloud_track_aggregates_evaluated_on_cloud_track(tmp_path, mode) -> None:
+    """hybrid/cloud 聚合按云语音轨道评估：cloud-voice-smoke 配对全 pass
+    => provider-smoke pass（云轨道要求部署 key + 真实短语音）。"""
+    directory = _mutated_passing_dir(
+        tmp_path, {"provider-smoke.json": _smoke_aggregate(mode=mode)}
+    )
+    report = _build(directory)
+    assert _statuses(report)["provider-smoke"] == "pass"
+    assert report["provider_smoke"]["gate_status"] == "pass"
+    assert report["provider_smoke"]["voice_mode"] == mode
+    assert report["provider_smoke"]["voice_track"] == "cloud-voice-smoke"
+    voice = next(
+        item
+        for item in _category(report, "provider-smoke")["covered_steps"]
+        if item["step"] == "voice"
+    )
+    assert "cloud-voice-smoke" in voice["reason"]
+
+
 # --- 5. 输出 schema exact allowlist ---------------------------------------------
 
 
@@ -559,6 +811,8 @@ def test_output_schema_exact_allowlist(tmp_path) -> None:
     report = _build(_mutated_passing_dir(tmp_path, {"cutover-approval.json": None}))
     assert set(report) == TOP_LEVEL_KEYS
     assert set(report["source"]) == SOURCE_KEYS
+    assert set(report["provider_smoke"]) == PROVIDER_SMOKE_KEYS
+    assert set(report["provider_smoke"]["source"]) == PROVIDER_SMOKE_SOURCE_KEYS
     assert report["tool"] == "production-evidence-gap"
     assert set(report["summary"]) == set(cr.STATUS_ORDER)
     assert [item["category"] for item in report["categories"]] == list(EXPECTED_CATEGORIES)
@@ -573,7 +827,8 @@ def test_output_schema_exact_allowlist(tmp_path) -> None:
             isinstance(tool, str) and tool for tool in item["existing_tools"]
         )
         assert item["agent_safe_actions"] and all(
-            isinstance(action, str) and action for action in item["agent_safe_actions"]
+            isinstance(action, str) and action
+            for action in item["agent_safe_actions"]
         )
         assert isinstance(item["authorization_required"], str) and item["authorization_required"]
 
@@ -610,13 +865,16 @@ def test_output_inside_evidence_dir_rejected(tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(
         peg, "run_cutover_rehearsal", lambda root: calls.append(root) or {}
     )
+    monkeypatch.setattr(
+        peg, "run_release_readiness", lambda root: calls.append(root) or {}
+    )
     for target in (
         directory / "gap.json",
         directory / "sub" / "gap.json",
     ):
         with pytest.raises(ProductionGapInputError):
             build_production_evidence_gap(directory, target)
-    assert not calls, "输出护栏必须先于任何证据读取"
+    assert not calls, "输出护栏必须先于任何证据读取（两个聚合器零调用）"
 
 
 def test_output_path_equivalence_forms_rejected(tmp_path) -> None:
@@ -805,12 +1063,17 @@ def test_module_source_has_no_env_db_or_network_access() -> None:
 
 
 def test_module_imports_only_shared_layers() -> None:
-    """import 面恰为 rehearsal/evidence_kit/legacy_papers + 标准库：复用既有
-    装载与校验层，不引入新依赖面（DB/网络模块物理上进不来）。"""
+    """import 面恰为 rehearsal/evidence_kit/legacy_papers/release_readiness +
+    标准库：复用既有装载与校验层，不引入新依赖面（DB/网络模块物理上进不来）。"""
     import ast
 
     tree = ast.parse(Path(peg.__file__).read_text(encoding="utf-8"))
-    allowed = {"cutover_rehearsal", "evidence_kit", "legacy_papers"}
+    allowed = {
+        "cutover_rehearsal",
+        "evidence_kit",
+        "legacy_papers",
+        "release_readiness",
+    }
     stdlib = {"__future__", "os", "collections", "dataclasses", "datetime", "pathlib", "typing"}
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
@@ -826,7 +1089,8 @@ def test_module_imports_only_shared_layers() -> None:
 
 
 def test_module_does_not_reimplement_evidence_validation() -> None:
-    """源码不含证据装载/schema 校验原语调用：全部复用 cutover-rehearsal。"""
+    """源码不含证据装载/schema 校验原语调用：全部复用 rehearsal 与
+    release-readiness（provider 聚合语义 defer，不旁路解析聚合文件）。"""
     source = Path(peg.__file__).read_text(encoding="utf-8")
     for primitive in (
         "load_json_object",
@@ -841,7 +1105,15 @@ def test_module_does_not_reimplement_evidence_validation() -> None:
         "check_regular_file",
         "HEX64_RE",
     ):
-        assert primitive not in source, f"不得自行实现 {primitive}（复用 rehearsal）"
+        assert primitive not in source, f"不得自行实现 {primitive}（复用聚合器）"
+    # provider 聚合语义不得旁路重实现：聚合器/评估器函数零引用
+    for banned in (
+        "aggregate_provider_smoke",
+        "export_provider_smoke",
+        "_eval_provider_smoke",
+        "EVALUATORS",
+    ):
+        assert banned not in source, f"不得引用 {banned}（defer 而非重实现）"
 
 
 def test_cli_parser_block_has_no_yes_flag() -> None:
@@ -879,33 +1151,51 @@ def test_human_summary_printed_without_json(tmp_path, capsys) -> None:
 # --- 11. 端到端与复用证明 -------------------------------------------------------
 
 
-def test_build_reuses_cutover_rehearsal_exactly_once(tmp_path, monkeypatch) -> None:
-    """build 恰调用一次 run_cutover_rehearsal：聚合唯一数据源，不自行评估。"""
+def test_build_reuses_both_aggregators_exactly_once(tmp_path, monkeypatch) -> None:
+    """build 恰调用一次 run_cutover_rehearsal 与一次 run_release_readiness：
+    两个聚合器是唯一数据源，不自行评估、不旁路解析聚合文件。"""
     directory = _full_passing_dir(tmp_path)
-    calls = []
-    original = peg.run_cutover_rehearsal
+    rehearsal_calls: list = []
+    readiness_calls: list = []
+    original_rehearsal = peg.run_cutover_rehearsal
+    original_readiness = peg.run_release_readiness
 
-    def _spy(root):
-        calls.append(root)
-        return original(root)
+    def _spy_rehearsal(root):
+        rehearsal_calls.append(root)
+        return original_rehearsal(root)
 
-    monkeypatch.setattr(peg, "run_cutover_rehearsal", _spy)
+    def _spy_readiness(root):
+        readiness_calls.append(root)
+        return original_readiness(root)
+
+    monkeypatch.setattr(peg, "run_cutover_rehearsal", _spy_rehearsal)
+    monkeypatch.setattr(peg, "run_release_readiness", _spy_readiness)
     build_production_evidence_gap(directory)
-    assert calls == [directory]
+    assert rehearsal_calls == [directory]
+    assert readiness_calls == [directory]
 
 
-def test_covered_statuses_match_independent_rehearsal_run(tmp_path) -> None:
-    """全 pass fixture 下 covered 步状态与独立运行的 rehearsal 逐步一致。"""
+def test_covered_statuses_match_independent_aggregator_runs(tmp_path) -> None:
+    """全 pass fixture 下：rehearsal-backed 三类 covered 步状态与独立运行的
+    rehearsal manifest 逐步一致；provider 槽位状态与独立运行的 readiness
+    provider-smoke 门一致（defer 证明）。"""
     directory = _full_passing_dir(tmp_path)
     rehearsal = cr.run_cutover_rehearsal(directory)
     rehearsal_statuses = {
         item["step"]: item["status"] for item in rehearsal["steps"]
     }
+    readiness = run_readiness(directory)
+    gate = next(
+        item for item in readiness["gates"] if item["gate"] == "provider-smoke"
+    )
     report = _build(directory)
     for item in report["categories"]:
+        assert item["status"] == "pass"
+        if item["category"] == "provider-smoke":
+            assert report["provider_smoke"]["gate_status"] == gate["status"]
+            continue
         for covered in item["covered_steps"]:
             assert covered["status"] == rehearsal_statuses[covered["step"]]
-        assert item["status"] == "pass"
     assert report["source"]["rehearsal_overall_status"] == rehearsal["overall_status"]
 
 
