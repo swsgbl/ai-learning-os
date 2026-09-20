@@ -84,6 +84,8 @@ def create_app(database_url: str | None = None) -> FastAPI:
                 "endpoint": settings.llm_endpoint,
                 "api_key": settings.llm_api_key,
                 "model": settings.llm_model,
+                # M14-71 可选 provider 特定请求级窗口提示（兼容性不保证）
+                "num_ctx": settings.llm_num_ctx,
             }
         )
     else:

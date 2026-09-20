@@ -9,6 +9,29 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-71 本地真实 provider 冒烟闭环（provider smoke local trial）**：
+分支 `ops/m14-71-provider-smoke-local-trial`。本地三槽位真实冒烟全过：
+search（SearXNG 真实端点 results=5）、local-voice（FunASR ASR 245ms +
+CosyVoice TTS RIFF WAV）、llm（`aios-qwen3.5-9b-4096` 冷启动：content
+12 chars 空响应守卫 + rubric judge achieved=[True,True]
+confidence=1.0）；`provider-smoke-aggregate --voice-mode local` 三
+providers 全 pass，`release-readiness` 消费后 **provider-smoke 门禁 =
+pass**（其余门禁 missing，`release_ready=false` 如实）。诚实边界与修复
+主线：Ollama /v1 实证**不可靠消费**顶层 `options.num_ctx`——LLM_NUM_CTX
+全面改为「provider 特定可选请求 Hint，兼容性不保证」措辞（compose/
+config/gateway/rubric_judge/main/smoke 脚本六处），本地冒烟固定走仓库
+所有模型别名 `aios-qwen3.5-9b-4096`（FROM qwen3.5:9b + 模型层
+PARAMETER num_ctx 4096），由新增幂等 fail-closed 供给脚本
+`infra/provision_ollama_model.ps1` 承载（qwen3:4b 显式拒绝）；本机已
+供给并验证（幂等重跑 PASS、`ollama show --parameters` 确认 4096，无预
+热依赖）。新增离线契约测试：供给脚本 + smoke_llm.sh 文本契约，扩展
+gateway num_ctx payload/校验/Settings/build_llm_judge 透传测试（全
+offline 零网络）。生产容器/服务与 env 全程零触碰、密钥零回显。证据：
+`docs/evidence/m14-71-provider-smoke-local-trial/README.md`（README 为
+唯一入库证据文件，5 份 gitignored 源证据由 sha256/bytes 锚定）。
+
+## 前一任务（M14-70 production current-main 切换证据回填 docs-only——已随 PR #157 合并 main；本地 provider 冒烟闭环由 M14-71 接续）
+
 **M14-70 production current-main 切换证据回填（docs-only）**：分支
 `docs/m14-70-production-cutover` 基于 `main@976798f`（PR #156
 merge，provider smoke voice topology 合入后 final main）。supervisor

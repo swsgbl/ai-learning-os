@@ -90,15 +90,18 @@ def _strip_and_parse(raw: str) -> RubricJudgement | None:
 def build_llm_judge(config: dict) -> LlmRubricJudge | None:
     """从 settings 槽位装配；endpoint/key/model 任一缺席返回 None（复核兜底 + 日志）。
 
-    config: {"endpoint": str|None, "api_key": str|None, "model": str|None}
+    config: {"endpoint": str|None, "api_key": str|None, "model": str|None,
+             "num_ctx": int|None（M14-71 可选 provider 特定请求级窗口提示，
+             兼容性不保证——Ollama /v1 实证不可靠消费）}
     """
     import logging
 
     logger = logging.getLogger(__name__)
-    endpoint, api_key, model = (
+    endpoint, api_key, model, num_ctx = (
         config.get("endpoint"),
         config.get("api_key"),
         config.get("model"),
+        config.get("num_ctx"),
     )
     if not (endpoint and api_key and model):
         logger.warning(
@@ -107,4 +110,6 @@ def build_llm_judge(config: dict) -> LlmRubricJudge | None:
             model or "missing",
         )
         return None
-    return LlmRubricJudge(LlmGateway(endpoint=endpoint, api_key=api_key, model=model))
+    return LlmRubricJudge(
+        LlmGateway(endpoint=endpoint, api_key=api_key, model=model, num_ctx=num_ctx)
+    )

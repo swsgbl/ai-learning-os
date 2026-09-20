@@ -166,6 +166,13 @@ services:
       LLM_ENDPOINT: ${AIOS_LLM_ENDPOINT:-}
       LLM_API_KEY: ${AIOS_LLM_API_KEY:-}
       LLM_MODEL: ${AIOS_LLM_MODEL:-}
+      # M14-71 LLM 请求级上下文窗口提示（可选正整数，非敏感）：仅在配置时随
+      # chat completions payload 顶层 options.num_ctx 出示。属 provider 特定
+      # 的请求 Hint——兼容性不保证（OpenAI 规范外字段，Ollama /v1 实证不可
+      # 靠消费，不据此声称生效）。M14-71 本地冒烟固定走模型别名
+      # aios-qwen3.5-9b-4096（模型层 num_ctx，见 infra/provision_ollama_model.ps1），
+      # 本槽位保持空 = 不带 options（payload 与既有形态一致，零行为漂移）
+      LLM_NUM_CTX: ${AIOS_LLM_NUM_CTX:-}
       # M14-70 主观题判分 judge selector（config.py rubric_judge 槽位）：默认
       # keyword = 内置确定性 judge，与应用默认严格一致；AIOS_RUBRIC_JUDGE=llm
       # 显式切换 LLM judge（复用上方 LLM_* 槽位）。`:-` 语义与 TTS_CLOUD_VOICE

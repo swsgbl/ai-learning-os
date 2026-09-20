@@ -62,6 +62,13 @@ class Settings(BaseSettings):
     llm_endpoint: str | None = None
     llm_api_key: str | None = None
     llm_model: str | None = None
+    # M14-71 LLM 请求级上下文窗口提示（可选正整数，env LLM_NUM_CTX）：仅在
+    # 配置时随 chat completions payload 顶层 options.num_ctx 出示。属 provider
+    # 特定的请求 Hint——兼容性不保证（OpenAI 规范外字段，Ollama /v1 实证不可
+    # 靠消费，不据此声称生效）；本地固定上下文走模型别名 aios-qwen3.5-9b-4096
+    # （模型层 num_ctx，infra/provision_ollama_model.ps1）。值非敏感（窗口
+    # 大小）；默认 None = payload 不带 options（零行为漂移）
+    llm_num_ctx: int | None = None
     embedding_provider: str | None = None
     search_provider: str | None = None
     search_cloud_endpoint: str | None = None  # M5-01 cloud-web 搜索源
@@ -107,6 +114,23 @@ class Settings(BaseSettings):
         # M14-65: 音色名剥除空白（与 auth_cookie_name 同款归一化）。空白串归一为
         # 空字符串——这是合法值：请求不带 voice 字段（由端点侧默认音色决定）
         return value.strip()
+
+    @field_validator("llm_num_ctx", mode="before")
+    @classmethod
+    def blank_llm_num_ctx_to_none(cls, value: object) -> object:
+        # M14-71: compose 的 `${AIOS_LLM_NUM_CTX:-}` 空值形态是空字符串——
+        # int 解析会失败，归一为 None（未配置语义），与 str 槽位空串等价处理
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("llm_num_ctx")
+    @classmethod
+    def positive_llm_num_ctx(cls, value: int | None) -> int | None:
+        # M14-71: 窗口提示必须是 >=1 的整数；bool 是 int 子类，一并拒绝
+        if value is not None and (isinstance(value, bool) or value < 1):
+            raise ValueError("LLM_NUM_CTX 必须是 >=1 的整数")
+        return value
 
     @field_validator("cors_origins")
     @classmethod
