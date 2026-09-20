@@ -91,6 +91,98 @@ def test_gateway_requires_full_config() -> None:
             LlmGateway(**kwargs)  # type: ignore[arg-type]
 
 
+# --- M14-71 num_ctx 请求级窗口提示 ---
+
+
+def test_gateway_payload_omits_options_when_num_ctx_unset() -> None:
+    """默认（None）payload 不带 options 键——与既有形态逐字节一致。"""
+    transport = FakeTransport(_ok_body("ok"))
+    _gateway(transport).chat((ChatMessage(role="user", content="q"),))
+    assert "options" not in transport.calls[0]["payload"]
+
+
+def test_gateway_payload_carries_options_num_ctx_when_set() -> None:
+    transport = FakeTransport(_ok_body("ok"))
+    LlmGateway(
+        endpoint="http://llm.test/v1", api_key="k", model="m",
+        transport=transport, num_ctx=4096,
+    ).chat((ChatMessage(role="user", content="q"),))
+    assert transport.calls[0]["payload"]["options"] == {"num_ctx": 4096}
+
+
+@pytest.mark.parametrize("bad", [0, -1, True, "512", 3.5])
+def test_gateway_rejects_invalid_num_ctx(bad) -> None:
+    with pytest.raises(ValueError, match="num_ctx"):
+        LlmGateway(
+            endpoint="http://llm.test/v1", api_key="k", model="m", num_ctx=bad
+        )
+
+
+def test_settings_blank_llm_num_ctx_is_none() -> None:
+    """compose `${AIOS_LLM_NUM_CTX:-}` 空串形态归一为 None（未配置语义）。"""
+    from app.core.config import Settings
+
+    for raw in (None, "", "   "):
+        settings = Settings(_env_file=None, llm_num_ctx=raw)
+        assert settings.llm_num_ctx is None
+
+
+def test_settings_accepts_valid_and_rejects_invalid_llm_num_ctx() -> None:
+    from pydantic import ValidationError
+
+    from app.core.config import Settings
+
+    assert Settings(_env_file=None, llm_num_ctx="4096").llm_num_ctx == 4096
+    for raw in ("0", "-1", "abc", "true", "3.5"):
+        with pytest.raises(ValidationError):
+            Settings(_env_file=None, llm_num_ctx=raw)
+
+
+def test_build_llm_judge_passes_num_ctx_through(monkeypatch) -> None:
+    """build_llm_judge 把 num_ctx 透传进 LlmGateway 构造（零网络验证）。"""
+    captured: dict = {}
+
+    class _SpyGateway:
+        def __init__(self, *, endpoint, api_key, model, num_ctx=None) -> None:
+            captured.update(
+                endpoint=endpoint, api_key=api_key, model=model, num_ctx=num_ctx
+            )
+
+    monkeypatch.setattr("app.llm.rubric_judge.LlmGateway", _SpyGateway)
+    judge = build_llm_judge(
+        {"endpoint": "http://x/v1", "api_key": "k", "model": "m", "num_ctx": 2048}
+    )
+    assert judge is not None
+    assert captured["num_ctx"] == 2048
+
+
+def test_build_llm_judge_omits_num_ctx_when_unset(monkeypatch) -> None:
+    captured: dict = {}
+
+    class _SpyGateway:
+        def __init__(self, *, endpoint, api_key, model, num_ctx=None) -> None:
+            captured.update(num_ctx=num_ctx)
+
+    monkeypatch.setattr("app.llm.rubric_judge.LlmGateway", _SpyGateway)
+    assert (
+        build_llm_judge(
+            {"endpoint": "http://x/v1", "api_key": "k", "model": "m"}
+        )
+        is not None
+    )
+    assert captured["num_ctx"] is None
+
+
+def test_build_llm_judge_num_ctx_alone_does_not_assemble() -> None:
+    """num_ctx 不是装配条件：endpoint/key/model 任一缺席仍返回 None。"""
+    assert (
+        build_llm_judge(
+            {"endpoint": None, "api_key": None, "model": None, "num_ctx": 4096}
+        )
+        is None
+    )
+
+
 # --- rubric LLM judge fail-closed ---
 
 
