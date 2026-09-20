@@ -18,6 +18,7 @@ bash -c 内部完成：WSL bash 不继承 Windows 环境变量（Python 侧 env=
 """
 from __future__ import annotations
 
+import base64
 import re
 import shlex
 import shutil
@@ -94,27 +95,40 @@ def _run_script_with_env_stub(env_overrides: dict[str, str]) -> subprocess.Compl
     """以 env-dump 桩 python 运行脚本：桩打印 NO_PROXY/no_proxy 导出值后 exit 0。
 
     代理绕过修正发生在探针 exec 之前——桩在探针位置读到的是修正后的导出值，
-    据此锁定脚本对两个变量的实际改写（空起点补齐/保留追加/幂等）。桩文件在
-    bash 会话内 mktemp 创建、调用后清理（WSL 不继承 Windows env/路径，桩的
-    创建与引用全部发生在 bash 内；PYTHON 指桩需 export，非 export 赋值
-    不进子进程环境）。
+    据此锁定脚本对两个变量的实际改写（空起点补齐/保留追加/幂等）。桩文件用
+    bash 的 mktemp 创建，但路径由 Python 捕获后以字面量回传后续 bash 调用；
+    桩内容经 base64 写入，避免外层 bash -c 在 WSL 互操作层丢失参数展开字符，
+    同时不引入网络访问。
     """
     for key in env_overrides:
         assert _ENV_KEY_RE.fullmatch(key), f"非法环境变量名: {key}"
-    # 桩脚本两行：shebang + 单行 printf（[] 包值方便断言空串/精确串）
+    created = run_bash([BASH, "-c", "mktemp"], timeout=30)
+    assert created.returncode == 0, created.stderr
+    stub = created.stdout.strip()
+    assert stub and "\n" not in stub, created.stdout
+
+    stub_source = (
+        '#!/usr/bin/env bash\n'
+        'printf "NO_PROXY=[%s] no_proxy=[%s]\\n" "$NO_PROXY" "$no_proxy"\n'
+    )
+    stub_payload = base64.b64encode(stub_source.encode("utf-8")).decode("ascii")
     stub_setup = (
-        '_stub="$(mktemp)" && '
-        'printf \'%s\\n\' \'#!/usr/bin/env bash\' '
-        '\'printf "NO_PROXY=[%s] no_proxy=[%s]\\n" "$NO_PROXY" "$no_proxy"\' '
-        '> "$_stub" && chmod +x "$_stub"'
+        f"printf %s {stub_payload} | base64 -d"
+        f" > {shlex.quote(stub)} && chmod +x {shlex.quote(stub)}"
     )
-    command = "; ".join(
-        [f"unset {' '.join(SMOKE_ENV_KEYS)}", stub_setup]
-        + [f"export {key}={shlex.quote(value)}" for key, value in env_overrides.items()]
-        # $_stub 是 mktemp 生成的 bash 变量，不能经 shlex.quote（保持引用原样）
-        + ['export PYTHON="$_stub"', shlex.quote(SCRIPT_RELATIVE), 'rc=$?', 'rm -f "$_stub"', 'exit $rc']
-    )
-    return run_bash([BASH, "-c", command], timeout=60, cwd=REPO_ROOT)
+    prepared = run_bash([BASH, "-c", stub_setup], timeout=30)
+    assert prepared.returncode == 0, prepared.stderr
+
+    try:
+        command = "; ".join(
+            [f"unset {' '.join(SMOKE_ENV_KEYS)}"]
+            + [f"export {key}={shlex.quote(value)}" for key, value in env_overrides.items()]
+            + [f"export PYTHON={shlex.quote(stub)}", shlex.quote(SCRIPT_RELATIVE)]
+        )
+        return run_bash([BASH, "-c", command], timeout=60, cwd=REPO_ROOT)
+    finally:
+        cleaned = run_bash([BASH, "-c", f"rm -f {shlex.quote(stub)}"], timeout=30)
+        assert cleaned.returncode == 0, cleaned.stderr
 
 
 def test_script_fails_when_endpoint_missing() -> None:
