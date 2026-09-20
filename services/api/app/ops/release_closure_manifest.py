@@ -1,10 +1,10 @@
 """M14-68 release-closure-manifest：生产收口 manifest（只读聚合器）。
 
-定位：release-readiness（M10-11 十门）与 production-evidence-gap（M11-18
-四类缺口）各自回答一个侧面，本工具把「切换窗口前的收口状态」收敛为一份
-确定性 JSON / Markdown closure manifest：git HEAD、证据目录逐文件有界清单
-（相对名/字节/SHA-256）、两个既有聚合器的结论子集、诚实合取的
-production_ready、blockers 与六条精确下一步命令（占位符形态）。安全边界：
+定位：release-readiness（M10-11+M14-73 十一门）与 production-evidence-gap
+（M11-18 四类缺口）各自回答一个侧面，本工具把「切换窗口前的收口状态」
+收敛为一份确定性 JSON / Markdown closure manifest：git HEAD、证据目录逐
+文件有界清单（相对名/字节/SHA-256）、两个既有聚合器的结论子集、诚实合取
+的 production_ready、blockers 与七条精确下一步命令（占位符形态）。安全边界：
 
 - **只消费既有评估结果**：readiness/gap 状态直接调用既有工具取得（其内部
   的路径护栏、装载、敏感键扫描、schema 校验与最终抹除原样生效），本模块
@@ -75,9 +75,9 @@ _PRODUCTION_READY_NOTE = (
     "任何生产操作——真实放行必须由审批人按既有 runbook 显式完成"
 )
 
-#: 六条精确下一步命令（静态模板；<evidence-dir>/<artifacts-dir> 占位符由
+#: 七条精确下一步命令（静态模板；<evidence-dir>/<artifacts-dir> 占位符由
 #: 运维替换，避免输出绝对本地路径；命令口径与 production-evidence-gap
-#: CATEGORY_SPECS 的既有工具表述一致）。顺序即输出顺序。
+#: CATEGORY_SPECS 与 tools/ops 既有工具表述一致）。顺序即输出顺序。
 NEXT_STEPS: tuple[dict[str, str], ...] = (
     {
         "id": "cloud-voice-smoke",
@@ -110,6 +110,20 @@ NEXT_STEPS: tuple[dict[str, str], ...] = (
         "note": (
             "三份单步证据齐备后聚合为 provider-smoke 门脱敏证据"
             "（M11-16：只收机器导出物，不接受手工拼装）"
+        ),
+    },
+    {
+        "id": "long-soak",
+        "command": (
+            "python tools/ops/soak_stability_audit.py "
+            "--history <artifacts-dir>/history.jsonl "
+            "--output-dir <artifacts-dir> && "
+            "cp <artifacts-dir>/soak-audit-report.json <evidence-dir>/long-soak.json"
+        ),
+        "note": (
+            "离线审计真实 24h 稳定窗口（M14-72 工具零时钟、确定性输出）；"
+            "报告 soak-audit-report.json 必须逐字节复制/改名为 long-soak.json"
+            "（不得手改、不得重新序列化），M14-73 起为必需门"
         ),
     },
     {

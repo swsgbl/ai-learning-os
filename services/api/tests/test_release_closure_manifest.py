@@ -12,7 +12,7 @@
    run_release_readiness / build_production_evidence_gap 结论逐字段一致
    （复用而非重复实现）；gap 四类全 pass 而 readiness 未 ready 时
    production_ready 仍 false（合取单边不放行）；空目录 blockers 覆盖
-   十门与四类；
+   十一门与四类；
 5. 诚实合取：两侧 stub 全 pass 才 production_ready=true / exit 0
    （stub 只测聚合逻辑，不发明任何真实审批）；
 6. 零绝对路径与零敏感：JSON+Markdown 不含证据目录/当前目录字面量、
@@ -201,7 +201,7 @@ def _approval_payload(directory: Path) -> dict:
 
 
 def _gap_passing_dir(tmp_path: Path, name: str = "evidence") -> Path:
-    """rehearsal 13 步全 pass（gap 四类 pass）但 release-readiness 十门
+    """rehearsal 13 步全 pass（gap 四类 pass）但 release-readiness 十一门
     未齐（缺 ci/release-check 等 readiness 门形态与 release-approval）"""
     directory = _evidence_dir(tmp_path, name)
     for filename, payload in _passing_steps_evidence().items():
@@ -367,7 +367,7 @@ def test_readiness_and_gap_subsets_match_independent_runs(tmp_path) -> None:
         "summary": gap_report["summary"],
         "exit_code": gap_report["exit_code"],
     }
-    # 空目录：十门全缺 + 四类全 not_executed -> 诚实合取 false / exit 1
+    # 空目录：十一门全缺 + 四类全 not_executed -> 诚实合取 false / exit 1
     assert readiness["release_ready"] is False
     assert gap_report["overall_status"] != "pass"
     assert report["production_ready"] is False

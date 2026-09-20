@@ -1063,3 +1063,12 @@ python tools/ops/soak_stability_audit.py --history <dir-or-file> --window-minute
 `services/api/tests/test_soak_stability_audit.py` 锁定；本工具只是长稳
 审计门禁，不构成真实 24h soak 的完成，也不构成 production readiness
 宣称，`production_ready=false` 不变。
+
+**M14-73 发布门接入**：`AUDIT_SCHEMA_VERSION` 升至 **2**，报告顶层新增
+`"gate": "long-soak"` 自声明字段——M14-72 语义与输出确定性完全不变。
+`release-readiness` 自 M14-73 起把 `long-soak` 作为必需门禁（证据文件
+`long-soak.json`，十必需门变十一门），评估器只接受 schema v2 + gate
+自声明 + 精确策略（1440/15/20/retention 500）的工具产物：把本工具生成
+的 `soak-audit-report.json` **逐字节复制重命名**为
+`<evidence-dir>/long-soak.json`（`cp` 后不得手工编辑/重序列化——输入
+sha256/bytes 与策略字段任一漂移即 malformed）。
