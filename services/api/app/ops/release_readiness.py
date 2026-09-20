@@ -49,7 +49,7 @@ from __future__ import annotations
 import os
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -123,6 +123,30 @@ SMOKE_ENTRY_KEYS = ("executed", "result", "evidence_step")
 
 #: 公网 TURN/TLS 验证的三项检查
 TURN_CHECKS = ("stun_binding", "tls_relay", "symmetric_nat_e2e")
+
+#: M14-73 long-soak 门策略：证据必须是 tools/ops/soak_stability_audit.py
+#: 在**恰为此默认策略**下产出的 audit_schema_version=2 报告（逐字节复制为
+#: long-soak.json）。任何策略漂移（窗口/间隔/间隔上限/留存）即 malformed——
+#: 非该策略下的 pass 不构成「真实连续 24 小时稳定窗口」证据。
+SOAK_AUDIT_TOOL = "tools/ops/soak_stability_audit.py"
+SOAK_AUDIT_SCHEMA_VERSION = 2
+SOAK_HISTORY_SCHEMA_VERSION = 1  # 报告顶层 schema_version（monitoring_history）
+SOAK_WINDOW_MINUTES = 1440
+SOAK_EXPECTED_INTERVAL_MINUTES = 15
+SOAK_MAX_GAP_MINUTES = 20
+SOAK_RETENTION = 500
+#: soak 审计报告 v2 的顶层键全集（与工具 build_report 逐键一致；多余/缺失
+#: 键 = 手工拼装或旧版形态，fail-closed 拒绝）
+SOAK_REPORT_KEYS = frozenset({
+    "schema_version", "audit_schema_version", "gate", "tool", "input",
+    "row_count", "analyzed_row_count", "omitted_older_count", "settings",
+    "anchor_collected_at", "window_start_collected_at", "selected_row_count",
+    "window_status_counts", "window_non_ok_count", "max_observed_gap_minutes",
+    "selected_span_minutes", "classification", "reasons",
+})
+#: 分类固定词汇原因（与工具 classify 输出一致；词汇外原因 = 不可信证据）
+SOAK_BLOCK_REASONS = ("non-ok-status-in-window", "excessive-gap-in-window")
+SOAK_PENDING_REASONS = ("insufficient-clean-coverage", "insufficient-sample-count")
 
 _IDENTITY_NOTE = (
     "approved_by 仅为审批记录内的字符串，本工具只做结构一致性与哈希绑定校验，"
@@ -199,6 +223,15 @@ GATES: tuple[GateSpec, ...] = (
         "draft-ownership.json",
         True,
         "两类历史草稿必须人工决策并执行完毕（计数归零）",
+    ),
+    GateSpec(
+        "long-soak",
+        "M14-72 真实 24h 长稳审计（soak_stability_audit，audit_schema_version=2）",
+        "long-soak.json",
+        True,
+        "发布前必须有真实连续 24 小时稳定窗口证据：窗口 1440 分钟/期望间隔 15"
+        " 分钟/最大间隔 20 分钟策略下的 pass 审计报告（固定词汇原因 fail-closed，"
+        "绝不从总历史跨度或合成时长推导）",
     ),
     GateSpec(
         "provider-smoke",
@@ -496,6 +529,294 @@ def _eval_draft_ownership(obj: dict[str, Any], root: Path, sha: Mapping[str, str
     return STATUS_PASS, f"无待归属草稿（已执行 {executed} 批）", data, []
 
 
+def _req_number(obj: Mapping[str, Any], key: str) -> float:
+    """非布尔的 int/float 数值且 >= 0（gap/span 分钟数在报告里可为小数）。"""
+    value = req(obj, key)
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        raise MalformedEvidence(f"字段 {key} 必须是 >= 0 的数值")
+    return float(value)
+
+
+def _eval_long_soak(obj: dict[str, Any], root: Path, sha: Mapping[str, str]):
+    _require_gate_self_id(obj, "long-soak")
+    # M14-73 fail-closed：证据必须是 soak_stability_audit v2 报告的逐字节副本
+    # （顶层键全集与工具 build_report 逐键一致）——多余/缺失键即手工拼装或
+    # 旧版形态，旁路拼装不收。
+    if set(obj) != set(SOAK_REPORT_KEYS):
+        diff = sorted(set(obj) ^ set(SOAK_REPORT_KEYS))
+        raise MalformedEvidence(
+            f"顶层键必须恰为 soak 审计 v2 报告的 {len(SOAK_REPORT_KEYS)} 键，"
+            f"差异: {diff}"
+        )
+    schema_version = req_int(obj, "schema_version")
+    if schema_version != SOAK_HISTORY_SCHEMA_VERSION:
+        raise MalformedEvidence(
+            f"schema_version 非 {SOAK_HISTORY_SCHEMA_VERSION}: {schema_version}"
+        )
+    audit_version = req_int(obj, "audit_schema_version")
+    if audit_version != SOAK_AUDIT_SCHEMA_VERSION:
+        raise MalformedEvidence(
+            f"audit_schema_version 非 {SOAK_AUDIT_SCHEMA_VERSION}"
+            f"（v1 报告不再被本门接受）: {audit_version}"
+        )
+    tool = req_str(obj, "tool")
+    if tool != SOAK_AUDIT_TOOL:
+        raise MalformedEvidence(f"tool 必须是 {SOAK_AUDIT_TOOL}: {tool}")
+    # 策略漂移即拒绝：非本门策略（1440/15/20/500）下的结论不构成本门证据
+    settings = req_dict(obj, "settings")
+    expected_settings = {
+        "window_minutes": SOAK_WINDOW_MINUTES,
+        "expected_interval_minutes": SOAK_EXPECTED_INTERVAL_MINUTES,
+        "max_gap_minutes": SOAK_MAX_GAP_MINUTES,
+        "retention": SOAK_RETENTION,
+    }
+    if set(settings) != set(expected_settings):
+        raise MalformedEvidence(
+            f"settings 键必须恰为 {sorted(expected_settings)}，"
+            f"实际: {sorted(settings)}"
+        )
+    for name, expected in expected_settings.items():
+        actual = req_int(settings, name)
+        if actual != expected:
+            raise MalformedEvidence(
+                f"settings.{name}={actual} 与本门策略值 {expected} 不符（策略漂移拒绝）"
+            )
+    input_meta = req_dict(obj, "input")
+    if set(input_meta) != {"sha256", "byte_size"}:
+        raise MalformedEvidence(
+            f"input 键必须恰为 ['byte_size', 'sha256']，实际: {sorted(input_meta)}"
+        )
+    input_sha = req_hex(input_meta, "sha256")
+    input_bytes = req_int(input_meta, "byte_size", minimum=1)
+    row_count = req_int(obj, "row_count", minimum=1)
+    analyzed = req_int(obj, "analyzed_row_count", minimum=1)
+    omitted = req_int(obj, "omitted_older_count")
+    # 行数不变式与工具 run_audit 一致：analyzed + omitted == row_count 且
+    # omitted 恰为被 retention 截断的旧行数
+    if analyzed + omitted != row_count:
+        raise MalformedEvidence(
+            f"行数不变式不成立: analyzed({analyzed}) + omitted({omitted})"
+            f" != row_count({row_count})"
+        )
+    if omitted != max(0, row_count - SOAK_RETENTION):
+        raise MalformedEvidence(
+            f"omitted_older_count({omitted}) != max(0, row_count - "
+            f"retention {SOAK_RETENTION})"
+        )
+    anchor_at = req_iso(obj, "anchor_collected_at")
+    window_start = req_iso(obj, "window_start_collected_at")
+    try:
+        delta = datetime.fromisoformat(anchor_at) - datetime.fromisoformat(window_start)
+    except (TypeError, ValueError):
+        raise MalformedEvidence(
+            "anchor/window_start 时间解析失败（naive 与 aware 混合）"
+        ) from None
+    if delta != timedelta(minutes=SOAK_WINDOW_MINUTES):
+        raise MalformedEvidence(
+            f"anchor 与 window_start 之差 {delta} 不等于 {SOAK_WINDOW_MINUTES} 分钟"
+        )
+    selected = req_int(obj, "selected_row_count")
+    if selected > analyzed:
+        raise MalformedEvidence(
+            f"selected_row_count({selected}) > analyzed_row_count({analyzed})"
+        )
+    counts = req_dict(obj, "window_status_counts")
+    if set(counts) != {"ok", "warn", "critical"}:
+        raise MalformedEvidence(
+            f"window_status_counts 键必须恰为 ['critical', 'ok', 'warn']，"
+            f"实际: {sorted(counts)}"
+        )
+    ok_count = req_int(counts, "ok")
+    warn_count = req_int(counts, "warn")
+    critical_count = req_int(counts, "critical")
+    if ok_count + warn_count + critical_count != selected:
+        raise MalformedEvidence(
+            f"状态计数之和 {ok_count + warn_count + critical_count}"
+            f" != selected_row_count({selected})"
+        )
+    non_ok = req_int(obj, "window_non_ok_count")
+    if not warn_count + critical_count <= non_ok <= selected:
+        raise MalformedEvidence(
+            f"window_non_ok_count={non_ok} 不在 [warn+critical="
+            f"{warn_count + critical_count}, selected={selected}] 区间"
+        )
+    max_gap = _req_number(obj, "max_observed_gap_minutes")
+    span = _req_number(obj, "selected_span_minutes")
+    classification = req_choice(obj, "classification", ("pass", "pending", "blocked"))
+    raw_reasons = req(obj, "reasons")
+    if (
+        not isinstance(raw_reasons, list)
+        or any(not isinstance(item, str) or not item for item in raw_reasons)
+        or len(set(raw_reasons)) != len(raw_reasons)
+    ):
+        raise MalformedEvidence("字段 reasons 必须是无重复的非空字符串列表")
+    reasons = list(raw_reasons)
+    unknown = [
+        item for item in reasons if item not in SOAK_BLOCK_REASONS + SOAK_PENDING_REASONS
+    ]
+    if unknown:
+        raise MalformedEvidence(
+            f"reasons 含固定词汇外原因 {unknown}（唯一合法生产者是审计工具）"
+        )
+    min_required = SOAK_WINDOW_MINUTES // SOAK_EXPECTED_INTERVAL_MINUTES + 1
+    data = {
+        "audit_schema_version": audit_version,
+        "input": {"sha256": input_sha, "byte_size": input_bytes},
+        "row_count": row_count,
+        "analyzed_row_count": analyzed,
+        "omitted_older_count": omitted,
+        "settings": dict(expected_settings),
+        "anchor_collected_at": anchor_at,
+        "selected_row_count": selected,
+        "window_status_counts": {
+            "ok": ok_count,
+            "warn": warn_count,
+            "critical": critical_count,
+        },
+        "window_non_ok_count": non_ok,
+        "max_observed_gap_minutes": max_gap,
+        "selected_span_minutes": span,
+        "classification": classification,
+        "reasons": reasons,
+    }
+    if classification == "pass":
+        if reasons:
+            raise MalformedEvidence(
+                f"classification=pass 但 reasons={reasons}（自相矛盾）"
+            )
+        if selected < min_required:
+            raise MalformedEvidence(
+                f"pass 但 selected_row_count={selected} < 闭区间最少样本 "
+                f"{min_required}（1440 分钟/15 分钟间隔）"
+            )
+        if span != float(SOAK_WINDOW_MINUTES):
+            raise MalformedEvidence(
+                f"pass 但 selected_span_minutes={span} 分钟 != 恰 "
+                f"{SOAK_WINDOW_MINUTES} 分钟"
+            )
+        if max_gap > SOAK_MAX_GAP_MINUTES:
+            raise MalformedEvidence(
+                f"pass 但 max_observed_gap_minutes={max_gap} > {SOAK_MAX_GAP_MINUTES}"
+            )
+        if non_ok or warn_count or critical_count or ok_count != selected:
+            raise MalformedEvidence(
+                f"pass 但窗口非全 ok（ok={ok_count}/warn={warn_count}/"
+                f"critical={critical_count}/non_ok={non_ok}/selected={selected}）"
+            )
+        return (
+            STATUS_PASS,
+            (
+                f"真实 24h 稳定窗口 pass：{selected} 样本全 ok、最大间隔 "
+                f"{max_gap:g} 分钟 <= {SOAK_MAX_GAP_MINUTES}、跨度恰 "
+                f"{SOAK_WINDOW_MINUTES} 分钟（anchor={anchor_at}，输入 sha256="
+                f"{input_sha[:12]}…，{row_count} 行中取末 {analyzed} 行分析）"
+            ),
+            data,
+            [],
+        )
+    if classification == "pending":
+        if not reasons or not set(reasons) <= set(SOAK_PENDING_REASONS):
+            raise MalformedEvidence(
+                f"classification=pending 但 reasons={reasons} 不构成合法 pending "
+                f"原因集（只能是 {list(SOAK_PENDING_REASONS)}）"
+            )
+        # 工具判定顺序：非 ok / 间隔超限会先判 blocked，pending 只能建立在
+        # 干净且间隔合规的窗口上
+        if non_ok or warn_count or critical_count or ok_count != selected:
+            raise MalformedEvidence(
+                f"pending 但窗口含非 ok 样本（non_ok={non_ok}/warn={warn_count}/"
+                f"critical={critical_count}）——应为 blocked（自相矛盾）"
+            )
+        if max_gap > SOAK_MAX_GAP_MINUTES:
+            raise MalformedEvidence(
+                f"pending 但 max_observed_gap_minutes={max_gap} > "
+                f"{SOAK_MAX_GAP_MINUTES}——应为 blocked（自相矛盾）"
+            )
+        if "insufficient-sample-count" in reasons and selected >= min_required:
+            raise MalformedEvidence(
+                f"reasons 声称样本数不足但 selected={selected} >= {min_required}"
+                "（自相矛盾）"
+            )
+        if (
+            "insufficient-clean-coverage" in reasons
+            and span >= float(SOAK_WINDOW_MINUTES)
+        ):
+            raise MalformedEvidence(
+                f"reasons 声称干净覆盖不足但 selected_span_minutes={span} 分钟 "
+                f"已 >= {SOAK_WINDOW_MINUTES}（自相矛盾）"
+            )
+        hints = {
+            "insufficient-clean-coverage": (
+                f"干净覆盖不足（span={span:g} 分钟 < {SOAK_WINDOW_MINUTES}）"
+            ),
+            "insufficient-sample-count": (
+                f"样本数不足（selected={selected} < {min_required}）"
+            ),
+        }
+        detail = "；".join(
+            hints[item] for item in SOAK_PENDING_REASONS if item in reasons
+        )
+        return (
+            STATUS_PENDING,
+            (
+                f"真实 24h 窗口未满（{detail}）——监测继续稳定运行补齐干净窗口后，"
+                "离线重跑 soak_stability_audit 并将新报告逐字节复制为 "
+                "long-soak.json 重新导出本门证据"
+            ),
+            data,
+            [],
+        )
+    # classification == "blocked"
+    if not reasons or not set(reasons) <= set(SOAK_BLOCK_REASONS):
+        raise MalformedEvidence(
+            f"classification=blocked 但 reasons={reasons} 不构成合法 blocked "
+            f"原因集（只能是 {list(SOAK_BLOCK_REASONS)}）"
+        )
+    # 与工具 classify 的 if/elif 判定序一致：非 ok 优先于间隔超限，两类原因
+    # 可同时为真但工具只发先命中的一条——因此这里校验单向蕴含而非双向等价
+    if "non-ok-status-in-window" in reasons and non_ok <= 0:
+        raise MalformedEvidence(
+            "reasons 声称窗口内非 ok 状态但 window_non_ok_count=0（自相矛盾）"
+        )
+    if "excessive-gap-in-window" in reasons and max_gap <= SOAK_MAX_GAP_MINUTES:
+        raise MalformedEvidence(
+            f"reasons 声称间隔超限但 max_observed_gap_minutes={max_gap} <= "
+            f"{SOAK_MAX_GAP_MINUTES}（自相矛盾）"
+        )
+    if non_ok > 0 and "non-ok-status-in-window" not in reasons:
+        raise MalformedEvidence(
+            f"window_non_ok_count={non_ok} > 0 但 reasons 未声明 "
+            f"{SOAK_BLOCK_REASONS[0]}（自相矛盾）"
+        )
+    if (
+        non_ok == 0
+        and max_gap > SOAK_MAX_GAP_MINUTES
+        and "excessive-gap-in-window" not in reasons
+    ):
+        raise MalformedEvidence(
+            f"无非 ok 样本但 max_observed_gap_minutes={max_gap} > "
+            f"{SOAK_MAX_GAP_MINUTES} 且 reasons 未声明 excessive-gap-in-window"
+            "（自相矛盾）"
+        )
+    parts = []
+    if "non-ok-status-in-window" in reasons:
+        parts.append(
+            f"窗口内 {non_ok} 个非 ok 样本（warn={warn_count}/"
+            f"critical={critical_count}）"
+        )
+    if "excessive-gap-in-window" in reasons:
+        parts.append(f"最大观测间隔 {max_gap:g} 分钟 > {SOAK_MAX_GAP_MINUTES}")
+    return (
+        STATUS_BLOCKED,
+        (
+            f"真实 24h 窗口存在稳定性问题: {'；'.join(parts)}——排查修复并重新获得"
+            "满 24 小时干净窗口前不得发布（绝不从总历史跨度推导稳定）"
+        ),
+        data,
+        [],
+    )
+
+
 def _eval_provider_smoke(obj: dict[str, Any], root: Path, sha: Mapping[str, str]):
     _require_gate_self_id(obj, "provider-smoke")
     # M14-70 聚合契约 fail-closed：topology 恰为 voice_mode 单键且为合法拓扑；
@@ -734,6 +1055,7 @@ EVALUATORS: dict[str, Callable[..., tuple[str, str, dict, list]]] = {
     "audit-chain-anchor": _eval_audit_chain_anchor,
     "legacy-papers": _eval_legacy_papers,
     "draft-ownership": _eval_draft_ownership,
+    "long-soak": _eval_long_soak,
     "provider-smoke": _eval_provider_smoke,
     "turn-tls": _eval_turn_tls,
     "release-approval": _eval_release_approval,

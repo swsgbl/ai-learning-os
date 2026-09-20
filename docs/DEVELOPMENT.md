@@ -908,12 +908,18 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
 - **CLI**：`python -m app.ops.cli release-readiness --evidence-dir <path>
   [--json] [--output <artifacts路径>]`，实现文件
   `services/api/app/ops/release_readiness.py`。
-- **定位**：只读汇总调用方显式提供的 10 个 gate 证据 JSON/JSONL，计算
+- **定位**：只读汇总调用方显式提供的 11 个 gate 证据 JSON/JSONL，计算
   SHA-256；不连 DB/网络/API，不读环境变量，不执行迁移、锚定、清理、WORM、
   发布、回滚，无 `--yes` 执行形态。
 - **gate 矩阵**：required——`ci-main`、`release-check`、`production-preflight`、
   `backup-restore`、`audit-chain-anchor`、`legacy-papers`、`draft-ownership`、
-  `provider-smoke`、`release-approval`；optional——`turn-tls`。
+  `long-soak`、`provider-smoke`、`release-approval`；optional——`turn-tls`。
+  `long-soak` 门的证据来源口径（M14-73）：来源命令是
+  `soak_stability_audit.py --history <history.jsonl> --output-dir <artifacts>`
+  ——`AUDIT_SCHEMA_VERSION=2` 报告顶层自声明 `gate="long-soak"`（v1 报告
+  不再被接受），生成的 `soak-audit-report.json` 必须**逐字节复制重命名**为
+  `<evidence-dir>/long-soak.json`，绝不由手工编辑/重序列化产生（见
+  tools/ops/README.md 的 `soak_stability_audit.py` 节）。
   `provider-smoke` 门的证据来源口径（M11-16）：来源命令是
   `provider-smoke-aggregate --search <PATH> --cloud-voice <PATH> --llm <PATH>
   --output <artifacts>/provider-smoke.json`——三份输入必须是
@@ -952,7 +958,7 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   symlink/reparse 组件即 fail-closed。
 - **诚实合取**：`production_ready = readiness.release_ready AND
   gap.overall==pass`；任一侧未全 pass 即 false，blockers 逐条透出
-  （readiness 必需门未过 + gap 类别未过），并输出六条占位符下一步命令
+  （readiness 必需门未过 + gap 类别未过），并输出七条占位符下一步命令
   （`<evidence-dir>`/`<artifacts-dir>` 由运维替换；不代签、不代批）。
 - **输出护栏**：`--output-json`/`--output-md` 仅允许 artifacts/temp
   下、两路径互不相同、不得位于 evidence 目录内；护栏检查先于证据读取；

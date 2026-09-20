@@ -236,6 +236,26 @@ def test_synthetic_24h_pass_15min_cadence(tmp_path) -> None:
     assert (output / MD_REPORT).read_text(encoding="utf-8").count("pass") >= 1
 
 
+def test_report_v2_gate_binding_contract(tmp_path) -> None:
+    """M14-73 契约：audit_schema_version=2 + 顶层 gate=long-soak 自声明
+    （release-readiness long-soak 门 v2 证据的唯一合法形态）。"""
+    source, output = tmp_path / "src", tmp_path / "out"
+    source.mkdir()
+    _write_history(source, _rows_back(hours=5))  # 任意合法分类面均携带门绑定
+    assert _run_cli(source / "history.jsonl", output) == sa.EXIT_PENDING
+    report = _report(output)
+    assert report["schema_version"] == 1
+    assert report["audit_schema_version"] == 2
+    assert report["gate"] == "long-soak"
+    assert report["tool"] == "tools/ops/soak_stability_audit.py"
+    assert report["settings"] == {"window_minutes": 1440,
+                                  "expected_interval_minutes": 15,
+                                  "max_gap_minutes": 20, "retention": 500}
+    md = (output / MD_REPORT).read_text(encoding="utf-8")
+    assert "gate=long-soak" in md
+    assert "audit_schema_version=2" in md
+
+
 def test_history_directory_form_equivalent(tmp_path) -> None:
     source, output = tmp_path / "src", tmp_path / "out"
     source.mkdir()

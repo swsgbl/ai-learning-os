@@ -41,7 +41,7 @@
 - 退出码：0 pass；1 pending；2 blocked 与输入拒绝（参数超界亦 2）。
 - 输出（默认 gitignored ``.verify/m14-72-long-soak-audit/``，
   ``--output-dir`` 为操作者显式自选）：确定性 JSON 与 Markdown 报告
-  （schema/tool/version、输入 SHA-256 与字节大小、行数、窗口/间隔/gap
+  （schema/gate/tool/version、输入 SHA-256 与字节大小、行数、窗口/间隔/gap
   设置、锚点、窗口起点、入选行数、状态计数、最大观测间隔、分类与
   固定词汇原因；**绝无原始日志行/密钥/secret/env 值/URL/token/主机
   标识**——仅已脱敏 project 字段与计数/时间戳面）。生成时间戳取自锚
@@ -84,8 +84,13 @@ REPORT_JSON_NAME = "soak-audit-report.json"
 REPORT_MD_NAME = "soak-audit-report.md"
 
 TAG = "[soak-audit]"
-AUDIT_SCHEMA_VERSION = 1
+#: M14-73 起 v2：报告新增顶层 gate 字段供 release-readiness long-soak 门
+#: 自声明绑定（v1 报告不再被该门接受）
+AUDIT_SCHEMA_VERSION = 2
 TOOL_NAME = "tools/ops/soak_stability_audit.py"
+#: 报告自声明的发布门 id（M14-73：release-readiness 必需门 long-soak 的
+#: 证据文件 long-soak.json 由本报告逐字节复制而来）
+GATE_NAME = "long-soak"
 
 #: 分类与固定词汇原因（绝不携带文件内容文本）
 CLASS_PASS = "pass"
@@ -297,6 +302,7 @@ def build_report(*, input_sha256: str, input_bytes: int, row_count: int,
     return {
         "schema_version": _history.HISTORY_SCHEMA_VERSION,
         "audit_schema_version": AUDIT_SCHEMA_VERSION,
+        "gate": GATE_NAME,
         "tool": TOOL_NAME,
         "input": {
             "sha256": input_sha256,
@@ -337,6 +343,9 @@ def render_report_markdown(report: dict[str, object]) -> str:
         f"- 分类：**{report['classification']}**"
         + (f"（原因：{', '.join(report['reasons'])}）" if report["reasons"] else ""),
         f"- 输入：SHA-256 `{input_info['sha256']}`，{input_info['byte_size']} bytes",
+        (f"- 发布门绑定：gate={report['gate']}"
+         f"（audit_schema_version={report['audit_schema_version']}；"
+         "release-readiness 证据 long-soak.json 由本报告逐字节复制而来）"),
         (f"- 行数：总 {report['row_count']} / 分析 {report['analyzed_row_count']}"
          f"（省略更早 {report['omitted_older_count']} 条）"),
         (f"- 设置：窗口 {settings['window_minutes']} 分钟 / 期望间隔 "

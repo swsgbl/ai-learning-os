@@ -9,32 +9,40 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-**M14-72 长稳审计（long soak stability audit）**：分支
-`ops/m14-72-long-soak-audit`（基于 main@8559c24），单次本地提交
-`ops: add monitoring soak stability audit`（不推送）。新增离线只读审计
-工具 `tools/ops/soak_stability_audit.py`：消费 M14-13 `history.jsonl`，
-判定真实连续 24h 稳定窗口——分类 pass（exit 0）/ pending（exit 1）/
-blocked（exit 2），全程 fail-closed（固定词汇原因）；schema 复用
-`monitoring_history` 单一事实源（常量/时间戳解析/project 白名单/Store/
-原子写/symlink 拒绝）；零子进程/零网络/零计划任务/零 env 读取/零墙钟
-（报告时间戳取自锚样本，输出逐字节可复现）；输出确定性 JSON+Markdown
-至 gitignored `.verify/m14-72-long-soak-audit/`，绝无原始日志行/密钥/
-secret/env 值/URL/token/主机标识。**数据域 blocked（warn/critical/
-partial 在窗口内、间隔超限）= 合法审计结论，照常写出报告后 exit 2；
-输入拒绝（缺失/symlink/解析/重复/非时序/项目冲突/行数/参数/写失败）=
-零输出 exit 2。诚实边界：pass 仅源于窗口内逐样本干净+覆盖+间隔+闭区间
-最小样本数（window//interval + 1，24h/15m = 97），绝不由总历史跨度/
-合成 soak 时长/墙钟推导；canonical 真实历史干跑 = blocked
-（non-ok-status-in-window，391 行/窗口内 ok=94/warn=3/最后一次 warn 后
-仅 465 分钟干净，报告已落盘），绝不宣称 24h pass；本工具只是长稳审计
-门禁，不构成真实 24h soak 的完成，也不构成 production readiness 宣称
-（production_ready=false）。** 测试 604 行契约测试 + 既有
-monitoring_history 契约全绿（169 passed），ruff/py_compile/
+**M14-73 长稳审计接入发布门（long soak release gate）**：分支
+`ops/m14-73-long-soak-release-gate`（基于 main@05c7aea，即 PR #159
+合并 M14-72 后的 main），单次本地提交 `ops: add long-soak release
+gate`（不推送）。把 M14-72 长稳审计接入 `release-readiness` 作为
+fail-closed 必需门禁：新增必需 GateSpec `long-soak`（证据
+`long-soak.json`，排序在 draft-ownership 之后、provider-smoke 之前），
+release-ready 门槛从十门升至**十一门**（10 必需 + 1 可选 turn-tls），
+GATE_IDS/approval 哈希绑定自动扩展。`tools/ops/soak_stability_audit.py`
+AUDIT_SCHEMA_VERSION 升至 **2** 并在报告顶层自声明
+`gate="long-soak"`（v1 报告不再被门禁接受），M14-72 语义与确定性不变。
+评估器 `_eval_long_soak` 严格校验：gate 自标识/工具路径/精确策略
+（1440/15/20/retention 500）/输入 sha256+bytes/行不变量
+（analyzed+omitted==row_count、omitted==max(0, row_count-500)、
+selected≤analyzed）/锚点−窗口起点==1440 分钟/counts 键恰为
+ok·warn·critical 且和==selected_row_count/window_non_ok_count∈
+[warn+critical, selected]；分类判定与工具单向蕴含一致（blocked 仅
+non-ok-status-in-window / excessive-gap-in-window；pending 仅
+insufficient-clean-coverage / insufficient-sample-count 且后者要求
+selected<97；pass 要求 reasons 为空+selected≥97+span==1440+max_gap≤20+
+non_ok==0+warn==critical==0+ok==selected；未知/矛盾=malformed）。
+release_closure_manifest 下一步指引更新为七条：离线跑 soak 审计后把
+生成 JSON **逐字节复制重命名**为 `<evidence-dir>/long-soak.json`
+（manifest 保持只读聚合器）。canonical 真实历史干跑（主仓 M14-13
+`history.jsonl`，396 行/578635 bytes/SHA-256 `65470fc6…783c`，锚点
+2026-09-20T06:15:01Z）= **blocked（non-ok-status-in-window，exit 2）**
+——97 样本 ok=94/warn=3/critical=0、span 1439.617 分钟、max_gap
+15.033 分钟、策略恰 1440/15/20/500；该真实报告经 `_eval_long_soak`
+直消费验证 = blocked（非 malformed），`release_ready=false` 如实，
+**绝不合成 soak pass**。测试 162 passed（三套件），ruff/py_compile/
 `git diff --check` 干净。证据：
-`docs/evidence/m14-72-long-soak-audit/README.md`（真实干跑输入以
-SHA-256+字节数锚定，输出文件哈希/字节数如实记录）。
+`docs/evidence/m14-73-long-soak-release-gate/README.md`（README 为唯一
+入库证据文件，干跑输出哈希/字节数如实记录）。
 
-## 前一任务（M14-71 本地真实 provider 冒烟闭环——已随 PR #158 合并 main；长稳审计由 M14-72 接续）
+## 前一任务（M14-72 长稳审计——已随 PR #159 合并 main；发布门接入由 M14-73 接续）
 
 **M14-71 本地真实 provider 冒烟闭环（provider smoke local trial）**：
 分支 `ops/m14-71-provider-smoke-local-trial`。本地三槽位真实冒烟全过：

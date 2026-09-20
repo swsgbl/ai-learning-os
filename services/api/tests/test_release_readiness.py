@@ -1,7 +1,7 @@
 """M10-11 release readiness：只读证据 manifest 的门矩阵/状态语义/安全边界。
 
 覆盖矩阵：
-1. 门矩阵与 CLI 注册：GATES 覆盖十个发布审批门（无漏项/无虚设）、
+1. 门矩阵与 CLI 注册：GATES 覆盖十一个发布审批门（无漏项/无虚设）、
    required/optional 划分、EVALUATORS 全覆盖、证据文件名唯一；CLI 子命令
    注册、无 --yes 执行形态（argparse exit 2）、main 分发；provider-smoke
    M14-70 聚合拓扑契约（topology.voice_mode 选轨 + evidence_step 配对 +
@@ -19,13 +19,17 @@
    pass）；审批绑定的门证据缺失 -> tampered；锚文件副本被改 / 申报计数与
    副本不一致 -> tampered；
 5. pending 不伪装 pass：pre-migration 证据、治理计数 >0、冒烟未执行、恢复
-   演练未 verified、锚定落后、WORM 未归档、审批未覆盖全部必需门 -> 该门
+   演练未 verified、锚定落后、WORM 未归档、24h 长稳窗口未满（固定词汇
+   insufficient-*）、审批未覆盖全部必需门 -> 该门
    pending、release_ready=False、exit 1、人类摘要写明仍需人工；turn-tls 是
    optional 门：pending 如实透出但不阻断 release_ready（本机/LAN 发布形态），
    manifest（not_pass_optional + optional_scope_note）与人类摘要必须声明公网
    语音发布仍需 turn-tls=pass，release_ready 不含公网语音就绪结论；
 6. blocked：CI failure / release-check 未全绿 / preflight fail / 链 invalid /
-   冒烟 fail -> blocked；
+   冒烟 fail / 长稳窗口非 ok 样本或间隔超限 -> blocked；M14-73 long-soak 门
+   另有专节：审计报告 v2 逐键契约（策略漂移、行数不变式、计数区间、时间窗
+   恰 1440 分钟、96-97 边界、与工具 if/elif 判定序一致的单向蕴含、审批哈希
+   绑定）全 fail-closed；
 7. 路径护栏与 IO（exit 2）：--evidence-dir 不存在 / 普通文件 / symlink、
    目录内任何 symlink、证据文件名被目录占用；--output 非 artifacts/temp
    拒绝、artifacts 内写入、输出父级被普通文件占用时不打印门结论摘要；
@@ -73,6 +77,7 @@ EXPECTED_GATES = {
     "audit-chain-anchor",
     "legacy-papers",
     "draft-ownership",
+    "long-soak",
     "provider-smoke",
     "turn-tls",
     "release-approval",
@@ -123,8 +128,41 @@ def _smoke_document(
     }
 
 
+def _soak_report(**overrides) -> dict:
+    """M14-73 long-soak.json 满配 pass 形态：audit_schema_version=2、97 样本
+    全 ok、跨度恰 1440 分钟（闭区间 1440/15+1=97）；overrides 顶层整项替换
+    （构造 pending/blocked/malformed 变体用）。"""
+    report = {
+        "schema_version": 1,
+        "audit_schema_version": 2,
+        "gate": "long-soak",
+        "tool": "tools/ops/soak_stability_audit.py",
+        "input": {"sha256": "cd" * 32, "byte_size": 571084},
+        "row_count": 97,
+        "analyzed_row_count": 97,
+        "omitted_older_count": 0,
+        "settings": {
+            "window_minutes": 1440,
+            "expected_interval_minutes": 15,
+            "max_gap_minutes": 20,
+            "retention": 500,
+        },
+        "anchor_collected_at": "2026-09-20T02:15:02Z",
+        "window_start_collected_at": "2026-09-19T02:15:02Z",
+        "selected_row_count": 97,
+        "window_status_counts": {"ok": 97, "warn": 0, "critical": 0},
+        "window_non_ok_count": 0,
+        "max_observed_gap_minutes": 15.0,
+        "selected_span_minutes": 1440.0,
+        "classification": "pass",
+        "reasons": [],
+    }
+    report.update(overrides)
+    return report
+
+
 def _passing_evidence() -> dict[str, dict]:
-    """九门齐备且全部满足 pass 形态的证据（不含 release-approval）。"""
+    """十门齐备且全部满足 pass 形态的证据（不含 release-approval）。"""
     return {
         "ci-main.json": {
             "gate": "ci-main",
@@ -167,6 +205,7 @@ def _passing_evidence() -> dict[str, dict]:
             "pending_count": 0,
             "batches": [],
         },
+        "long-soak.json": _soak_report(),
         "provider-smoke.json": _smoke_document(),
         "turn-tls.json": {
             "gate": "turn-tls",
@@ -267,7 +306,7 @@ def _statuses(report: dict) -> dict[str, str]:
 
 
 def test_gate_matrix_complete_no_phantom() -> None:
-    """十个发布审批门无漏项/无虚设；optional 仅 turn-tls；评估器全覆盖。"""
+    """十一个发布审批门无漏项/无虚设；optional 仅 turn-tls；评估器全覆盖。"""
     assert GATE_IDS == EXPECTED_GATES
     files = [spec.evidence_file for spec in GATES]
     assert len(files) == len(set(files)), "证据文件名必须唯一"
@@ -908,6 +947,18 @@ def test_pending_semantics_each_gate(tmp_path) -> None:
             "draft-ownership.json",
             {"gate": "draft-ownership", "pending_count": 6, "batches": []},
         ),
+        "long-soak": (
+            "long-soak.json",
+            # 工具 classify 单原因发射：覆盖未达窗口起点 -> 仅
+            # insufficient-clean-coverage（96 样本、跨度 1425 分钟）
+            _soak_report(
+                classification="pending",
+                reasons=["insufficient-clean-coverage"],
+                selected_row_count=96,
+                window_status_counts={"ok": 96, "warn": 0, "critical": 0},
+                selected_span_minutes=1425.0,
+            ),
+        ),
         "provider-smoke": (
             "provider-smoke.json",
             _smoke_document(
@@ -1091,6 +1142,17 @@ def test_blocked_semantics(tmp_path) -> None:
                 "worm": {"archived": True},
             },
         ),
+        "long-soak": (
+            "long-soak.json",
+            # 工具 classify 单原因发射：非 ok 优先于间隔超限 -> 仅
+            # non-ok-status-in-window（97 选 94 ok/3 warn）
+            _soak_report(
+                classification="blocked",
+                reasons=["non-ok-status-in-window"],
+                window_status_counts={"ok": 94, "warn": 3, "critical": 0},
+                window_non_ok_count=3,
+            ),
+        ),
         "provider-smoke": (
             "provider-smoke.json",
             _smoke_document(
@@ -1115,6 +1177,316 @@ def test_blocked_semantics(tmp_path) -> None:
         assert _statuses(report)[gate_id] == "blocked", gate_id
         assert report["release_ready"] is False
         assert report["exit_code"] == 1
+
+
+# --- 6b. M14-73 long-soak：24h 长稳审计门 fail-closed 专节 ---------------------
+
+
+def test_long_soak_pass_gate_semantics(tmp_path) -> None:
+    """真实 24h 稳定窗口 pass：97 样本全 ok/跨度恰 1440/最大间隔 <= 20，
+    结论携带 anchor 与输入 sha256 前缀供审批复核定位原始 history。"""
+    directory = _evidence_dir(tmp_path)
+    _write_evidence(directory)
+    _write_approval(directory)
+
+    report = _run(directory)
+    gate = _gate(report, "long-soak")
+    assert gate["status"] == "pass"
+    assert "真实 24h 稳定窗口 pass" in gate["reason"]
+    assert "97 样本全 ok" in gate["reason"]
+    assert "跨度恰 1440 分钟" in gate["reason"]
+    assert "cdcdcdcdcdcd" in gate["reason"]  # input.sha256 前 12 位
+    assert gate["data"]["classification"] == "pass"
+    assert gate["data"]["audit_schema_version"] == 2
+    assert gate["data"]["input"]["sha256"] == "cd" * 32
+
+
+def test_release_ready_requires_long_soak_pass(tmp_path) -> None:
+    """缺 long-soak.json：该门 missing、release_ready=False——M14-73 前的
+    十门绿态不再构成 ready（fail-closed 升级回归锚）。"""
+    directory = _evidence_dir(tmp_path)
+    evidence = _passing_evidence()
+    del evidence["long-soak.json"]
+    _write_evidence(directory, evidence)
+    _write_approval(
+        directory, coverage=sorted(GATE_IDS - {"release-approval", "long-soak"})
+    )
+
+    report = _run(directory)
+    assert _statuses(report)["long-soak"] == "missing"
+    assert "long-soak" in report["not_pass_required"]
+    assert report["release_ready"] is False
+    assert report["exit_code"] == 1
+
+
+def test_long_soak_pending_reasons_each_variant(tmp_path) -> None:
+    """两种 pending 固定词汇各自成立（工具单原因发射），如实透出并指引
+    补齐窗口——绝不伪装 pass。"""
+    fragments = {
+        "insufficient-clean-coverage": "干净覆盖不足",
+        "insufficient-sample-count": "样本数不足",
+    }
+    variants = {
+        # 覆盖未达窗口起点（样本可已凑满 97 但跨度不足 24h）
+        "insufficient-clean-coverage": _soak_report(
+            classification="pending",
+            reasons=["insufficient-clean-coverage"],
+            selected_span_minutes=1400.0,
+        ),
+        # 覆盖已达窗口起点但闭区间样本数不足 97
+        "insufficient-sample-count": _soak_report(
+            classification="pending",
+            reasons=["insufficient-sample-count"],
+            selected_row_count=96,
+            window_status_counts={"ok": 96, "warn": 0, "critical": 0},
+        ),
+    }
+    for name, payload in variants.items():
+        directory = _evidence_dir(tmp_path, f"soak-pending-{name}")
+        _write_evidence(directory)
+        _write_json(directory, "long-soak.json", payload)
+        _write_approval(directory)
+
+        report = _run(directory)
+        gate = _gate(report, "long-soak")
+        assert gate["status"] == "pending", (name, gate["reason"])
+        assert gate["data"]["reasons"] == [name]
+        assert fragments[name] in gate["reason"]
+        assert "补齐干净窗口" in gate["reason"]  # 下一步指引而非空泛等待
+        assert "long-soak" in report["not_pass_required"], name
+        assert report["release_ready"] is False, name
+        assert report["exit_code"] == 1, name
+
+
+def test_long_soak_blocked_reasons_each_variant(tmp_path) -> None:
+    """两种 blocked 固定词汇各自成立：窗口非 ok 样本 / 间隔超限。"""
+    variants = {
+        "non-ok-status-in-window": _soak_report(
+            classification="blocked",
+            reasons=["non-ok-status-in-window"],
+            window_status_counts={"ok": 94, "warn": 3, "critical": 0},
+            window_non_ok_count=3,
+        ),
+        "excessive-gap-in-window": _soak_report(
+            classification="blocked",
+            reasons=["excessive-gap-in-window"],
+            max_observed_gap_minutes=35.0,
+        ),
+    }
+    for name, payload in variants.items():
+        directory = _evidence_dir(tmp_path, f"soak-blocked-{name}")
+        _write_evidence(directory)
+        _write_json(directory, "long-soak.json", payload)
+        _write_approval(directory)
+
+        report = _run(directory)
+        gate = _gate(report, "long-soak")
+        assert gate["status"] == "blocked", (name, gate["reason"])
+        assert gate["data"]["reasons"] == [name]
+        assert "存在稳定性问题" in gate["reason"]
+        assert "不得发布" in gate["reason"]
+        assert "long-soak" in report["not_pass_required"], name
+        assert report["release_ready"] is False, name
+        assert report["exit_code"] == 1, name
+
+
+def test_long_soak_contract_violations_are_malformed(tmp_path) -> None:
+    """v2 报告逐键契约：schema/工具/策略漂移/行数不变式/计数区间/时间窗/
+    自相矛盾原因/96-97 边界一律 malformed（exit 1，绝不放行）。"""
+
+    def _policy(**kw) -> dict:
+        base = {
+            "window_minutes": 1440,
+            "expected_interval_minutes": 15,
+            "max_gap_minutes": 20,
+            "retention": 500,
+        }
+        base.update(kw)
+        return base
+
+    missing_reasons = _soak_report()
+    del missing_reasons["reasons"]
+    cases = {
+        "gate-self-id": (_soak_report(gate="ci-main"), "['long-soak'] 之一"),
+        "extra-top-key": ({**_soak_report(), "synthetic": True}, "顶层键必须恰为"),
+        "missing-top-key": (missing_reasons, "顶层键必须恰为"),
+        "schema-version-drift": (_soak_report(schema_version=2), "schema_version 非 1"),
+        "audit-schema-v1": (
+            _soak_report(audit_schema_version=1),
+            "v1 报告不再被本门接受",
+        ),
+        "wrong-tool": (_soak_report(tool="tools/ops/other.py"), "tool 必须是"),
+        "policy-window": (
+            _soak_report(settings=_policy(window_minutes=720)),
+            "settings.window_minutes=720 与本门策略值 1440 不符",
+        ),
+        "policy-interval": (
+            _soak_report(settings=_policy(expected_interval_minutes=5)),
+            "expected_interval_minutes=5 与本门策略值 15 不符",
+        ),
+        "policy-gap": (
+            _soak_report(settings=_policy(max_gap_minutes=30)),
+            "max_gap_minutes=30 与本门策略值 20 不符",
+        ),
+        "policy-retention": (
+            _soak_report(settings=_policy(retention=200)),
+            "retention=200 与本门策略值 500 不符",
+        ),
+        "input-shape": (
+            _soak_report(input={"sha256": "cd" * 32}),
+            "input 键必须恰为",
+        ),
+        "row-invariant": (_soak_report(analyzed_row_count=96), "行数不变式不成立"),
+        "omitted-invariant": (
+            _soak_report(row_count=520, analyzed_row_count=505, omitted_older_count=15),
+            "omitted_older_count(15)",
+        ),
+        "window-delta": (
+            _soak_report(anchor_collected_at="2026-09-20T03:15:02Z"),
+            "不等于 1440 分钟",
+        ),
+        "selected-above-analyzed": (
+            _soak_report(
+                selected_row_count=98,
+                window_status_counts={"ok": 98, "warn": 0, "critical": 0},
+            ),
+            "selected_row_count(98) > analyzed_row_count(97)",
+        ),
+        "counts-sum": (
+            _soak_report(window_status_counts={"ok": 94, "warn": 2, "critical": 0}),
+            "状态计数之和 96",
+        ),
+        "counts-keys": (
+            _soak_report(window_status_counts={"ok": 97, "warn": 0}),
+            "window_status_counts 键必须恰为",
+        ),
+        "non-ok-below-interval": (
+            _soak_report(
+                classification="blocked",
+                reasons=["non-ok-status-in-window"],
+                window_status_counts={"ok": 94, "warn": 3, "critical": 0},
+                window_non_ok_count=2,
+            ),
+            "不在 [warn+critical=3, selected=97] 区间",
+        ),
+        "non-ok-above-selected": (
+            _soak_report(window_non_ok_count=98),
+            "不在 [warn+critical=0, selected=97] 区间",
+        ),
+        # 96/97 边界：闭区间完整序列恰 97，96 个样本不构成 pass
+        "pass-below-min-samples": (
+            _soak_report(
+                selected_row_count=96,
+                window_status_counts={"ok": 96, "warn": 0, "critical": 0},
+            ),
+            "闭区间最少样本 97",
+        ),
+        "pass-with-reasons": (
+            _soak_report(reasons=["insufficient-clean-coverage"]),
+            "classification=pass 但 reasons",
+        ),
+        "pass-span-short": (
+            _soak_report(selected_span_minutes=1400.0),
+            "!= 恰 1440 分钟",
+        ),
+        "pass-gap-over": (
+            _soak_report(max_observed_gap_minutes=21.0),
+            "max_observed_gap_minutes=21.0 > 20",
+        ),
+        "unknown-reason": (
+            _soak_report(classification="blocked", reasons=["made-up-reason"]),
+            "固定词汇外原因",
+        ),
+        "pending-with-non-ok": (
+            _soak_report(
+                classification="pending",
+                reasons=["insufficient-clean-coverage"],
+                selected_span_minutes=1400.0,
+                selected_row_count=97,
+                window_status_counts={"ok": 96, "warn": 1, "critical": 0},
+                window_non_ok_count=1,
+            ),
+            "应为 blocked",
+        ),
+        "pending-clean-coverage-span-full": (
+            _soak_report(
+                classification="pending",
+                reasons=["insufficient-clean-coverage"],
+            ),
+            "已 >= 1440（自相矛盾）",
+        ),
+        "pending-sample-count-satisfied": (
+            _soak_report(
+                classification="pending",
+                reasons=["insufficient-sample-count"],
+            ),
+            "声称样本数不足但 selected=97",
+        ),
+        "blocked-claim-non-ok-but-clean": (
+            _soak_report(
+                classification="blocked",
+                reasons=["non-ok-status-in-window"],
+            ),
+            "window_non_ok_count=0（自相矛盾）",
+        ),
+        "blocked-claim-gap-but-compliant": (
+            _soak_report(
+                classification="blocked",
+                reasons=["excessive-gap-in-window"],
+            ),
+            "间隔超限但 max_observed_gap_minutes=15.0",
+        ),
+        # 工具 if/elif 判定序：非 ok 存在时只会发 non-ok 原因——
+        # 非 ok > 0 却申报 gap 原因，与唯一合法生产者矛盾
+        "blocked-non-ok-unclaimed": (
+            _soak_report(
+                classification="blocked",
+                reasons=["excessive-gap-in-window"],
+                window_status_counts={"ok": 94, "warn": 3, "critical": 0},
+                window_non_ok_count=3,
+                max_observed_gap_minutes=35.0,
+            ),
+            "未声明 non-ok-status-in-window",
+        ),
+    }
+    for name, (payload, fragment) in cases.items():
+        directory = _evidence_dir(tmp_path, f"soak-bad-{name}")
+        _write_evidence(directory)
+        _write_json(directory, "long-soak.json", payload)
+        _write_approval(directory)
+
+        report = _run(directory)
+        gate = _gate(report, "long-soak")
+        assert gate["status"] == "malformed", (name, gate["reason"])
+        assert fragment in gate["reason"], (name, gate["reason"])
+        assert report["release_ready"] is False, name
+        assert report["exit_code"] == 1, name
+
+
+def test_long_soak_approval_binding_tampered(tmp_path) -> None:
+    """审批后再改 long-soak.json 字节 -> release-approval tampered（哈希
+    失配精确指向 long-soak），release_ready 回落 False——第十一门纳入
+    审批哈希绑定面。"""
+    directory = _evidence_dir(tmp_path)
+    _write_evidence(directory)
+    _write_approval(directory)
+    assert _run(directory)["release_ready"] is True  # 先确立含 long-soak 的绿态
+
+    edited = _soak_report(
+        classification="pending",
+        reasons=["insufficient-sample-count"],
+        selected_row_count=96,
+        window_status_counts={"ok": 96, "warn": 0, "critical": 0},
+    )
+    _write_json(directory, "long-soak.json", edited)
+
+    report = _run(directory)
+    assert _statuses(report)["long-soak"] == "pending"
+    approval = _gate(report, "release-approval")
+    assert approval["status"] == "tampered"
+    assert approval["data"]["hash_mismatches"] == ["long-soak"]
+    assert report["release_ready"] is False
+    assert report["exit_code"] == 1
 
 
 # --- 7. 路径护栏与 IO：exit 2 --------------------------------------------------
