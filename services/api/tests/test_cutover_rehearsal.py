@@ -293,6 +293,51 @@ def test_step_matrix_is_13_required_steps_on_timeline() -> None:
     assert order[-1] == "cutover-approval"
 
 
+def test_rehearsal_timeline_unchanged_for_provider_gap_deferral(tmp_path) -> None:
+    """M14-74 兼容性：production-evidence-gap 的 provider-smoke 类别 defer
+    到 release-readiness 聚合门后，演练时间线保持不变——cloud-voice-smoke
+    仍是演练步（pre-window 云语音冒烟）、local-voice-smoke 不是演练步
+    （只是 M14-70 聚合证据轨道）；聚合文件 provider-smoke.json 出现在
+    证据目录时 rehearsal 只记 unrecognized、不阻断时间线评估（13 步全
+    pass 结论不受影响——聚合证据由 release-readiness 门消费）。"""
+    assert "cloud-voice-smoke" in STEP_IDS
+    assert "local-voice-smoke" not in STEP_IDS
+    assert {"search-smoke", "llm-smoke"} <= STEP_IDS
+    directory = _full_passing_dir(tmp_path)
+    _write_json(
+        directory,
+        "provider-smoke.json",
+        {
+            "gate": "provider-smoke",
+            "topology": {"voice_mode": "local"},
+            "providers": {
+                "voice": {
+                    "executed": True,
+                    "result": "pass",
+                    "evidence_step": "local-voice-smoke",
+                },
+                "search": {
+                    "executed": True,
+                    "result": "pass",
+                    "evidence_step": "search-smoke",
+                },
+                "llm": {
+                    "executed": True,
+                    "result": "pass",
+                    "evidence_step": "llm-smoke",
+                },
+            },
+        },
+    )
+    report = _run(directory)
+    assert set(_statuses(report).values()) == {"pass"}
+    assert report["overall_status"] == "pass"
+    assert any(
+        item["file"] == "provider-smoke.json"
+        for item in report["unrecognized_files"]
+    ), "聚合文件只如实记录，不进入演练时间线评估"
+
+
 def test_cli_registered_and_has_no_execute_flag(tmp_path, monkeypatch) -> None:
     """CLI 子命令注册、无 --yes 执行形态（argparse 对未知旗标 exit 2）。"""
     assert hasattr(cli_module, "_run_cutover_rehearsal")

@@ -1,10 +1,12 @@
 """M14-68 release-closure-manifest：生产收口 manifest（只读聚合器）。
 
 定位：release-readiness（M10-11+M14-73 十一门）与 production-evidence-gap
-（M11-18 四类缺口）各自回答一个侧面，本工具把「切换窗口前的收口状态」
-收敛为一份确定性 JSON / Markdown closure manifest：git HEAD、证据目录逐
-文件有界清单（相对名/字节/SHA-256）、两个既有聚合器的结论子集、诚实合取
-的 production_ready、blockers 与七条精确下一步命令（占位符形态）。安全边界：
+（M11-18+M14-74 四类缺口）各自回答一个侧面，本工具把「切换窗口前的收口
+状态」收敛为一份确定性 JSON / Markdown closure manifest：git HEAD、证据
+目录逐文件有界清单（相对名/字节/SHA-256）、两个既有聚合器的结论子集、
+诚实合取的 production_ready、blockers 与八条精确下一步命令（占位符形态；
+provider 命令按 M14-70 拓扑选轨——provider 聚合语义由 production-evidence-
+gap 透出的 provider-smoke 门状态承载，本清单不重复实现）。安全边界：
 
 - **只消费既有评估结果**：readiness/gap 状态直接调用既有工具取得（其内部
   的路径护栏、装载、敏感键扫描、schema 校验与最终抹除原样生效），本模块
@@ -77,17 +79,36 @@ _PRODUCTION_READY_NOTE = (
 
 #: 七条精确下一步命令（静态模板；<evidence-dir>/<artifacts-dir> 占位符由
 #: 运维替换，避免输出绝对本地路径；命令口径与 production-evidence-gap
-#: CATEGORY_SPECS 与 tools/ops 既有工具表述一致）。顺序即输出顺序。
+#: CATEGORY_SPECS 与 tools/ops 既有工具表述一致——provider 命令按 M14-70
+#: 拓扑选轨（--voice-mode local|hybrid|cloud），本清单不重复 provider 聚合
+#: 语义，聚合结论一律以 production-evidence-gap 透出的 provider-smoke 门
+#: 状态为准）。顺序即输出顺序。
 NEXT_STEPS: tuple[dict[str, str], ...] = (
     {
-        "id": "cloud-voice-smoke",
+        "id": "search-smoke",
         "command": (
-            "python -m app.ops.cli provider-smoke-export cloud-voice "
-            "--output <evidence-dir>/cloud-voice-smoke.json"
+            "python -m app.ops.cli provider-smoke-export search "
+            "--output <evidence-dir>/search-smoke.json"
         ),
         "note": (
-            "运维以部署 key 执行 bash infra/smoke_voice_cloud.sh 冒烟通过后"
-            "导出单步脱敏证据（M11-16：机器导出，key 不入库不入码）"
+            "search 打真实端点冒烟通过后导出单步脱敏证据"
+            "（SEARCH_CLOUD_API_KEY 可选，M11-16：机器导出）"
+        ),
+    },
+    {
+        "id": "voice-smoke",
+        "command": (
+            "python -m app.ops.cli provider-smoke-export "
+            "<cloud-voice|local-voice> "
+            "--output <evidence-dir>/"
+            "<cloud-voice-smoke.json|local-voice-smoke.json>"
+        ),
+        "note": (
+            "语音单步导出按拓扑选轨（M14-70）：local 拓扑执行 bash "
+            "infra/smoke_voice_local.sh（本地语音链路 ASR/TTS 探针，无需云"
+            " key）后导出 local-voice；hybrid/cloud 拓扑以部署 key 执行 "
+            "bash infra/smoke_voice_cloud.sh（真实短语音，key 不入库不入码）"
+            "后导出 cloud-voice"
         ),
     },
     {
@@ -103,13 +124,15 @@ NEXT_STEPS: tuple[dict[str, str], ...] = (
         "command": (
             "python -m app.ops.cli provider-smoke-aggregate "
             "--search <evidence-dir>/search-smoke.json "
-            "--cloud-voice <evidence-dir>/cloud-voice-smoke.json "
+            "--voice <evidence-dir>/<local-voice-smoke.json|cloud-voice-smoke.json> "
             "--llm <evidence-dir>/llm-smoke.json "
+            "--voice-mode <local|hybrid|cloud> "
             "--output <evidence-dir>/provider-smoke.json"
         ),
         "note": (
-            "三份单步证据齐备后聚合为 provider-smoke 门脱敏证据"
-            "（M11-16：只收机器导出物，不接受手工拼装）"
+            "三份单步证据齐备后按语音拓扑聚合为 provider-smoke 门脱敏证据"
+            "（M11-16/M14-70：--voice-mode local 必须以 --voice 传 "
+            "local-voice-smoke.json；只收机器导出物，不接受手工拼装）"
         ),
     },
     {

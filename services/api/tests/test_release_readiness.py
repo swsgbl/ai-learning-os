@@ -58,6 +58,7 @@ from app.ops.release_readiness import (
     GATE_IDS,
     GATES,
     REQUIRED_GATE_IDS,
+    SMOKE_PROVIDERS,
     format_readiness_summary,
     run_release_readiness,
 )
@@ -451,6 +452,31 @@ def test_provider_smoke_topology_tracks_all_pass(tmp_path, mode) -> None:
     # 通过口径声明当前拓扑与对应 voice 证据源
     assert mode in gate["reason"]
     assert expected_voice_step in gate["reason"]
+
+
+def test_provider_smoke_gate_contract_for_gap_deferral(tmp_path) -> None:
+    """M14-74 gap defer 契约：production-evidence-gap 的 provider-smoke
+    类别直接消费本门 record——评估形态下 data 恰为 topology+providers、
+    槽位键与 SMOKE_PROVIDERS 一致、槽位 entry 键恰为 executed/result/
+    evidence_step（改形会直接红掉 gap 侧 defer）；缺失形态下 data 为空
+    dict（拓扑不可知，gap 侧如实透出 null）。"""
+    directory = _evidence_dir(tmp_path, "gap-deferral-contract")
+    evidence = _passing_evidence()
+    evidence["provider-smoke.json"] = _smoke_document("local")
+    _write_evidence(directory, evidence)
+    gate = _gate(_run(directory), "provider-smoke")
+    assert gate["status"] == "pass"
+    assert {"gate", "status", "reason", "data", "evidence"} <= set(gate)
+    assert set(gate["data"]) == {"topology", "providers"}
+    assert set(gate["data"]["providers"]) == set(SMOKE_PROVIDERS)
+    for name, entry in gate["data"]["providers"].items():
+        assert set(entry) == {"executed", "result", "evidence_step"}, name
+    # 缺失形态：无 provider-smoke.json => 门 missing、无槽位明细
+    empty = _evidence_dir(tmp_path, "gap-deferral-missing")
+    _write_evidence(empty, {})  # 空目录（全部门 missing）
+    gate = _gate(_run(empty), "provider-smoke")
+    assert gate["status"] == "missing"
+    assert gate["data"] == {}
 
 
 @pytest.mark.parametrize(

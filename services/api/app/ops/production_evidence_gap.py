@@ -1,20 +1,28 @@
-"""M11-18 production-evidence-gap：生产证据缺口 manifest（只读聚合器）。
+"""M11-18/M14-74 production-evidence-gap：生产证据缺口 manifest（只读聚合器）。
 
 定位：cutover-rehearsal（M10-15）回答「13 步演练时间线证据齐不齐」，本工具
 回答「离实际生产切换还差哪几块证据」——把台账「下一任务」定义的四类生产
 前置证据缺口（历史治理批次、审计链建链与锚定、真实 provider 冒烟、切换
-审批）从 rehearsal 的只读评估结果中**聚合**为逐类缺口清单：每类给出状态、
-缺口描述、已覆盖步骤、既有工具、缺失证据、运维动作、agent 可安全执行的
-动作与必须运维显式授权的边界。四类之外的 5 步（CI、release-check、
-preflight×2、备份恢复）不在本清单范围，完整时间线仍以 cutover-rehearsal
-manifest 为准——四类全 pass 不代表 13 步全 pass，更不代表生产就绪。
+审批）**聚合**为逐类缺口清单：每类给出状态、缺口描述、已覆盖步骤、既有
+工具、缺失证据、运维动作、agent 可安全执行的动作与必须运维显式授权的
+边界。数据源按类别分轨（M14-74）：governance/audit-chain/
+cutover-approval 三类复用 rehearsal 的只读评估结果（覆盖 5 步）；provider-smoke
+类别**defer 到 release-readiness 的 provider-smoke 门**（``provider-smoke.json``
+聚合，M14-70 拓扑感知语义：local 拓扑聚合消费 local-voice 单步证据，
+hybrid/cloud 聚合消费 cloud-voice 单步证据）——本地拓扑语音证据经聚合门
+闭合即 pass，不再因演练时间线的云语音步而缺口；演练云语音步是否齐备仍由
+cutover-rehearsal manifest 如实回答，与本清单互不替代。四类全 pass 不代表
+13 步全 pass，更不代表生产就绪。
 
 安全边界（docs/DEVELOPMENT.md「生产证据缺口清单」节同步维护）：
 
-- **只消费既有评估结果**：本工具直接调用 ``run_cutover_rehearsal`` 取得其
-  manifest（其内部的路径护栏、JSON 装载、敏感键扫描、schema 校验、scrub
-  全部原样复用），自身不重新解析任何证据文件、不重复实现证据 schema
-  校验——step 状态与 reason/next_action 均来自 rehearsal 的白名单提取；
+- **只消费既有评估结果**：本工具直接调用 ``run_cutover_rehearsal`` 与
+  ``run_release_readiness`` 取得其 manifest（两者内部的路径护栏、JSON
+  装载、敏感键扫描、schema 校验、scrub 全部原样复用），自身不重新解析
+  任何证据文件、不重复实现证据 schema 校验、不旁路实现 provider 聚合
+  语义——rehearsal-backed 三类的 step 状态与 reason/next_action 来自
+  rehearsal 的白名单提取，provider-smoke 类别状态与槽位明细来自
+  release-readiness provider-smoke 门；
 - 只读本地证据：不连接数据库、不调用 API、不访问网络、不读取任何环境
   变量（生产密钥物理上进不了本工具，``os.environ`` 零引用）；对证据目录
   零写入（字节保持不变）；
@@ -24,12 +32,12 @@ manifest 为准——四类全 pass 不代表 13 步全 pass，更不代表生�
 - ``production_ready`` 恒为 ``false``：本输出是缺口清单，不构成生产放行、
   不构成 production readiness，也不授权任何生产操作——真实 key、生产连接
   与执行批准必须由运维显式提供与授予，agent 不得虚拟生产就绪；
-- 输出零敏感、零生产业务 ID：每类只透传 rehearsal 的白名单标量与文本
-  （step/status/reason/next_action）加本模块的静态指引文本；来自 rehearsal
-  的 reason/next_action 逐字段再过 ``scrub_sensitive`` 纵深防御（静态指引
-  文本是代码内字面量、零敏感，不经运行时 scrub——且通用 scrub 会按敏感
-  **键名**模式误抹 ``authorization_required`` 这类白名单字段）；证据目录内
-  的敏感键证据已由 rehearsal 按 blocked（malformed）语义处理，值从不回显；
+- 输出零敏感、零生产业务 ID：每类只透传两个聚合器的白名单标量与文本
+  （step/status/reason/next_action）加本模块的静态指引文本；来自聚合器的
+  动态文本逐字段再过 ``scrub_sensitive`` 纵深防御（静态指引文本是代码内
+  字面量、零敏感，不经运行时 scrub——且通用 scrub 会按敏感**键名**模式
+  误抹 ``authorization_required`` 这类白名单字段）；证据目录内的敏感键
+  证据已由聚合器按 blocked（malformed）语义处理，值从不回显；
 - 路径护栏 fail-closed（exit 2）：``--evidence-dir`` 护栏复用 rehearsal
   （symlink/非常规目录拒绝）；``--output`` 必须位于 gitignore 的
   artifacts/temp（复用 ``is_safe_artifact_path``）、任何已存在路径组件是
@@ -38,10 +46,15 @@ manifest 为准——四类全 pass 不代表 13 步全 pass，更不代表生�
   护栏先于任何证据内容读取执行；落盘由 CLI 共享原子写完成（同目录临时
   文件 + fsync + os.replace，失败旧文件字节原样、无 partial）。
 
-状态聚合（诚实优先，与 rehearsal 四态同源常量）：类别内全部步骤 pass 才
-pass；有 blocked 优先 blocked（结构不可信/结论为否/哈希失配必须先停下）；
-否则 pending（待人工决策或执行）；否则 not_executed（证据未提供或动作未
-发生）。绝不把部分通过伪装成 pass。
+状态聚合（诚实优先，与 rehearsal 四态同源常量）：rehearsal-backed 类别内
+全部步骤 pass 才 pass；有 blocked 优先 blocked（结构不可信/结论为否/哈希
+失配必须先停下）；否则 pending（待人工决策或执行）；否则 not_executed
+（证据未提供或动作未发生）。provider-smoke 类别**defer**：状态是权威门
+六态的固定映射（pass/pending/blocked 同名透传；missing -> not_executed；
+malformed/tampered -> blocked），不从槽位重新聚合——门级 pending 语义
+（待运维执行冒烟）不得被槽位词表吞掉；槽位明细（voice/search/llm）按
+聚合 result 透出（fail -> blocked，not_executed -> not_executed）。绝不把
+部分通过伪装成 pass。
 
 退出码：四类全 pass=0；任一类非 pass=1；目录/路径或 IO 问题=2（与
 rehearsal CLI 同口径）。
@@ -65,10 +78,24 @@ from app.ops.cutover_rehearsal import (
 )
 from app.ops.evidence_kit import scrub_sensitive
 from app.ops.legacy_papers import is_safe_artifact_path
+from app.ops.release_readiness import (
+    GATES,
+    STATUS_MALFORMED,
+    STATUS_MISSING,
+    STATUS_TAMPERED,
+    run_release_readiness,
+)
 
-#: 证据自声明：状态与 reason/next_action 全部复用 cutover-rehearsal 评估结果
+#: 证据自声明：governance/audit-chain/cutover-approval 三类状态与
+#: reason/next_action 全部复用 cutover-rehearsal 评估结果；provider-smoke
+#: 类别状态 defer 到 release-readiness 的 provider-smoke 门（M14-74）。
 TOOL_ID = "production-evidence-gap"
 SOURCE_TOOL = "cutover-rehearsal"
+#: provider-smoke 类别的权威门（release-readiness GATES 登记，零漂移引用）
+PROVIDER_GATE_TOOL = "release-readiness"
+_PROVIDER_GATE_SPEC = next(
+    spec for spec in GATES if spec.gate_id == "provider-smoke"
+)
 
 _ISOLATION_NOTE = (
     "隔离只读梳理：本工具只消费 cutover-rehearsal 的本地只读评估结果并按"
@@ -80,10 +107,12 @@ _NO_EXECUTION_NOTE = (
     "运行任何 provider 冒烟——命令没有 --yes 执行形态，是纯汇总器"
 )
 _SCOPE_NOTE = (
-    "本清单聚焦四类生产前置证据缺口，覆盖 cutover-rehearsal 演练时间线的"
-    "部分步骤（见 source.steps_covered）；完整时间线（CI、release-check、"
-    "preflight、备份恢复）仍以 cutover-rehearsal manifest 为准——四类全 "
-    "pass 不代表演练时间线全 pass"
+    "本清单聚焦四类生产前置证据缺口：governance/audit-chain/"
+    "cutover-approval 三类覆盖 cutover-rehearsal 演练时间线的 5 步（见 "
+    "source.steps_covered），provider-smoke 类别以 release-readiness 的"
+    " provider-smoke 门聚合证据为权威（不在演练步骤覆盖面内）；完整时间线"
+    "（CI、release-check、preflight、备份恢复、云端冒烟步）仍以 "
+    "cutover-rehearsal manifest 为准——四类全 pass 不代表演练时间线全 pass"
 )
 _PRODUCTION_READY_NOTE = (
     "production_ready 恒为 false：本输出是证据缺口清单，不构成生产放行、"
@@ -91,8 +120,24 @@ _PRODUCTION_READY_NOTE = (
     "与执行批准必须由运维显式提供与授予"
 )
 _SOURCE_NOTE = (
-    "状态与 reason/next_action 全部复用 cutover-rehearsal 只读评估结果；"
-    "本工具不重新解析证据文件、不重复实现证据 schema 校验"
+    "governance/audit-chain/cutover-approval 三类状态与 reason/next_action"
+    " 复用 cutover-rehearsal 只读评估结果；provider-smoke 类别状态 defer 到"
+    " release-readiness 的 provider-smoke 门；本工具不重新解析证据文件、"
+    "不重复实现证据 schema 校验或聚合语义"
+)
+_PROVIDER_SOURCE_NOTE = (
+    "provider-smoke 类别状态 defer 到 release-readiness 的 provider-smoke"
+    " 门（provider-smoke.json 聚合）的拓扑感知语义：语音按 "
+    "topology.voice_mode 选轨——local 拓扑聚合消费 local-voice 单步证据"
+    "（无需云 key），hybrid/cloud 拓扑聚合消费 cloud-voice 单步证据；本"
+    "工具只透出该门结论，不重新实现聚合语义。证据缺失或结构不符时拓扑"
+    "不可知，voice_mode/voice_track 如实为 null"
+)
+#: 缺聚合文件（readiness missing）时 provider 槽位的静态运维指引
+_PROVIDER_MISSING_ACTION = (
+    "运维按语音拓扑冒烟导出单步证据后，以 provider-smoke-aggregate "
+    "--voice-mode local|hybrid|cloud 聚合为 provider-smoke.json"
+    "（M11-16：机器导出，不接受手工拼装）"
 )
 
 
@@ -102,19 +147,29 @@ class ProductionGapInputError(Exception):
 
 @dataclass(frozen=True)
 class CategorySpec:
-    """一类生产前置证据缺口的静态登记（步骤映射与动作指引，manifest 透出）。"""
+    """一类生产前置证据缺口的静态登记（步骤映射与动作指引，manifest 透出）。
+
+    ``steps`` 语义按类别分轨：rehearsal-backed 三类（governance/
+    audit-chain/cutover-approval）是 cutover-rehearsal 的 step id（测试与
+    ``cutover_rehearsal.STEP_IDS`` 交叉锁定）；provider-smoke 类别是
+    provider 槽位（voice/search/llm，测试与 ``release_readiness.
+    SMOKE_PROVIDERS`` 交叉锁定，与演练 step id 不交）——其状态 defer 到
+    release-readiness 的 provider-smoke 门，不从演练步骤聚合。
+    """
 
     category: str
     title: str
     basis: str  # 为什么是生产前置缺口（manifest 原样透出，可审计）
-    steps: tuple[str, ...]  # 对应 cutover-rehearsal 的 step id
+    steps: tuple[str, ...]  # rehearsal step id 或 provider 槽位（见类注释）
     existing_tools: tuple[str, ...]  # 既有工具/命令/runbook（证据从哪来）
     agent_safe_actions: tuple[str, ...]  # agent 可安全执行的只读/本地动作
     authorization_required: str  # 必须运维显式授权的边界
 
 
-#: 四类生产前置证据缺口（输出顺序即此顺序；steps 必须是 rehearsal step id，
-#: 测试守卫与 cutover_rehearsal.STEP_IDS 交叉锁定，防漂移）。
+#: 四类生产前置证据缺口（输出顺序即此顺序）。governance/audit-chain/
+#: cutover-approval 三类的 steps 必须是 rehearsal step id（测试守卫与
+#: cutover_rehearsal.STEP_IDS 交叉锁定）；provider-smoke 的 steps 是
+#: provider 槽位（与 release_readiness.SMOKE_PROVIDERS 交叉锁定）。
 CATEGORY_SPECS: tuple[CategorySpec, ...] = (
     CategorySpec(
         "governance",
@@ -175,16 +230,18 @@ CATEGORY_SPECS: tuple[CategorySpec, ...] = (
     CategorySpec(
         "provider-smoke",
         "真实 provider 冒烟证据（search / 语音 local|hybrid|cloud 拓扑 / llm）",
-        "三类 provider 需以真实端点与部署 key 冒烟通过（语音按拓扑选轨："
-        "local=本地语音链路探针，无需云 key；hybrid/cloud=部署 key + 真实短"
-        "语音），结论由 provider-smoke-export 从真实退出码机器导出（不接受"
-        "人工抄录拼装），并聚合为 release-readiness 的 provider-smoke 门证据。"
-        "本类别步骤沿用演练时间线的云语音步（cloud-voice-smoke 是"
-        " cutover-rehearsal 步骤，local-voice-smoke 只是 M14-70 聚合证据轨道"
-        "、不是新演练步）：release 门按聚合证据 topology.voice_mode 选轨"
-        "——local 拓扑聚合消费 local-voice 单步证据，hybrid/cloud 拓扑聚合"
-        "消费 cloud-voice 单步证据（hybrid 的本地轨道由单步导出独立承载）",
-        ("search-smoke", "cloud-voice-smoke", "llm-smoke"),
+        "三类 provider 槽位（voice/search/llm——不是演练步骤）需以真实端点与"
+        "部署 key 冒烟通过（语音按拓扑选轨：local=本地语音链路探针，无需云"
+        " key；hybrid/cloud=部署 key + 真实短语音），结论由 "
+        "provider-smoke-export 从真实退出码机器导出（不接受人工抄录拼装）。"
+        "M14-74 起本类别状态 defer 到 release-readiness 的 provider-smoke 门"
+        "（provider-smoke.json 聚合）的拓扑感知语义为权威：release 门按聚合"
+        "证据 topology.voice_mode 选轨——local 拓扑聚合消费 local-voice 单步"
+        "证据，hybrid/cloud 拓扑聚合消费 cloud-voice 单步证据；本清单不再从"
+        "演练时间线的 cloud-voice-smoke 步聚合（该步仍是 cutover-rehearsal"
+        " 步骤，local-voice-smoke 只是聚合证据轨道、不是新演练步）——本地"
+        "拓扑语音证据经聚合门闭合，本地拓扑不再因演练云语音步而缺口",
+        ("voice", "search", "llm"),
         (
             (
                 "provider-smoke-export search|cloud-voice|local-voice|llm"
@@ -238,6 +295,27 @@ CATEGORY_SPECS: tuple[CategorySpec, ...] = (
 )
 
 CATEGORY_ORDER = tuple(spec.category for spec in CATEGORY_SPECS)
+
+#: provider-smoke 类别 defer 映射：readiness 门六态 -> 本清单四态
+#: （与 rehearsal-backed 类别同词汇）。missing=证据未提供 -> not_executed；
+#: malformed/tampered=结构不可信/哈希失配 -> blocked（先停下，不给「待补」
+#: 的宽松读法）；pass/pending/blocked 同名透传。
+_GAP_STATUS_BY_READINESS: dict[str, str] = {
+    STATUS_PASS: STATUS_PASS,
+    STATUS_PENDING: STATUS_PENDING,
+    STATUS_BLOCKED: STATUS_BLOCKED,
+    STATUS_MISSING: STATUS_NOT_EXECUTED,
+    STATUS_MALFORMED: STATUS_BLOCKED,
+    STATUS_TAMPERED: STATUS_BLOCKED,
+}
+
+#: provider 槽位明细映射：聚合 providers.{slot}.result -> 本清单四态
+#: （fail=结论为否，与 blocked 同权先停下）
+_SLOT_STATUS_BY_RESULT: dict[str, str] = {
+    "pass": STATUS_PASS,
+    "fail": STATUS_BLOCKED,
+    "not_executed": STATUS_NOT_EXECUTED,
+}
 
 #: 类别状态聚合优先级：blocked > pending > not_executed（全 pass 才 pass）
 _CATEGORY_PRECEDENCE = (STATUS_BLOCKED, STATUS_PENDING, STATUS_NOT_EXECUTED)
@@ -322,6 +400,82 @@ def _gap_text(status: str, total: int, not_pass: list[dict[str, Any]]) -> str:
     return f"{_STATUS_GAP_PREFIX[status]}: {listing}"
 
 
+def _provider_gate(readiness: Mapping[str, Any]) -> Mapping[str, Any]:
+    """取 release-readiness manifest 的 provider-smoke 门记录。"""
+    return next(
+        gate for gate in readiness["gates"] if gate["gate"] == "provider-smoke"
+    )
+
+
+def _provider_covered_steps(
+    slots: tuple[str, ...],
+    gate: Mapping[str, Any],
+    category_status: str,
+) -> list[dict[str, Any]]:
+    """provider-smoke 类别的 covered_steps：槽位明细 defer 到权威门。
+
+    门评估成功（pass/pending/blocked）时逐槽透出聚合 result 的四态映射与
+    evidence_step；门级失败（missing/malformed/tampered）时无槽位明细，
+    每槽如实置为类别状态（missing=not_executed，malformed/tampered=
+    blocked），reason 复用门 reason（已 scrub，纵深防御再过一次）。
+    """
+    gate_reason = scrub_sensitive(gate["reason"])
+    providers = (gate.get("data") or {}).get("providers") or {}
+    covered: list[dict[str, Any]] = []
+    for slot in slots:
+        entry = providers.get(slot)
+        if not isinstance(entry, Mapping):
+            covered.append(
+                {
+                    "step": slot,
+                    "status": category_status,
+                    "reason": gate_reason,
+                    "next_action": (
+                        _PROVIDER_MISSING_ACTION
+                        if category_status == STATUS_NOT_EXECUTED
+                        else gate_reason
+                    ),
+                }
+            )
+            continue
+        slot_status = _SLOT_STATUS_BY_RESULT[entry["result"]]
+        covered.append(
+            {
+                "step": slot,
+                "status": slot_status,
+                "reason": (
+                    f"聚合槽位 {slot}: result={entry['result']}"
+                    f"（evidence_step={entry['evidence_step']}）"
+                ),
+                "next_action": (
+                    None if slot_status == STATUS_PASS else gate_reason
+                ),
+            }
+        )
+    return covered
+
+
+def _provider_smoke_block(gate: Mapping[str, Any]) -> dict[str, Any]:
+    """顶层 provider_smoke 块：权威门状态与语音拓扑/轨道（缺失或结构
+    不符时拓扑不可知，如实为 None）。"""
+    topology = (gate.get("data") or {}).get("topology") or {}
+    voice_mode = topology.get("voice_mode") if topology else None
+    voice_track = (
+        "local-voice-smoke" if voice_mode == "local" else "cloud-voice-smoke"
+    ) if voice_mode else None
+    return {
+        "source": {
+            "tool": PROVIDER_GATE_TOOL,
+            "gate": _PROVIDER_GATE_SPEC.gate_id,
+            "evidence_file": _PROVIDER_GATE_SPEC.evidence_file,
+        },
+        "gate_status": gate["status"],
+        "voice_mode": voice_mode,
+        "voice_track": voice_track,
+        "note": _PROVIDER_SOURCE_NOTE,
+    }
+
+
 def build_production_evidence_gap(
     evidence_dir: str | Path,
     output_path: str | Path | None = None,
@@ -339,28 +493,42 @@ def build_production_evidence_gap(
     # 输出护栏先于任何证据内容读取（覆盖证据输入的形态在读取前拒绝）。
     if output_path is not None:
         _check_output_path(output_path, root)
-    # 唯一数据源：rehearsal 的只读评估结果（其内部完成目录护栏、装载、
-    # 敏感键扫描、schema 校验与 scrub——本工具不重复实现任何一环）。
+    # 两个只读数据源（其内部各自完成目录护栏、装载、敏感键扫描、schema
+    # 校验与 scrub——本工具不重复实现任何一环）：rehearsal 承载
+    # governance/audit-chain/cutover-approval 三类；release-readiness 的
+    # provider-smoke 门（M14-70 拓扑聚合语义）是 provider-smoke 类别的
+    # 唯一权威——本工具不重新实现聚合，也不旁路解析 provider-smoke.json。
     rehearsal = run_cutover_rehearsal(root)
+    readiness = run_release_readiness(root)
     steps_by_id = {record["step"]: record for record in rehearsal["steps"]}
+    provider_gate = _provider_gate(readiness)
+    provider_block = _provider_smoke_block(provider_gate)
 
     categories: list[dict[str, Any]] = []
     for spec in CATEGORY_SPECS:
-        covered = [
-            {
-                "step": record["step"],
-                "status": record["status"],
-                # 透传自 rehearsal 的动态文本逐字段 scrub（纵深防御）；
-                # 静态指引文本（basis/tools/actions/authorization）是代码内
-                # 字面量、零敏感，不经运行时 scrub——通用 scrub 会按敏感键名
-                # 模式把 authorization_required 这类白名单字段误抹成占位符。
-                "reason": scrub_sensitive(record["reason"]),
-                "next_action": scrub_sensitive(record["next_action"]),
-            }
-            for record in (steps_by_id[step_id] for step_id in spec.steps)
-        ]
-        statuses = [item["status"] for item in covered]
-        status = _aggregate_status(statuses)
+        if spec.category == "provider-smoke":
+            # defer：类别状态是权威门状态的映射，不从槽位重新聚合
+            # （门 pending=待执行冒烟等门级语义不得被槽位词表吞掉）。
+            status = _GAP_STATUS_BY_READINESS[provider_gate["status"]]
+            covered = _provider_covered_steps(
+                spec.steps, provider_gate, status
+            )
+        else:
+            covered = [
+                {
+                    "step": record["step"],
+                    "status": record["status"],
+                    # 透传自 rehearsal 的动态文本逐字段 scrub（纵深防御）；
+                    # 静态指引文本（basis/tools/actions/authorization）是
+                    # 代码内字面量、零敏感，不经运行时 scrub——通用 scrub
+                    # 会按敏感键名模式把 authorization_required 这类白名单
+                    # 字段误抹成占位符。
+                    "reason": scrub_sensitive(record["reason"]),
+                    "next_action": scrub_sensitive(record["next_action"]),
+                }
+                for record in (steps_by_id[step_id] for step_id in spec.steps)
+            ]
+            status = _aggregate_status([item["status"] for item in covered])
         not_pass = [item for item in covered if item["status"] != STATUS_PASS]
         categories.append(
             {
@@ -399,10 +567,15 @@ def build_production_evidence_gap(
         "source": {
             "tool": SOURCE_TOOL,
             "steps_total": len(rehearsal["steps"]),
-            "steps_covered": sum(len(spec.steps) for spec in CATEGORY_SPECS),
+            "steps_covered": sum(
+                len(spec.steps)
+                for spec in CATEGORY_SPECS
+                if spec.category != "provider-smoke"
+            ),
             "rehearsal_overall_status": rehearsal["overall_status"],
             "note": _SOURCE_NOTE,
         },
+        "provider_smoke": provider_block,
         "categories": categories,
         "summary": summary,
         "overall_status": overall_status,
@@ -423,6 +596,13 @@ def format_gap_summary(report: Mapping[str, Any]) -> str:
             f"来源: {report['source']['tool']} 只读评估"
             f"（覆盖 {report['source']['steps_covered']}/"
             f"{report['source']['steps_total']} 步）"
+        ),
+        (
+            f"provider 权威: {report['provider_smoke']['source']['tool']} 的"
+            f" {report['provider_smoke']['source']['gate']} 门"
+            f"（{report['provider_smoke']['source']['evidence_file']}；"
+            f"gate_status={report['provider_smoke']['gate_status']}；"
+            f"拓扑 {report['provider_smoke']['voice_mode'] or '未知'}）"
         ),
         _ISOLATION_NOTE,
         "-" * 72,

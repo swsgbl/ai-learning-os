@@ -12,7 +12,10 @@
    run_release_readiness / build_production_evidence_gap 结论逐字段一致
    （复用而非重复实现）；gap 四类全 pass 而 readiness 未 ready 时
    production_ready 仍 false（合取单边不放行）；空目录 blockers 覆盖
-   十一门与四类；
+   十一门与四类；M14-74 起 gap 的 provider-smoke 类别状态经 gap 输出透传
+   （本地拓扑聚合 pass => 四类全 pass；缺聚合 => not_executed 进
+   blockers），NEXT_STEPS provider 命令按 M14-70 拓扑选轨且本清单不重复
+   provider 聚合语义（源码守卫）；
 5. 诚实合取：两侧 stub 全 pass 才 production_ready=true / exit 0
    （stub 只测聚合逻辑，不发明任何真实审批）；
 6. 零绝对路径与零敏感：JSON+Markdown 不含证据目录/当前目录字面量、
@@ -200,13 +203,44 @@ def _approval_payload(directory: Path) -> dict:
     }
 
 
+def _smoke_aggregate(mode: str = "local") -> dict:
+    """最小合法形态的 provider-smoke.json 聚合（M14-70 契约；与
+    test_production_evidence_gap / test_release_readiness 夹具同源）。"""
+    voice_step = "local-voice-smoke" if mode == "local" else "cloud-voice-smoke"
+    return {
+        "gate": "provider-smoke",
+        "topology": {"voice_mode": mode},
+        "providers": {
+            "voice": {
+                "executed": True,
+                "result": "pass",
+                "evidence_step": voice_step,
+            },
+            "search": {
+                "executed": True,
+                "result": "pass",
+                "evidence_step": "search-smoke",
+            },
+            "llm": {
+                "executed": True,
+                "result": "pass",
+                "evidence_step": "llm-smoke",
+            },
+        },
+    }
+
+
 def _gap_passing_dir(tmp_path: Path, name: str = "evidence") -> Path:
-    """rehearsal 13 步全 pass（gap 四类 pass）但 release-readiness 十一门
-    未齐（缺 ci/release-check 等 readiness 门形态与 release-approval）"""
+    """rehearsal 13 步全 pass + 本地拓扑聚合 pass（gap 四类 pass）但
+    release-readiness 十一门未齐（缺 ci/release-check 等 readiness 门形态
+    与 release-approval）"""
     directory = _evidence_dir(tmp_path, name)
     for filename, payload in _passing_steps_evidence().items():
         _write_json(directory, filename, payload)
     _write_json(directory, "cutover-approval.json", _approval_payload(directory))
+    # M14-74：provider-smoke 类别以 provider-smoke.json 聚合为权威
+    # （本地拓扑语音轨道），无聚合文件则该类 not_executed
+    _write_json(directory, "provider-smoke.json", _smoke_aggregate())
     return directory
 
 
@@ -397,6 +431,63 @@ def test_evidence_files_bytes_unchanged_after_run(tmp_path) -> None:
     before = _snapshot(directory)
     _build(directory)
     assert _snapshot(directory) == before
+
+
+def test_gap_provider_smoke_status_consumed_via_gap_output(tmp_path) -> None:
+    """M14-74：gap 的 provider-smoke 类别状态经 gap 输出透传——本地拓扑
+    聚合 pass => 四类全 pass；缺聚合文件（旧版云端时间线步齐备）=>
+    provider-smoke=not_executed 进 blockers。本清单不自行评估聚合证据。"""
+    directory = _gap_passing_dir(tmp_path)
+    report, _ = _build(directory)
+    assert set(_gap_statuses(report).values()) == {"pass"}
+    assert report["gap"]["overall_status"] == "pass"
+
+    (directory / "provider-smoke.json").unlink()
+    report, exit_code = _build(directory)
+    assert _gap_statuses(report)["provider-smoke"] == "not_executed"
+    assert report["gap"]["overall_status"] == "not_executed"
+    assert exit_code == 1
+    assert (
+        "production-evidence-gap 类别未通过: provider-smoke=not_executed"
+        in report["blockers"]
+    )
+    # readiness 侧 provider-smoke 门也如实 missing（两聚合器结论互不覆盖）
+    assert "release-readiness 必需门未通过: provider-smoke" in report["blockers"]
+
+
+def test_next_steps_provider_commands_follow_topology_tracks() -> None:
+    """NEXT_STEPS provider 命令与 M14-70 拓扑聚合口径一致：语音导出按拓扑
+    选轨（local-voice 轨道可见）、聚合命令用 --voice 新形态并显式
+    --voice-mode——旧「无拓扑 --cloud-voice 聚合」形态不得回流。"""
+    steps = {item["id"]: item for item in rcm.NEXT_STEPS}
+    voice_export = steps["voice-smoke"]
+    assert "local-voice" in voice_export["command"]
+    assert "cloud-voice" in voice_export["command"]
+    assert "smoke_voice_local.sh" in voice_export["note"]
+    aggregate = steps["provider-smoke-aggregate"]
+    assert "--voice-mode <local|hybrid|cloud>" in aggregate["command"]
+    assert "--voice <evidence-dir>/" in aggregate["command"]
+    assert "--voice-mode local 必须以 --voice 传 local-voice-smoke.json" in (
+        aggregate["note"]
+    )
+    # 旧形态：聚合命令不得再以 --cloud-voice 直连且不带 --voice-mode
+    assert "--cloud-voice" not in aggregate["command"]
+
+
+def test_module_does_not_duplicate_provider_aggregate_semantics() -> None:
+    """源码守卫：本清单不重复 provider 聚合语义——不 import
+    provider_smoke_evidence、不引用 readiness provider 槽位/评估器符号；
+    provider 结论一律由 gap 输出与 readiness 输出承载（只消费子集）。"""
+    source = Path(rcm.__file__).read_text(encoding="utf-8")
+    for banned in (
+        "provider_smoke_evidence",
+        "SMOKE_PROVIDERS",
+        "SMOKE_VOICE_MODES",
+        "SMOKE_ENTRY_KEYS",
+        "_eval_provider_smoke",
+        "aggregate_provider_smoke",
+    ):
+        assert banned not in source, f"不得引用 {banned}（经聚合器输出承载）"
 
 
 # --- 5. 诚实合取（stub 只测聚合逻辑，不发明审批） ----------------------------------

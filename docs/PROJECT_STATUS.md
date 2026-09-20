@@ -9,6 +9,41 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-74 provider 收口拓扑调和（provider closure topology）**：分支
+`ops/m14-74-provider-closure-topology`（基于 main@b05a449，即 PR #160
+合并 M14-73 后的 main），单次本地提交 `ops: reconcile provider
+closure topology`（不推送）。production-evidence-gap 的 provider-smoke
+类别 steps 由 cutover-rehearsal 演练步改为 **provider 槽位**
+（voice/search/llm，与 `release_readiness.SMOKE_PROVIDERS` 交叉锁定、
+与演练 step id 词汇不交），类别状态 **defer 到 release-readiness 的
+provider-smoke 门**——固定映射 pass/pending/blocked 同名透传、
+missing→not_executed、malformed/tampered→blocked，
+**missing/malformed/tampered/fail 全部保持 fail-closed**；顶层新增
+provider_smoke 块透出权威门状态与拓扑选轨（`voice_mode=local` 消费
+local-voice-smoke 轨，hybrid/cloud 消费 cloud-voice-smoke 轨，拓扑未知
+则如实为 null）；build() 对 rehearsal/readiness 各恰调用一次且输出
+护栏前置。release_closure_manifest 仍**只消费 gap/readiness 产物**
+（零 provider 语义重复，source-guard 测试实证），下一步指引按 M14-70
+拓扑形态修正（`--voice`/`--voice-mode`、双语音导出轨道），**七条扩为
+八条**拓扑感知条目。cutover-rehearsal **13 步时间线不变**（新增聚合
+文件兼容性测试：聚合文件在证据目录仅记录为未识别、不阻断演练评估）。
+测试：16 条过期断言修复 + 新增 17 条 focused 测试（gap 12/closure 3/
+readiness defer 契约 1/rehearsal 兼容 1）——focused **248 passed**
+（supervisor 复核）/ Claude focused **422 passed**；ruff/py_compile/
+npm typecheck/npm lint（11 条既有 warning、0 error）/npm build 全过；
+全量 API 套件 **3859 passed/33 skipped**（3 例为本地 WSL-bash 环境失败，
+改选 Git Bash 后 test_smoke_search_script.py 7/7 通过）。supervisor
+真实形状只读验证（真实脱敏 M14-71 证据 + 真实 M14-73 soak 报告组装
+只读夹具）：provider 门 **pass/local**、long-soak **blocked**（97
+selected、94 ok、3 warn、0 critical）、cutover-approval **not
+executed**、closure **production_ready=false（12 blockers 如实透出）**。
+诚实边界：`production_ready=false` 不变——不声称 release approval、
+不执行也不声称 production cutover。证据：
+`docs/evidence/m14-74-provider-closure-topology/README.md`（README 为
+唯一入库证据文件，输入/输出 sha256/bytes 如实记录）。
+
+## 前一任务（M14-73 长稳审计接入发布门——已随 PR #160 合并 main；provider 收口拓扑调和由 M14-74 接续）
+
 **M14-73 长稳审计接入发布门（long soak release gate）**：分支
 `ops/m14-73-long-soak-release-gate`（基于 main@05c7aea，即 PR #159
 合并 M14-72 后的 main），单次本地提交 `ops: add long-soak release
