@@ -1024,3 +1024,42 @@ M14-42/M14-43/M14-49 事实）后**正路径**
 state/policy 为**手工物化**样本——自动维持这些输入的 updater 仍缺位，
 后续真实运维依赖它补齐；不声称审计归档本身已执行；
 `production_ready=false` 不变。
+
+## soak_stability_audit.py（M14-72）
+
+长稳稳定性审计器：只读消费 M14-13
+`.verify/artifacts/m14-13-monitoring-history/history.jsonl`，判定是否存在
+**真实连续 24 小时稳定窗口**，输出确定性 JSON+Markdown 报告到
+gitignored `.verify/m14-72-long-soak-audit/`。与 monitoring_history 同款
+纪律：单文件纯标准库、一切 I/O 经 Store 注入、零子进程/零网络/零计划
+任务/零 env 读取/零墙钟（生成时间戳取自锚样本，输出逐字节可复现）。
+
+```
+# 仓库根执行（canonical venv，纯标准库）
+python tools/ops/soak_stability_audit.py                    # 默认输入/输出
+python tools/ops/soak_stability_audit.py --history <dir-or-file> --window-minutes 1440
+```
+
+分类（fail-closed，固定词汇原因；数据域 blocked 与输入拒绝分离）：
+
+- `pass`（exit 0）：窗口内全部样本 ok 且 partial=false、全局时序/唯一/
+  项目单一、间隔 ≤ max-gap、样本数 ≥ 闭区间最小值（window // interval
+  + 1，24h/15m = 97，含窗口两端）、覆盖自窗口起点——**绝不从
+  总历史跨度/insights 聚合/合成 soak 时长/墙钟推导 pass**。
+- `pending`（exit 1）：数据合法但干净覆盖不足或样本数低于闭区间最小值
+  （insufficient-clean-coverage / insufficient-sample-count）——96 行
+  即使跨度覆盖窗口且间隔合规仍 pending。
+- `blocked`（exit 2，数据域审计结论）：窗口内 warn/critical/partial
+  （non-ok-status-in-window）或间隔超限（excessive-gap-in-window）——
+  输入合法，写出确定性 JSON+Markdown blocked 报告后退出 2（canonical
+  真实历史干跑即此：窗口内含 warn，报告落盘）。
+- 输入拒绝（exit 2，零输出）：路径缺失/symlink、malformed 行/非法字段
+  （含非哈希 overall_status 的受控拒绝）、重复/非时序时间戳、项目冲突、
+  行数超硬顶 5000、参数超界、写失败——写出前即拒绝。
+
+留存契约：`--retention`（默认 500，1-5000）取最新 N 行分析，全局校验
+覆盖全部行；报告仅含计数/状态/时间戳面与输入 SHA-256——绝无原始日志
+行/密钥/secret/env 值/URL/token/主机标识。契约测试
+`services/api/tests/test_soak_stability_audit.py` 锁定；本工具只是长稳
+审计门禁，不构成真实 24h soak 的完成，也不构成 production readiness
+宣称，`production_ready=false` 不变。

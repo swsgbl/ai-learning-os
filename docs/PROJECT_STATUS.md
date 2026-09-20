@@ -9,6 +9,33 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-72 长稳审计（long soak stability audit）**：分支
+`ops/m14-72-long-soak-audit`（基于 main@8559c24），单次本地提交
+`ops: add monitoring soak stability audit`（不推送）。新增离线只读审计
+工具 `tools/ops/soak_stability_audit.py`：消费 M14-13 `history.jsonl`，
+判定真实连续 24h 稳定窗口——分类 pass（exit 0）/ pending（exit 1）/
+blocked（exit 2），全程 fail-closed（固定词汇原因）；schema 复用
+`monitoring_history` 单一事实源（常量/时间戳解析/project 白名单/Store/
+原子写/symlink 拒绝）；零子进程/零网络/零计划任务/零 env 读取/零墙钟
+（报告时间戳取自锚样本，输出逐字节可复现）；输出确定性 JSON+Markdown
+至 gitignored `.verify/m14-72-long-soak-audit/`，绝无原始日志行/密钥/
+secret/env 值/URL/token/主机标识。**数据域 blocked（warn/critical/
+partial 在窗口内、间隔超限）= 合法审计结论，照常写出报告后 exit 2；
+输入拒绝（缺失/symlink/解析/重复/非时序/项目冲突/行数/参数/写失败）=
+零输出 exit 2。诚实边界：pass 仅源于窗口内逐样本干净+覆盖+间隔+闭区间
+最小样本数（window//interval + 1，24h/15m = 97），绝不由总历史跨度/
+合成 soak 时长/墙钟推导；canonical 真实历史干跑 = blocked
+（non-ok-status-in-window，391 行/窗口内 ok=94/warn=3/最后一次 warn 后
+仅 465 分钟干净，报告已落盘），绝不宣称 24h pass；本工具只是长稳审计
+门禁，不构成真实 24h soak 的完成，也不构成 production readiness 宣称
+（production_ready=false）。** 测试 604 行契约测试 + 既有
+monitoring_history 契约全绿（169 passed），ruff/py_compile/
+`git diff --check` 干净。证据：
+`docs/evidence/m14-72-long-soak-audit/README.md`（真实干跑输入以
+SHA-256+字节数锚定，输出文件哈希/字节数如实记录）。
+
+## 前一任务（M14-71 本地真实 provider 冒烟闭环——已随 PR #158 合并 main；长稳审计由 M14-72 接续）
+
 **M14-71 本地真实 provider 冒烟闭环（provider smoke local trial）**：
 分支 `ops/m14-71-provider-smoke-local-trial`。本地三槽位真实冒烟全过：
 search（SearXNG 真实端点 results=5）、local-voice（FunASR ASR 245ms +
