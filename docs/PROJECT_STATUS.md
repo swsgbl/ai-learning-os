@@ -9,6 +9,62 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-90 current-main 代码绑定门证据刷新（code-bound release gates，受控刷新 r2）**：worktree
+`m14-90-current-main-code-evidence`，分支 `ops/m14-90-current-main-code-evidence`，基于 main
+`7cca73fa5b3ac8ec18846c39870657480ee1f455`（PR #176 merge，精确基点；首笔 r1 曾基于
+f2a21a6/PR #175 完成两门刷新，交付审查判定有效但 stale-based——r2 经受控 rebase 前移
+到 7cca73f 并全部重新真实执行，不复制任何 r1 产物；r1 canonical 五文件移出 canonical，
+归档 gitignored `.verify/artifacts/m14-90-f2a21a6-superseded-audit/` 供审计），单 local
+commit（不 push、不开 PR）。目标：按 M14-86/M14-81 精确契约/流程对新 main 基点只刷新
+**代码绑定发布门**（ci-main / release-check）并重新聚合 readiness；绝不手改 gate JSON、
+不合成 pass、不搬运旧生产状态证据冒充 current（含已在基点内的 M14-88 provider-smoke
+恢复证据——生产状态绑定，不搬运）、不伪称 production readiness（`release_ready=false`/
+`production_ready=false` 全程不变）。零生产触碰（零容器/计划任务/DB/MinIO/语音/生产
+日志/secrets/soak 历史/审批接触，零部署；唯一网络访问=GitHub 只读 `gh api`（直连）+
+r2 fetch origin 经一次性 socks5 代理参数（未改全局配置）+ worktree 从零包安装 uv/npm
+（r2 删除重建 .venv/node_modules））。基点增量（f1dfcbb→7cca73f，8 commits/10 文件
++2678/−1）：PR #173 M14-86 证据 + PR #174 M14-84 harmony 冒烟（**真实运行时改动**：
+tools/harmony_release/backend_smoke.py +1142、tests/harmony_release +536（归 CI Release
+tools job 管辖，不入 api 套件）、apps/harmony AiosApi.ets 4 行）+ PR #175 M14-87
+audit-chain 证据 + PR #176 M14-88 provider-smoke 恢复（f2a21a6→7cca73f 增量，4 文件
++276 纯 docs）；services/api 与 apps/web 零改动；代码绑定门证据只对执行时点的树成立，
+运行时面有改动更须如实重推导。执行结果（r2 全部新执行，canonical
+`.verify/artifacts/m14-90-current-main-code-evidence/` 5 文件 sha256 锚定，不含任何
+r1 文件）：① **ci-main** `gh api`（runs?head_sha=7cca73f… + runs/35642190403/jobs，
+raw 响应归档）命中真实 push/main run **35642190403**（该 SHA 唯一 run；created
+2026-09-21T19:01:37Z / updated 19:05:45Z，conclusion=success，**5/5 jobs success**——
+API/Docker/Release tools/Android/Web），按 `_eval_ci_main` 契约由断言驱动脚本（断言
+失败即非零退出不产出；ruff 通过）从 raw 事实程序化派生 `evidence/ci-main.json`
+（1134 bytes；未复用 r1 run 35639993213 或其 raw 文件）；② **release-check** 于
+rebase 后树从零重建环境（uv venv CPython 3.12.14 + npm ci 411 packages，node
+v22.23.2）新工作区 r2 跑 `app.ops.cli release-check-isolated` full（一次性 SQLite +
+127.0.0.1 临时 API + 环境剥离，零生产面）——**all_green=true 10/10 pass**
+（generated_at 2026-09-21T19:19:47Z；pytest **4024 passed/33 skipped** in 243.25s，
+与 M14-86/r1 完全一致——services/api 零改动的预期对账；migration
+current==head==0027_audit_chain；backup tables:30；voice local 17324 bytes；license
+api 15/web ok/models 7/sources 6；e2e 5 步 1198 ms），产物逐字节复制改名（程序化
+比对 byte-identical=True，2491 bytes）；③ **release-readiness** 聚合 M14-90
+canonical 证据目录（只放两个真实重推导的代码绑定门）——**pass=2（ci-main/
+release-check）/ missing=9**（required 八项：preflight/backup-restore/
+audit-chain-anchor/legacy-papers/draft-ownership/long-soak/provider-smoke/
+release-approval；optional turn-tls），malformed=0/tampered=0，manifest 内嵌 sha256
+与实际文件哈希程序化交叉核验一致，**`release_ready=false`、exit_code=1 如实**。
+验证：聚焦契约三件套 **137 passed, 1 warning**（4.33s，
+release_readiness/release_check_isolated/release_checklist）；canonical 五 JSON
+解析/契约消费通过、release-check 与 r2 隔离产物逐字节一致、manifest 与落盘产物
+逐字节一致；`git diff --check` 干净（docs-only，无 Python 改动）。诚实边界：八个
+生产状态门 + long-soak + release-approval 全部如实 missing（各门最新真实记录见
+M14-83（@ 5829ad9，provider-smoke blocked 如实）、M14-85（@ f47a1e4，
+backup-restore verified）、M14-87（audit-chain-anchor 门闭合）与 **M14-88
+（provider-smoke 三件套恢复，已在基点 7cca73f 内；恢复依赖易失性宿主
+sing-box/ollama 进程，发布窗口前需真实重推导）** 各自 canonical，不搬运冒充
+current）；M14-79 权威 soak 锚最早审计时点 2026-09-22T15:00:01Z 未届满、24h 审计
+未发生，long-soak 不预宣称；release-approval 人工审批从未发生；生产仍运行 m14-70
+镜像，不授权任何部署；**M14-89 及更晚无 PR、未合入 main，本切片不声称不预判其
+结果**。证据 `docs/evidence/m14-90-current-main-code-evidence/README.md`（唯一入库
+证据文件），同步更新 CHANGELOG（M14-90 条目）与 ROADMAP（M14-90 状态更新）。
+
+## 前一任务（M14-88 本地 provider-smoke 三件套恢复——已随 PR #176 合并 main `7cca73fa5b3ac8ec18846c39870657480ee1f455`；current-main 代码绑定门证据刷新由 M14-90 接续）
 **M14-88 本地 provider-smoke 三件套恢复（provider-smoke recovery）**：worktree
 `m14-88-provider-smoke-recovery`，分支 `ops/m14-88-provider-smoke-recovery`，基于 main
 `f2a21a6266ffde71d21303dbf357eae324394563`（PR #175 merge，精确基点；初始基点 `5ff1e68`/PR #174，独立验收后经受控 rebase 前移到 current main（仅解决三台账 docs 冲突，零代码变更、canonical raw 证据零改动）），单 local
