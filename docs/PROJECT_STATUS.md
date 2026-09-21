@@ -9,38 +9,61 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-85 current-main backup-restore 发布门演练（backup-restore drill）**：worktree
+`m14-85-backup-restore-drill`，分支 `ops/m14-85-backup-restore-drill`，基于 main
+`f47a1e460db4a6aa06a815488300a2a4af200444`（PR #171 merge，精确基点），单 local
+commit（不 push、不开 PR）。目标：按 M14-83 证据 README §7 精确安全计划，用仓库既有
+工具（M6-06 backup/restore CLI + M11-04 backup-restore-evidence + M10-11
+release-readiness）完成真实生产备份 → 一次性隔离恢复演练 → backup-restore 门证据
+导出；只动这一个门，不手工拼装 gate JSON、不伪称 production readiness。生产边界全程
+遵守：生产 DB（ai_learning_os）只读（备份反射 SELECT；audit-chain-verify 演练前后
+byte-identical=零写入佐证）；恢复只落一次性隔离库 `ai_learning_os_drill_m14_85`
+（test_gate 白名单前缀变体；恢复前三重隔离验证=URL 白名单纯解析零连接 +
+current_database() 回连 + 空库断言；guarded DROP 用后即删，pg_database 复原为演练前
+精确集合）；对象备份纯读（list_keys/get，恢复侧零 S3 参数零 put）；配置备份只取公开
+文件（compose + env.example——真实 secret 文件 env.production-recovery 零接触，
+S3 凭据从 compose 程序化提取经 env 注入零回显）；零容器启停/重建（演练前后 docker
+ps + StartedAt 七容器 ID/镜像/启动时刻逐项相同）；绝不覆盖 m14-75 既有备份（新目录
+artifacts/m14-85-backup，预检确认不存在）。执行结果（全部真实，canonical
+`.verify/artifacts/m14-85-backup-restore/` 2 文件 sha256 锚定）：① 三件套备份
+exit 0——30 表/总行数 **32**（与 m14-75 演练回灌行数一致，生产数据未变）/对象 1 件
+（同款唯一对象）/公开配置 2 件，manifest sha256 `3678f9d5…59459e4b4c`；② 恢复演练
+——首次对未迁移空目标 plain restore 被 **fail-closed 拒绝**（BackupIntegrityError
+目标库缺表；缺表检查先于任何写入、目标复核零触碰，如实记录）；按契约正确顺序
+alembic upgrade head（0027_audit_chain，显式 DATABASE_URL=<隔离 URL>）→ restore
+exit 0 回灌 32 行；逐表 COUNT 对账 **30/30 表与 manifest 全等、零 mismatch**；
+③ `backup-restore-evidence` exit 0——**verified=true、inserted_rows=32**，
+manifest_sha256 与备份 manifest.json 字节哈希绑定复核一致；④ release-readiness 聚合
+M14-85 canonical 目录——**pass=1（backup-restore）+ required missing=9 + optional
+missing=1**（其余门属独立切片 scope，不搬运 M14-83/M14-81 旧 canonical 冒充
+current），malformed=0/tampered=0，**`release_ready=false`、exit 1 如实保留**。验证：
+聚焦契约测试 **108 passed, 3 skipped**（backup_drill/backup_restore_evidence/
+release_readiness 三件套；3 skip=真实 PG 门控项未设 env 按设计跳过，真实 PG 全链路
+已由本切片在隔离库真跑）；canonical 两 JSON 解析 + gate/证据交叉断言通过；
+`git diff --check` 干净（docs-only 零代码改动）。诚实边界：证据只覆盖演练时点备份
+（非持续可恢复）；恢复演练只回灌 DB（对象/配置完整性由 verify_manifest 哈希覆盖，
+端到端对象回传未演练）；生产 PG 存在历史遗留隔离库（drill/drill_m14_75，未触碰，
+清理由 supervisor 决策）；备份三件套在 worktree gitignored 目录（长期归档需运维
+决策）；生产仍运行 m14-70 镜像，不授权任何部署。证据
+`docs/evidence/m14-85-backup-restore/README.md`（唯一入库证据文件），同步更新
+CHANGELOG（M14-85 条目）与 ROADMAP（M14-85 状态更新）。
+
+
+## 前一任务（M14-83 current-main 生产只读证据刷新——已随 PR #171 合并 main `f47a1e4`；backup-restore 门演练由 M14-85 按其 README §7 计划接续执行）
 **M14-83 current-main 生产只读证据刷新（production read-only evidence）**：worktree
 `m14-83-production-evidence-refresh`，分支 `ops/m14-83-production-evidence-refresh`，基于
 main `5829ad9c7dbdfbcf0fc71728dbc2ecec2012135d`（PR #170 merge，精确基点），单 local
-commit（不 push、不开 PR）。目标：只刷新可在不改变生产状态前提下真实重推导的生产状态
-门（preflight post-migration / 治理两门 / audit-chain verify-only / 本地拓扑 provider
-冒烟），不运行 backup-restore、不创建/更新审计锚、不伪称 production readiness。安全
-策略：全部命令以 current main 代码（worktree 从零 venv）执行；生产 DB 只读访问经
-`infra/docker-compose.yml` 仓库公开硬编码连接串（aios:aios 非 secret）+ 宿主固定
-loopback 映射 `127.0.0.1:5433`——**未读取 `infra/env.production-recovery`、零 key/token
-回显**；零容器启停/重建、零计划任务、零 Ollama/WSL/代理触碰（Ollama inactive 未代启）。
-刷新结果（全部真实执行，canonical
-`.verify/artifacts/m14-83-production-read-only-evidence/` 17 文件 sha256 锚定）：
-① `production-preflight --phase post-migration` **5/5 pass、0 pending/fail/not_configured**
-（db-connect postgresql/ai_learning_os、alembic current==head==`0027_audit_chain`、审计链
-valid 0 entries、治理三项计数 0、锚 verify-only up-to-date @ canonical m14-42 锚副本
-354 bytes `d2bfd877…`）；② 治理报告 total=0 → `governance-evidence` 两门
-**pending_count=0**（pass）；③ `audit-chain-verify` valid（0 entries/0 audit rows）+
-`audit-chain-anchor --verify-only` **up-to-date、written=false 零写入**（raw 归档）；
-④ provider 冒烟如实三态——local-voice **pass**（FunASR 真实转写 latency 2911ms +
-CosyVoice RIFF WAV 241,964 bytes）、search **fail**（SearXNG 存活但上游引擎
-brave/duckduckgo/google cse/wikidata/wikipedia 全部出站连接错误）、llm **fail**
-（127.0.0.1:11434 连接拒绝、WSL Ollama inactive）→ 聚合 provider-smoke 门 **blocked**；
-⑤ `release-readiness` 聚合——**pass=3 + blocked=1 + required missing=6**（ci-main/
-release-check 对 `5829ad9` 未重推导属代码绑定门切片 scope、backup-restore 按边界不运行、
-audit-chain-anchor 完整 worm 形态需运维窗口、long-soak 24h 审计未发生、release-approval
-human-only），malformed=0/tampered=0，**`release_ready=false`、exit 1 如实保留**。验证：
-聚焦契约测试 **461 passed, 4 skipped**（八文件）；`git diff --check` 干净（docs-only）。
-诚实边界：生产仍运行 m14-70 镜像；本切片不授权任何部署；README 含独立窗口
-backup-restore 演练精确安全计划（只读预检→备份→一次性恢复库回灌→
-backup_restore_evidence 导出→中止条件）。证据
-`docs/evidence/m14-83-production-read-only-evidence/README.md`（唯一入库证据文件），同步
-更新 CHANGELOG（M14-83 条目）与 ROADMAP（M14-83 状态更新）。
+commit（不 push、不开 PR）。只刷新可在不改变生产状态前提下真实重推导的生产状态门：
+① `production-preflight --phase post-migration` **5/5 pass、0 pending/fail**；② 治理两门
+**pending_count=0**（pass）；③ audit-chain valid + anchor verify-only up-to-date（零写入）；
+④ provider 冒烟如实三态——local-voice pass / search fail（SearXNG 上游出站断开）/ llm
+fail（Ollama inactive 未代启）→ provider-smoke 门 blocked；⑤ release-readiness 聚合
+**pass=3 + blocked=1 + required missing=6**，`release_ready=false`、exit 1 如实保留
+（canonical `.verify/artifacts/m14-83-production-read-only-evidence/` 17 文件 sha256
+锚定）。零生产突变、零 secrets 接触（compose 公开连接串 + 127.0.0.1:5433 loopback，
+未打开 env.production-recovery）。聚焦契约测试 461 passed, 4 skipped。README §7 留下
+backup-restore 演练独立窗口精确安全计划——由 M14-85 接续执行。证据
+`docs/evidence/m14-83-production-read-only-evidence/README.md`（唯一入库证据文件）。
 
 
 ## 前一任务（M14-82 Harmony current-main 模拟器未签名发布链验证——已随 PR #170 合并 main `5829ad9`；current-main 生产只读证据刷新由 M14-83 接续）

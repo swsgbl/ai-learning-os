@@ -79,6 +79,41 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-85 状态更新
+
+- M14-85 current-main backup-restore 发布门演练（实现/文档切片；worktree
+  `m14-85-backup-restore-drill`，分支 `ops/m14-85-backup-restore-drill`，基于 main
+  `f47a1e460db4a6aa06a815488300a2a4af200444`（PR #171 merge，精确基点），单 local
+  commit，不 push）：按 M14-83 证据 README §7 精确安全计划，用仓库既有工具
+  （M6-06 backup/restore CLI + M11-04 backup-restore-evidence + M10-11
+  release-readiness）执行真实生产备份 → 一次性隔离恢复演练 → 门证据导出，只动
+  backup-restore 一个门。生产边界全程遵守：生产 DB（ai_learning_os）只读
+  （audit-chain-verify 演练前后 byte-identical=零写入佐证）；恢复只落一次性隔离库
+  `ai_learning_os_drill_m14_85`（白名单前缀变体 + 恢复前三重隔离验证 + guarded DROP
+  用后即删，pg_database 复原为演练前精确集合）；对象备份纯读（恢复侧零 S3 参数零
+  put）；配置备份只取公开文件（真实 secret 文件 env.production-recovery 零接触，
+  S3 凭据经 env 注入零回显）；零容器启停/重建（七容器 ID/镜像/StartedAt 演练前后
+  逐项相同）；绝不覆盖 m14-75 既有备份。结果（全部真实，canonical
+  `.verify/artifacts/m14-85-backup-restore/` 2 文件 sha256 锚定）：① 三件套备份
+  exit 0——30 表/总行数 32（与 m14-75 演练一致，生产数据未变）/对象 1 件/公开配置
+  2 件，manifest sha256 `3678f9d5…59459e4b4c`；② 恢复演练——首次对未迁移空目标
+  plain restore 被 **fail-closed 拒绝**（目标库缺表，检查先于任何写入、目标零触碰，
+  如实记录）；按契约 alembic upgrade head（0027_audit_chain）→ restore exit 0 回灌
+  32 行，逐表 COUNT 对账 **30/30 表与 manifest 全等**；③ `backup-restore-evidence`
+  exit 0——**verified=true、inserted_rows=32**（manifest_sha256 与备份 manifest 字节
+  哈希绑定复核一致）；④ release-readiness 聚合 M14-85 canonical 目录——**pass=1
+  （backup-restore）+ required missing=9 + optional missing=1**（其余门属独立切片
+  scope，不搬运旧 canonical 冒充 current），malformed=0/tampered=0，
+  **`release_ready=false`、exit_code=1 如实保留**。验证：聚焦契约测试 **108 passed,
+  3 skipped**（三件套；3 skip=PG 门控项按设计跳过，真实 PG 全链路已由本切片在隔离库
+  真跑）；canonical JSON 解析 + 交叉断言通过；`git diff --check` 干净（docs-only）。
+  诚实边界：证据只覆盖演练时点备份（非持续可恢复）；恢复演练只回灌 DB（对象/配置
+  完整性由 verify_manifest 哈希覆盖）；生产 PG 存在历史遗留隔离库（drill/
+  drill_m14_75，未触碰）；备份三件套在 worktree gitignored 目录（长期归档需运维
+  决策）；生产仍运行 m14-70 镜像，不授权任何部署。证据
+  `docs/evidence/m14-85-backup-restore/README.md`（唯一入库证据文件），同步更新
+  CHANGELOG（M14-85 条目）与 PROJECT_STATUS 顶部任务结构（M14-83 降级为前一任务）。
+
 ### M14-83 状态更新
 
 - M14-83 current-main 生产只读证据刷新（实现/文档切片；worktree
