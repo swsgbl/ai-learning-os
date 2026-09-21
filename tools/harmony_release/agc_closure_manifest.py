@@ -9,6 +9,12 @@ for an AGC release genuinely pass?
 Safety contract:
 - Reads only the given JSON evidence files. Never reads the environment,
   never spawns a process, never touches a device, never builds or signs.
+- Cross-report chain consistency (M14-79): the release_build output
+  hash must equal the sign_hap input hash, and the sign_hap
+  signed-output hash must equal the verify_signature input hash. A
+  mismatch (stale or mixed evidence from different builds) blocks the
+  manifest even when every per-gate status passes; a missing side
+  never triggers it.
 - Signedness is never inferred from a file name: only a
   ``verify_signature`` report with status ``signed_and_valid`` counts as
   signedness evidence; a signing claim (``claimed_signed``) alone never
@@ -249,6 +255,75 @@ def _hap_record(report: dict | None) -> dict | None:
     }
 
 
+def _hap_sha256_from(report: dict | None, section: str) -> str | None:
+    """Sanitized SHA-256 from a report HAP record, if present and valid.
+
+    "section" selects the record: "artifact" (the release_build output
+    or the sign_hap signed output) or "input" (the HAP a tool was
+    pointed at). A missing, partial or forged record yields None so
+    the cross-report chain check never fires on absent evidence -
+    missing evidence stays the job of the per-gate checks.
+    """
+    if not isinstance(report, dict):
+        return None
+    record = report.get(section)
+    if not isinstance(record, dict):
+        return None
+    sha256 = record.get("sha256")
+    if not isinstance(sha256, str) or not SHA256_RE.match(sha256):
+        return None
+    return sha256.upper()
+
+
+def _chain_consistency(
+    chosen: dict[str, tuple[str, dict]],
+) -> list[dict]:
+    """Cross-report HAP chain: the release_build output hash must equal
+    the sign_hap input hash, and the sign_hap signed-output hash must
+    equal the verify_signature input hash (fail-closed on a mismatch
+    when both sides are present).
+
+    Per-gate status checks cannot see stale or mixed evidence: a
+    release_build report for build N plus a sign_hap report still
+    pointing at build N-1 passes every per-gate test. This check
+    compares only sanitized hashes, never paths or values, and only
+    fires when both sides of a link exist - a missing report stays
+    the missing_report blocker job.
+    """
+    blockers: list[dict] = []
+
+    def chosen_report(gate: str) -> dict | None:
+        entry = chosen.get(gate)
+        return entry[1] if entry else None
+
+    links = (
+        (
+            "release_build",
+            "artifact",
+            "sign_hap",
+            "input",
+            "build_artifact_vs_sign_input",
+        ),
+        (
+            "sign_hap",
+            "artifact",
+            "verify_signature",
+            "input",
+            "sign_artifact_vs_verify_input",
+        ),
+    )
+    for left_gate, left_key, right_gate, right_key, link in links:
+        left = _hap_sha256_from(chosen_report(left_gate), left_key)
+        right = _hap_sha256_from(chosen_report(right_gate), right_key)
+        if left is not None and right is not None and left != right:
+            blockers.append({
+                "code": "evidence_hap_mismatch",
+                "gate": "evidence_chain",
+                "detail": {"link": link},
+            })
+    return blockers
+
+
 def _gate_facts(gate: str, report: dict) -> dict:
     """Value-free, tool-specific facts for the gate table."""
     if gate == "release_build":
@@ -334,6 +409,8 @@ def _next_action(blocker: dict) -> str:
         return "supply_reports_from_known_release_tools"
     if code == "duplicate_report":
         return "deduplicate_evidence_reports_per_gate"
+    if code == "evidence_hap_mismatch":
+        return "rerun_release_chain_so_evidence_shares_one_hap"
     detail = blocker.get("detail") if isinstance(blocker.get("detail"), dict) else {}
     source_status = detail.get("source_status")
     if code == "gate_not_pass":
@@ -368,6 +445,7 @@ def build_manifest(reports: Sequence[tuple[str, dict]]) -> dict:
     gates: list[dict] = []
     blockers: list[dict] = []
     hap: dict | None = None
+    chosen: dict[str, tuple[str, dict]] = {}
     for gate in REQUIRED_GATES:
         entries = by_gate[gate]
         if not entries:
@@ -396,6 +474,7 @@ def build_manifest(reports: Sequence[tuple[str, dict]]) -> dict:
                 entry[0],
             ),
         )
+        chosen[gate] = (source, report)
         passed, extra = _gate_pass(gate, report)
         gates.append(_gate_record(gate, source, report, passed))
         if not passed:
@@ -412,6 +491,8 @@ def build_manifest(reports: Sequence[tuple[str, dict]]) -> dict:
             })
         if gate == "release_build":
             hap = _hap_record(report)
+
+    blockers += _chain_consistency(chosen)
 
     if unclassified:
         blockers.append({

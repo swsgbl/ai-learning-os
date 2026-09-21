@@ -427,6 +427,119 @@ class TestSignedness:
 
 
 # ---------------------------------------------------------------------------
+# Cross-report HAP chain consistency (M14-79).
+# ---------------------------------------------------------------------------
+
+class TestEvidenceChainConsistency:
+
+    def test_stale_sign_input_hash_blocks_manifest(self, tmp_path):
+        reports = all_ok_reports()
+        # sign_hap still points at the previous build's unsigned HAP:
+        # every per-gate status passes, but the chain disagrees.
+        reports["sign.json"]["input"] = {
+            "relpath": HAP_RELPATH,
+            "size_bytes": 128,
+            "sha256": SHA_B,
+            "filename_has_unsigned": True,
+            "inside_repository": True,
+        }
+        result, code = run_agc_closure_manifest(
+            inputs=_write_all(tmp_path, reports)
+        )
+        assert result["status"] == "blocked"
+        assert code == EXIT_BLOCKED
+        gates = {g["name"]: g for g in result["gates"]}
+        # Every per-gate status still passes ...
+        assert all(g["pass"] for g in gates.values())
+        # ... but the cross-report mismatch blocks the closure.
+        blocker = next(
+            b for b in result["blockers"]
+            if b["code"] == "evidence_hap_mismatch"
+        )
+        assert blocker["gate"] == "evidence_chain"
+        assert blocker["detail"]["link"] == "build_artifact_vs_sign_input"
+        assert "rerun_release_chain_so_evidence_shares_one_hap" in (
+            result["next_actions"]
+        )
+
+    def test_mixed_verify_input_hash_blocks_manifest(self, tmp_path):
+        reports = all_ok_reports()
+        reports["sign.json"]["artifact"] = {
+            "relpath": HAP_RELPATH.replace("-unsigned.hap", "-signed.hap"),
+            "size_bytes": 256,
+            "sha256": SHA_A,
+            "filename_has_signed": True,
+            "bytes_changed_from_input": False,
+        }
+        reports["verify.json"]["input"] = {
+            "relpath": HAP_RELPATH.replace("-unsigned.hap", "-signed.hap"),
+            "size_bytes": 256,
+            "sha256": SHA_B,
+            "filename_has_signed": True,
+            "filename_has_unsigned": False,
+            "inside_repository": True,
+            "filename_used_for_signedness": False,
+        }
+        result, code = run_agc_closure_manifest(
+            inputs=_write_all(tmp_path, reports)
+        )
+        assert result["status"] == "blocked"
+        assert code == EXIT_BLOCKED
+        blocker = next(
+            b for b in result["blockers"]
+            if b["code"] == "evidence_hap_mismatch"
+        )
+        assert blocker["detail"]["link"] == "sign_artifact_vs_verify_input"
+
+    def test_matching_chain_still_ok(self, tmp_path):
+        reports = all_ok_reports()
+        signed_relpath = HAP_RELPATH.replace("-unsigned.hap", "-signed.hap")
+        reports["sign.json"]["input"] = {
+            "relpath": HAP_RELPATH,
+            "size_bytes": 128,
+            "sha256": SHA_A,
+            "filename_has_unsigned": True,
+            "inside_repository": True,
+        }
+        reports["sign.json"]["artifact"] = {
+            "relpath": signed_relpath,
+            "size_bytes": 256,
+            "sha256": SHA_B,
+            "filename_has_signed": True,
+            "bytes_changed_from_input": True,
+        }
+        reports["verify.json"]["input"] = {
+            "relpath": signed_relpath,
+            "size_bytes": 256,
+            "sha256": SHA_B,
+            "filename_has_signed": True,
+            "filename_has_unsigned": False,
+            "inside_repository": True,
+            "filename_used_for_signedness": False,
+        }
+        result, code = run_agc_closure_manifest(
+            inputs=_write_all(tmp_path, reports)
+        )
+        assert result["status"] == "ok"
+        assert result["blockers"] == []
+        assert code == EXIT_OK
+
+    def test_missing_records_never_trigger_chain_blocker(self, tmp_path):
+        # sign/verify reports without HAP records: chain check stays
+        # silent; the missing-evidence handling keeps its old shape.
+        reports = all_ok_reports()
+        result, code = run_agc_closure_manifest(
+            inputs=_write_all(tmp_path, reports)
+        )
+        assert result["status"] == "ok"
+        assert code == EXIT_OK
+        assert not any(
+            b["code"] == "evidence_hap_mismatch"
+            for b in result["blockers"]
+        )
+
+
+# ---------------------------------------------------------------------------
 # Path safety: symlinks and non-regular files.
 # ---------------------------------------------------------------------------
 
