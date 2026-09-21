@@ -617,12 +617,9 @@ def test_reject_malformed_history_row(tmp_path) -> None:
 
 
 @pytest.mark.parametrize("rows_text,reason_part", [
-    ('{"schema_version": 9, "collected_at": "2026-09-21T04:00:01Z",'
-     ' "project": "p", "overall_status": "ok", "partial": false}\n', "schema-version"),
-    ('{"schema_version": 1, "collected_at": "2026-09-21T04:00:01Z",'
-     ' "project": "p", "overall_status": "maybe", "partial": false}\n', "overall-status"),
-    ('{"schema_version": 1, "collected_at": "2026-09-21T04:00:01Z",'
-     ' "project": "p", "overall_status": ["ok"], "partial": false}\n', "overall-status"),
+    ('{"schema_version": 9, "collected_at": "2026-09-21T04:00:01Z", "project": "p", "overall_status": "ok", "partial": false}\n', "schema-version"),
+    ('{"schema_version": 1, "collected_at": "2026-09-21T04:00:01Z", "project": "p", "overall_status": "maybe", "partial": false}\n', "overall-status"),
+    ('{"schema_version": 1, "collected_at": "2026-09-21T04:00:01Z", "project": "p", "overall_status": ["ok"], "partial": false}\n', "overall-status"),
     ('not json\n', "not-json"),
     ('', "empty-history"),
 ])

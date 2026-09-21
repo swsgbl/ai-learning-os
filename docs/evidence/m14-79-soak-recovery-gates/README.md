@@ -133,14 +133,14 @@ python tools/ops/soak_window_gate.py \
   `soak-window-gate.md` 1750 bytes sha256
   `584d6a1be7bde9a8d3336bb9d77c8901ea8c19c546c333ba0ff854df5716c261`。
 
-## 4. 测试与静态验证（真实执行结果）
+## 4. 测试与静态验证（真实执行结果，follow-up 轮最终口径）
 
 - 新增契约测试两件套（worktree，repo venv pytest 9.1.1）：
 
 ```bash
 cd services/api && python -m pytest -q \
   tests/test_pipeline_incident_review.py tests/test_soak_window_gate.py
-# 69 passed in 0.55s
+# 69 passed
 ```
 
   覆盖：结构契约（源码零子进程/零网络/零 env/零墙钟 token，socket+
@@ -155,39 +155,95 @@ cd services/api && python -m pytest -q \
   consecutive-ok > retention、真实文件面 symlink）；隐私（标记 token
   绝不进入输出）；CLI 默认值与 ops README 文档化。
 
-- 聚焦回归（本切片触碰面 + 依赖面）：
+- 聚焦回归九件套（本切片触碰面 + 依赖面，follow-up 轮最终口径）：
 
 ```bash
 cd services/api && python -m pytest -q \
-  tests/test_soak_window_gate.py tests/test_pipeline_incident_review.py \
-  tests/test_soak_stability_audit.py tests/test_monitoring_history.py \
+  tests/test_production_monitor.py tests/test_monitoring_pipeline.py \
+  tests/test_monitoring_pipeline_task.py tests/test_monitoring_history.py \
+  tests/test_monitoring_insights.py tests/test_pipeline_incident_review.py \
+  tests/test_soak_window_gate.py tests/test_soak_stability_audit.py \
   tests/test_release_readiness.py
-# 314 passed in 10.64s
+# 831 passed in 11.01s
 ```
 
-- 静态：`ruff check tools/ops/pipeline_incident_review.py
-  tools/ops/soak_window_gate.py` → All checks passed；`py_compile` 双工具
-  通过；`git diff --check` 干净。全量 pytest 未跑（3939+ 用例本机
+  （分件实测：production_monitor **243**（含 M14-79 日志时间界 15 项
+  新增用例）、monitoring_pipeline **70**（含超时上调 pin 1 项新增）、
+  monitoring_pipeline_task **79**、monitoring_history **119**、
+  monitoring_insights **125**、pipeline_incident_review **38**、
+  soak_window_gate **31**、soak_stability_audit **51**、release_readiness
+  **75**——合计 831。首轮两件套 69 + 五件套 314 为 follow-up 前口径。）
+
+- 静态：`ruff check`（含 CI 口径 `--select ISC` 复核）全部触碰文件
+  All checks passed；`py_compile` 全部触碰 .py 通过；`git diff --check`
+  干净。全量 pytest 未跑（3939+ 用例本机
   WSL-bash 环境存在与本切片无关的已知环境失败；聚焦面全绿，完整回归
   由 CI 承担）。
+
+## 4b. follow-up 轮（supervisor 复核 8931545 后，单 follow-up commit）
+
+supervisor 独立复核发现三类问题，全部修复（详见本节）：
+
+1. **test lint**：`test_pipeline_incident_review.py` parametrize 三处
+   ISC004（隐式字符串拼接）——改为单行字符串字面量。
+2. **root cause 不自愈**：`production_monitor` 的 log-errors 对
+   `docker logs --tail` 全尾计数无时间界（supervisor 只读核查：postgres
+   tail 78 行、同 6 条陈旧错误、最新 2026-09-21T04:29:19Z；13:15/13:30
+   无新 postgres 错误仍 warn）。修复 = **时间戳感知的当前区间记账**：
+   `docker logs` 恒带 `--timestamps`（白名单放行，布尔/带值旗标拆分校验）；
+   仅计时间戳 ≥ 基线（最新合法 prior 完整工件 started_at_utc，与 M14-23
+   restart 基线同源、先于采集解析）的错误行；早于基线计入
+   `stale_error_lines` 显式入档；**时间戳不可解析 → fail-closed 恒计入
+   当前区间**（`unparsed_error_lines` 计数）；基线缺失/不可用 → 回退
+   `full-tail`（= 修复前保守口径）。`error_total_tail` / `latest_error_at`
+   / `accounting{basis,window_start_at}` 照实入档；阈值与退出码零变更；
+   阈值/日志/容器/计划任务/history 均未改动。
+   - **评审中发现的实现 bug 一并修复**：`DOCKER_LOG_TS_RE` 捕获组不含
+     `Z` 却按含 `Z` 的 `TIMESTAMP_FORMAT` 解析——一切合法 docker 时间戳
+     都会不可解析（fail-closed 全计入，恢复语义退化为 full-tail）。
+     修复 = 专用无 Z 格式 `DOCKER_LOG_TS_FORMAT` 解析后补 UTC。
+   - **fail-closed e2e 期望不一致修正**：无前缀错误行 2 条不可能达
+     warn 阈值 5——测试改为 6 条（更强而非更弱），实证未解析行触发
+     可见 warn。
+   - e2e 验收（supervisor 实证形态回放）：同 6 条陈旧错误（04:29:19Z）
+     在基线（05:15:01Z）之后 → postgres error_total=0、tail=6、stale=6、
+     overall **ok**——恢复不再被陈旧错误永久阻塞；基线后新错误照常
+     warn（无遮蔽反向证明）。
+3. **history 超时边界漂移**（13:45 轮 45.522s vs 45s，加上 12:00/12:45
+   两轮 45.206/46.955s 共三次刚过界即杀）：采用**有依据的有界上调**——
+   `monitoring_pipeline.HISTORY_TIMEOUT_DEFAULT` 45s → **90s**（≈1.9×
+   最坏观测 46.955s；正常完成轮实测 0.3–7.2s；硬顶 120 不变；默认总和
+   480+90+15=585s < PT12M=720s 执行时限，硬顶和 710s < 720s 亦不变）。
+   调度器内层超时仍恒先于外层 ExecutionTimeLimit（防调度器击杀留 stale
+   lock 的原设计保持）；**超时事实照常入档**（status=timeout /
+   failure_detail=stage-killed-after-timeout，pipeline_incident_review
+   照常归因为执行域瞬态）——不隐藏、不改记成功、不动计划任务（任务
+   调用的是管道脚本，管道默认值生效）。新增 pin 测试
+   `test_history_timeout_default_raised_45_to_90_m1479`。
 
 ## 5. 诚实边界与剩余阻塞（不伪称，逐项可执行收口）
 
 1. **生产仍运行 m14-70 镜像**（2026-09-19 M14-70 切换后未再变更）；
    本切片零生产触碰，不构成任何部署。
-2. **long-soak 门仍 missing/blocked**：当前历史尾部 warn 未消退，门
+2. **log-errors 时间界修复与 history 超时上调均为代码变更，待 supervisor
+   复核合并后才对真实调度生效**：当前生产计划任务仍运行 main 的
+   `production_monitor`（全尾计数）与 45s 管道默认——warn 尾部与超时
+   事实在合并前**不会自愈**；合并后首两轮（重建基线 + 陈旧错误出界）
+   即按新语义恢复。本切片未运行任何真实 execute。
+3. **long-soak 门仍 missing/blocked**：当前历史尾部 warn 未消退，门
    `soak_window_gate` 如实 closed——必须等尾部出现 8 连续干净样本后
    才能锚定新窗口，再等真实 24h 干净后由 soak 审计判定。本切片交付的
    是这条路径的**门禁与证据形态**，不是 soak 通过本身。
-3. **03:30 槽位缺失原因不可定证**（无报告/无工件/无行；可能的调度
+4. **03:30 槽位缺失原因不可定证**（无报告/无工件/无行；可能的调度
    未触发或机器休眠均无工件佐证）——如实记录为数据空档，不猜测。
-4. **12:30 运行与任务简报的差异**：简报称 12:30/12:45 均「history 超时
-   46.955s」；工件实证 12:30 是 monitor exit 2 无工件、12:00（45.206s）
-   与 12:45（46.955s）才是 history 超时——证据 README 以工件为准。
-5. 其余发布门（production-preflight / backup-restore / audit-chain /
+5. **12:30 运行与任务简报的差异**：简报称 12:30/12:45 均「history 超时
+   46.955s」；工件实证 12:30 是 monitor exit 2 无工件、12:00（45.206s）、
+   12:45（46.955s）与 13:45（45.522s）才是 history 超时——证据 README
+   以工件为准。
+6. 其余发布门（production-preflight / backup-restore / audit-chain /
    governance / provider-smoke / release-approval / turn-tls）状态与
    M14-78 §6 相同，全部待生产运维窗口或人工审批，本切片不触碰。
-6. history.jsonl 是活文件：§2/§3 哈希是取证时点快照，重跑工具会得到
+7. history.jsonl 是活文件：§2/§3 哈希是取证时点快照，重跑工具会得到
    更新样本的等价结构（工具输出确定性以输入为锚，零墙钟）。
-7. `release_ready=false`、`production_ready=false` 不变；发布审批永远
+8. `release_ready=false`、`production_ready=false` 不变；发布审批永远
    人工（human-only），本切片不签署、不代拟、不合成任何审批。
