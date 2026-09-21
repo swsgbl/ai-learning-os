@@ -9,6 +9,43 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-78 current-main release 证据刷新（实现/文档切片）**：分支
+`ops/m14-78-release-evidence-refresh`（独立 worktree，基于 main
+`b7db88c3401a6f0ce821a9777fb8b815bd4cf837`（PR #164 merge，精确基点）），
+单 local commit（不 push、不建 PR）。目标：对 m14-75 生产收口证据做逐文件
+staleness 审计，并只用仓库既有工具/契约刷新**当前可真实推导**的证据，绝不
+手改 gate JSON、绝不合成结果、绝不伪称 production readiness；全程零生产
+触碰（零容器/调度任务/wsl.exe/语音进程/secrets/soak 历史/发布审批接触，
+零部署；唯一网络访问是经代理的 GitHub Actions 只读 `gh api`）。
+审计结论（14 文件，SHA-256 与收口 manifest 内嵌哈希互证无篡改）：
+**代码绑定门 2 项 stale**（ci-main 锚 `2a0e911`/run 35545589956；
+release-check 为 2a0e911 时代树 2026-09-20T23:53:59Z 隔离运行——main 已
+前移 5 commits（PR #163 纯文档 + PR #164 watchdog 工具/测试，运行面零
+改动））；**生产状态绑定门 11 项 blocked**（preflight/backup-restore/
+audit-chain×3/legacy-papers/draft-ownership/provider-smoke×4——快照仍是
+生产（m14-70 切换后未再变更）各维度最新真实记录，但重推导需生产/DB/语音
+访问，按本切片约束如实 blocked 不搬运冒充）；聚合 manifest 1 项保留为收口
+存档。刷新交付（全部真实执行，命令与哈希见证据 README）：① **ci-main**
+`gh api` 命中真实 push/main run **35548392898** @ b7db88c
+（2026-09-21T00:39:37Z，conclusion=success，**5/5 jobs**；raw 响应归档），
+按 `_eval_ci_main` 契约新写；② **release-check** b7db88c worktree 从零
+环境跑 `release-check-isolated`（一次性 SQLite + 回环临时 API + 敏感环境
+剥离）——**all_green 10/10**（pytest **3939 passed**/33 skipped；migration
+head==0027_audit_chain；backup/voice/license/e2e 全过），逐字节复制改名
+（sha256 复核一致）；③ **release-readiness** 聚合——**pass=2 / missing=9**
+（required 八项含 long-soak/release-approval，optional turn-tls），
+malformed=0/tampered=0，**release_ready=false、exit_code=1 如实**。验证：
+聚焦契约三件套 **137 passed**（release_readiness/release_check_isolated/
+release_checklist）；`git diff --check` 干净。诚实边界：long-soak 仍无真实
+24h 干净窗口（sidecar 看护注册未发生，需新窗口起算）；release-approval
+从未发生且本切片不触碰；六类生产状态门待下次生产切换窗口统一重执行；
+`release_ready=false` / `production_ready=false` 不变，不授权任何部署。
+证据 `docs/evidence/m14-78-release-evidence-refresh/README.md`（唯一入库
+证据文件，canonical 5 文件 SHA-256+bytes 锚定于 gitignored
+`.verify/artifacts/m14-78-release-evidence-refresh/`）。
+
+## 前一任务（M14-77 语音健康 sidecar 看护计划任务 readiness——已随 PR #164 合并 main `b7db88c`；current-main release 证据刷新由 M14-78 接续）
+
 **M14-77 语音健康 sidecar 看护计划任务 readiness（韧性修复开发切片）**：分支
 `ops/m14-77-voice-sidecar-resilience`（独立 worktree，基于 main@2a0e911
 （PR #162 merge）），单次本地提交 `ops: add voice sidecar watchdog task
