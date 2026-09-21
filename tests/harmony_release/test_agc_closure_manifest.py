@@ -80,6 +80,8 @@ def sign_ok() -> dict:
         "failures": [],
         "claimed_signed": True,
         "signedness_verified": False,
+        "input": _sign_input_record(),
+        "artifact": _sign_artifact_record(),
     }
 
 
@@ -89,11 +91,47 @@ def verify_signed() -> dict:
         "status": "signed_and_valid",
         "failures": [],
         "signature": {"signed": True, "verified": True},
+        "input": _verify_input_record(),
     }
 
 
 def device_ok(tool: str) -> dict:
     return {"tool": tool, "status": "ok", "failures": []}
+
+
+SIGNED_HAP_RELPATH = HAP_RELPATH.replace("-unsigned.hap", "-signed.hap")
+
+
+def _sign_input_record() -> dict:
+    return {
+        "relpath": HAP_RELPATH,
+        "size_bytes": 128,
+        "sha256": SHA_A,
+        "filename_has_unsigned": True,
+        "inside_repository": True,
+    }
+
+
+def _sign_artifact_record() -> dict:
+    return {
+        "relpath": SIGNED_HAP_RELPATH,
+        "size_bytes": 256,
+        "sha256": SHA_B,
+        "filename_has_signed": True,
+        "bytes_changed_from_input": True,
+    }
+
+
+def _verify_input_record() -> dict:
+    return {
+        "relpath": SIGNED_HAP_RELPATH,
+        "size_bytes": 256,
+        "sha256": SHA_B,
+        "filename_has_signed": True,
+        "filename_has_unsigned": False,
+        "inside_repository": True,
+        "filename_used_for_signedness": False,
+    }
 
 
 def all_ok_reports() -> dict:
@@ -424,6 +462,200 @@ class TestSignedness:
         gates = {g["name"]: g for g in result["gates"]}
         assert gates["sign_hap"]["pass"] is True
         assert gates["verify_signature"]["source_status"] is None
+
+
+# ---------------------------------------------------------------------------
+# Cross-report HAP chain consistency (M14-79).
+# ---------------------------------------------------------------------------
+
+class TestEvidenceChainConsistency:
+
+    def test_stale_sign_input_hash_blocks_manifest(self, tmp_path):
+        reports = all_ok_reports()
+        # sign_hap still points at the previous build's unsigned HAP:
+        # every per-gate status passes, but the chain disagrees.
+        reports["sign.json"]["input"] = {
+            "relpath": HAP_RELPATH,
+            "size_bytes": 128,
+            "sha256": SHA_B,
+            "filename_has_unsigned": True,
+            "inside_repository": True,
+        }
+        result, code = run_agc_closure_manifest(
+            inputs=_write_all(tmp_path, reports)
+        )
+        assert result["status"] == "blocked"
+        assert code == EXIT_BLOCKED
+        gates = {g["name"]: g for g in result["gates"]}
+        # Every per-gate status still passes ...
+        assert all(g["pass"] for g in gates.values())
+        # ... but the cross-report mismatch blocks the closure.
+        blocker = next(
+            b for b in result["blockers"]
+            if b["code"] == "evidence_hap_mismatch"
+        )
+        assert blocker["gate"] == "evidence_chain"
+        assert blocker["detail"]["link"] == "build_artifact_vs_sign_input"
+        assert "rerun_release_chain_so_evidence_shares_one_hap" in (
+            result["next_actions"]
+        )
+
+    def test_mixed_verify_input_hash_blocks_manifest(self, tmp_path):
+        reports = all_ok_reports()
+        reports["sign.json"]["artifact"] = {
+            "relpath": HAP_RELPATH.replace("-unsigned.hap", "-signed.hap"),
+            "size_bytes": 256,
+            "sha256": SHA_A,
+            "filename_has_signed": True,
+            "bytes_changed_from_input": False,
+        }
+        reports["verify.json"]["input"] = {
+            "relpath": HAP_RELPATH.replace("-unsigned.hap", "-signed.hap"),
+            "size_bytes": 256,
+            "sha256": SHA_B,
+            "filename_has_signed": True,
+            "filename_has_unsigned": False,
+            "inside_repository": True,
+            "filename_used_for_signedness": False,
+        }
+        result, code = run_agc_closure_manifest(
+            inputs=_write_all(tmp_path, reports)
+        )
+        assert result["status"] == "blocked"
+        assert code == EXIT_BLOCKED
+        blocker = next(
+            b for b in result["blockers"]
+            if b["code"] == "evidence_hap_mismatch"
+        )
+        assert blocker["detail"]["link"] == "sign_artifact_vs_verify_input"
+
+    def test_matching_chain_still_ok(self, tmp_path):
+        reports = all_ok_reports()
+        signed_relpath = HAP_RELPATH.replace("-unsigned.hap", "-signed.hap")
+        reports["sign.json"]["input"] = {
+            "relpath": HAP_RELPATH,
+            "size_bytes": 128,
+            "sha256": SHA_A,
+            "filename_has_unsigned": True,
+            "inside_repository": True,
+        }
+        reports["sign.json"]["artifact"] = {
+            "relpath": signed_relpath,
+            "size_bytes": 256,
+            "sha256": SHA_B,
+            "filename_has_signed": True,
+            "bytes_changed_from_input": True,
+        }
+        reports["verify.json"]["input"] = {
+            "relpath": signed_relpath,
+            "size_bytes": 256,
+            "sha256": SHA_B,
+            "filename_has_signed": True,
+            "filename_has_unsigned": False,
+            "inside_repository": True,
+            "filename_used_for_signedness": False,
+        }
+        result, code = run_agc_closure_manifest(
+            inputs=_write_all(tmp_path, reports)
+        )
+        assert result["status"] == "ok"
+        assert result["blockers"] == []
+        assert code == EXIT_OK
+
+    def test_missing_sign_input_hash_blocks_manifest(self, tmp_path):
+        # A passing sign_hap report whose input record vanished: the
+        # chain must fail closed on the distinct missing-hash blocker,
+        # not stay silent and not lean on the per-gate checks.
+        reports = all_ok_reports()
+        del reports["sign.json"]["input"]
+        result, code = run_agc_closure_manifest(
+            inputs=_write_all(tmp_path, reports)
+        )
+        assert result["status"] == "blocked"
+        assert code == EXIT_BLOCKED
+        gates = {g["name"]: g for g in result["gates"]}
+        assert all(g["pass"] for g in gates.values())
+        blocker = next(
+            b for b in result["blockers"]
+            if b["code"] == "evidence_hap_missing"
+        )
+        assert blocker["gate"] == "evidence_chain"
+        assert blocker["detail"]["slot"] == "sign_input"
+        assert "regenerate_evidence_reports_with_hap_hash_records" in (
+            result["next_actions"]
+        )
+
+    def test_missing_signed_artifact_hash_blocks_manifest(self, tmp_path):
+        # sign_hap claims success but records no signed output hash:
+        # nothing ties the verify report to this signing run.
+        reports = all_ok_reports()
+        del reports["sign.json"]["artifact"]
+        result, code = run_agc_closure_manifest(
+            inputs=_write_all(tmp_path, reports)
+        )
+        assert result["status"] == "blocked"
+        assert code == EXIT_BLOCKED
+        gates = {g["name"]: g for g in result["gates"]}
+        assert all(g["pass"] for g in gates.values())
+        blocker = next(
+            b for b in result["blockers"]
+            if b["code"] == "evidence_hap_missing"
+        )
+        assert blocker["detail"]["slot"] == "sign_artifact"
+
+    def test_missing_verify_input_hash_blocks_manifest(self, tmp_path):
+        # verify_signature passes with no input record: without the
+        # completeness check the closure would trust it blindly.
+        reports = all_ok_reports()
+        del reports["verify.json"]["input"]
+        result, code = run_agc_closure_manifest(
+            inputs=_write_all(tmp_path, reports)
+        )
+        assert result["status"] == "blocked"
+        assert code == EXIT_BLOCKED
+        gates = {g["name"]: g for g in result["gates"]}
+        assert all(g["pass"] for g in gates.values())
+        blocker = next(
+            b for b in result["blockers"]
+            if b["code"] == "evidence_hap_missing"
+        )
+        assert blocker["detail"]["slot"] == "verify_input"
+
+    def test_partial_or_invalid_sha256_records_block_manifest(
+        self, tmp_path
+    ):
+        # Truncated and non-hex sha256 values are invalid records, not
+        # chain members: each yields its own missing-hash blocker.
+        reports = all_ok_reports()
+        reports["sign.json"]["input"]["sha256"] = SHA_A[:63]
+        reports["verify.json"]["input"]["sha256"] = "not-a-hash"
+        result, code = run_agc_closure_manifest(
+            inputs=_write_all(tmp_path, reports)
+        )
+        assert result["status"] == "blocked"
+        assert code == EXIT_BLOCKED
+        slots = sorted(
+            b["detail"]["slot"]
+            for b in result["blockers"]
+            if b["code"] == "evidence_hap_missing"
+        )
+        assert slots == ["sign_input", "verify_input"]
+
+    def test_missing_whole_reports_stay_missing_report_blockers(
+        self, tmp_path
+    ):
+        # Absent reports keep their own blocker; the completeness
+        # check never fires for a gate that supplied no report.
+        reports = all_ok_reports()
+        del reports["sign.json"]
+        del reports["verify.json"]
+        result, code = run_agc_closure_manifest(
+            inputs=_write_all(tmp_path, reports)
+        )
+        assert result["status"] == "blocked"
+        assert code == EXIT_BLOCKED
+        codes = {b["code"] for b in result["blockers"]}
+        assert codes == {"missing_report"}
 
 
 # ---------------------------------------------------------------------------
