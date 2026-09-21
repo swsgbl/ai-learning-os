@@ -1072,3 +1072,67 @@ python tools/ops/soak_stability_audit.py --history <dir-or-file> --window-minute
 的 `soak-audit-report.json` **逐字节复制重命名**为
 `<evidence-dir>/long-soak.json`（`cp` 后不得手工编辑/重序列化——输入
 sha256/bytes 与策略字段任一漂移即 malformed）。
+
+## pipeline_incident_review.py（M14-79）
+
+管道事件复核器：只读交叉复盘 M14-14 管道报告目录
+（`.verify/artifacts/m14-14-monitoring-pipeline/`，只认
+`pipeline-YYYYMMDD-HHMMSS.json`（execute）与 `plan-*`（只计数））与
+M14-13 `history.jsonl`，把「pipeline exit 1」拆成三类语义并判定恢复：
+**monitor 非零退出但写出样本工件 = 状态域裁决**（监控正常工作，系统确实
+warn/critical——其引发的 history/insights skipped 是设计内门控后果，不是
+执行失败）；**monitor 非零退出且无工件 = 执行域失败**（该槽位零样本、
+数据真空）；**monitor ok 而 history/insights 超时 = 执行域瞬态失败**
+（样本工件已落盘，history 行由后续成功运行增量补录——补录事实如实呈现，
+超时绝不改记成功）。逐运行归因（固定词汇 failure_domain ∈
+none/execution/status/mixed + execution_failure_kinds + 超时步 + 样本
+入史反查）→ 事件窗口聚合（恢复 = 其后首个 overall ok 运行，无恢复即
+开放）→ 双面判定（pipeline_execution_state × monitoring_status_state，
+绝不合并遮蔽）。零子进程/零网络/零计划任务/零 env 读取/零墙钟
+（generated_at 取自输入时间戳，输出逐字节可复现）；输出确定性
+JSON+Markdown 到 gitignored
+`.verify/artifacts/m14-79-pipeline-incident-review/`。
+
+```
+# 仓库根执行（canonical venv，纯标准库）
+python tools/ops/pipeline_incident_review.py                     # 默认输入/输出
+python tools/ops/pipeline_incident_review.py --runs 20           # 只复盘最新 20 份
+```
+
+退出码：0 无开放项 / 1 有开放项（管道最新运行仍失败或 history 最新样本
+非 ok——可见结论，报告照常落盘）/ 2 输入拒绝（零输出：未知 stem、
+stage 越词汇、monitor skipped（结构不可能）、schema 漂移、started_at
+重复/非时序、history malformed/重复/非时序/项目冲突/空文件/行数超顶、
+参数越界）。M14-21 前两步形态（无 insights step）可解析，缺席步不计
+失败。契约测试 `services/api/tests/test_pipeline_incident_review.py`
+锁定；all_clear ≠ production readiness（`production_ready=false` 不变）。
+
+## soak_window_gate.py（M14-79）
+
+长稳窗口锚定/重启门：只读消费 M14-13 `history.jsonl`，把「何时允许重启
+一个全新 24h soak 窗口」固化为可审计门禁——尾部 `--consecutive-ok N`
+（默认 8 = 15 分钟节奏 2 小时）个连续样本全部 ok 且 partial=false、
+相邻间隔 ≤ `--max-gap-minutes`（默认 20，与 soak 审计同口径）才 open；
+warn/critical/partial 仍留在尾部即 closed，**逐条列出**每个非干净样本
+（collected_at + overall_status + partial——绝不遮蔽、绝不改写历史）。
+`--anchor` 在门 open 时原子写出锚定记录 `soak-window-anchor.json/.md`
+（锚点 = 最新样本 collected_at，零墙钟；最早可判定时间 = 锚点 + 窗口；
+前置指纹；后续审计固定指引）；锚定记录已存在 → anchor-exists 拒绝
+（重启窗口须操作者显式归档旧记录，防静默重锚掩盖已破坏的窗口）。
+
+```
+# 仓库根执行（canonical venv，纯标准库）
+python tools/ops/soak_window_gate.py                     # 检查模式（默认）
+python tools/ops/soak_window_gate.py --anchor            # 门 open 时锚定
+python tools/ops/soak_window_gate.py --consecutive-ok 8  # 前置可配置
+```
+
+退出码：0 门 open / 1 门 closed（门报告落盘、锚定记录零写出——可见
+结论）/ 2 输入拒绝（缺失/symlink/malformed/重复/非时序/项目冲突/空
+文件/行数超顶/consecutive-ok 超 retention/参数越界/anchor-exists/写
+失败——零写入）。**锚定 ≠ soak 通过**：门只证明开窗时尾部干净，窗口
+结局由 24h 后 `soak_stability_audit.py` 判定（其报告逐字节复制为
+`long-soak.json` 才构成门证据）；`release_ready=false` /
+`production_ready=false` 不变。输出 gitignored
+`.verify/artifacts/m14-79-soak-window-anchor/`；契约测试
+`services/api/tests/test_soak_window_gate.py` 锁定。
