@@ -1030,6 +1030,86 @@ def _run_release_readiness(args) -> int:
     return report["exit_code"]
 
 
+def _run_evidence_cockpit(args) -> int:
+    """python -m app.ops.cli evidence-cockpit --gate-source GATE=PATH
+--current-head SHA --staging-dir DIR [--gate-declared-head GATE=SHA]
+[--anchor-companion PATH] [--json] [--output PATH]
+
+    M14-91 跨切片发布证据驾驶舱（只读聚合器 + 一次性 staging）：显式接受
+    各切片 canonical 门证据文件（来源登记路径/字节/SHA-256，零改动），按
+    evaluator 的 gate→文件名映射逐字节 stage 进一次性新目录（绝不覆盖既有
+    内容），对 staging 复用 run_release_readiness 全量门语义，并按
+    code-bound / production-state 分类 + 声明 commit（内嵌或旗标）与
+    current HEAD 的比对标记 current/stale/undeclared。**永不接受、stage
+    或生成 release-approval**（传入即 fail-closed）；production_ready 恒
+    false。退出码：cockpit_ready=true=0（全部必需门（release-approval
+    除外）staged 且 pass 且无 stale/undeclared-code-bound blocker——不是
+    staged 子集干净）/ 有 blocker（staged 门非 pass、stale、code-bound
+    undeclared、**required 门未 stage（not-staged-required）**；唯一例外
+    release-approval 按策略永不接受不计 blocker，turn-tls 为 optional 门
+    在本机/LAN 发布范围不阻断）=1 / 输入/路径/护栏问题=2（零 staging）。
+    """
+    import json as _json
+    from pathlib import Path
+
+    from app.ops.evidence_cockpit import (
+        CockpitInputError,
+        _collect_declared_heads,
+        _collect_gate_sources,
+        build_evidence_cockpit,
+        format_cockpit_summary,
+        write_cockpit_report,
+    )
+    from app.ops.legacy_papers import is_safe_artifact_path
+
+    if args.output and not is_safe_artifact_path(args.output):
+        print(
+            f"拒绝写入 {args.output}：cockpit 报告只能写入 gitignore 的 "
+            "artifacts/ 或 temp/ 目录"
+        )
+        return 2
+    try:
+        sources = _collect_gate_sources(list(args.gate_source))
+        declared = _collect_declared_heads(
+            list(args.gate_declared_head or []), sources)
+        report = build_evidence_cockpit(
+            sources,
+            current_head=args.current_head,
+            staging_dir=args.staging_dir,
+            declared_heads=declared,
+            anchor_companion=args.anchor_companion,
+        )
+        if args.output:
+            try:
+                write_cockpit_report(report, args.output)
+            except (CockpitInputError, OSError) as cause:
+                # 报告落盘失败：staging 虽已建成也不留半成品现场——移除
+                # 本次新建目录后如实 exit 2（清理失败时异常自带残留说明）。
+                from app.ops.evidence_cockpit import _remove_created_staging
+                _remove_created_staging(
+                    Path(report["staging"]["dir"]), cause)
+                print(
+                    f"cockpit 报告写入失败（已移除本次 staging）: "
+                    f"{type(cause).__name__}: {cause}"
+                )
+                return 2
+            print(f"报告已写入: {args.output}")
+    except CockpitInputError as cause:
+        print(f"cockpit 输入无效（未产生报告/零 staging）: {cause}")
+        return 2
+    except OSError as cause:
+        print(
+            "cockpit IO 失败（未产生报告）: "
+            f"{type(cause).__name__}: {cause}"
+        )
+        return 2
+    if args.as_json:
+        print(_json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(format_cockpit_summary(report))
+    return report["exit_code"]
+
+
 def _run_cutover_rehearsal(args) -> int:
     """python -m app.ops.cli cutover-rehearsal --evidence-dir DIR
     [--json] [--output PATH]
@@ -2186,6 +2266,58 @@ def main() -> None:
             "原子落盘：临时文件 + rename，失败保留旧报告、symlink 拒绝；默认不落盘）"
         ),
     )
+    p_ec = sub.add_parser(
+        "evidence-cockpit",
+        help=(
+            "跨切片发布证据驾驶舱（M14-91；显式 canonical 证据来源登记 + "
+            "字节一致一次性 staging + release-readiness 复跑 + code-bound/"
+            "production-state 分类与 stale 标记；永不接受 release-approval，"
+            "production_ready 恒 false，无 --yes 形态）"
+        ),
+    )
+    p_ec.add_argument(
+        "--gate-source",
+        action="append",
+        required=True,
+        metavar="GATE=PATH",
+        help="显式 canonical 门证据文件（可重复；GATE 为发布门 id，"
+             "release-approval 传入即拒绝）",
+    )
+    p_ec.add_argument(
+        "--current-head",
+        required=True,
+        metavar="SHA",
+        help="当前 HEAD（40 位十六进制；stale 判定比较基准）",
+    )
+    p_ec.add_argument(
+        "--staging-dir",
+        required=True,
+        metavar="DIR",
+        help="一次性 staging 目录（必须不存在，工具创建；绝不覆盖既有内容）",
+    )
+    p_ec.add_argument(
+        "--gate-declared-head",
+        action="append",
+        default=None,
+        metavar="GATE=SHA",
+        help="显式声明某门证据执行/绑定的树（可重复；与内嵌声明冲突即拒绝）",
+    )
+    p_ec.add_argument(
+        "--anchor-companion",
+        default=None,
+        metavar="PATH",
+        help="audit-anchor.jsonl 伴生锚文件副本（同规则字节一致 stage）",
+    )
+    p_ec.add_argument(
+        "--json", dest="as_json", action="store_true",
+        help="输出完整 JSON cockpit 报告",
+    )
+    p_ec.add_argument(
+        "--output",
+        default=None,
+        help="写 JSON 报告到文件（必须位于 gitignore 的 artifacts/temp 目录；"
+             "原子落盘，目标已存在即拒绝覆盖）",
+    )
     p_cr = sub.add_parser(
         "cutover-rehearsal",
         help=(
@@ -2623,6 +2755,8 @@ def main() -> None:
         raise SystemExit(_run_production_preflight(args))
     if args.command == "release-readiness":
         raise SystemExit(_run_release_readiness(args))
+    if args.command == "evidence-cockpit":
+        raise SystemExit(_run_evidence_cockpit(args))
     if args.command == "cutover-rehearsal":
         raise SystemExit(_run_cutover_rehearsal(args))
     if args.command == "governance-evidence":
