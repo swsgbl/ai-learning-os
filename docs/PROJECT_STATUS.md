@@ -9,6 +9,60 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-87 audit-chain-anchor current gate 闭合（audit-chain/WORM/离线副本核验刷新）**：worktree
+`m14-87-audit-chain-current-gate`，分支 `ops/m14-87-audit-chain-current-gate`，真实执行/代码基点 = main `ddcaa229d308a8e5a46e46dae3a9d7a10ac6640e`（PR #173 merge）；该提交后分支已 rebase 到 current main `5ff1e685c52f3111efa3d508b17ca16558e72171`（PR #174 merge，M14-84 harmony 切片合入后）——rebase 仅解决三台账与 M14-84 的 docs 冲突（倒序排序与前一任务结构），零代码变更、零生产/WORM/离线核验重跑、canonical raw 证据零改动，单 local
+commit（不 push、不开 PR）。目标：按 M14-83 §6.2/§7.5 遗留计划，用仓库既有
+工具对 current main 诚实闭合 **audit-chain-anchor 发布门**（链/锚/WORM 三块
+证据），并由断言驱动的可审计脚本从真实报告逐键程序化组装门证据；绝不手改
+gate JSON、不合成 pass、不搬运 m14-75 旧证据冒充 current、不伪称 production
+readiness。零生产突变：零容器启停/重建/删除/部署（七容器 StartedAt
+2026-09-21T04:29:17–22Z 全程未动）、零计划任务、零语音/WSL/代理进程触碰；
+生产 DB 只读、**MinIO 只读**（version 定向 head/get 零 put——锚定 head 无
+前进，既有 WORM 归档即 current）、零锚文件写入（verify-only）、**未读取
+`infra/env.production-recovery` 或任何 secret**（WORM 凭据取 compose 公开
+默认经环境变量注入，值不回显）。执行结果（全部真实，canonical
+`.verify/artifacts/m14-87-audit-chain-current-gate/` 13 文件 sha256 锚定）：
+① **audit-chain-verify**（生产 DB 只读）——`valid=true/entries=0/
+audit_rows=0/problems=[]`（空链，与 m14-75/M14-83/M14-85 一致）；②
+**audit-chain-anchor --verify-only**（canonical 锚文件
+`.verify/artifacts/m14-42-audit-chain-anchor/audit-anchor.jsonl`，354 bytes
+sha256 `d2bfd877…73aa4e`）——`status=up-to-date`、`written=false`（首次缺
+DATABASE_URL 被 fail-closed 拒绝后补 env 通过，如实记录）；③ **M14-43
+WORM 在线核验**（worktree current-main 代码 + 既有 archive 成功报告
+（2026-09-17，sidecar sha256 `66703e41…` 匹配）绑定，凭据经
+`AIOS_AUDIT_ARCHIVE_*` 环境变量注入）——`worm_verified=true`：对象按
+version `dc704b8d…` 定向 head/get 逐字节 SHA-256=锚文件、COMPLIANCE 至
+2036-09-17T19:10:00Z、content-type/size 精确一致（新报告
+2026-09-21T18:15:03Z，三件套归档 canonical raw/）；④ **M14-49 离线副本
+核验**（G: 独立物理盘 `worm-root-v1`，与既有 manifest 确定性绑定的
+2026-09-17 verify 报告字节，sha256 `ff2494a8…` 与 manifest 记录一致复核）
+——`offline_verified=true`、existing `state=matching` 三文件逐字节一致
+（新报告 2026-09-21T18:15:50Z；换任何其他报告会被 manifest 复算
+fail-closed 拒绝——工具防跨参数设计；G: 零写入）；⑤ **门证据程序化组装**
+——归档脚本 `assemble_audit_chain_anchor_gate.py` 从四份真实报告逐键提取
+（14 组成功断言 + 三方跨报告一致性断言，任一失败即非零退出不产出）产出
+`evidence/audit-chain-anchor.json`（1418 bytes，m14-75 同形，worm 块
+online/offline verified_at 为本次真实核验时点）+ 伴生锚文件副本
+（companion）；⑥ **release-readiness** 聚合 M14-87 canonical 证据目录——
+**audit-chain-anchor 门 pass**（链 valid + 锚定 up-to-date + WORM 已归档 +
+锚文件副本 1 锚点校验自洽），**pass=1 / required missing=9 / optional
+missing=1**，malformed=0/tampered=0，**`release_ready=false`、exit_code=1
+如实保留**。验证：聚焦契约测试 **410 passed, 3 skipped**（13.33s：
+release_readiness/audit_chain/audit_chain_anchor/audit_anchor_archive/
+audit_worm_offline_copy）；canonical JSON 解析/契约消费通过、两份新 verify
+报告 sidecar 逐一匹配复核；组装器 ruff 零告警（tracked Python 零改动）；
+`git diff --check` 干净（docs-only）。诚实边界：门证据是核验时点快照（head
+前进后需重新锚定+归档+重跑本流程）；空链下零归档为合法形态；离线副本绑定
+2026-09-17 报告字节（重绑新报告需获准窗口重跑 M14-49 copy）；其余九门如实
+missing（最新真实记录见 M14-83/M14-85/M14-86 canonical，对 ddcaa22 stale
+如实不搬运）；provider-smoke 恢复（SearXNG 出站 + Ollama）/long-soak 届满
+审计（2026-09-22T15:00:01Z 后）/release-approval 人工审批为发布前剩余
+动作；生产仍运行 m14-70 镜像，`release_ready=false`/`production_ready=false`
+不变，不授权任何部署。证据
+`docs/evidence/m14-87-audit-chain-current-gate/README.md`（唯一入库证据
+文件），同步更新 CHANGELOG（M14-87 条目）与 ROADMAP（M14-87 状态更新）；rebase 时同步将 M14-84 调整为前一任务。
+
+## 前一任务（M14-84 Harmony 模拟器真实 API 后端冒烟——已随 PR #174 合并 main `5ff1e685c52f3111efa3d508b17ca16558e72171`；audit-chain-anchor current gate 闭合由 M14-87 接续）
 **M14-84 Harmony 模拟器真实 API 后端冒烟（emulator real-API smoke）**：worktree
 `m14-84-harmony-real-api-smoke`，分支 `harmony/m14-84-emulator-real-api-smoke`，基于 main
 `ddcaa229d308a8e5a46e46dae3a9d7a10ac6640e`（PR #173 merge，精确基点），单 local
@@ -34,8 +88,7 @@ confirm home_assertion_missed 如实失败，重建 HAP 后全绿——断言非
 如实）。诚实边界：未签名（signedness_verified=false）、真机模式未验证、401 为
 预期未认证态。同步更新 CHANGELOG（M14-84 条目）与 ROADMAP（M14-84 状态更新）。
 
-## 前一任务（M14-86 current-main 代码绑定门证据刷新——已随 PR #173 合并 main `ddcaa229`；Harmony 模拟器真实 API 冒烟由 M14-84 接续）
-
+## 前一任务（M14-86 current-main 代码绑定门证据刷新——已随 PR #173 合并 main `ddcaa229d308a8e5a46e46dae3a9d7a10ac6640e`；Harmony 模拟器真实 API 冒烟由 M14-84 接续，audit-chain-anchor 门闭合由 M14-87 接续）
 **M14-86 current-main 代码绑定门证据刷新（code-bound release gates）**：worktree
 `m14-86-current-main-code-evidence`，分支 `ops/m14-86-current-main-code-evidence`，基于 main
 `f1dfcbbbb2a64746aebd89d10ce38d4c65539e82`（PR #172 merge，精确基点），单 local
