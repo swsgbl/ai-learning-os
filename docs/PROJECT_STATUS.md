@@ -9,6 +9,48 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-88 本地 provider-smoke 三件套恢复（provider-smoke recovery）**：worktree
+`m14-88-provider-smoke-recovery`，分支 `ops/m14-88-provider-smoke-recovery`，基于 main
+`f2a21a6266ffde71d21303dbf357eae324394563`（PR #175 merge，精确基点；初始基点 `5ff1e68`/PR #174，独立验收后经受控 rebase 前移到 current main（仅解决三台账 docs 冲突，零代码变更、canonical raw 证据零改动）），单 local
+commit（不 push、不开 PR）。目标：恢复 M14-83 记录为 blocked 的本地
+provider-smoke 三件套（search / local-voice / llm）并产出可审计的当前证据——
+先诊断、最小修复、再真实重跑，绝不虚构通过、绝不复用旧证据。**诊断结论（全部
+本机实证）**：① **search**——生产容器 `aios-m14-03-production-rehearsal-searxng-1`
+healthy 但 `/search?q=OpenAI&format=json` HTTP 200 `results=0`、全部上游引擎
+`HTTP connection error`；容器 env 里 `AIOS_SEARXNG_HTTP(S)_PROXY` 机制
+（M14-66）**部署时已正确注入**（`host.docker.internal:7892`），根因是**宿主
+sing-box 代理进程未运行**（7892 无监听；vpn-manager `on` 回退的 xray 节点已
+失效，实测 HTTP 000）——直接启动本机 sing-box 1.13.21 后同端点 **results=28**
+（google 200/bing 302 经代理实测），**零容器 stop/restart/rebuild/delete、零
+env 修改**；② **llm**——WSL Ubuntu 从未安装 Ollama（`command not found` +
+systemd not-found，干扰项），实际安装是 **Windows 原生** 0.33.2
+（`G:\AI_MIGRATED\...\Ollama\ollama.exe`，`OLLAMA_MODELS=G:\AI_MIGRATED\D\Ollama\.ollama`，
+qwen3.5:9b 在场）但无进程——后台启动 `ollama serve`（11434 监听确认）后运行
+`infra/provision_ollama_model.ps1` **RESULT: PASS**（幂等：别名
+`aios-qwen3.5-9b-4096` 已存在且 num_ctx=4096/base 一致）；③ **local-voice**——
+FunASR 8010 / CosyVoice 8011 本就在场（health 200），零触碰只冒烟。**真实重跑
+（仓库工具链，2026-09-21T18:40–18:41Z 执行窗口）**：`provider-smoke-export`
+search/local-voice/llm 三步全 **pass**（results=5；ASR 真实转写 42 bytes +
+TTS RIFF WAV 226,604 bytes；llm 补全 12 chars + rubric judge
+`achieved=[True, True] confidence=1.0`），`provider-smoke-aggregate
+--voice-mode local` **voice/search/llm 全 pass**（provider-smoke.json，schema
+provider-smoke-evidence-v1，工具程序化生成零手改）。证据：canonical
+gitignored `.verify/artifacts/m14-88-provider-smoke-recovery/` 12 文件
+sha256/bytes 锚定，入库证据
+`docs/evidence/m14-88-provider-smoke-recovery/README.md`（唯一入库证据文件）。
+验证：聚焦契约六件套 **235 passed**（provider_smoke_evidence/release_readiness/
+searxng_local_provider/smoke_search_script/smoke_voice_local_script/
+provision_ollama_model_script）、ruff 通过、`git diff --check` 干净。诚实边界：
+宿主 sing-box 为易失性用户进程（停止则 search 再断，容器/仓库机制无缺陷）；
+`ollama serve` 未注册为服务（重启后需再启动，恢复手册在证据 README §7）；
+provider-smoke.json 仅覆盖 local 拓扑，release-readiness 聚合未重跑（任务
+范围外）；前一任务 M14-87 已随 PR #175 合并 main `f2a21a6266ffde71d21303dbf357eae324394563`（本分支经受控 rebase 并入树内，其内容完整保留）；零生产容器
+生命周期变更、零 secret 读取（`infra/env.production-recovery*` 从未打开）。
+同步更新 CHANGELOG（M14-88 条目）与 ROADMAP（M14-88 状态更新）。
+
+
+## 前一任务（M14-87 audit-chain-anchor current gate 闭合——已随 PR #175 合并 main `f2a21a6266ffde71d21303dbf357eae324394563`（本分支经受控 rebase 并入树内）；本地 provider-smoke 三件套恢复由 M14-88 接续）
+
 **M14-87 audit-chain-anchor current gate 闭合（audit-chain/WORM/离线副本核验刷新）**：worktree
 `m14-87-audit-chain-current-gate`，分支 `ops/m14-87-audit-chain-current-gate`，真实执行/代码基点 = main `ddcaa229d308a8e5a46e46dae3a9d7a10ac6640e`（PR #173 merge）；该提交后分支已 rebase 到 current main `5ff1e685c52f3111efa3d508b17ca16558e72171`（PR #174 merge，M14-84 harmony 切片合入后）——rebase 仅解决三台账与 M14-84 的 docs 冲突（倒序排序与前一任务结构），零代码变更、零生产/WORM/离线核验重跑、canonical raw 证据零改动，单 local
 commit（不 push、不开 PR）。目标：按 M14-83 §6.2/§7.5 遗留计划，用仓库既有
@@ -61,6 +103,7 @@ missing（最新真实记录见 M14-83/M14-85/M14-86 canonical，对 ddcaa22 sta
 不变，不授权任何部署。证据
 `docs/evidence/m14-87-audit-chain-current-gate/README.md`（唯一入库证据
 文件），同步更新 CHANGELOG（M14-87 条目）与 ROADMAP（M14-87 状态更新）；rebase 时同步将 M14-84 调整为前一任务。
+
 
 ## 前一任务（M14-84 Harmony 模拟器真实 API 后端冒烟——已随 PR #174 合并 main `5ff1e685c52f3111efa3d508b17ca16558e72171`；audit-chain-anchor current gate 闭合由 M14-87 接续）
 **M14-84 Harmony 模拟器真实 API 后端冒烟（emulator real-API smoke）**：worktree

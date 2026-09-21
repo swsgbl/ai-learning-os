@@ -79,6 +79,39 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-88 状态更新
+
+- M14-88 本地 provider-smoke 三件套恢复·运维恢复切片（分支
+  `ops/m14-88-provider-smoke-recovery`（独立 worktree，基于 main
+  `f2a21a6266ffde71d21303dbf357eae324394563`（PR #175 merge，精确基点；初始基点 `5ff1e68`/PR #174，独立验收后经受控 rebase 前移到 current main（仅解决三台账 docs 冲突，零代码变更、canonical raw 证据零改动））），
+  单 local commit，不 push）：诊断并恢复 M14-83 记录为 blocked 的本地
+  provider-smoke 三件套（search/local-voice/llm），以仓库既有工具真实重跑
+  产出当前证据——绝不虚构通过、绝不复用旧证据冒充当前，零应用代码/配置
+  改动。诊断（全部本机实证）：**search**——生产 searxng 容器 healthy 但
+  results=0/全部上游引擎 `HTTP connection error`；容器 env 的
+  `AIOS_SEARXNG_HTTP(S)_PROXY` 机制（M14-66）部署时已正确注入
+  （`host.docker.internal:7892`），根因是宿主 sing-box 代理进程未运行
+  （vpn-manager `on` 回退的 xray 节点已失效实测 HTTP 000）——直接启动
+  sing-box 1.13.21 后 results=28，**零容器 stop/restart/rebuild/delete、零
+  env 修改、零 secret 读取**；**llm**——WSL Ubuntu 从未安装 Ollama（干扰项），
+  实际安装是 Windows 原生 0.33.2（OLLAMA_MODELS=G:\AI_MIGRATED\D\Ollama\.ollama，
+  qwen3.5:9b 在场）但无进程——启动 `ollama serve`（11434 监听确认）后
+  `infra/provision_ollama_model.ps1` **RESULT: PASS**（幂等：别名
+  `aios-qwen3.5-9b-4096` 已存在且参数一致）；**local-voice**——FunASR 8010/
+  CosyVoice 8011 本就在场（health 200），零触碰只冒烟。真实重跑（仓库工具链，
+  2026-09-21T18:40–18:41Z 窗口）：`provider-smoke-export` 三步全 **pass**
+  （search results=5；ASR 真实转写 42 bytes + TTS RIFF WAV 226,604 bytes；
+  llm 12 chars + rubric judge `achieved=[True, True] confidence=1.0`），
+  `provider-smoke-aggregate --voice-mode local` **voice/search/llm 全 pass**
+  （provider-smoke.json 工具程序化生成零手改）。证据：canonical gitignored
+  `.verify/artifacts/m14-88-provider-smoke-recovery/` 12 文件 sha256/bytes
+  锚定 + 入库 `docs/evidence/m14-88-provider-smoke-recovery/README.md`（唯一
+  入库证据文件）。验证：聚焦契约六件套 **235 passed**、ruff 通过、
+  `git diff --check` 干净。诚实边界：宿主 sing-box 为易失性用户进程（停止则
+  search 再断，容器/仓库机制无缺陷，长期方案留待运维）；`ollama serve` 未
+  注册为服务（重启后需再启动，恢复手册在证据 README §7）；provider-smoke.json
+  仅覆盖 local 拓扑、release-readiness 聚合未重跑（任务范围外）；前一任务 M14-87 已随 PR #175 合并 main `f2a21a6266ffde71d21303dbf357eae324394563`（本分支经受控 rebase 并入树内，其内容完整保留）；零生产容器生命周期变更。
+
 ### M14-87 状态更新
 
 - M14-87 audit-chain-anchor current gate 闭合·实现/文档切片（分支 `ops/m14-87-audit-chain-current-gate`（独立 worktree，真实执行/代码基点 = main `ddcaa229d308a8e5a46e46dae3a9d7a10ac6640e`（PR #173 merge）；该提交后分支已 rebase 到 current main `5ff1e685c52f3111efa3d508b17ca16558e72171`（PR #174 merge，M14-84 harmony 切片合入后）——rebase 仅解决三台账与 M14-84 的 docs 冲突（倒序排序与前一任务结构），零代码变更、零生产/WORM/离线核验重跑、canonical raw 证据零改动），单 local commit，不 push）：按 M14-83 §6.2/§7.5 遗留计划，用仓库既有工具对 current main 诚实闭合 **audit-chain-anchor 发布门**（链/锚/WORM 三块证据），绝不手改 gate JSON、不合成 pass、不搬运 m14-75 旧证据冒充 current、不伪称 production readiness。零生产突变：零容器启停/重建/删除/部署（七容器 StartedAt 2026-09-21T04:29:17–22Z 全程未动）、零计划任务、零语音/WSL/代理进程触碰；生产 DB 只读、**MinIO 只读**（version 定向 head/get 零 put——锚定 head 无前进，既有 WORM 归档即 current）、零锚文件写入（verify-only `written=false`）、**未读取 `infra/env.production-recovery` 或任何 secret**（WORM 凭据取 compose 公开默认经环境变量注入，值不回显）。核验（全部真实执行，canonical `.verify/artifacts/m14-87-audit-chain-current-gate/` 13 文件 sha256 锚定）：① `audit-chain-verify --json`（生产 DB 只读）——`valid=true/entries=0/audit_rows=0/problems=[]`；② `audit-chain-anchor --verify-only`（canonical 锚文件 354 bytes sha256 `d2bfd877…73aa4e`）——`up-to-date`、`written=false`（首次缺 DATABASE_URL 被 fail-closed 拒绝后补 env 通过，如实记录）；③ **M14-43 WORM 在线核验**（既有 archive 成功报告（2026-09-17，sidecar 匹配）绑定）——`worm_verified=true`（对象 version `dc704b8d…` 定向 head/get 逐字节 SHA-256=锚文件、COMPLIANCE 至 2036-09-17、content-type/size 精确一致；新报告 2026-09-21T18:15:03Z）；④ **M14-49 离线副本核验**（G: 独立物理盘，与既有 manifest 确定性绑定的 2026-09-17 verify 报告字节 sha256 `ff2494a8…` 复核一致）——`offline_verified=true`、existing `state=matching`（新报告 2026-09-21T18:15:50Z；换任何其他报告会被 manifest 复算 fail-closed 拒绝——工具防跨参数设计）；⑤ **门证据程序化组装**：归档脚本 `assemble_audit_chain_anchor_gate.py` 从四份真实报告逐键提取（14 组成功断言 + 三方跨报告一致性断言，失败即非零退出不产出）产出 `evidence/audit-chain-anchor.json`（1418 bytes，m14-75 同形，worm 块时间戳为本次真实核验时点）+ 伴生锚文件副本；⑥ **release-readiness** 聚合——**audit-chain-anchor 门 pass**（链 valid + 锚定 up-to-date + WORM 已归档 + 锚文件副本 1 锚点校验自洽），pass=1 / required missing=9 / optional missing=1，malformed=0/tampered=0，**`release_ready=false`、exit_code=1 如实**。验证：聚焦契约测试 **410 passed, 3 skipped**（13.33s，release_readiness/audit_chain/audit_chain_anchor/audit_anchor_archive/audit_worm_offline_copy）；canonical JSON 解析/契约消费通过、新报告 sidecar 逐一匹配复核；组装器 ruff 零告警（tracked Python 零改动）；`git diff --check` 干净。诚实边界：门证据是核验时点快照（head 前进后需重新锚定+归档+重跑本流程）；空链下零归档为合法形态；离线副本绑定 2026-09-17 报告字节（重绑新报告需获准窗口重跑 M14-49 copy，G: 零写入）；其余九门如实 missing（最新真实记录见 M14-83/M14-85/M14-86 canonical，对 ddcaa22 stale 如实不搬运）；provider-smoke 恢复/long-soak 届满审计/release-approval 为剩余运维与人工动作；生产仍运行 m14-70 镜像，`release_ready=false`/`production_ready=false` 不变，不授权任何部署。证据 `docs/evidence/m14-87-audit-chain-current-gate/README.md`（唯一入库证据文件），同步更新 CHANGELOG（M14-87 条目）与 PROJECT_STATUS 顶部任务结构（M14-84 降级为前一任务（rebase 调整））。
