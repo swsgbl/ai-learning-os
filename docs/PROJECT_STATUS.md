@@ -9,6 +9,49 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-81 current-main release 证据刷新（实现/文档切片）**：分支
+`ops/m14-81-current-main-release-evidence`（独立 worktree，基于 main
+`e1f128be80fee736d5326272bcecebc1c729f0fb`（PR #168 merge，精确基点）），
+单 local commit（不 push、不建 PR）。目标：沿用 M14-78 模式对新 main 基点
+只刷新**代码绑定门**（ci-main / release-check）并重新聚合 readiness，绝不
+手改 gate JSON、不搬运旧生产状态证据冒充 current、绝不伪称 production
+readiness；全程零生产触碰（零容器/调度任务/DB/MinIO/语音引擎/生产日志/
+secrets/soak 历史/发布审批接触，零部署；唯一网络访问 = GitHub 只读
+`gh api`（本机直连）+ worktree 从零包安装）。基点增量（b7db88c→e1f128b，
+10 commits/20 文件 +4474/−51）：PR #165 M14-78 证据 + PR #166 M14-79
+harmony gate-drift + PR #167 M14-80 sign-claim 加固 + PR #168 M14-79 soak
+恢复门——运行时服务面（services/api/app、apps/web）零改动，但代码绑定门
+证据只对执行时点的树成立，故如实重推导。刷新交付（全部真实执行，命令与
+哈希见证据 README）：① **ci-main** `gh api` 命中真实 push/main run
+**35589879598** @ e1f128b（2026-09-21T10:39:12Z，conclusion=success，
+**5/5 jobs**；raw 响应归档且断言由脚本复核 raw 数据），按 `_eval_ci_main`
+契约新写；② **release-check** e1f128b worktree 从零环境（uv venv 3.12 +
+npm ci）跑 `release-check-isolated`（一次性 SQLite + 127.0.0.1 临时 API +
+敏感环境剥离）——**all_green 10/10**（pytest **4024 passed**/33 skipped
+in 228.85s，较 M14-78 的 3939 +85 恰为 M14-79 ops 面新契约测试对账；
+migration head==0027_audit_chain；backup/voice/license/e2e 全过），逐字节
+复制改名（sha256 复核一致）；③ **release-readiness** 聚合 M14-81 canonical
+证据目录（只放两个真实重推导的代码绑定门）——**pass=2 / missing=9**
+（required 八项含 long-soak/release-approval，optional turn-tls），
+malformed=0/tampered=0，**release_ready=false、exit_code=1 如实**。验证：
+聚焦契约三件套 **137 passed**；canonical 五 JSON 解析/契约消费通过、
+release-check 与隔离产物逐字节一致；`git diff --check` 干净（docs-only，
+无 Python 改动）。诚实边界：生产仍运行 m14-70 镜像；supervisor 已运行
+`soak_window_gate --anchor` 完成**正式锚定**（权威锚点
+2026-09-21T15:00:01Z、最早审计时点 2026-09-22T15:00:01Z、尾部 8 干净
+样本/tail_max_gap 15.0；锚定记录已存在即阻止重锚、后续样本不移动锚点
+——14:45:01Z 仅为锚定前检查显示值）——修复后干净尾部与 M14-79 预期
+恢复方向一致、非独立因果证明；**锚定 ≠ long-soak 通过、不授权
+readiness**，24h 审计未发生故 long-soak 门仍如实 missing；history 超时
+上调与 M14-80 harmony 面尚无独立验收记录；
+八个生产状态门 + long-soak + release-approval
+全部如实 missing；`release_ready=false` / `production_ready=false` 不变，
+不授权任何部署。证据 `docs/evidence/m14-81-current-main-release-evidence/README.md`
+（唯一入库证据文件，canonical 5 文件 SHA-256+bytes 锚定于 gitignored
+`.verify/artifacts/m14-81-current-main-release-evidence/`）。
+
+## 前一任务（M14-78 current-main release 证据刷新——已随 PR #165 合并 main `376c4ee`（其后 main 经 PR #166/#167/#168 前移至 `e1f128b`）；current-main 证据刷新由 M14-81 接续）
+
 **M14-78 current-main release 证据刷新（实现/文档切片）**：分支
 `ops/m14-78-release-evidence-refresh`（独立 worktree，基于 main
 `b7db88c3401a6f0ce821a9777fb8b815bd4cf837`（PR #164 merge，精确基点）），
