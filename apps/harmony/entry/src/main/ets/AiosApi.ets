@@ -314,7 +314,9 @@ async function getJson<T>(baseUrl: string, endpoint: AiosEndpoint | string): Pro
   }
 
   // 2. 拼接完整 URL:base 已规范化为以 '/' 结尾(或带 path)
-  const base: string = check.url.endsWith('/') ? check.url : `${check.url}/`;
+  // M14-84: 所有 endpoint 均以 '/' 开头,拼接前剥掉 base 尾部 '/' 避免 '//' 双斜杠
+  // (FastAPI 不归一化 '//',//health 会 404;真机冒烟实测发现的缺陷)
+  const base: string = check.url.endsWith('/') ? check.url.substring(0, check.url.length - 1) : check.url;
   const fullUrl: string = `${base}${endpoint}`;
 
   const httpClient = http.createHttp();

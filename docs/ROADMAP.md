@@ -79,6 +79,37 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-84 状态更新
+
+- M14-84 Harmony 模拟器真实 API 后端冒烟（实现/文档切片；worktree
+  `m14-84-harmony-real-api-smoke`，分支 `harmony/m14-84-emulator-real-api-smoke`，
+  基于 main `ddcaa229d308a8e5a46e46dae3a9d7a10ac6640e`（PR #173 merge，精确
+  基点），单 local commit，不 push）：新增设备驱动后端冒烟工具
+  `tools/harmony_release/backend_smoke.py`（默认 dry-run 仅宿主预检零设备触碰，
+  `--confirm-mutation` 才触设备；`--api-base` 仅接受 loopback 起点）+
+  `tests/harmony_release/test_backend_smoke.py` 22 项全 fake 注入单测；真实
+  confirm 于本地模拟器 `127.0.0.1:5555` 对**本机 loopback 开发后端**（宿主
+  uvicorn 开发面，非生产容器栈）——**`status=ok exit=0`，7 步全部 ok**
+  （host_preflight/install/start/settings_ui/home_view/background/uninstall；
+  cleanup ok，bundle 已卸载）；Home 断言明细 **`"0.1.0": 1`、
+  `"请求失败 (HTTP 401)": 3`**（真实后端诚实答案：`/api/v1/version` 渲染
+  0.1.0，auth-gated 端点未认证态如实 401）；冒烟 HAP 为 unsigned（452,587
+  bytes，sha256 `88E5427D…D593E`，signedness_verified=false 如实）。冒烟并
+  真实抓出并修复应用侧 `AiosApi.ets getJson` 双斜杠 URL 拼接缺陷（base 尾
+  `/` + endpoint 头 `/` → `//health` → FastAPI 404；首次 confirm
+  home_assertion_missed 如实失败，重建 HAP 后全绿——证明断言非恒真）。已知
+  失败模式（IME 遮挡底部 tab bar → home_view 采用冷重启 aa force-stop +
+  start）记入工具注释与单测。验证：聚焦 `test_backend_smoke.py` **22 passed**
+  （2026-09-22 复跑）；全量 `tests/harmony_release` **449 passed, 1 skipped**、
+  ruff F,E9,W605 通过、`git diff --check` 干净（全量为 2026-09-21 执行窗口
+  记录，验收轮未重跑，如实）。诚实边界：**未签名、仅本地模拟器、仅本机
+  开发后端——不声明 Harmony 生产就绪、不构成发布/部署授权**；零生产容器/
+  DB/MinIO/语音/secret 接触；真机模式未验证。证据
+  `docs/evidence/m14-84-harmony-real-api-smoke/README.md`（唯一入库证据文件，
+  原始证据 gitignored `.verify/m14-84-harmony-real-api-smoke/` sha256 锚定），
+  同步更新 CHANGELOG（M14-84 条目）与 PROJECT_STATUS 顶部任务结构（M14-86
+  降级为前一任务）。
+
 ### M14-86 状态更新
 
 - M14-86 current-main 代码绑定门证据刷新·实现/文档切片（分支 `ops/m14-86-current-main-code-evidence`（独立 worktree，基于 main `f1dfcbbbb2a64746aebd89d10ce38d4c65539e82`（PR #172 merge，精确基点）），单 local commit，不 push）：按 M14-81 精确契约/流程对新 main 基点只刷新**代码绑定门**（ci-main / release-check）并重新聚合 readiness，绝不手改 gate JSON、不搬运旧生产状态证据冒充 current、不伪称 production readiness；零生产触碰（零容器/计划任务/DB/MinIO/语音/生产日志/secrets/soak 历史/审批接触，零部署；唯一网络访问=GitHub 只读 `gh api`（直连）+ worktree 从零包安装）。基点增量（e1f128b→f1dfcbb，7 commits/7 文件 +1127/−0）：PR #169 M14-81 证据 + PR #170 M14-82 harmony 冒烟 + PR #171 M14-83 生产只读证据 + PR #172 M14-85 backup-restore 演练——**全部为 docs**（台账+四份 evidence README），运行时服务面零改动；但代码绑定门证据只对执行时点的树成立，docs-only 增量同样如实重推导。刷新（全部真实执行，canonical `.verify/artifacts/m14-86-current-main-code-evidence/` 5 文件 sha256 锚定）：① **ci-main** `gh api`（runs?head_sha=f1dfcbb… + runs/35632399209/jobs，raw 归档）命中真实 push/main run **35632399209**（created 2026-09-21T17:30:05Z，conclusion=success，**5/5 jobs success**——API/Docker/Release tools/Android/Web），按 `_eval_ci_main` 契约由断言脚本（失败即非零退出不产出）从 raw 事实程序化派生；② **release-check** 于 f1dfcbb worktree 从零环境（uv venv CPython 3.12.14 + npm ci 411 packages）跑 `app.ops.cli release-check-isolated` full——**all_green=true 10/10 pass**（pytest **4024 passed/33 skipped** in 239.41s，与 M14-81 @ e1f128b 完全一致——纯 docs 增量零测试变更的预期对账；migration head==0027_audit_chain；backup/voice/license/e2e 全过），产物逐字节复制改名（byte-identical=True）；③ **release-readiness** 聚合 M14-86 canonical 目录——**pass=2 / missing=9**（required 八项：preflight/backup-restore/audit-chain-anchor/legacy-papers/draft-ownership/long-soak/provider-smoke/release-approval；optional turn-tls），malformed=0/tampered=0，内嵌 sha256 与实际哈希交叉核验一致，**`release_ready=false`、exit_code=1 如实**。验证：聚焦契约三件套 **137 passed, 1 warning**（2.63s）；canonical 五 JSON 解析/契约消费通过、release-check 与隔离产物逐字节一致；`git diff --check` 干净（docs-only，无 Python 改动）。诚实边界：八个生产状态门 + long-soak + release-approval 全部如实 missing（各门最新真实记录见 M14-83（@ 5829ad9，provider-smoke blocked 如实——search/llm 失败无恢复记录）与 M14-85（@ f47a1e4，backup-restore verified）各自 canonical，不搬运冒充 current）；M14-79 权威 soak 锚最早审计时点 2026-09-22T15:00:01Z 未届满、24h 审计未发生，long-soak 不预宣称；生产仍运行 m14-70 镜像（2026-09-19 切换后未变）；`release_ready=false`/`production_ready=false` 不变，不授权任何部署。证据 `docs/evidence/m14-86-current-main-code-evidence/README.md`（唯一入库证据文件），同步更新 CHANGELOG（M14-86 条目）与 PROJECT_STATUS 顶部任务结构（M14-85 降级为前一任务）。

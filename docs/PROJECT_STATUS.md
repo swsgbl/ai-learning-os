@@ -9,6 +9,33 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-84 Harmony 模拟器真实 API 后端冒烟（emulator real-API smoke）**：worktree
+`m14-84-harmony-real-api-smoke`，分支 `harmony/m14-84-emulator-real-api-smoke`，基于 main
+`ddcaa229d308a8e5a46e46dae3a9d7a10ac6640e`（PR #173 merge，精确基点），单 local
+commit（不 push、不开 PR）。目标：新增设备驱动后端冒烟工具
+`tools/harmony_release/backend_smoke.py`，在本地模拟器上对本机 loopback 开发后端
+（`http://127.0.0.1:8000/`，宿主 uvicorn 开发面，非生产容器栈）做真实端到端
+验证（安装 → 设置页输入 API 地址 → 冷重启回 Home → 断言真实 API 渲染 → 清理
+卸载），并以全 fake 注入单测锁定契约。**明确边界：未签名 HAP、仅本地模拟器、
+仅本机开发后端——不声明 Harmony 生产就绪、不构成发布/部署授权；零生产容器/
+DB/MinIO/语音/secret 接触。**执行结果（全部真实，原始证据 gitignored
+`.verify/m14-84-harmony-real-api-smoke/` sha256 锚定，入库证据
+`docs/evidence/m14-84-harmony-real-api-smoke/README.md`）：confirm 于
+`127.0.0.1:5555` **`status=ok exit=0`，7 步全部 ok**（host_preflight/install/
+start/settings_ui/home_view/background/uninstall；cleanup ok，bundle 已卸载）；
+Home 断言 **`"0.1.0": 1`、`"请求失败 (HTTP 401)": 3`**（真实后端诚实答案：
+`/api/v1/version` 渲染 0.1.0，auth-gated 端点未认证态如实 401）；冒烟真实抓出
+并修复 `AiosApi.ets getJson` 双斜杠 URL 拼接缺陷（`//health`→FastAPI 404，首次
+confirm home_assertion_missed 如实失败，重建 HAP 后全绿——断言非恒真）；已知
+失败模式（IME 遮挡底部 tab bar → home_view 采用冷重启 aa force-stop + start）
+记入工具注释与单测。验证：聚焦 `test_backend_smoke.py` **22 passed**（2026-09-22
+复跑）；全量 `tests/harmony_release` **449 passed, 1 skipped**、ruff F,E9,W605
+通过、`git diff --check` 干净（全量为 2026-09-21 执行窗口记录，验收轮未重跑，
+如实）。诚实边界：未签名（signedness_verified=false）、真机模式未验证、401 为
+预期未认证态。同步更新 CHANGELOG（M14-84 条目）与 ROADMAP（M14-84 状态更新）。
+
+## 前一任务（M14-86 current-main 代码绑定门证据刷新——已随 PR #173 合并 main `ddcaa229`；Harmony 模拟器真实 API 冒烟由 M14-84 接续）
+
 **M14-86 current-main 代码绑定门证据刷新（code-bound release gates）**：worktree
 `m14-86-current-main-code-evidence`，分支 `ops/m14-86-current-main-code-evidence`，基于 main
 `f1dfcbbbb2a64746aebd89d10ce38d4c65539e82`（PR #172 merge，精确基点），单 local
