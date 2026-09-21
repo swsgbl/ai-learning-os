@@ -9,6 +9,34 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-82 Harmony current-main 模拟器未签名发布链验证（verify-only 文档切片）**：worktree
+`m14-82-harmony-current-main-smoke`，分支 `harmony/m14-82-current-main-smoke`，基于 main
+`e1f128be80fee736d5326272bcecebc1c729f0fb`（PR #168 merge），单 local commit（不 push、
+不开 PR）。目标：在 PR #167（M14-80 sign_hap claimed-signed fail-closed 收口）与 PR #168
+（M14-79 soak 恢复门）合并后，真实重跑模拟器面未签名发布链，刷新 current-main 证据；
+不声明生产就绪、不接触 AGC/签名材料、不修改发布链工具（verify-only）。链路结果（全部
+真实执行，原始证据 gitignored `.verify/m14-82-harmony-current-main-smoke/` 16 文件
+SHA256SUMS 锚定）：① 模拟器：两 loopback 目标中选定 `127.0.0.1:5555`
+（`const.product.name=emulator`、API 24；boot 佐证 `bootevent.boot.completed=true` +
+foundation/appspawn 进程运行；`127.0.0.1:15566` 为 Kaihong BotBook VM，不在范围）；
+② preflight `--expect-unsigned` exit 0 / `status=blocked_by_external_materials`
+（signing_configs_count=0、三材料 env 未设置；`--require-materials` 变体 exit 2）——诚实
+未签名边界保持；③ release_build clean/assemble 双 exit 0，unsigned HAP 188,984 bytes /
+SHA-256 `584E5D47…B341`（与 M14-76 大小相同、内容哈希不同——HAP zip 归档时间戳已知非
+确定性，不声称字节级一致）；④ device_smoke 先 plan-only（5 mutation step 全 not_run）→
+`--confirm-mutation` 真实冒烟 **6/6 命令过**（install / aa start / dumpLayout / file recv /
+force-stop / uninstall），cleanup+卸载成功，layout 53,798 bytes 落盘；⑤ device_preflight
+plan-only exit 0（loopback 目标在 check 模式被拒绝语义保持；未跑 true-device 模式）；
+⑥ pytest `tests/harmony_release` **427 passed, 1 skipped**（与 M14-80 持平）+ mock contract
+**54/54 passed**（installed UI 网络降级契约）。诚实边界：**未签名 / 无 AGC / 无已签名
+HAP / 不声明生产就绪**；布局漂移如实记录（82 原始节点 vs M14-76 76 attr 节点——模拟器
+采样时点动态内容差异，两口径均真实）；模拟器 UI 网络降级态为预期（无后端）；本切片零
+生产触碰、零发布链工具改动。证据
+`docs/evidence/m14-82-harmony-current-main-smoke/README.md`（唯一入库证据文件），同步
+更新 CHANGELOG（M14-82 条目）与 ROADMAP（M14-82 状态更新）。
+
+
+## 前一任务（M14-81 current-main release 证据刷新——已随 PR #169 合并 main `116382a`；Harmony current-main 模拟器未签名发布链验证由 M14-82 接续）
 **M14-81 current-main release 证据刷新（实现/文档切片）**：分支
 `ops/m14-81-current-main-release-evidence`（独立 worktree，基于 main
 `e1f128be80fee736d5326272bcecebc1c729f0fb`（PR #168 merge，精确基点）），
@@ -51,7 +79,6 @@ readiness**，24h 审计未发生故 long-soak 门仍如实 missing；history �
 `.verify/artifacts/m14-81-current-main-release-evidence/`）。
 
 ## 前一任务（M14-78 current-main release 证据刷新——已随 PR #165 合并 main `376c4ee`（其后 main 经 PR #166/#167/#168 前移至 `e1f128b`）；current-main 证据刷新由 M14-81 接续）
-
 **M14-78 current-main release 证据刷新（实现/文档切片）**：分支
 `ops/m14-78-release-evidence-refresh`（独立 worktree，基于 main
 `b7db88c3401a6f0ce821a9777fb8b815bd4cf837`（PR #164 merge，精确基点）），
