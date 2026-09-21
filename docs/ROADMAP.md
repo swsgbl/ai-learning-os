@@ -79,10 +79,34 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-82 状态更新
+
+- M14-82 Harmony current-main 模拟器未签名发布链验证（verify-only 文档切片；worktree
+  `m14-82-harmony-current-main-smoke`，分支 `harmony/m14-82-current-main-smoke`，基于 main
+  `e1f128be80fee736d5326272bcecebc1c729f0fb`（PR #168 merge），单 local commit，不 push）：
+  PR #167（M14-80 sign_hap claimed-signed fail-closed 收口）与 PR #168（M14-79 soak 恢复门）
+  合并后真实重跑模拟器面未签名发布链，刷新 current-main 证据，不声明生产就绪。链路（全部
+  真实执行，原始证据 gitignored `.verify/m14-82-harmony-current-main-smoke/` 16 文件
+  SHA256SUMS 锚定）：模拟器选定 `127.0.0.1:5555`（`const.product.name=emulator`、API 24、
+  `bootevent.boot.completed=true` + foundation/appspawn 进程佐证；`127.0.0.1:15566` 为
+  Kaihong BotBook VM，不在范围）；preflight `--expect-unsigned` exit 0 /
+  `blocked_by_external_materials`（`--require-materials` 变体 exit 2）——诚实未签名边界
+  保持；release_build clean/assemble 双 exit 0，unsigned HAP 188,984 bytes / SHA-256
+  `584E5D47…B341`（与 M14-76 大小相同、内容哈希不同——HAP zip 归档时间戳已知非确定性，
+  不声称字节级一致）；device_smoke plan-only 后 `--confirm-mutation` **6/6 命令过**
+  （install / aa start / dumpLayout / file recv / force-stop / uninstall），cleanup+卸载成功，
+  layout 53,798 bytes 落盘；device_preflight plan-only exit 0（loopback 在 check 模式被拒绝
+  语义保持，未跑 true-device）；pytest `tests/harmony_release` **427 passed, 1 skipped**
+  （与 M14-80 持平）+ mock contract **54/54 passed**（installed UI 网络降级契约）。诚实边界：
+  **未签名 / 无 AGC / 无已签名 HAP / 不声明生产就绪**（零 AIOS_HARMONY_* 材料变量、零签名
+  材料接触、零发布链工具改动）；布局漂移如实（82 原始节点 vs M14-76 76 attr 节点——模拟器
+  采样时点动态内容差异，两口径均真实）；模拟器 UI 网络降级态为预期（无后端）。证据
+  `docs/evidence/m14-82-harmony-current-main-smoke/README.md`（唯一入库证据文件），同步更新
+  CHANGELOG（M14-82 条目）与 PROJECT_STATUS 顶部任务结构（M14-81 降级为前一任务）。
+
 ### M14-81 状态更新
 
 - M14-81 current-main release 证据刷新·实现/文档切片（分支 `ops/m14-81-current-main-release-evidence`（独立 worktree，基于 main `e1f128be80fee736d5326272bcecebc1c729f0fb`（PR #168 merge，精确基点）），单 local commit，不 push）：沿用 M14-78 模式对新 main 基点只刷新**代码绑定门**（ci-main / release-check）并重新聚合 readiness，绝不手改 gate JSON、不搬运旧生产状态证据冒充 current、不伪称 production readiness；零生产触碰（零容器/调度任务/DB/MinIO/语音/生产日志/secrets/soak 历史/审批接触，零部署；唯一网络访问 = GitHub 只读 `gh api`（直连）+ worktree 从零包安装）。基点增量（b7db88c→e1f128b，10 commits/20 文件 +4474/−51）：PR #165 M14-78 证据切片 + PR #166 M14-79 harmony gate-drift 审计与链哈希 fail-closed + PR #167 M14-80 sign_hap 未变更输出 fail-closed 加固 + PR #168 M14-79 soak 恢复门（事件复盘/窗口锚定门/log-error 时间界/history 超时 45→90s）——运行时服务面（services/api/app、apps/web）零改动，但代码绑定门证据只对执行时点的树成立，故如实重推导。刷新（全部真实执行）：① **ci-main** `gh api`（runs?head_sha=e1f128b… + runs/35589879598/jobs）命中真实 push/main run **35589879598**（created 2026-09-21T10:39:12Z，conclusion=success，**5/5 jobs success**——Web/API/Docker/Android/Release tools；raw 响应归档，断言由脚本复核 raw 数据），按 `_eval_ci_main` 契约新写；② **release-check** 于 e1f128b worktree 从零环境（uv venv 3.12 + npm ci）跑 `app.ops.cli release-check-isolated`（一次性 SQLite + 127.0.0.1 临时 API + 环境剥离，零生产面）——**all_green=true 10/10 pass**（pytest **4024 passed**/33 skipped 228.85s，较 M14-78 的 3939 +85 恰为 M14-79 ops 面新契约测试对账；migration head==0027_audit_chain；backup/voice/license/e2e 全过），产物逐字节复制改名（sha256 复核一致）；③ **release-readiness** 聚合 M14-81 canonical 证据目录（`.verify/artifacts/m14-81-current-main-release-evidence/`，只放两个真实重推导的代码绑定门）——**pass=2 / missing=9**（required 八项：preflight/backup-restore/audit-chain-anchor/legacy-papers/draft-ownership/long-soak/provider-smoke/release-approval；optional turn-tls），malformed=0/tampered=0，**release_ready=false、exit_code=1 如实**。验证：聚焦契约三件套 **137 passed**（2.56s）；canonical 五 JSON 解析/契约消费通过、release-check 与隔离产物逐字节一致；`git diff --check` 干净（docs-only，无 Python 改动）。诚实边界：生产仍运行 m14-70 镜像；supervisor 已运行 `soak_window_gate --anchor` 完成**正式锚定**（权威锚点 2026-09-21T15:00:01Z、最早审计时点 2026-09-22T15:00:01Z、尾部 8 干净样本/tail_max_gap 15.0；锚定记录已存在即阻止重锚、后续样本不移动锚点——14:45:01Z 仅为锚定前检查显示值）——修复后干净尾部与 M14-79 预期恢复方向一致、非独立因果证明；**锚定 ≠ long-soak 通过、不授权 readiness**，24h 审计未发生故 long-soak 门仍如实 missing；history 超时上调与 M14-80 harmony 面尚无独立验收记录；八个生产状态门 + long-soak + release-approval 全部如实 missing（待生产运维窗口/人工审批）；`release_ready=false` / `production_ready=false` 不变，不授权任何部署。证据 `docs/evidence/m14-81-current-main-release-evidence/README.md`（唯一入库证据文件），同步更新 CHANGELOG（M14-81 条目）与 PROJECT_STATUS 顶部任务结构（M14-78 降级为前一任务）。
-
 ### M14-78 状态更新
 
 - M14-78 current-main release 证据刷新·实现/文档切片（分支 `ops/m14-78-release-evidence-refresh`（独立 worktree，基于 main `b7db88c3401a6f0ce821a9777fb8b815bd4cf837`（PR #164 merge，精确基点）），单 local commit，不 push）：对 m14-75 生产收口证据（`.verify/artifacts/m14-75-production-closure/evidence/`，14 文件逐文件 SHA-256 审计，与收口 manifest 内嵌哈希逐一互证无篡改）做 **current-main（b7db88c）staleness 审计与可真实推导面的刷新**，不伪称 production readiness。分类口径：**代码绑定门**（ci-main——锚定 merge_commit `2a0e911`（PR #162）；release-check——2a0e911 时代树 2026-09-20T23:53:59Z 隔离 full 10 门）随 main 前移 5 commits（PR #163 纯文档 + PR #164 watchdog 工具/测试，运行面零改动）即 stale；**生产状态绑定门**（production-preflight/backup-restore/audit-chain-anchor{,+jsonl,+verify}/legacy-papers/draft-ownership/provider-smoke{,+3 冒烟明细}）锚定生产系统而非 git commit——生产自 m14-70 切换后未再变更，快照仍是各维度最新真实记录，但重推导需生产/DB/语音访问，本切片零生产触碰约束下全部如实 **blocked**（不搬运旧文件冒充 current）。刷新（全部真实执行）：① **ci-main** 经代理 `gh api repos/swsgbl/ai-learning-os/actions/runs?head_sha=b7db88c…` + `…/runs/35548392898/jobs` 命中真实 push/main run **35548392898**（created 2026-09-21T00:39:37Z，conclusion=success，**5/5 jobs success**——Web/API/Docker/Android/Release tools；raw 响应归档），按 `_eval_ci_main` 契约新写 `ci-main.json`（不改 m14-75 任何文件）；② **release-check** 于 b7db88c worktree 从零环境（uv venv + npm ci）跑 `app.ops.cli release-check-isolated`（一次性 SQLite + 127.0.0.1 临时 API + 环境剥离 AUTH_SECRET/DATABASE_URL，零生产面）——**all_green=true 10/10 pass**（pytest **3939 passed**/33 skipped 265.24s，较 m14-75 3863 增量含 PR #164 watchdog 77 项；migration head==0027_audit_chain；backup 演练/voice local 合成/license/e2e 全过），产物逐字节复制改名入库证据目录（sha256 复核一致）；③ **release-readiness** 聚合 canonical 证据目录（只放两个真实重推导的代码绑定门，生产状态门不搬运防过度宣称）——**pass=2 / missing=9**（required 八项：preflight/backup-restore/audit-chain-anchor/legacy-papers/draft-ownership/long-soak/provider-smoke/release-approval；optional turn-tls），malformed=0/tampered=0，**release_ready=false、exit_code=1 如实**。验证：聚焦契约三件套 **137 passed**（test_release_readiness + test_release_check_isolated + test_release_checklist，4.55s）；`git diff --check` 干净；canonical JSON 解析/契约消费通过。诚实边界：long-soak 仍无真实 24h 干净窗口（m14-75 起 missing，sidecar 看护注册未发生需新窗口起算）、release-approval 从未发生（本切片明确不触碰）、六类生产状态门待下次生产切换窗口统一重执行；`release_ready=false` / `production_ready=false` 不变，不授权任何部署。证据 `docs/evidence/m14-78-release-evidence-refresh/README.md`（唯一入库证据文件；canonical 证据 5 文件 SHA-256+bytes 锚定于 gitignored `.verify/artifacts/m14-78-release-evidence-refresh/`），同步更新 CHANGELOG（M14-78 条目）与 PROJECT_STATUS 顶部任务结构（M14-77 降级为前一任务）。
