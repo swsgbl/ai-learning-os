@@ -9,6 +9,41 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-83 current-main 生产只读证据刷新（production read-only evidence）**：worktree
+`m14-83-production-evidence-refresh`，分支 `ops/m14-83-production-evidence-refresh`，基于
+main `5829ad9c7dbdfbcf0fc71728dbc2ecec2012135d`（PR #170 merge，精确基点），单 local
+commit（不 push、不开 PR）。目标：只刷新可在不改变生产状态前提下真实重推导的生产状态
+门（preflight post-migration / 治理两门 / audit-chain verify-only / 本地拓扑 provider
+冒烟），不运行 backup-restore、不创建/更新审计锚、不伪称 production readiness。安全
+策略：全部命令以 current main 代码（worktree 从零 venv）执行；生产 DB 只读访问经
+`infra/docker-compose.yml` 仓库公开硬编码连接串（aios:aios 非 secret）+ 宿主固定
+loopback 映射 `127.0.0.1:5433`——**未读取 `infra/env.production-recovery`、零 key/token
+回显**；零容器启停/重建、零计划任务、零 Ollama/WSL/代理触碰（Ollama inactive 未代启）。
+刷新结果（全部真实执行，canonical
+`.verify/artifacts/m14-83-production-read-only-evidence/` 17 文件 sha256 锚定）：
+① `production-preflight --phase post-migration` **5/5 pass、0 pending/fail/not_configured**
+（db-connect postgresql/ai_learning_os、alembic current==head==`0027_audit_chain`、审计链
+valid 0 entries、治理三项计数 0、锚 verify-only up-to-date @ canonical m14-42 锚副本
+354 bytes `d2bfd877…`）；② 治理报告 total=0 → `governance-evidence` 两门
+**pending_count=0**（pass）；③ `audit-chain-verify` valid（0 entries/0 audit rows）+
+`audit-chain-anchor --verify-only` **up-to-date、written=false 零写入**（raw 归档）；
+④ provider 冒烟如实三态——local-voice **pass**（FunASR 真实转写 latency 2911ms +
+CosyVoice RIFF WAV 241,964 bytes）、search **fail**（SearXNG 存活但上游引擎
+brave/duckduckgo/google cse/wikidata/wikipedia 全部出站连接错误）、llm **fail**
+（127.0.0.1:11434 连接拒绝、WSL Ollama inactive）→ 聚合 provider-smoke 门 **blocked**；
+⑤ `release-readiness` 聚合——**pass=3 + blocked=1 + required missing=6**（ci-main/
+release-check 对 `5829ad9` 未重推导属代码绑定门切片 scope、backup-restore 按边界不运行、
+audit-chain-anchor 完整 worm 形态需运维窗口、long-soak 24h 审计未发生、release-approval
+human-only），malformed=0/tampered=0，**`release_ready=false`、exit 1 如实保留**。验证：
+聚焦契约测试 **461 passed, 4 skipped**（八文件）；`git diff --check` 干净（docs-only）。
+诚实边界：生产仍运行 m14-70 镜像；本切片不授权任何部署；README 含独立窗口
+backup-restore 演练精确安全计划（只读预检→备份→一次性恢复库回灌→
+backup_restore_evidence 导出→中止条件）。证据
+`docs/evidence/m14-83-production-read-only-evidence/README.md`（唯一入库证据文件），同步
+更新 CHANGELOG（M14-83 条目）与 ROADMAP（M14-83 状态更新）。
+
+
+## 前一任务（M14-82 Harmony current-main 模拟器未签名发布链验证——已随 PR #170 合并 main `5829ad9`；current-main 生产只读证据刷新由 M14-83 接续）
 **M14-82 Harmony current-main 模拟器未签名发布链验证（verify-only 文档切片）**：worktree
 `m14-82-harmony-current-main-smoke`，分支 `harmony/m14-82-current-main-smoke`，基于 main
 `e1f128be80fee736d5326272bcecebc1c729f0fb`（PR #168 merge），单 local commit（不 push、

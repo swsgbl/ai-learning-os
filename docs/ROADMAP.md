@@ -79,6 +79,52 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-83 状态更新
+
+- M14-83 current-main 生产只读证据刷新（实现/文档切片；worktree
+  `m14-83-production-evidence-refresh`，分支 `ops/m14-83-production-evidence-refresh`，基于
+  main `5829ad9c7dbdfbcf0fc71728dbc2ecec2012135d`（PR #170 merge，精确基点），单 local
+  commit，不 push）：只刷新可在不改变生产状态前提下真实重推导的生产状态门——
+  production-preflight post-migration、legacy-papers/draft-ownership 治理、audit-chain
+  verify-only、本地拓扑 provider 冒烟（search+local-voice+llm）；**不运行 backup-restore、
+  不创建/更新审计锚**（列入证据 README §7 独立窗口安全计划）。零生产突变：零容器启停/
+  重建、零计划任务、零 Ollama/WSL/代理触碰（Ollama 发现 inactive 未代启，如实记失败）、
+  零 DB 写入（只读 SELECT/inspector）、零锚写入（verify-only written=false）、零
+  secrets/env 读取（DB 连接串取自 compose 仓库公开硬编码值 + 宿主 `127.0.0.1:5433`
+  固定 loopback 映射；未打开 `infra/env.production-recovery`；零 key/token 回显）。刷新
+  （全部真实执行，canonical `.verify/artifacts/m14-83-production-read-only-evidence/`
+  17 文件 sha256 锚定）：① `production-preflight --phase post-migration`（current main
+  worktree venv 代码 + 生产 DB 只读 + canonical m14-42 锚副本 354 bytes `d2bfd877…`
+  verify-only 交叉校验）**5/5 pass、0 pending/fail/not_configured**——alembic
+  current==head==`0027_audit_chain`、审计链 valid（0 entries/0 audit rows）、治理三项计数
+  0、锚 up-to-date；证据按 M14-78 ci-main 同款程序化转录模式（tool/gate/step 头 + 与
+  raw 工具报告逐键断言一致，不手工改值）；② 治理报告 total=0 → `governance-evidence`
+  两门 **pending_count=0**（pass）；③ `audit-chain-verify` valid + `audit-chain-anchor
+  --verify-only` up-to-date（零写入，raw 归档）——audit-chain-anchor **门**仍如实
+  missing（完整 chain/anchor/worm 三块形态含 WORM 归档核验需运维窗口，不手工拼装 gate
+  JSON）；④ provider 冒烟如实三态——local-voice **pass**（FunASR 真实转写 latency
+  2911ms/transcript 42 bytes + CosyVoice RIFF WAV 241,964 bytes/latency 21817ms）、search
+  **fail**（SearXNG /healthz 200 但上游引擎 brave/duckduckgo/google cse/wikidata/
+  wikipedia 全部出站 HTTP connection error——容器出站当前断开，按边界不动代理/容器）、
+  llm **fail**（`127.0.0.1:11434` 连接拒绝、WSL Ubuntu Ollama systemctl inactive）→
+  `provider-smoke-aggregate --voice-mode local` 聚合门 **blocked**（exit 1，证据照常
+  落盘）；⑤ `release-readiness` 聚合 M14-83 canonical 目录——**pass=3（production-
+  preflight/legacy-papers/draft-ownership）+ blocked=1（provider-smoke）+ required
+  missing=6（ci-main/release-check/backup-restore/audit-chain-anchor/long-soak/
+  release-approval）**，malformed=0/tampered=0，**`release_ready=false`、exit_code=1 如实
+  保留**（ci-main/release-check 对 `5829ad9` 未重推导属代码绑定门切片 scope，M14-81
+  canonical（@ e1f128b）仍是其最新真实记录、对现 main 已 stale 如实；long-soak 的 M14-79
+  权威 soak 锚最早审计时点 2026-09-22T15:00:01Z 未届满/未执行）。验证：聚焦契约测试
+  **461 passed, 4 skipped**（release-readiness/governance-evidence/provider-smoke/
+  production-preflight/audit-chain×2/legacy/draft 八文件）；`git diff --check` 干净
+  （docs-only 零 Python 改动）。诚实边界：生产仍运行 m14-70 镜像（2026-09-19 切换后
+  未变）；`release_ready=false`/`production_ready=false` 不变，不授权任何部署；README §7
+  含 backup-restore 演练独立窗口精确安全计划（只读预检→备份→一次性恢复库回灌→
+  backup_restore_evidence 导出→中止条件，可与 WORM 核验、SearXNG/Ollama 恢复共享同一
+  窗口）。证据 `docs/evidence/m14-83-production-read-only-evidence/README.md`（唯一入库
+  证据文件），同步更新 CHANGELOG（M14-83 条目）与 PROJECT_STATUS 顶部任务结构（M14-82
+  降级为前一任务）。
+
 ### M14-82 状态更新
 
 - M14-82 Harmony current-main 模拟器未签名发布链验证（verify-only 文档切片；worktree
