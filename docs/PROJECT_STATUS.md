@@ -9,6 +9,54 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-86 current-main 代码绑定门证据刷新（code-bound release gates）**：worktree
+`m14-86-current-main-code-evidence`，分支 `ops/m14-86-current-main-code-evidence`，基于 main
+`f1dfcbbbb2a64746aebd89d10ce38d4c65539e82`（PR #172 merge，精确基点），单 local
+commit（不 push、不开 PR）。目标：按 M14-81 精确契约/流程对新 main 基点只刷新
+**代码绑定门**（ci-main / release-check）并重新聚合 readiness；绝不手改 gate
+JSON、不搬运旧生产状态证据冒充 current、不伪称 production readiness。零生产
+触碰（零容器/计划任务/DB/MinIO/语音/生产日志/secrets/soak 历史/审批接触，
+零部署；唯一网络访问=GitHub 只读 `gh api`（直连）+ worktree 从零包安装
+uv/npm）。基点增量（e1f128b→f1dfcbb，7 commits/7 文件 +1127/−0）全部为
+docs（台账+四份 evidence README），运行时服务面零改动——但代码绑定门证据
+只对执行时点的树成立，docs-only 增量同样如实重推导。执行结果（全部真实，
+canonical `.verify/artifacts/m14-86-current-main-code-evidence/` 5 文件
+sha256 锚定）：① **ci-main**——`gh api`（runs?head_sha=f1dfcbb… +
+runs/35632399209/jobs，raw 响应归档）命中真实 push/main run **35632399209**
+（created 2026-09-21T17:30:05Z，conclusion=success，**5/5 jobs success**——
+API/Docker/Release tools/Android/Web），按 `_eval_ci_main` 契约由断言脚本
+（断言失败即非零退出、不产出证据）从 raw 事实程序化派生 ci-main.json
+（904 bytes）；② **release-check**——f1dfcbb worktree 从零环境（uv venv
+CPython 3.12.14 + uv pip 双 requirements + npm ci 411 packages）跑
+`app.ops.cli release-check-isolated` full（一次性 SQLite + 127.0.0.1 临时
+API + 环境剥离，零生产面）——**all_green=true 10/10 pass**（generated_at
+2026-09-21T17:45:54Z；pytest **4024 passed/33 skipped** in 239.41s，与
+M14-81 @ e1f128b 完全一致——纯 docs 增量零测试变更的预期对账；migration
+current==head==0027_audit_chain；backup tables:30；voice local 17324
+bytes；license api 15/web ok/models 7/sources 6；e2e 5 步 1390 ms），产物
+逐字节复制改名（程序化比对 byte-identical=True，2491 bytes）；③
+**release-readiness** 聚合 M14-86 canonical 证据目录（只放两个真实重推导
+的代码绑定门）——**pass=2（ci-main/release-check）/ missing=9**（required
+八项：preflight/backup-restore/audit-chain-anchor/legacy-papers/
+draft-ownership/long-soak/provider-smoke/release-approval；optional
+turn-tls），malformed=0/tampered=0，manifest 内嵌 sha256 与实际文件哈希
+程序化交叉核验一致，**`release_ready=false`、exit_code=1 如实保留**。
+验证：聚焦契约三件套 **137 passed, 1 warning**（2.63s，
+release_readiness/release_check_isolated/release_checklist）；canonical
+五 JSON 解析/契约消费通过、release-check 与隔离产物逐字节一致；
+`git diff --check` 干净（docs-only，零 Python 改动）。诚实边界：八个生产
+状态门 + long-soak + release-approval 全部如实 missing（各门最新真实记录
+见 M14-83（@ 5829ad9，provider-smoke blocked 如实——search/llm 失败无
+恢复记录）与 M14-85（@ f47a1e4，backup-restore verified=true）各自
+canonical，不搬运冒充 current）；M14-79 权威 soak 锚最早审计时点
+2026-09-22T15:00:01Z 未届满、24h 审计未发生，long-soak 不预宣称；
+生产仍运行 m14-70 镜像，`release_ready=false`/`production_ready=false`
+不变，不授权任何部署。证据
+`docs/evidence/m14-86-current-main-code-evidence/README.md`（唯一入库证据
+文件），同步更新 CHANGELOG（M14-86 条目）与 ROADMAP（M14-86 状态更新）。
+
+
+## 前一任务（M14-85 current-main backup-restore 发布门演练——已随 PR #172 合并 main `f1dfcbb`；代码绑定门证据刷新由 M14-86 接续）
 **M14-85 current-main backup-restore 发布门演练（backup-restore drill）**：worktree
 `m14-85-backup-restore-drill`，分支 `ops/m14-85-backup-restore-drill`，基于 main
 `f47a1e460db4a6aa06a815488300a2a4af200444`（PR #171 merge，精确基点），单 local
