@@ -9,6 +9,59 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-77 语音健康 sidecar 看护计划任务 readiness（韧性修复开发切片）**：分支
+`ops/m14-77-voice-sidecar-resilience`（独立 worktree，基于 main@2a0e911
+（PR #162 merge）），单次本地提交 `ops: add voice sidecar watchdog task
+readiness`（不推送）。触发事实（2026-09-21 生产）：FunASR/CosyVoice 引擎
+均 managed-running、health 200，但 voice_health_sidecar PID 6660 于 01:00
+后静默退出——15 分钟监控管道（M14-27 起 monitor 固定 argv
+`--voice-health-source sidecar`，manifest 仅静态校验不核验进程存活）因
+sidecar 端点不可达连续约 7 小时 monitor exit 2，history/insights 连锁
+skipped，long-soak 被污染。根因缺陷＝**死亡后无自恢复**：sidecar 是生产
+拓扑中唯一「spawn 一次、无看护」的未托管组件（引擎属托管生命周期可恢
+复），控制器 `start` 幂等自愈早已存在（stale manifest → 清理 → 全新启
+动，113 项测试覆盖）但生产中无任何周期性调用者，唯一触发是人工（PID
+漂移 701→6660 旁证历史已发生死亡-重启循环；01:00 直接诱因离线不可定证
+——H1 WSL VM/中继回收最可能、H2 OOM、H3 信号三假设如实列举，均收敛
+同一修复）。交付（全部**加法式**，零改动 production_monitor /
+monitoring_pipeline / voice_health_sidecar{,_control}.py / 既有 VBS 与
+任务契约；零生产触碰——零注册、零 wsl.exe、零引擎/sidecar 启停）：
+① `tools/voice/voice_sidecar_watchdog_task.py`（M14-14
+monitoring_pipeline_task 同款纪律：GatedSchtasks 四形态结构性白名单
+（`/Run`//`/Change`//`/End`/带 `/F` create 一律执行前拒绝）、
+install/uninstall 精确确认短语 `EXECUTE VOICE SIDECAR WATCHDOG
+SCHEDULER CHANGE`（与 M14-14 隔离）、绝不覆盖同名（前置 query + 二次列
+表复核）、归属判定 fail-closed（URI 两形态 + Description 持久标记 + 全
+字段精确 + 归一化省略默认值条件认可）、/XML 字节形态严格四形态解码、
+DOCTYPE/ENTITY 解析前拒绝、generate UTF-16 with BOM + 回读复核）；
+② `tools/voice/run_voice_sidecar_watchdog_silent.vbs`（与 M14-14 VBS
+diff 结构同构实证：静默幂等 ensure 调既有 controller `start`——活着跳
+过/死了以全部既有生产保护核验重启/WSL 不可用 rc 3 可见失败，退出码原样
+透传 Task Scheduler）。任务参数（测试交叉 pin）：`AIOS-Voice-Sidecar-
+Watchdog`（urn:aios:m14-77:voice-sidecar-watchdog）、TimeTrigger PT5M
+（死亡暴露窗收敛到一个看护周期且 < 监控管道 PT15M——15 分钟管道最多污
+染一轮）> ExecutionTimeLimit PT4M > 90s 单轮 ensure 预算（控制器 start
+最坏推算 probe×2 + status 落档 + 双端口健康探测 + 启动余量，与控制器常
+量交叉 pin）；独立任务独立时限不挤占管道 PT12M/710s 预算链；IgnoreNew +
+ControlLock 双重防重叠。**production_monitor 只读/fail-closed/不伪造健
+康语义原样保留**——sidecar 死亡轮 monitor 照样如实 exit 2，本切片只把
+断档从「人工介入前无限」收敛到「注册后 ≤5 分钟」。测试：新增
+`test_voice_sidecar_watchdog_task.py` **77 passed**（Task XML 关键字段/
+预算链交叉 pin/verify 四态含归一化/decode 四形态/白名单门含 POSIX
+tempfile 回归/plan/generate/status 五态/install-uninstall 短语门禁与精
+确形态/VBS 契约/与既有任务零身份冲突/源码契约）；聚焦回归五件套
+**566 passed**（watchdog 77 + sidecar 113 + pipeline task 79 + pipeline
+69 + production monitor 228——零破坏）；ruff/py_compile/
+`git diff --check` 全过。诚实边界：交付的是 readiness——真实注册
+（plan → generate → install --confirm → status，supervisor 获准窗口 +
+提升令牌）、受控破坏-自愈演练与长期观察均未发生（看护当前不在生产运行，
+注册前断档风险仍在）；单轮如实失败仍会发生（fail-closed 设计）；
+`production_ready=false` 不变。证据：
+`docs/evidence/m14-77-voice-sidecar-watchdog/README.md`（根因假设/机制
+链/方案边界/真实测试结果/七步注册指引）。
+
+## 前一任务（M14-74 provider 收口拓扑调和——已随 PR #161 合并 main；语音 sidecar 看护由 M14-77 接续）
+
 **M14-74 provider 收口拓扑调和（provider closure topology）**：分支
 `ops/m14-74-provider-closure-topology`（基于 main@b05a449，即 PR #160
 合并 M14-73 后的 main），单次本地提交 `ops: reconcile provider
@@ -41,41 +94,6 @@ executed**、closure **production_ready=false（12 blockers 如实透出）**。
 不执行也不声称 production cutover。证据：
 `docs/evidence/m14-74-provider-closure-topology/README.md`（README 为
 唯一入库证据文件，输入/输出 sha256/bytes 如实记录）。
-
-## 前一任务（M14-73 长稳审计接入发布门——已随 PR #160 合并 main；provider 收口拓扑调和由 M14-74 接续）
-
-**M14-73 长稳审计接入发布门（long soak release gate）**：分支
-`ops/m14-73-long-soak-release-gate`（基于 main@05c7aea，即 PR #159
-合并 M14-72 后的 main），单次本地提交 `ops: add long-soak release
-gate`（不推送）。把 M14-72 长稳审计接入 `release-readiness` 作为
-fail-closed 必需门禁：新增必需 GateSpec `long-soak`（证据
-`long-soak.json`，排序在 draft-ownership 之后、provider-smoke 之前），
-release-ready 门槛从十门升至**十一门**（10 必需 + 1 可选 turn-tls），
-GATE_IDS/approval 哈希绑定自动扩展。`tools/ops/soak_stability_audit.py`
-AUDIT_SCHEMA_VERSION 升至 **2** 并在报告顶层自声明
-`gate="long-soak"`（v1 报告不再被门禁接受），M14-72 语义与确定性不变。
-评估器 `_eval_long_soak` 严格校验：gate 自标识/工具路径/精确策略
-（1440/15/20/retention 500）/输入 sha256+bytes/行不变量
-（analyzed+omitted==row_count、omitted==max(0, row_count-500)、
-selected≤analyzed）/锚点−窗口起点==1440 分钟/counts 键恰为
-ok·warn·critical 且和==selected_row_count/window_non_ok_count∈
-[warn+critical, selected]；分类判定与工具单向蕴含一致（blocked 仅
-non-ok-status-in-window / excessive-gap-in-window；pending 仅
-insufficient-clean-coverage / insufficient-sample-count 且后者要求
-selected<97；pass 要求 reasons 为空+selected≥97+span==1440+max_gap≤20+
-non_ok==0+warn==critical==0+ok==selected；未知/矛盾=malformed）。
-release_closure_manifest 下一步指引更新为七条：离线跑 soak 审计后把
-生成 JSON **逐字节复制重命名**为 `<evidence-dir>/long-soak.json`
-（manifest 保持只读聚合器）。canonical 真实历史干跑（主仓 M14-13
-`history.jsonl`，396 行/578635 bytes/SHA-256 `65470fc6…783c`，锚点
-2026-09-20T06:15:01Z）= **blocked（non-ok-status-in-window，exit 2）**
-——97 样本 ok=94/warn=3/critical=0、span 1439.617 分钟、max_gap
-15.033 分钟、策略恰 1440/15/20/500；该真实报告经 `_eval_long_soak`
-直消费验证 = blocked（非 malformed），`release_ready=false` 如实，
-**绝不合成 soak pass**。测试 162 passed（三套件），ruff/py_compile/
-`git diff --check` 干净。证据：
-`docs/evidence/m14-73-long-soak-release-gate/README.md`（README 为唯一
-入库证据文件，干跑输出哈希/字节数如实记录）。
 
 ## 前一任务（M14-72 长稳审计——已随 PR #159 合并 main；发布门接入由 M14-73 接续）
 
