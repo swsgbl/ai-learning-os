@@ -13,8 +13,10 @@ Safety contract:
   hash must equal the sign_hap input hash, and the sign_hap
   signed-output hash must equal the verify_signature input hash. A
   mismatch (stale or mixed evidence from different builds) blocks the
-  manifest even when every per-gate status passes; a missing side
-  never triggers it.
+  manifest even when every per-gate status passes, and so does a
+  chosen report that omits or corrupts any required hash record:
+  absence is the distinct ``evidence_hap_missing`` blocker, never a
+  silent pass, and never left to the per-gate checks alone.
 - Signedness is never inferred from a file name: only a
   ``verify_signature`` report with status ``signed_and_valid`` counts as
   signedness evidence; a signing claim (``claimed_signed``) alone never
@@ -92,6 +94,18 @@ PASS_STATUSES = {
 
 MAX_INPUT_BYTES = 8 << 20  # evidence reports are a few KiB
 MAX_UNCLASSIFIED_LABELS = 8
+
+# Cross-report chain completeness (M14-79 follow-up): whenever the
+# relevant gate reports are present, every one of these hash slots
+# must be recorded and well-formed in the chosen report. A missing
+# or invalid slot is the distinct ``evidence_hap_missing`` blocker,
+# so a passing report can never fail the chain open by omission.
+CHAIN_HASH_RECORDS = (
+    ("release_build", "artifact", "build_artifact"),
+    ("sign_hap", "input", "sign_input"),
+    ("sign_hap", "artifact", "sign_artifact"),
+    ("verify_signature", "input", "verify_input"),
+)
 
 # Human-safe text shapes. Anything that does not match is replaced by a
 # fixed fallback label, so a forged report can never smuggle a value.
@@ -260,9 +274,9 @@ def _hap_sha256_from(report: dict | None, section: str) -> str | None:
 
     "section" selects the record: "artifact" (the release_build output
     or the sign_hap signed output) or "input" (the HAP a tool was
-    pointed at). A missing, partial or forged record yields None so
-    the cross-report chain check never fires on absent evidence -
-    missing evidence stays the job of the per-gate checks.
+    pointed at). A missing, partial or forged record yields None;
+    the chain-completeness check turns that None into a distinct
+    ``evidence_hap_missing`` blocker instead of a silent pass.
     """
     if not isinstance(report, dict):
         return None
@@ -278,23 +292,38 @@ def _hap_sha256_from(report: dict | None, section: str) -> str | None:
 def _chain_consistency(
     chosen: dict[str, tuple[str, dict]],
 ) -> list[dict]:
-    """Cross-report HAP chain: the release_build output hash must equal
-    the sign_hap input hash, and the sign_hap signed-output hash must
-    equal the verify_signature input hash (fail-closed on a mismatch
-    when both sides are present).
+    """Cross-report HAP chain, fail-closed end to end (M14-79 +
+    follow-up): a present report set must carry every required chain
+    hash, and the hashes must agree link by link.
 
-    Per-gate status checks cannot see stale or mixed evidence: a
-    release_build report for build N plus a sign_hap report still
-    pointing at build N-1 passes every per-gate test. This check
-    compares only sanitized hashes, never paths or values, and only
-    fires when both sides of a link exist - a missing report stays
-    the missing_report blocker job.
+    Per-gate status checks cannot see stale, mixed or gutted
+    evidence: a release_build report for build N plus a sign_hap
+    report still pointing at build N-1 passes every per-gate test,
+    and so does a passing report that simply omits its HAP hash
+    records. This check closes both: a chosen report missing or
+    corrupting any required hash slot (CHAIN_HASH_RECORDS) adds the
+    distinct ``evidence_hap_missing`` blocker, and two present
+    hashes that disagree add ``evidence_hap_mismatch``. A wholly
+    absent report stays the ``missing_report`` blocker job.
     """
     blockers: list[dict] = []
 
     def chosen_report(gate: str) -> dict | None:
         entry = chosen.get(gate)
         return entry[1] if entry else None
+
+    # Completeness first: for every gate report that is present, all
+    # of its required chain hashes must be recorded and well-formed.
+    for gate, section, slot in CHAIN_HASH_RECORDS:
+        report = chosen_report(gate)
+        if report is None:
+            continue  # absent report: missing_report blocker, not here
+        if _hap_sha256_from(report, section) is None:
+            blockers.append({
+                "code": "evidence_hap_missing",
+                "gate": "evidence_chain",
+                "detail": {"slot": slot},
+            })
 
     links = (
         (
@@ -409,6 +438,8 @@ def _next_action(blocker: dict) -> str:
         return "supply_reports_from_known_release_tools"
     if code == "duplicate_report":
         return "deduplicate_evidence_reports_per_gate"
+    if code == "evidence_hap_missing":
+        return "regenerate_evidence_reports_with_hap_hash_records"
     if code == "evidence_hap_mismatch":
         return "rerun_release_chain_so_evidence_shares_one_hap"
     detail = blocker.get("detail") if isinstance(blocker.get("detail"), dict) else {}
