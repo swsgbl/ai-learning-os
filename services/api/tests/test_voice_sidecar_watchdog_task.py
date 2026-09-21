@@ -234,9 +234,13 @@ def test_build_task_xml_key_fields(fake_repo: Path) -> None:
         vbs=vswt._repo_paths(fake_repo)["vbs"].resolve())
     assert text_of("t:Actions/t:Exec/t:Arguments") == expected_args
     assert Path(text_of("t:Actions/t:Exec/t:WorkingDirectory")).resolve() == fake_repo.resolve()
-    # Action 指向 tools/voice 下本切片 VBS（绝不指向监控/恢复任务 wrapper）
-    assert "run_voice_sidecar_watchdog_silent.vbs" in text_of("t:Actions/t:Exec/t:Arguments")
-    assert "tools\\voice" in text_of("t:Actions/t:Exec/t:Arguments")
+    # Action 指向 tools/voice 下本切片 VBS（绝不指向监控/恢复任务 wrapper）。
+    # 平台无关路径段检查：expected VBS 自 _repo_paths 派生，Windows 反斜杠与
+    # Linux POSIX 分隔符都覆盖；exact expected-arguments 断言见上文。
+    expected_vbs = vswt._repo_paths(fake_repo)["vbs"].resolve()
+    assert expected_vbs.parent.name == "voice"
+    assert expected_vbs.parent.parent.name == "tools"
+    assert expected_vbs.name == "run_voice_sidecar_watchdog_silent.vbs"
 
 
 def test_budget_chain_cross_pin() -> None:
