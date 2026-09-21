@@ -515,6 +515,68 @@ ruff/py_compile/`git diff --check` 全过。真实 M14-28 验收须在本修复
 合并后整体重跑，`production_ready=false` 不变。详见
 `docs/evidence/m14-29-sidecar-status-path/README.md`。
 
+**看护计划任务 readiness（M14-77，2026-09-21）**：生产事实——
+FunASR/CosyVoice 引擎均 managed-running、health 200，但 sidecar
+PID 6660 于 2026-09-21 01:00 后静默退出，15 分钟监控管道（M14-27 起
+monitor 固定 argv `--voice-health-source sidecar`）因 sidecar 端点
+不可达连续约 7 小时 monitor exit 2，long-soak 被污染。根因缺陷不是
+sidecar 死亡本身（单进程死亡不可避免），而是**死亡后无自恢复**：sidecar
+经控制器一次性 spawn、无看护（引擎属托管生命周期、重启后可恢复
+managed-running，sidecar 是生产拓扑中唯一未托管组件）；控制器 `start`
+的幂等自愈（stale manifest → 清理 → 全新启动）早已存在且有 113 项测试
+覆盖，但生产中无任何周期性调用者——唯一触发是人工。M14-77 交付**看护
+计划任务 readiness**（全部加法式，零改动 production_monitor /
+monitoring_pipeline / sidecar / 控制器 / 既有 VBS 与任务）：
+
+- `tools/voice/voice_sidecar_watchdog_task.py`（M14-14
+  `monitoring_pipeline_task.py` 同款纪律）：管理隐藏周期计划任务
+  `AIOS-Voice-Sidecar-Watchdog`（`urn:aios:m14-77:voice-sidecar-watchdog`）
+  ——plan/generate/status/install/uninstall；GatedSchtasks 结构性白名单
+  （只读两查询 / 精确 `/Create /TN <名> /XML <tmp>` / 精确
+  `/Delete /TN <名> /F`，其余 `/Run`//`/Change`//`/End` 等一律在任何执行
+  前拒绝）；install/uninstall 各需精确确认短语
+  `EXECUTE VOICE SIDECAR WATCHDOG SCHEDULER CHANGE`（与 M14-14 短语不同，
+  变更面隔离）；绝不覆盖同名任务（前置 query + 二次全量列表复核）；
+  归属判定 fail-closed（URI 两形态 + Description 持久标记 + 全部关键字段
+  逐项精确；Task Scheduler 归一化省略的默认值元素按 M14-06/M14-14 实证
+  先例条件认可，显式非默认值漂移按 malformed 拒绝管理）；
+  `/XML` 输出按字节形态严格四形态解码（UTF-16LE 无 BOM/LE BOM/BE BOM/
+  UTF-8 prolog 之外一律 unknown fail-closed）；XML 解析前拒绝
+  DOCTYPE/ENTITY（XXE 防护）；generate 产物为 UTF-16 with BOM 字节
+  （与 XML 声明及 install 临时字节一致，回读复核）；本开发回合零安装/
+  零注册——实际注册 supervisor-only（获准窗口 + 提升令牌）。
+- `tools/voice/run_voice_sidecar_watchdog_silent.vbs`（M14-14
+  `run_monitoring_pipeline_silent.vbs` 同款结构，diff 同构实证）：静默
+  调用 `<repo>/.venv/Scripts/python.exe tools/voice/
+  voice_health_sidecar_control.py start`（幂等 ensure：活着跳过、死了
+  以全部既有生产保护核验重启、WSL 不可用 rc 3 可见失败不遮蔽），退出码
+  经 `WScript.Quit` 原样透传（Task Scheduler「上次运行结果」可见）；
+  仓库根自脚本位置推导（零盘符硬编码）、零弹窗、零 secret。
+- 任务参数与预算链（测试交叉 pin）：TimeTrigger 重复间隔 **PT5M**（sidecar
+  死亡暴露窗收敛到一个看护周期，且 < 监控管道 PT15M——15 分钟管道最多
+  污染一轮）＞ ExecutionTimeLimit **PT4M** ＞ 单轮 ensure 预算 90s（=
+  控制器 `start` 最坏推算 probe×2 + status 落档等待 + 幂等分支双端口健康
+  探测 + 解释器/wsl.exe 启动余量，常量与控制器同源事实 pin）；
+  IgnoreNew + 控制器 ControlLock 双重防重叠；独立任务独立时限，**不挤占**
+  监控管道任务的 PT12M 执行预算（监控管道三步硬顶之和 710s 的预算链不动）。
+- 运维语义：看护任务在线期间 sidecar 期望恒运行——人工维护前先停看护
+  （`uninstall`，supervisor 操作），否则 `stop` 后 ≤5 分钟内会被幂等
+  ensure 重新拉起（设计意图，非缺陷）。monitor 的只读/fail-closed/不伪造
+  健康语义零改动：sidecar 死亡时 monitor 照样如实 exit 2，本切片只把
+  断档窗口从「人工介入前无限」收敛到 ≤5 分钟。
+- 测试与验证：`services/api/tests/test_voice_sidecar_watchdog_task.py`
+  77 项契约测试（Task XML 关键字段/预算链交叉 pin/verify 四态 + 归一化/
+  解码四形态/白名单门（含 POSIX tempfile 值位置回归）/plan/generate/
+  status 五态/install/uninstall 短语门禁与精确形态/VBS 契约/与既有任务
+  零身份冲突/源码契约零 `"/Run"`、`"/Create"` 行零 `/F`、零 shell=）；
+  聚焦回归 566 passed（watchdog 77 + sidecar 113 + pipeline task 79 +
+  pipeline 69 + production monitor 228——五件套全绿零破坏）；ruff /
+  py_compile / `git diff --check` 全过；**零生产触碰**（零 schtasks 写
+  路径、零真实计划任务注册、零 wsl.exe 调用、sidecar 从未启动）。真实
+  注册与重启自愈验证是 supervisor 后续获准窗口步骤（步骤见
+  `docs/evidence/m14-77-voice-sidecar-watchdog/README.md` §5），
+  `production_ready=false` 不变。
+
 ## 边界（实际部署状态，2026-09-10 M14-02 轮更新）
 
 - **本机已完成真实部署与冒烟**（2026-09-10，WSL2 + RTX 5070 Ti）：模型
