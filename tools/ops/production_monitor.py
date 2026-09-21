@@ -58,6 +58,18 @@ HTTP/零计划任务，全部行为用 fake/stub 测试锁定；真实采集仅�
   ``threshold_results.restart_evaluation``（baseline 元数据 + 逐服务
   state/reason/delta）；check_id 仍为 ``container-restarts``，schema 向后
   兼容（v1 旧工件照常作基线与入档）。
+- 日志错误时间界（M14-79）：``docker logs`` 恒带 ``--timestamps``（只读
+  输出旗标，白名单放行），log-errors 阈值判定改为**当前区间计数**——仅
+  统计时间戳 ≥ 基线（最新合法 prior 完整工件 started_at_utc，与 M14-23
+  restart 基线同源）的错误行；早于基线的陈旧错误计入
+  ``stale_error_lines`` 显式入档（绝不静默丢弃）；错误行时间戳不可解析
+  → **fail-closed 恒计入当前区间**（``unparsed_error_lines`` 显式计数，
+  recency 无法建立绝不排除）；基线缺失/不可用 → 记账基准回退
+  ``full-tail``（= 修复前保守全尾口径）。``error_total_tail``（全尾
+  行数）与 ``latest_error_at``（最新错误时刻）照实入档——陈旧错误的
+  存在始终可见，只是不再永久阻塞恢复；阈值本身零变更。schema 向后
+  兼容：旧工件（无新键）照常作基线与入档；history/insights 消费面
+  ``error_total`` 键名与类型不变。
 - 报告：schema 版本化 JSON + Markdown **原子写入**（同目录 tmp +
   os.replace）；默认目录 ``REPO_ROOT/.verify/artifacts/m14-12-production-monitoring``
   **gitignored**，``--artifact-dir`` 自定义路径为**操作者显式自选覆盖**
@@ -486,15 +498,21 @@ class RealRunner:
 _COMPOSE_VALUE_OPTIONS = frozenset({"-f", "-p", "--profile", "--env-file"})
 _COMPOSE_FLAGS = frozenset({"--dry-run"})
 _INSPECT_FLAGS = frozenset({"--format"})
-_LOGS_FLAGS = frozenset({"--tail"})
+#: M14-79：logs 面旗标拆分——--tail <n>（带值，必选）+ --timestamps（布尔
+#: 只读输出旗标，可选；为日志错误时间界提供逐行 RFC3339 时间戳）；
+#: 跟随（-f）/--since 等其余形态仍一律拒绝
+_LOGS_VALUE_FLAGS = frozenset({"--tail"})
+_LOGS_BOOL_FLAGS = frozenset({"--timestamps"})
+_LOGS_FLAGS = _LOGS_VALUE_FLAGS | _LOGS_BOOL_FLAGS
 #: 三形态之外的一切子命令面（含全部 mutation/交互/长驻形态）一律拒绝
 _DOCKER_SUBCOMMAND_WHITELIST = frozenset({"compose", "inspect", "logs"})
 
 
 def is_readonly_docker_command(argv: tuple[str, ...] | list[str]) -> bool:
     """结构性白名单：仅 docker compose ps / docker inspect --format /
-    docker logs --tail 三只读形态放行；其余（含 stop/rm/kill/down/restart/
-    exec/up/build 等一切 mutation 与交互面）一律 False。"""
+    docker logs --tail（+ 可选 --timestamps，M14-79）只读形态放行；其余
+    （含 stop/rm/kill/down/restart/exec/up/build 等一切 mutation 与交互面）
+    一律 False。"""
     tokens = [str(item) for item in argv]
     if len(tokens) < 2 or tokens[0] != "docker":
         return False
@@ -532,13 +550,17 @@ def is_readonly_docker_command(argv: tuple[str, ...] | list[str]) -> bool:
             names += 1
             index += 1
         return saw_format and names >= 1
-    # logs：--tail <n> + 容器名；无其它旗标（-f 跟随/长驻形态拒绝）
+    # logs：--tail <n>（必选，带值）+ --timestamps（可选布尔，M14-79）+
+    # 恰一个容器名；其余旗标（-f 跟随/长驻、--since 等）一律拒绝
     index, saw_tail, names = 2, False, 0
     while index < len(tokens):
         token = tokens[index]
-        if token in _LOGS_FLAGS:
+        if token in _LOGS_VALUE_FLAGS:
             index += 2
             saw_tail = True
+            continue
+        if token in _LOGS_BOOL_FLAGS:
+            index += 1
             continue
         if token.startswith("-"):
             return False
@@ -797,27 +819,126 @@ LOG_LEVEL_PATTERNS: tuple[tuple[str, re.Pattern[str]], ...] = tuple(
 #: 阈值判定的「错误级」合计口径：fatal + error + critical（warning 不计入）
 LOG_ERROR_LEVELS = frozenset({"fatal", "error", "critical"})
 
+#: ---------------------------------------------------------------- M14-79
+#: 日志错误时间界（root cause 修复）：M14-12 起 log-errors 对
+#: ``docker logs --tail`` 的错误行**全尾计数且无时间界**——一次事故的陈旧
+#: 错误（如 2026-09-21 04:29:19Z 的 6 条 postgres 错误）只要仍留在 tail
+#: 窗口内就永远计入 error_total，warn 永不消退（13:15/13:30 样本无新错误
+#: 仍 warn 的实证）。修复语义：
+#: - ``docker logs`` 恒带 ``--timestamps``（只读输出旗标）——每行获得
+#:   RFC3339 前缀，recency 可逐行建立；
+#: - 阈值判定的 ``error_total`` 改为**当前区间计数**：仅统计时间戳 ≥
+#:   基线（最新合法 prior 完整工件的 started_at_utc——与 M14-23 restart
+#:   基线同源同解析）的错误行；早于基线的错误行计入
+#:   ``stale_error_count``（显式入档，绝不静默丢弃）；
+#: - **fail-closed**：错误行时间戳不可解析（无 --timestamps 前缀/形态
+#:   非法）→ 恒计入当前区间（``unparsed_error_lines`` 显式计数）——
+#:   recency 无法建立时绝不排除任何错误行，绝不遮蔽；基线缺失/不可用
+#:   → 记账基准回退 ``full-tail``（= 修复前保守口径，全尾计数）；
+#: - 阈值本身（warn≥5/critical≥20）零变更；``error_total_tail`` 原样
+#:   保留全尾行数、``latest_error_at`` 保留最新错误行时间戳——陈旧错误
+#:   的存在始终可见，只是不再永久阻塞恢复。
 
-def summarize_log_lines(lines: list[str]) -> dict[str, object]:
-    """纯函数：行 → 级别匹配计数（lines_scanned/levels/error_total）。
+#: docker logs --timestamps 行首前缀（UTC Z 形态，可选 1-9 位小数秒；
+#: 空格分隔）。带时区偏移的形态不接受（docker 恒输出 Z）——不可解析即
+#: fail-closed 计入当前区间。
+DOCKER_LOG_TS_RE = re.compile(
+    r"^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.\d{1,9})?Z ")
+
+#: 前缀捕获组格式：**无 Z 后缀**（Z 由正则按字面匹配，不进捕获组）——
+#: 与 canonical TIMESTAMP_FORMAT（带 Z）刻意区分，解析须用本格式
+DOCKER_LOG_TS_FORMAT = "%Y-%m-%dT%H:%M:%S"
+
+#: 记账基准固定词汇
+LOG_ACCOUNTING_WINDOW = "since-window-start"
+LOG_ACCOUNTING_FULL_TAIL = "full-tail"
+
+
+def parse_docker_log_timestamp(line: str) -> datetime | None:
+    """纯函数：docker --timestamps 行首前缀 → UTC datetime；不可解析 → None。
+
+    捕获组不含 Z（正则按字面匹配 Z 后缀），故用 DOCKER_LOG_TS_FORMAT
+    （无 Z）解析——与 TIMESTAMP_FORMAT 混用会把一切合法时间戳判为不可
+    解析（fail-closed 全计入当前区间，恢复语义退化为 full-tail）。
+    返回值仅用于 recency 比较；解析失败由调用方按 fail-closed 口径处理
+    （计入当前区间，绝不排除）。"""
+    match = DOCKER_LOG_TS_RE.match(line)
+    if match is None:
+        return None
+    try:
+        return datetime.strptime(match.group(1), DOCKER_LOG_TS_FORMAT).replace(
+            tzinfo=timezone.utc)
+    except ValueError:
+        return None
+
+
+def summarize_log_lines(lines: list[str], *,
+                        window_start_dt: datetime | None = None,
+                        ) -> dict[str, object]:
+    """纯函数：行 → 级别匹配计数 + M14-79 时间界记账（见模块常量注释）。
+
+    - ``levels``：全尾级别匹配计数（语义不变，仅信息面）；
+    - ``error_total_tail``：全尾**错误级行数**（行基——一行匹配多个错误级
+      仍计 1 行；修复前按级别匹配数求和，单级别行两口径恒相等）；
+    - ``error_total``：阈值判定口径——window 基准=当前区间错误行数
+      （≥ window_start 计入；< window_start 计 stale；时间戳不可解析恒
+      计入当前区间），full-tail 基准=全尾错误行数（保守回退）。
     原文行绝不进入返回值——调用方也无处可放。"""
     levels: dict[str, int] = {level: 0 for level, _ in LOG_LEVEL_PATTERNS}
+    error_patterns = [pattern for level, pattern in LOG_LEVEL_PATTERNS
+                      if level in LOG_ERROR_LEVELS]
+    tail_error_lines = 0
+    current_error_lines = 0
+    stale_error_lines = 0
+    unparsed_error_lines = 0
+    latest_error_dt: datetime | None = None
     for line in lines:
         for level, pattern in LOG_LEVEL_PATTERNS:
             if pattern.search(line):
                 levels[level] += 1
+        if not any(pattern.search(line) for pattern in error_patterns):
+            continue
+        tail_error_lines += 1
+        line_dt = parse_docker_log_timestamp(line)
+        if line_dt is not None:
+            if latest_error_dt is None or line_dt > latest_error_dt:
+                latest_error_dt = line_dt
+            if window_start_dt is None or line_dt >= window_start_dt:
+                current_error_lines += 1
+            else:
+                stale_error_lines += 1
+        else:
+            # fail-closed：recency 无法建立 → 恒计入当前区间，绝不排除
+            current_error_lines += 1
+            unparsed_error_lines += 1
+    if window_start_dt is None:
+        basis, window_start_at = LOG_ACCOUNTING_FULL_TAIL, None
+        error_total = tail_error_lines
+    else:
+        basis = LOG_ACCOUNTING_WINDOW
+        window_start_at = datetime.strftime(window_start_dt, TIMESTAMP_FORMAT)
+        error_total = current_error_lines
     return {
         "lines_scanned": len(lines),
         "levels": levels,
-        "error_total": sum(levels[level] for level in LOG_ERROR_LEVELS),
+        "error_total": error_total,
+        "error_total_tail": tail_error_lines,
+        "stale_error_lines": stale_error_lines if window_start_dt is not None else 0,
+        "unparsed_error_lines": unparsed_error_lines,
+        "latest_error_at": (datetime.strftime(latest_error_dt, TIMESTAMP_FORMAT)
+                            if latest_error_dt is not None else None),
+        "accounting": {"basis": basis, "window_start_at": window_start_at},
     }
 
 
 def collect_log_summary(runner: Runner, *, project: str, service: str,
-                        tail: int) -> tuple[dict[str, object] | None, Failure | None]:
-    """docker logs --tail <n> <container>（只读；stdout+stderr 合并后仅留计数）。"""
+                        tail: int,
+                        window_start_dt: datetime | None = None,
+                        ) -> tuple[dict[str, object] | None, Failure | None]:
+    """docker logs --tail <n> --timestamps <container>（只读；stdout+stderr
+    合并后仅留计数/时间界记账，原文绝不保留）。"""
     name = container_name(project, service)
-    argv = ["docker", "logs", "--tail", str(tail), name]
+    argv = ["docker", "logs", "--tail", str(tail), "--timestamps", name]
     result, failure = _run_or_failure(runner, argv, timeout=LOGS_TIMEOUT_SECONDS)
     if failure is not None:
         return None, failure
@@ -825,7 +946,7 @@ def collect_log_summary(runner: Runner, *, project: str, service: str,
     if result.returncode != 0:
         return None, Failure("logs-nonzero-exit", "")
     lines = (result.stdout + result.stderr).splitlines()
-    return summarize_log_lines(lines), None
+    return summarize_log_lines(lines, window_start_dt=window_start_dt), None
 
 
 def _sub_collector_status(items: dict[str, dict[str, object]]) -> str:
@@ -834,7 +955,8 @@ def _sub_collector_status(items: dict[str, dict[str, object]]) -> str:
 
 def collect_snapshot(*, runner: Runner, transport: Transport, endpoints: list[Endpoint],
                      project: str, profile: str, compose_file: Path, log_tail: int,
-                     request_timeout_seconds: float) -> dict[str, object]:
+                     request_timeout_seconds: float,
+                     log_window_start: str | None = None) -> dict[str, object]:
     """只读采集主入口：compose ps + 六容器 inspect + 端点 GET + 日志摘要。
     部分失败如实入档（partial 由整体汇总推导），缺失绝不标记 healthy。"""
     ps_services, ps_failure = collect_compose_ps(
@@ -877,8 +999,19 @@ def collect_snapshot(*, runner: Runner, transport: Transport, endpoints: list[En
     endpoint_collector = {"status": _sub_collector_status(per_endpoint), "per_endpoint": per_endpoint}
 
     per_log: dict[str, dict[str, object]] = {}
+    # M14-79：日志错误时间界（canonical 形态校验失败 → None = full-tail
+    # 保守回退，方向恒为多计不少计）
+    window_dt: datetime | None = None
+    if log_window_start:
+        try:
+            window_dt = datetime.strptime(log_window_start, TIMESTAMP_FORMAT).replace(
+                tzinfo=timezone.utc)
+        except ValueError:
+            window_dt = None
     for service in STACK_SERVICES:
-        summary, failure = collect_log_summary(runner, project=project, service=service, tail=log_tail)
+        summary, failure = collect_log_summary(runner, project=project, service=service,
+                                                tail=log_tail,
+                                                window_start_dt=window_dt)
         if failure is not None:
             per_log[service] = {"status": "failed", **failure.as_dict()}
         else:
@@ -1261,7 +1394,23 @@ def evaluate_thresholds(collectors: dict[str, object], thresholds: Thresholds,
             severity = "warn"
         else:
             severity = "ok"
-        checks.append(_check("log-errors", service, severity, f"error_total={error_total}"))
+        # M14-79：detail 显式携带时间界记账面（全尾/陈旧/不可解析/窗口
+        # 起点/最新错误时刻）——恢复判定可审计，陈旧错误绝不静默消失
+        tail_total = int(item.get("error_total_tail") or error_total)
+        stale = int(item.get("stale_error_lines") or 0)
+        unparsed = int(item.get("unparsed_error_lines") or 0)
+        detail = (f"error_total={error_total} tail={tail_total} "
+                  f"stale={stale} unparsed={unparsed}")
+        latest_error = item.get("latest_error_at")
+        if isinstance(latest_error, str) and latest_error:
+            detail += f" latest_error_at={latest_error}"
+        accounting = item.get("accounting")
+        if (isinstance(accounting, dict)
+                and accounting.get("basis") == LOG_ACCOUNTING_WINDOW):
+            detail += f" basis=window start={accounting.get('window_start_at')}"
+        else:
+            detail += " basis=full-tail"
+        checks.append(_check("log-errors", service, severity, detail))
 
     alerts = [check for check in checks if check["severity"] != "ok"]
     counts = {
@@ -1333,6 +1482,7 @@ class SafeLog:
 def build_config(*, project: str, profile: str, compose_file: Path, endpoints: list[Endpoint],
                  log_tail: int, request_timeout_seconds: float,
                  thresholds: Thresholds, voice_health_source: str = "loopback",
+                 log_error_window_start: str | None = None,
                  ) -> dict[str, object]:
     return {
         "project": project,
@@ -1344,12 +1494,13 @@ def build_config(*, project: str, profile: str, compose_file: Path, endpoints: l
         "log_tail": log_tail,
         "request_timeout_seconds": request_timeout_seconds,
         "thresholds": thresholds.as_dict(),
+        "log_error_window_start": log_error_window_start,
     }
 
 
 #: 报告边界注记（固定词汇表：绝不包含任何采集原文）
 REPORT_BOUNDARIES: tuple[str, ...] = (
-    "read-only collection: compose ps + docker inspect + docker logs --tail + GET-only HTTP; zero mutations",
+    "read-only collection: compose ps + docker inspect + docker logs --tail/--timestamps + GET-only HTTP; zero mutations",
     (
         "web/api health-check targets remain fixed literal loopback GET-only URLs"
         " (127.0.0.1 with explicit ports; no DNS, no query, no fragment, no userinfo)"
@@ -1361,9 +1512,18 @@ REPORT_BOUNDARIES: tuple[str, ...] = (
         " URLs, no manifest path injection, and no loopback fallback (an invalid or"
         " missing manifest fails closed with zero collection)"
     ),
-    "all docker commands pass the readonly whitelist gate (compose ps / inspect / logs --tail only)",
+    "all docker commands pass the readonly whitelist gate (compose ps / inspect / logs --tail/--timestamps only)",
     "http.client direct connection: proxy env never consulted (loopback proxy bypass)",
     "container log summary: match counts and level categories only; raw log lines never persisted",
+    (
+        "log-error thresholds evaluate the current-interval count (M14-79): only error"
+        " lines with a docker --timestamps prefix at or after the baseline (latest legal"
+        " prior complete artifact) count toward error_total; older errors are recorded"
+        " as stale_error_lines and never silently dropped; error lines whose timestamp"
+        " cannot be parsed always count as current (fail closed); with no usable"
+        " baseline the accounting falls back to full-tail (the pre-M14-79 conservative"
+        " whole-tail count); thresholds themselves are unchanged"
+    ),
     "collector failures are recorded as partial=true with a safe category; missing is never treated as healthy",
     (
         "restart thresholds evaluate the current-interval delta against the latest legal prior"
@@ -1630,7 +1790,8 @@ def main(argv: list[str] | None = None) -> int:
         for endpoint in endpoints:
             log.say(f"端点: {endpoint.endpoint_id} -> {endpoint.url}（组: {endpoint.group}）")
         log.say(f"阈值: {json.dumps(thresholds.as_dict(), ensure_ascii=False)}（全部含边界，warn 恒可见）")
-        log.say(f"日志摘要: docker logs --tail {args.log_tail}（仅计数/级别/类别，原文绝不持久化）")
+        log.say(f"日志摘要: docker logs --tail {args.log_tail} --timestamps（M14-79：错误计数按"
+                "基线时间界记账，仅计数/级别/类别/时间戳面，原文绝不持久化）")
         log.say(f'执行需: --execute --confirm "{CONFIRM_PHRASE}"')
         report = build_report(
             mode="plan", started_utc=clock.utc_now_iso(), ended_utc=clock.utc_now_iso(),
@@ -1653,20 +1814,34 @@ def main(argv: list[str] | None = None) -> int:
     # 5) execute（只读采集；真实执行仅由 supervisor 在获准窗口运行）
     log.say(f"=== M14-12 生产监控 EXECUTE: project={args.project} 端点={len(endpoints)} ===")
     started_utc = clock.utc_now_iso()
+    # M14-23/M14-79：解析基线（最新合法 prior 完整工件；纯本地只读
+    # fail-safe，零 shell/零网络/零额外生产读取——先于采集解析：restart
+    # 增量与日志错误时间界共用同一基线，候选恒为 prior 工件）
+    baseline = resolve_restart_baseline(args.artifact_dir)
+    baseline_note = baseline.source_stem if baseline.source_stem else baseline.reason
+    log.say(f"restart 基线: {baseline.status}（{baseline_note}；"
+            f"非法候选跳过 {baseline.invalid_skipped_count}）")
+    # M14-79：日志错误时间界 = 基线 collected_at（基线不可用 → None =
+    # full-tail 保守回退——方向恒为多计不少计，绝不因界缺失而排除错误行）
+    log_window_start = baseline.collected_at if baseline.status == "ok" else None
+    window_note = log_window_start if log_window_start else "full-tail（基线不可用，保守回退）"
+    log.say(f"日志错误时间界: {window_note}")
+    # execute 报告的 config 携带实际时间界（plan 报告恒 None——plan 零读取）
+    config = build_config(
+        project=args.project, profile=DEFAULT_PROFILE, compose_file=COMPOSE_FILE,
+        endpoints=endpoints, log_tail=args.log_tail,
+        request_timeout_seconds=args.request_timeout_seconds, thresholds=thresholds,
+        voice_health_source=args.voice_health_source,
+        log_error_window_start=log_window_start,
+    )
     collectors = collect_snapshot(
         runner=ReadonlyRunner(RealRunner()), transport=RealTransport(),
         endpoints=endpoints, project=args.project, profile=DEFAULT_PROFILE,
         compose_file=COMPOSE_FILE, log_tail=args.log_tail,
         request_timeout_seconds=args.request_timeout_seconds,
+        log_window_start=log_window_start,
     )
     ended_utc = clock.utc_now_iso()
-    # M14-23：解析 restart 增量基线（最新合法 prior 完整工件；纯本地只读
-    # fail-safe，零 shell/零网络/零额外生产读取——发生在本轮报告写入之前，
-    # 候选恒为 prior 工件）
-    baseline = resolve_restart_baseline(args.artifact_dir)
-    baseline_note = baseline.source_stem if baseline.source_stem else baseline.reason
-    log.say(f"restart 基线: {baseline.status}（{baseline_note}；"
-            f"非法候选跳过 {baseline.invalid_skipped_count}）")
     results = evaluate_thresholds(collectors, thresholds, endpoints=endpoints,
                                   baseline=baseline)
     report = build_report(

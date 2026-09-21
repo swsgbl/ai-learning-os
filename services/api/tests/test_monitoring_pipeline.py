@@ -825,6 +825,24 @@ def test_three_stage_timeout_budget_below_task_limit() -> None:
     assert (mp.MONITOR_TIMEOUT_MAX, mp.HISTORY_TIMEOUT_MAX) == (540.0, 120.0)
 
 
+def test_history_timeout_default_raised_45_to_90_m1479() -> None:
+    """M14-79：history 步默认超时 45s → 90s——2026-09-21 生产三次实测
+    （45.206s / 45.522s / 46.955s）刚过 45s 即被杀；90s ≈ 1.9× 最坏观测
+    （46.955s），正常完成轮实测 0.3–7.2s。上调只改默认值：硬顶 120 不变、
+    默认总和仍 < PT12M=720s。超时事实入档语义（RunnerTimeout →
+    status=timeout + 后续步 skipped 固定词汇原因）不随上调改变——由既有
+    test_monitor_timeout_skips_history_and_insights 与
+    test_insights_timeout_categorized 真实绑定，本测试零冗余重述。"""
+    assert mp.HISTORY_TIMEOUT_DEFAULT == 90.0
+    assert mp.HISTORY_TIMEOUT_MIN < 90.0 <= mp.HISTORY_TIMEOUT_MAX
+    worst_observed_kill = 46.955  # 2026-09-21T04:45:25Z 运行实测
+    assert mp.HISTORY_TIMEOUT_DEFAULT >= 1.9 * worst_observed_kill - 1e-9
+    default_sum = (mp.MONITOR_TIMEOUT_DEFAULT + mp.HISTORY_TIMEOUT_DEFAULT
+                   + mp.INSIGHTS_TIMEOUT_DEFAULT)
+    assert default_sum == 585.0
+    assert default_sum < 720  # PT12M 执行时限
+
+
 def test_markdown_renders_all_three_stages(monkeypatch, tmp_path) -> None:
     _patch_stage_dirs(monkeypatch, tmp_path)
     fake = FakeRunner(monitor_rc=0, history_rc=0, insights_rc=2)

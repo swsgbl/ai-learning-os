@@ -260,6 +260,25 @@ python tools/ops/production_monitor.py --execute \
     --confirm "EXECUTE READ-ONLY PRODUCTION MONITORING"   # execute（旗标+精确短语齐备才放行）
 ```
 
+**状态（M14-79 日志错误时间界，2026-09-21）**：`log-errors` 阈值判定由
+`docker logs --tail` **全尾无时间界计数**改为**当前区间计数**（root
+cause：2026-09-21 容器重建事故的 6 条 postgres 陈旧错误（最新
+04:29:19Z）只要留在 tail 窗口内就永远计入 error_total，13:15/13:30
+样本无新错误仍 warn，恢复被永久阻塞）。语义：`docker logs` 恒带
+`--timestamps`（只读输出旗标，白名单放行——布尔/带值旗标拆分校验）；
+仅统计时间戳 ≥ 基线（最新合法 prior 完整工件 `started_at_utc`，与
+M14-23 restart 基线同源同解析、先于采集解析）的错误行；早于基线的计入
+`stale_error_lines` 显式入档（绝不静默丢弃）；**时间戳不可解析 →
+fail-closed 恒计入当前区间**（`unparsed_error_lines` 显式计数——recency
+无法建立绝不排除，e2e 实证 6 条无前缀错误行触发可见 warn）；基线缺失/
+不可用 → 记账基准回退 `full-tail`（= 修复前保守全尾口径）。
+`error_total_tail`/`latest_error_at`/`accounting{basis,window_start_at}`
+照实入档，check detail 携带完整记账面；阈值（warn≥5/critical≥20）与
+退出码零变更；schema 向后兼容（旧工件照常作基线与入档，history/
+insights 消费面 `error_total` 键名/类型不变）。e2e 验收：同 6 条陈旧
+错误（04:29:19Z）在基线（05:15:01Z）之后 → error_total=0、overall ok
+——恢复不再被陈旧错误阻塞；基线后的新错误照常 warn（无遮蔽反向证明）。
+
 **状态（M14-23 restart 增量语义，✅ 2026-09-13 已随 PR #100 合并 main
 （merge `6efcdfd`，feature head `5926172` 含 supervisor R1 加固）并经
 真实计划任务自然调度两轮验收——18:00 与 18:15（+08:00）均 Last
@@ -512,8 +531,13 @@ python tools/ops/monitoring_pipeline.py --execute \
   无用户可注入命令/URL/env 展开；子进程输出只取 returncode，stdout/stderr
   绝不持久化/回显。
 - **超时预算**：monitor 60–540s（默认 480s，覆盖 monitor 内部最坏 ~445s）、
-  history 10–120s（默认 45s）、insights 5–50s（默认 15s，纯本地只读工件
-  处理秒级完成即兜底杀停）；三步硬顶之和 540+120+50=710s < 计划任务执行
+  history 10–120s（**默认 90s——M14-79 由 45s 上调**：2026-09-21 生产三次
+  实测 45.206/45.522/46.955s 刚过 45s 即被杀（工件目录 830+ 份时冷缓存
+  重校验偶发超时），90s ≈ 1.9× 最坏观测（46.955s）、正常完成轮实测
+  0.3–7.2s；超时事实照常入档 status=timeout，绝不隐藏或改记成功）、
+  insights 5–50s（默认 15s，纯本地只读工件
+  处理秒级完成即兜底杀停）；默认总和 480+90+15=585s，三步硬顶之和
+  540+120+50=710s < 计划任务执行
   时限 PT12M=720s < 重复间隔 PT15M——调度器绝不先于内部超时杀整任务。
 - **重叠保护**：gitignored 工件目录内 `pipeline.lock`（O_CREAT|O_EXCL）；
   已存在即可见拒绝零执行；**本轮零 stale-lock 清理**（陈旧锁操作者人工
@@ -1072,3 +1096,67 @@ python tools/ops/soak_stability_audit.py --history <dir-or-file> --window-minute
 的 `soak-audit-report.json` **逐字节复制重命名**为
 `<evidence-dir>/long-soak.json`（`cp` 后不得手工编辑/重序列化——输入
 sha256/bytes 与策略字段任一漂移即 malformed）。
+
+## pipeline_incident_review.py（M14-79）
+
+管道事件复核器：只读交叉复盘 M14-14 管道报告目录
+（`.verify/artifacts/m14-14-monitoring-pipeline/`，只认
+`pipeline-YYYYMMDD-HHMMSS.json`（execute）与 `plan-*`（只计数））与
+M14-13 `history.jsonl`，把「pipeline exit 1」拆成三类语义并判定恢复：
+**monitor 非零退出但写出样本工件 = 状态域裁决**（监控正常工作，系统确实
+warn/critical——其引发的 history/insights skipped 是设计内门控后果，不是
+执行失败）；**monitor 非零退出且无工件 = 执行域失败**（该槽位零样本、
+数据真空）；**monitor ok 而 history/insights 超时 = 执行域瞬态失败**
+（样本工件已落盘，history 行由后续成功运行增量补录——补录事实如实呈现，
+超时绝不改记成功）。逐运行归因（固定词汇 failure_domain ∈
+none/execution/status/mixed + execution_failure_kinds + 超时步 + 样本
+入史反查）→ 事件窗口聚合（恢复 = 其后首个 overall ok 运行，无恢复即
+开放）→ 双面判定（pipeline_execution_state × monitoring_status_state，
+绝不合并遮蔽）。零子进程/零网络/零计划任务/零 env 读取/零墙钟
+（generated_at 取自输入时间戳，输出逐字节可复现）；输出确定性
+JSON+Markdown 到 gitignored
+`.verify/artifacts/m14-79-pipeline-incident-review/`。
+
+```
+# 仓库根执行（canonical venv，纯标准库）
+python tools/ops/pipeline_incident_review.py                     # 默认输入/输出
+python tools/ops/pipeline_incident_review.py --runs 20           # 只复盘最新 20 份
+```
+
+退出码：0 无开放项 / 1 有开放项（管道最新运行仍失败或 history 最新样本
+非 ok——可见结论，报告照常落盘）/ 2 输入拒绝（零输出：未知 stem、
+stage 越词汇、monitor skipped（结构不可能）、schema 漂移、started_at
+重复/非时序、history malformed/重复/非时序/项目冲突/空文件/行数超顶、
+参数越界）。M14-21 前两步形态（无 insights step）可解析，缺席步不计
+失败。契约测试 `services/api/tests/test_pipeline_incident_review.py`
+锁定；all_clear ≠ production readiness（`production_ready=false` 不变）。
+
+## soak_window_gate.py（M14-79）
+
+长稳窗口锚定/重启门：只读消费 M14-13 `history.jsonl`，把「何时允许重启
+一个全新 24h soak 窗口」固化为可审计门禁——尾部 `--consecutive-ok N`
+（默认 8 = 15 分钟节奏 2 小时）个连续样本全部 ok 且 partial=false、
+相邻间隔 ≤ `--max-gap-minutes`（默认 20，与 soak 审计同口径）才 open；
+warn/critical/partial 仍留在尾部即 closed，**逐条列出**每个非干净样本
+（collected_at + overall_status + partial——绝不遮蔽、绝不改写历史）。
+`--anchor` 在门 open 时原子写出锚定记录 `soak-window-anchor.json/.md`
+（锚点 = 最新样本 collected_at，零墙钟；最早可判定时间 = 锚点 + 窗口；
+前置指纹；后续审计固定指引）；锚定记录已存在 → anchor-exists 拒绝
+（重启窗口须操作者显式归档旧记录，防静默重锚掩盖已破坏的窗口）。
+
+```
+# 仓库根执行（canonical venv，纯标准库）
+python tools/ops/soak_window_gate.py                     # 检查模式（默认）
+python tools/ops/soak_window_gate.py --anchor            # 门 open 时锚定
+python tools/ops/soak_window_gate.py --consecutive-ok 8  # 前置可配置
+```
+
+退出码：0 门 open / 1 门 closed（门报告落盘、锚定记录零写出——可见
+结论）/ 2 输入拒绝（缺失/symlink/malformed/重复/非时序/项目冲突/空
+文件/行数超顶/consecutive-ok 超 retention/参数越界/anchor-exists/写
+失败——零写入）。**锚定 ≠ soak 通过**：门只证明开窗时尾部干净，窗口
+结局由 24h 后 `soak_stability_audit.py` 判定（其报告逐字节复制为
+`long-soak.json` 才构成门证据）；`release_ready=false` /
+`production_ready=false` 不变。输出 gitignored
+`.verify/artifacts/m14-79-soak-window-anchor/`；契约测试
+`services/api/tests/test_soak_window_gate.py` 锁定。

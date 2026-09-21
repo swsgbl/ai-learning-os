@@ -35,8 +35,11 @@ HTTP/零计划任务注册，全部行为用 fake 注入测试锁定；真实执
   词汇原因（``<prev>-status-<status>``），**前置步骤的退出码/类别如实
   保留绝不遮蔽**；insights 失败不改变 monitor/history 事实。逐步有界超时
   + 保守硬顶：monitor 60–540s（默认 480s，覆盖 monitor 内部最坏预算
-  ~445s + 启动余量）、history 10–120s（默认 45s）、insights 5–50s（默认
-  15s——纯本地只读工件处理，秒级完成即兜底杀停）——三步硬顶之和
+  ~445s + 启动余量）、history 10–120s（默认 90s——M14-79 由 45s 上调：
+  2026-09-21 生产三次实测 45.2–47.0s 刚过界即杀，90s ≈ 1.9× 最坏观测（46.955s）且
+  正常轮 0.3–7.2s；超时事实照常入档绝不隐藏）、insights 5–50s（默认
+  15s——纯本地只读工件处理，秒级完成即兜底杀停）——默认总和
+  480+90+15=585s，三步硬顶之和
   540+120+50=710s < 计划任务执行时限 PT12M=720s < PT15M 间隔。
 - 重叠保护（fail-closed）：gitignored 工件目录内独占锁 ``pipeline.lock``
   （O_CREAT|O_EXCL 原子创建；锁/目录 symlink 一律拒绝）。锁已存在 → 可见
@@ -123,13 +126,18 @@ INSIGHTS_OUTPUT_NAMES: tuple[str, ...] = ("insights.json", "insights-summary.md"
 #: 步骤超时（秒）——有界 + 保守硬顶。预算链（与 monitoring_pipeline_task
 #: 的 ExecutionTimeLimit=PT12M=720s 交叉 pin，测试锁定）：monitor 内部最坏
 #: ~445s（compose ps 60 + 6×inspect 30 + 6×logs 30 + 5×HTTP 5）+ 启动余量
-#: → 默认 480s；history 45s；insights 纯本地只读工件处理秒级完成 → 默认
-#: 15s；三步硬顶之和 540+120+50=710s < 720s 执行时限 < PT15M 重复间隔
-#: （调度器绝不先于内部超时杀整任务——避免调度器击杀留下 stale lock）。
+#: → 默认 480s；history 默认 90s（M14-79 由 45s 上调：2026-09-21 生产实测
+#: 45.206s/45.522s/46.955s 三次刚过 45s 即被杀——工件目录已 830+ 份时冷
+#: 缓存下重校验偶超 45s；90s ≈ 1.9× 最坏观测（46.955s），仍留约 2 分钟余量；正常完成轮
+#: 实测 0.3–7.2s）；insights 纯本地只读工件处理秒级完成 → 默认 15s；
+#: 默认总和 480+90+15=585s，三步硬顶之和 540+120+50=710s < 720s 执行时限
+#: < PT15M 重复间隔（调度器绝不先于内部超时杀整任务——避免调度器击杀
+#: 留下 stale lock）。超时事实照常入档（step status=timeout），绝不因上调
+#: 而隐藏或改记成功。
 MONITOR_TIMEOUT_DEFAULT = 480.0
 MONITOR_TIMEOUT_MIN = 60.0
 MONITOR_TIMEOUT_MAX = 540.0
-HISTORY_TIMEOUT_DEFAULT = 45.0
+HISTORY_TIMEOUT_DEFAULT = 90.0
 HISTORY_TIMEOUT_MIN = 10.0
 HISTORY_TIMEOUT_MAX = 120.0
 INSIGHTS_TIMEOUT_DEFAULT = 15.0
@@ -557,7 +565,7 @@ PIPELINE_BOUNDARIES: tuple[str, ...] = (
     "execute requires --execute plus the exact confirmation phrase; malformed or missing gates exit 2 before any runner is constructed",
     "only three fixed allowlisted command forms are ever invoked (monitor --execute with its own confirm phrase; history with defaults; insights --execute with its own confirm phrase and no --source, relying on the canonical history output default); no shell=True, no user command/URL/env expansion",
     "sequence is monitor then history then insights; history runs only after monitor exits 0; insights runs only after history status is ok; stage failures and skips are preserved with fixed-vocabulary reasons, never masked",
-    "per-step bounded timeouts with conservative hard caps (monitor 60-540s, history 10-120s, insights 5-50s; caps sum to 710s below the PT12M task execution time limit)",
+    "per-step bounded timeouts with conservative hard caps (monitor 60-540s, history 10-120s, insights 5-50s; caps sum to 710s below the PT12M task execution time limit; history default raised 45s -> 90s in M14-79 after three observed 45.2-47.0s kills in production, about 1.9x worst observed (46.955s) while completed runs take 0.3-7.2s; timeout facts remain recorded as-is and are never suppressed)",
     "overlap protection: fail-closed exclusive lock; zero destructive stale-lock cleanup in this round",
     "report contains only safe facts: statuses, exit codes, stage timing, fixed command identities, sanitized error categories/classes, artifact names/hashes",
     "no env values, tokens, headers, raw child output, or production IDs are ever read into the report",

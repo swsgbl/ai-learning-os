@@ -51,6 +51,7 @@ import json
 import socket
 import sys
 import threading
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -1798,3 +1799,253 @@ def test_main_execute_two_rounds_first_warns_then_recovers(monkeypatch, tmp_path
     assert second_eval["baseline"]["source_stem"] == "monitor-20260913-010000"
     assert second_eval["per_service"]["api"] == {"state": "ok", "reason": "stable",
                                                  "delta": 0}
+
+
+# ---------------------------------------------------------------- M14-79 日志错误时间界
+
+
+def test_whitelist_accepts_logs_with_timestamps() -> None:
+    """M14-79：--timestamps（布尔只读输出旗标）与 --tail 组合放行。"""
+    assert pm.is_readonly_docker_command(
+        ["docker", "logs", "--tail", "200", "--timestamps", f"{PROJECT}-api-1"]) is True
+    assert pm.is_readonly_docker_command(
+        ["docker", "logs", "--timestamps", "--tail", "100", f"{PROJECT}-api-1"]) is True
+
+
+@pytest.mark.parametrize("argv", [
+    ["docker", "logs", "--timestamps", "x"],                        # 缺 --tail
+    ["docker", "logs", "--tail", "100", "--timestamps", "x", "y"],  # 多容器名
+    ["docker", "logs", "--tail", "100", "--timestamps", "--since", "1h", "x"],
+])
+def test_whitelist_rejects_malformed_timestamps_shapes(argv: list[str]) -> None:
+    assert pm.is_readonly_docker_command(argv) is False
+
+
+def test_parse_docker_log_timestamp_variants() -> None:
+    assert pm.parse_docker_log_timestamp(
+        "2026-09-21T04:29:19.123456789Z ERROR deadlock detected"
+    ) == datetime(2026, 9, 21, 4, 29, 19, tzinfo=timezone.utc)
+    assert pm.parse_docker_log_timestamp(
+        "2026-09-21T04:29:19Z ERROR deadlock detected"
+    ) == datetime(2026, 9, 21, 4, 29, 19, tzinfo=timezone.utc)
+    assert pm.parse_docker_log_timestamp("ERROR no prefix") is None
+    assert pm.parse_docker_log_timestamp(  # 时区偏移形态不接受（docker 恒 Z）
+        "2026-09-21T04:29:19+02:00 ERROR x") is None
+    assert pm.parse_docker_log_timestamp(  # 无空格分隔不接受
+        "2026-09-21T04:29:19ZERROR x") is None
+    assert pm.parse_docker_log_timestamp(  # 日历非法 → None（fail-closed 计数侧承担）
+        "2026-13-99T99:99:99Z ERROR x") is None
+
+
+def test_summarize_window_excludes_stale_errors_and_recovers() -> None:
+    """supervisor 实证形态：6 条陈旧 postgres 错误（04:29:19）+ 边界时刻
+    一条 + 更新一条 → 当前区间仅 2 条（含边界，闭区间），陈旧 6 条显式
+    入档（stale_error_lines）绝不静默丢弃。"""
+    window_start = datetime(2026, 9, 21, 5, 15, 1, tzinfo=timezone.utc)
+    lines = (
+        [f"2026-09-21T04:29:19.{i:09d}Z ERROR stale leak {MARK_TOKEN}" for i in range(6)]
+        + ["2026-09-21T05:15:01Z ERROR boundary exact"]
+        + ["2026-09-21T05:20:00Z ERROR fresh failure"]
+        + ["2026-09-21T05:16:00Z INFO fine", "INFO no prefix fine"]
+    )
+    summary = pm.summarize_log_lines(lines, window_start_dt=window_start)
+    assert summary["error_total"] == 2          # 阈值判定口径（当前区间，含边界）
+    assert summary["error_total_tail"] == 8     # 全尾错误行（6 陈旧 + 边界 + 新）
+    assert summary["stale_error_lines"] == 6
+    assert summary["unparsed_error_lines"] == 0
+    assert summary["latest_error_at"] == "2026-09-21T05:20:00Z"
+    assert summary["accounting"] == {"basis": pm.LOG_ACCOUNTING_WINDOW,
+                                     "window_start_at": "2026-09-21T05:15:01Z"}
+    assert MARK_TOKEN not in json.dumps(summary)
+
+
+def test_summarize_fail_closed_when_recency_unparseable() -> None:
+    """fail-closed：时间戳不可解析的错误行恒计入当前区间——绝不排除。"""
+    window_start = datetime(2026, 9, 21, 5, 15, 1, tzinfo=timezone.utc)
+    lines = [
+        "2026-09-21T04:29:19Z ERROR stale parsed",
+        "2026-09-21T04:29:20Z ERROR stale parsed too",
+        "ERROR no timestamp prefix one",   # recency 无法建立
+        "ERROR no timestamp prefix two",
+    ]
+    summary = pm.summarize_log_lines(lines, window_start_dt=window_start)
+    assert summary["error_total"] == 2       # 未解析的两条全部计入
+    assert summary["error_total_tail"] == 4
+    assert summary["stale_error_lines"] == 2
+    assert summary["unparsed_error_lines"] == 2
+    assert summary["latest_error_at"] == "2026-09-21T04:29:20Z"
+
+
+def test_summarize_full_tail_basis_without_window() -> None:
+    """无时间界（基线缺失/不可用）→ full-tail 保守回退 = 修复前口径。"""
+    lines = ["2026-09-21T04:00:00Z ERROR a", "ERROR b", "INFO fine"]
+    summary = pm.summarize_log_lines(lines)
+    assert summary["error_total"] == 2 == summary["error_total_tail"]
+    assert summary["stale_error_lines"] == 0
+    assert summary["accounting"] == {"basis": pm.LOG_ACCOUNTING_FULL_TAIL,
+                                     "window_start_at": None}
+
+
+def test_summarize_line_based_error_accounting() -> None:
+    """一行命中多个错误级（fatal+error）仍计 1 行——恢复口径按行不按匹配数。"""
+    lines = ["2026-09-21T05:20:00Z FATAL error both words"]
+    summary = pm.summarize_log_lines(lines)
+    assert summary["levels"]["fatal"] == 1 and summary["levels"]["error"] == 1
+    assert summary["error_total"] == 1
+
+
+def test_collect_log_summary_argv_carries_timestamps_and_window() -> None:
+    runner = FakeRunner(logs_lines={
+        "api": ["2026-09-21T04:00:00Z ERROR stale", "2026-09-21T06:00:00Z ERROR fresh"],
+    })
+    window_start = datetime(2026, 9, 21, 5, 15, 1, tzinfo=timezone.utc)
+    summary, failure = pm.collect_log_summary(runner, project=PROJECT, service="api",
+                                              tail=100, window_start_dt=window_start)
+    assert failure is None
+    assert runner.calls[-1] == ("docker", "logs", "--tail", "100",
+                                "--timestamps", f"{PROJECT}-api-1")
+    assert summary is not None
+    assert summary["error_total"] == 1
+    assert summary["stale_error_lines"] == 1
+
+
+def _log_collectors(*, current: int, tail: int, stale: int, unparsed: int = 0,
+                    latest: str | None = None,
+                    basis: str = pm.LOG_ACCOUNTING_WINDOW,
+                    window_start: str | None = "2026-09-21T05:15:01Z",
+                    ) -> dict[str, object]:
+    """带 M14-79 记账字段的 logs collector 形状（其余面同 _collectors）。"""
+    base = _collectors()
+    logs = base["logs"]
+    assert isinstance(logs, dict)
+    per_log = logs["per_service"]
+    assert isinstance(per_log, dict)
+    for item in per_log.values():
+        item.update({
+            "error_total": current, "error_total_tail": tail,
+            "stale_error_lines": stale, "unparsed_error_lines": unparsed,
+            "latest_error_at": latest,
+            "accounting": {"basis": basis, "window_start_at": window_start},
+        })
+    return base
+
+
+def test_evaluate_log_errors_severity_from_current_interval_only() -> None:
+    """阈值判定只看当前区间：tail=999/stale=994 而当前 4 → ok（恢复）；
+    当前 5（达 warn 边界）→ warn——阈值本身零变更。"""
+    results = pm.evaluate_thresholds(
+        _log_collectors(current=4, tail=999, stale=994,
+                        latest="2026-09-21T04:29:19Z"), _thresholds())
+    checks = [c for c in results["checks"] if c["check_id"] == "log-errors"]
+    assert all(check["severity"] == "ok" for check in checks)
+    detail = checks[0]["detail"]
+    assert "error_total=4" in detail and "tail=999" in detail
+    assert "stale=994" in detail and "basis=window" in detail
+    assert "start=2026-09-21T05:15:01Z" in detail
+    assert "latest_error_at=2026-09-21T04:29:19Z" in detail
+
+    results = pm.evaluate_thresholds(
+        _log_collectors(current=5, tail=999, stale=994), _thresholds())
+    checks = [c for c in results["checks"] if c["check_id"] == "log-errors"]
+    assert all(check["severity"] == "warn" for check in checks)
+    assert results["overall_status"] == "warn"
+
+
+def test_evaluate_log_errors_detail_marks_full_tail_basis() -> None:
+    results = pm.evaluate_thresholds(
+        _log_collectors(current=5, tail=5, stale=0, basis=pm.LOG_ACCOUNTING_FULL_TAIL,
+                        window_start=None), _thresholds())
+    checks = [c for c in results["checks"] if c["check_id"] == "log-errors"]
+    assert all(check["severity"] == "warn" for check in checks)
+    assert "basis=full-tail" in checks[0]["detail"]
+    assert "unparsed=0" in checks[0]["detail"]
+
+
+def test_main_execute_log_window_recovers_stale_errors_e2e(monkeypatch, tmp_path) -> None:
+    """核心验收（supervisor 实证形态）：工件目录已有基线（05:15:01Z 完整
+    工件），postgres tail 内仍是同 6 条陈旧错误（04:29:19Z，无新增）→
+    log-errors ok、overall ok——恢复不再被陈旧错误永久阻塞。"""
+    _block_sockets(monkeypatch)
+    _block_subprocess(monkeypatch)
+    (tmp_path / "monitor-20260921-051501.json").write_text(
+        _prior_artifact_json(started="2026-09-11T00:00:00Z",
+                             collected="2026-09-21T05:15:01Z"), encoding="utf-8")
+    stale_postgres = [f"2026-09-21T04:29:19.{i:09d}Z ERROR stale {i}" for i in range(6)]
+    runner = FakeRunner(logs_lines={
+        "postgres": stale_postgres + ["2026-09-21T05:16:00Z INFO fine"],
+        **{svc: ["2026-09-21T05:16:00Z INFO fine"] for svc in pm.STACK_SERVICES
+           if svc != "postgres"},
+    })
+    _patch_gate(monkeypatch, runner, FakeTransport())
+    rc = pm.main(["--execute", "--confirm", pm.CONFIRM_PHRASE,
+                  "--artifact-dir", str(tmp_path)])
+    assert rc == pm.EXIT_OK
+    report = json.loads(max(tmp_path.glob("monitor-*.json")).read_text("utf-8"))
+    assert report["overall_status"] == "ok"
+    pg = report["collectors"]["logs"]["per_service"]["postgres"]
+    assert pg["error_total"] == 0
+    assert pg["error_total_tail"] == 6
+    assert pg["stale_error_lines"] == 6
+    assert pg["unparsed_error_lines"] == 0
+    assert pg["latest_error_at"] == "2026-09-21T04:29:19Z"
+    assert pg["accounting"] == {"basis": pm.LOG_ACCOUNTING_WINDOW,
+                                "window_start_at": "2026-09-21T05:15:01Z"}
+    assert report["config"]["log_error_window_start"] == "2026-09-21T05:15:01Z"
+    log_checks = [c for c in report["threshold_results"]["checks"]
+                  if c["check_id"] == "log-errors"]
+    assert all(c["severity"] == "ok" for c in log_checks)
+    pg_check = next(c for c in log_checks if c["subject"] == "postgres")
+    assert "error_total=0 tail=6 stale=6" in pg_check["detail"]
+
+
+def test_main_execute_log_window_fail_closed_without_timestamps_e2e(
+        monkeypatch, tmp_path) -> None:
+    """fail-closed e2e：基线在场但错误行无 --timestamps 前缀（recency 无法
+    建立）→ 全部计入当前区间并触发可见 warn（6 条 ≥ warn 5）——绝不因
+    解析失败而排除。"""
+    _block_sockets(monkeypatch)
+    _block_subprocess(monkeypatch)
+    (tmp_path / "monitor-20260921-051501.json").write_text(
+        _prior_artifact_json(started="2026-09-11T00:00:00Z",
+                             collected="2026-09-21T05:15:01Z"), encoding="utf-8")
+    poisoned = {svc: [f"ERROR leak {MARK_TOKEN}", "error again",
+                      "FATAL unparsed", "critical unparsed",
+                      "ERROR more unparsed", "error: still unparsed",
+                      "INFO fine"]
+                for svc in pm.STACK_SERVICES}
+    runner = FakeRunner(logs_lines=poisoned)
+    _patch_gate(monkeypatch, runner, FakeTransport())
+    rc = pm.main(["--execute", "--confirm", pm.CONFIRM_PHRASE,
+                  "--log-error-warn", "5", "--artifact-dir", str(tmp_path)])
+    assert rc == pm.EXIT_OK  # warn 恒可见（exit 0），不隐藏
+    report = json.loads(max(tmp_path.glob("monitor-*.json")).read_text("utf-8"))
+    assert report["overall_status"] == "warn"
+    for svc in pm.STACK_SERVICES:
+        item = report["collectors"]["logs"]["per_service"][svc]
+        assert item["error_total"] == 6          # 未解析 → 全部计入当前区间
+        assert item["unparsed_error_lines"] == 6
+        assert item["stale_error_lines"] == 0
+    assert MARK_TOKEN not in max(tmp_path.glob("monitor-*")).read_text("utf-8")
+
+
+def test_main_execute_log_window_fresh_errors_still_warn_e2e(monkeypatch, tmp_path) -> None:
+    """无遮蔽反向证明：基线之后的新错误照常触发 warn（时间界不掩盖真劣化）。"""
+    _block_sockets(monkeypatch)
+    _block_subprocess(monkeypatch)
+    (tmp_path / "monitor-20260921-051501.json").write_text(
+        _prior_artifact_json(started="2026-09-11T00:00:00Z",
+                             collected="2026-09-21T05:15:01Z"), encoding="utf-8")
+    runner = FakeRunner(logs_lines={
+        "postgres": [f"2026-09-21T05:2{m}:00Z ERROR fresh {i}"
+                     for i, m in enumerate(range(5))] + ["INFO fine"],
+        **{svc: ["INFO fine"] for svc in pm.STACK_SERVICES if svc != "postgres"},
+    })
+    _patch_gate(monkeypatch, runner, FakeTransport())
+    rc = pm.main(["--execute", "--confirm", pm.CONFIRM_PHRASE,
+                  "--artifact-dir", str(tmp_path)])
+    assert rc == pm.EXIT_OK
+    report = json.loads(max(tmp_path.glob("monitor-*.json")).read_text("utf-8"))
+    assert report["overall_status"] == "warn"
+    pg = report["collectors"]["logs"]["per_service"]["postgres"]
+    assert pg["error_total"] == 5
+    assert pg["stale_error_lines"] == 0
