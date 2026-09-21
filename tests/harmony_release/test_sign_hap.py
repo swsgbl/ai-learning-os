@@ -317,15 +317,6 @@ class TestSuccess:
         assert result["output"]["path_explicit"] is True
         assert result["artifact"]["relpath"] == default_output_relpath()
 
-    def test_unchanged_output_bytes_are_recorded_not_hidden(self, tmp_path, monkeypatch):
-        fixture = Fixture(tmp_path, monkeypatch)
-        result, code = fixture.run(runner=FakeSignTool(output_bytes=UNSIGNED_BYTES))
-        assert code == 0
-        assert result["artifact"]["bytes_changed_from_input"] is False
-        # the claim still rests on tool success, never on this wrapper's word
-        assert result["claimed_signed"] is True
-        assert result["signed"] is False
-
     def test_overwrite_allowed_with_explicit_opt_in(self, tmp_path, monkeypatch):
         fixture = Fixture(tmp_path, monkeypatch)
         output = hap_path(fixture.repo).with_name("entry-default-signed.hap")
@@ -875,6 +866,75 @@ class TestChildOutcome:
         assert result["artifact"] is None
         assert result["claimed_signed"] is False
         assert result["steps"] == [{"name": STEP_NAME, "exit_code": 0}]
+
+    def test_output_identical_to_input_fails_closed_after_exit_0(
+        self, tmp_path, monkeypatch
+    ):
+        """M14-80 Gap A: exit 0 + bytes identical to the input never claims."""
+        first, first_code = Fixture(tmp_path / "a", monkeypatch).run(
+            runner=FakeSignTool(output_bytes=UNSIGNED_BYTES)
+        )
+        second, second_code = Fixture(tmp_path / "b", monkeypatch).run(
+            runner=FakeSignTool(output_bytes=UNSIGNED_BYTES)
+        )
+        for result, code in ((first, first_code), (second, second_code)):
+            assert code == 1
+            assert result["status"] == "failure"
+            assert [f["code"] for f in result["failures"]] == [
+                "output_unchanged_from_input"
+            ]
+            assert result["failures"][0]["detail"] == {
+                "relpath": default_output_relpath(),
+                "size_bytes": len(UNSIGNED_BYTES),
+                "sha256": hashlib.sha256(UNSIGNED_BYTES).hexdigest().upper(),
+            }
+            # the honest artifact record stays (bytes did not change)
+            assert result["artifact"]["bytes_changed_from_input"] is False
+            assert result["artifact"]["sha256"] == hashlib.sha256(
+                UNSIGNED_BYTES
+            ).hexdigest().upper()
+            # the signing claim is withheld
+            assert result["claimed_signed"] is False
+            assert result["claimed_signed_basis"] is None
+            assert result["signed"] is False
+            assert result["signedness_verified"] is False
+            # the tool did exit 0; that fact is still recorded honestly
+            assert result["steps"] == [{"name": STEP_NAME, "exit_code": 0}]
+        assert render_json(first) == render_json(second)
+
+    def test_same_size_but_changed_bytes_still_claims(self, tmp_path, monkeypatch):
+        """Identical size alone must not fail the run; the bytes must differ."""
+        fixture = Fixture(tmp_path, monkeypatch)
+        changed = bytes((b + 1) % 256 for b in UNSIGNED_BYTES)
+        result, code = fixture.run(runner=FakeSignTool(output_bytes=changed))
+        assert code == 0
+        assert result["status"] == "ok"
+        assert result["failures"] == []
+        assert result["artifact"]["size_bytes"] == len(UNSIGNED_BYTES)
+        assert result["artifact"]["bytes_changed_from_input"] is True
+        assert result["claimed_signed"] is True
+        assert result["claimed_signed_basis"] == CLAIM_BASIS
+        assert result["signed"] is False
+        assert result["signedness_verified"] is False
+
+    def test_unchanged_output_failure_json_leaks_no_values(
+        self, tmp_path, monkeypatch
+    ):
+        """Path/secret hygiene on the new failure path (M14-80)."""
+        fixture = Fixture(tmp_path, monkeypatch)
+        result, code = fixture.run(runner=FakeSignTool(output_bytes=UNSIGNED_BYTES))
+        assert code == 1
+        text = render_json(result)
+        summary = render_summary(result)
+        for blob in (text, summary):
+            assert str(tmp_path) not in blob
+            assert str(tmp_path).replace("\\", "/") not in blob
+            assert "outside_materials" not in blob
+            assert "release.cer" not in blob
+            for secret in (ALIAS, KEY_PASSWORD, KEYSTORE_PASSWORD):
+                assert secret not in blob
+        assert '"argv"' not in text
+        assert "failures=output_unchanged_from_input" in summary
 
     def test_unreadable_output_is_failure_without_error_text(self, tmp_path, monkeypatch):
         fixture = Fixture(tmp_path, monkeypatch)

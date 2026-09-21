@@ -44,13 +44,18 @@ Safety contract:
   repository, an output that would overwrite an existing file without
   ``allow_overwrite``, an output equal to the input, a missing output
   directory, a missing/unreadable jar or java, a spawn failure, a nonzero tool
-  exit, or a missing/unreadable produced file.
+  exit, a missing/unreadable produced file, or a produced file byte-identical
+  to the input (same size and SHA-256) after a successful tool run.
 - ``signed`` is always ``false``: this wrapper does **not** cryptographically
-  verify signedness. ``claimed_signed`` is true only when the tool exited 0
-  and the output file was written and read back; that is a *claim* backed by
-  tool success (``claimed_signed_basis``), not a verification
-  (``signedness_verified`` stays false). Verifying the signature is a
-  separate, later tool.
+  verify signedness. ``claimed_signed`` is true only when the tool exited 0,
+  the output file was written and read back, and its bytes are not identical
+  to the input (identical = same size and same SHA-256); that is a *claim*
+  backed by tool success (``claimed_signed_basis``), not a verification
+  (``signedness_verified`` stays false). A tool that exits 0 but leaves no
+  file, an unreadable file, or a file byte-identical to the input is a
+  deterministic failure (``output_missing`` / ``output_unreadable`` /
+  ``output_unchanged_from_input``), never a signing claim. Verifying the
+  signature is a separate, later tool.
 
 Blocking precedence (documented, not hidden): request validation (exit 1) ->
 external materials (exit 2 when absent, exit 1 when present but invalid) ->
@@ -131,7 +136,7 @@ SECRET_OPTION_NAMES = ("-keyAlias", "-keyPwd", "-keystorePwd")
 UNSIGNED_MARKER = "unsigned"
 SIGNED_MARKER = "signed"
 STEP_NAME = "sign_hap"
-CLAIM_BASIS = "hap_sign_tool_exit_0_and_output_written"
+CLAIM_BASIS = "hap_sign_tool_exit_0_output_written_bytes_changed"
 
 EXIT_OK = 0
 EXIT_FAILURE = 1
@@ -637,7 +642,25 @@ def run_sign_hap(
                     request.output_path, Path(root).resolve(), input_record
                 )
                 failures += artifact_failures
-                if not artifact_failures:
+                # Post-invocation artifact validation (M14-80, Gap A): a
+                # tool exit 0 alone must never carry the signing claim. The
+                # produced file must exist, be readable, and NOT be
+                # byte-identical to the input (same size and SHA-256).
+                unchanged = bool(
+                    artifact is not None
+                    and artifact["sha256"] == input_record["sha256"]
+                    and artifact["size_bytes"] == input_record["size_bytes"]
+                )
+                if unchanged:
+                    failures.append({
+                        "code": "output_unchanged_from_input",
+                        "detail": {
+                            "relpath": artifact["relpath"],
+                            "size_bytes": artifact["size_bytes"],
+                            "sha256": artifact["sha256"],
+                        },
+                    })
+                if not artifact_failures and not unchanged:
                     claimed_signed = True
                     claimed_signed_basis = CLAIM_BASIS
 
