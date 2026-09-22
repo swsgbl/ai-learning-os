@@ -9,6 +9,65 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-92 current-main 代码绑定门证据刷新 + evidence-cockpit 聚合（code-bound
+gates refresh + cockpit aggregation）**：worktree `m14-92-current-main-code-evidence`，
+分支 `ops/m14-92-current-main-code-evidence`，基于 main
+`ddec7df463d2ae7d751e82a0b4fd319c1439c391`（PR #178 merge，精确基点；fetch 后
+origin/main 复核一致），单 local commit（不 push、不开 PR）。目标：对新 main
+只刷新**代码绑定发布门**（ci-main / release-check），并以新合入的 M14-91
+evidence-cockpit 首次作为 current 刷新聚合器重新汇总发布证据；沿用
+M14-86/M14-90 证据契约/流程，绝不手改 gate JSON、不合成 pass、不复制 M14-90
+产物（CI run/隔离环境/release-check 运行全部本轮新执行）、不搬运旧生产状态
+证据冒充新执行。基点增量（7cca73f→ddec7df，5 commits/8 文件 +1923）：PR #177
+M14-90 证据（纯 docs）+ PR #178 M14-91 cockpit（**真实运行时改动**：
+evidence_cockpit.py +507 / cli.py +155 / tests +723）——services/api 有真实
+代码与测试集变更，代码绑定门必须真实重新执行才对 ddec7df 成立。执行
+（canonical `.verify/artifacts/m14-92-current-main-code-evidence/` 6 文件
+sha256 锚定，gitignored 不入库）：① **ci-main** `gh api`（runs?head_sha=
+ddec7df… + runs/35670971994/jobs，raw 归档）命中真实 push/main run
+**35670971994**（该 SHA 唯一 run；created 2026-09-22T00:12:27Z，
+conclusion=success，**5/5 jobs success**——API/Docker/Release tools/Android/
+Web），按 `_eval_ci_main` 契约由断言脚本（失败即非零退出不产出，ruff +
+py_compile 通过）从 raw 事实程序化派生 `evidence/ci-main.json`（1112 bytes）；
+② **release-check** 从零重建环境（uv venv CPython 3.12.14 + npm ci 411
+packages）新工作区跑 `release-check-isolated` full——运行前前置核验执行树
+`git rev-parse HEAD`==ddec7df 且 porcelain 为空（后续 `--gate-declared-head
+release-check=ddec7df` 声明的诚实性前提），**all_green=true 10/10 pass**
+（pytest **4054 passed / 33 skipped** in 238.32s，较 M14-90 @ 7cca73f 的 4024
+恰 +30 = PR #178 新增 cockpit 测试的预期对账；migration current==head==
+0027_audit_chain；backup tables:30 files:1；voice local 17324 bytes；license
+api 15/web ok/models 7/sources 6；e2e 5 步 1259 ms），产物逐字节复制改名
+`evidence/release-check.json`（byte-identical=True）；③ **evidence-cockpit
+聚合**（docs 编辑前、HEAD 仍为干净 ddec7df 时运行；canonical 源路径逐一取自
+M14-91 README/staged-inventory/cockpit-smoke gate_bindings 登记，不猜测；
+staging 前 7 个既有生产状态源文件 sha256 与 M14-91 登记值逐一 MATCH）：staged
+本切片新 ci-main/release-check + 既有 M14-83/85/87/88 canonical 六门 +
+anchor companion——**evaluator pass=8 / missing=3 / blocked=0 / malformed=0
+/ tampered=0**，ci-main stale=**current**（内嵌 merge_commit=ddec7df）、
+release-check stale=**current**（flag 声明，执行树核验成立）——M14-91 冒烟
+所报 `ci-main:stale` + `release-check:stale` 两项 blocker 消失，**blockers
+仅剩 `long-soak:not-staged-required`**；`release_ready=false` /
+`production_ready=false` / cockpit_ready=false、**exit 1 如实**（long-soak
+与 release-approval 缺席之下不可能 ready，不以任何方式强制 exit 0）；staged
+9 文件外部复核 **9/9 IDENTICAL**（工具内建断言 + 独立逐字节比较；清单归档
+canonical `staged-inventory.txt`，报告归档 canonical `cockpit-report.json`）。
+验证：cockpit 三件套（test_evidence_cockpit + test_release_readiness +
+test_release_closure_manifest）**145 passed** in 1.59s；release-check 三件套
+（readiness + check_isolated + checklist）**137 passed, 1 warning** in 2.64s；
+canonical 六文件 `json.load` 通过；`git diff --check` 干净（docs-only）。
+诚实边界：long-soak 24h 审计未发生（M14-79 权威锚最早审计时点
+2026-09-22T15:00:01Z 未届满，cockpit 生成于 00:3xZ 早于该时点，不预宣称）；
+release-approval human-only 从未发生；production-state 六门为各切片时点快照
+呈现不 block（M14-91 §1.1 第 5 条口径，效力判断留 supervisor + 声明通道；
+provider-smoke 易失性如 M14-88 记录）；turn-tls optional 未 stage；生产仍
+运行 m14-70 镜像（2026-09-19 切换后未变）；M14-89 无 PR 未合入不预判；代码
+绑定门只对执行时点树成立、main 再前移即再 stale；零生产触碰（零容器/计划
+任务/DB/MinIO/语音/secrets/soak/审批，零部署；唯一网络访问=GitHub 只读
+`gh api` + fetch + worktree 从零包安装）。证据
+`docs/evidence/m14-92-current-main-code-evidence/README.md`（唯一入库证据
+文件），同步更新 CHANGELOG（M14-92 条目）与 ROADMAP（M14-92 状态更新）。
+
+## 前一任务（M14-91 release-evidence-cockpit 跨切片证据驾驶舱——已随 PR #178 合并 main `ddec7df463d2ae7d751e82a0b4fd319c1439c391`；current-main 代码绑定门证据刷新 + cockpit 聚合由 M14-92 接续）
 **M14-91 release-evidence-cockpit 跨切片证据驾驶舱（evidence cockpit）**：worktree
 `m14-91-release-evidence-cockpit`，分支 `ops/m14-91-release-evidence-cockpit`，基于 main
 `650b02dbf2372afb4617fd6b77b01ecf0f46382f`（PR #177 merge，精确基点），单 local
