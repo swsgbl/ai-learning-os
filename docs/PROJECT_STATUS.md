@@ -9,6 +9,48 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-91 release-evidence-cockpit 跨切片证据驾驶舱（evidence cockpit）**：worktree
+`m14-91-release-evidence-cockpit`，分支 `ops/m14-91-release-evidence-cockpit`，基于 main
+`650b02dbf2372afb4617fd6b77b01ecf0f46382f`（PR #177 merge，精确基点），单 local
+commit（不 push、不开 PR）。目标：降低发布门证据人工拼装风险——新模块
+`services/api/app/ops/evidence_cockpit.py` + CLI 子命令 `evidence-cockpit`
+（零 Harmony 文件），把 M14-83/86/87 反复用一次性脚本控制的「跨切片
+canonical 门证据聚合 + 组装」固化为确定性、可测试的仓库内工具：① 显式
+canonical 输入（`--gate-source GATE=PATH`，未知门/重复声明 fail-closed）；
+② 来源登记路径/字节/SHA-256 零改动（symlink 拒绝、JSON 对象 + gate 自
+声明错位拒绝）；③ 字节一致一次性 staging（按 evaluator gate→文件名映射，
+原子写 + 写后重读断言，目录必须不存在绝不覆盖；`--anchor-companion`
+同规则）；④ 复用 `run_release_readiness` 全量门语义（零重复实现）；
+⑤ code-bound（ci-main/release-check）vs production-state 分类 + stale
+判定（声明来源 = ci-main 内嵌 merge_commit 或 `--gate-declared-head`
+旗标，冲突 fail-closed；== current HEAD→current / ≠→stale / 无→
+undeclared；stale 一律 blocker、code-bound undeclared 保守 blocker、
+production-state undeclared 呈现不 block——效力判断留 supervisor）；
+⑥ **永不接受/stage/生成 release-approval**（传入即拒绝）、
+`production_ready` 恒 false、`release_ready` 原样透传（approval 恒
+missing 故恒 false）。退出码 0/1/2（supervisor rework 三项已并入：① 单次读盘纪律——source 字节恰好读一次，解析/自声明校验/登记/staging 消费同一 bytes（TOCTOU 防护，read_bytes 计数回归证明）；② staging 创建后任何失败（写入/evaluator/报告落盘）移除本次新建目录含 .tmp 残留，清理失败不虚称零产出（注入 IO 失败回归）；③ cockpit_ready 收紧——required 门未 stage 即阻断，release-approval 按策略例外、turn-tls optional 不阻断，报告 required_not_staged 列表 + 摘要三类区分显式呈现）。验证：聚焦测试
+`tests/test_evidence_cockpit.py` **23 passed**（pass/missing/blocked/
+stale 四态、embedded+flag 双路 stale、冲突拒绝、来源零改动、字节一致
+staging、审批拒绝零产出、malformed（非 JSON/错位/staging 已存在/
+symlink）、分类口径、CLI 注册/无 --yes）；回归 readiness +
+closure-manifest **138 passed**；`ruff check services/api` 全绿；
+`git diff --check` 干净。真实 canonical 冒烟 @ current HEAD 650b02d：
+聚合 M14-90/87/83/85/88 五切片九文件——**evaluator pass=8/missing=3/
+blocked=0/malformed=0/tampered=0**，**ci-main:stale + release-check:
+stale 如实报出**（M14-90 证据 @ 7cca73f 对 650b02d stale + long-soak:not-staged-required——此前需
+supervisor 人工判断的事实一条命令诚实呈现）→ cockpit_ready=False、
+exit 1；staged 9 文件外部 `cmp` 独立复核 9/9 IDENTICAL 且哈希与各切片
+README 登记值交叉一致（报告归档 gitignored canonical
+`.verify/artifacts/m14-91-release-evidence-cockpit/`）。诚实边界：
+cockpit 是编排/汇总器，不重跑任何门、不连任何生产面；ci-main/
+release-check 对 650b02d 的真实重推导仍是独立 evidence-refresh 切片
+工作（冒烟所报 stale 即当前真实缺口）；零生产触碰（零容器/DB/MinIO/
+语音/secrets/部署/审批）；`production_ready=false` 恒成立，不授权任何
+部署。证据 `docs/evidence/m14-91-release-evidence-cockpit/README.md`
+（唯一入库证据文件），同步更新 CHANGELOG（M14-91 条目）与 ROADMAP
+（M14-91 状态更新）。
+
+## 前一任务（M14-90 current-main 代码绑定门证据刷新——已随 PR #177 合并 main `650b02dbf2372afb4617fd6b77b01ecf0f46382f`；release-evidence-cockpit 由 M14-91 接续）
 **M14-90 current-main 代码绑定门证据刷新（code-bound release gates，受控刷新 r2）**：worktree
 `m14-90-current-main-code-evidence`，分支 `ops/m14-90-current-main-code-evidence`，基于 main
 `7cca73fa5b3ac8ec18846c39870657480ee1f455`（PR #176 merge，精确基点；首笔 r1 曾基于
