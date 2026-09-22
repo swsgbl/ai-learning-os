@@ -23,6 +23,7 @@ import { SearchPane } from '../components/SearchPane';
 import { SettingsPane } from '../components/SettingsPane';
 import { StudyPane } from '../components/StudyPane';
 import { VoicePane } from '../components/VoicePane';
+import { AuthPane } from '../components/AuthPane';
 
 @Entry
 @Component
@@ -56,7 +57,17 @@ struct Index {
 
         TabContent() {
           Column() {
-            SettingsPane()
+            Scroll() {
+              Column({ space: 16 }) {
+                SettingsPane()
+                AuthPane()
+              }
+              .width('100%')
+            }
+            .width('100%')
+            .height('100%')
+            .align(Alignment.TopStart)
+            .scrollBar(BarState.Off)
           }
           .width('100%')
           .height('100%')

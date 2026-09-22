@@ -25,6 +25,73 @@ import { http } from '@kit.NetworkKit';
 import { safeErrorText } from './ErrorText';
 import { UrlPolicyCode, validateBaseUrl, urlPolicyMessage } from './UrlPolicy';
 
+/**
+ * M14-89 认证会话扩展(第 1 切片):
+ *   - POST /api/v1/auth/login(用户名+密码 => bearer token);
+ *   - GET /api/v1/auth/me(显式 token 校验,登录成功判定依据);
+ *   - 受保护 GET 可附带内存 bearer token:仅当 token 非空且不含任何空白
+ *     字符时才附加 Authorization: Bearer 头;空白/含空白 token 一律不附加;
+ *   - 内存 token 由本模块唯一持有(安全持久化走 TokenVault/Asset Store Kit),
+ *     零持久化:不写 preferences、不写文件、不打日志;
+ *   - 密码仅作为 login 请求体一次性使用,任何返回值/状态/错误都不回显密码。
+ */
+
+/** 内存 bearer token(模块级唯一持有点;null = 无会话) */
+let inMemoryBearer: string | null = null;
+
+/**
+ * 设置内存 bearer token。fail-closed:仅接受非空且不含任何空白字符的 token,
+ * 其余(空串/前后空白/内部空白/null)一律归一化为 null(不附加头)。
+ */
+export function setBearerToken(token: string | null): void {
+  inMemoryBearer = isUsableBearer(token) ? token : null;
+}
+
+/** 当前是否持有可用内存 token(不暴露 token 本体) */
+export function hasBearerToken(): boolean {
+  return inMemoryBearer !== null;
+}
+
+/** 清空内存 token(登出) */
+export function clearBearerToken(): void {
+  inMemoryBearer = null;
+}
+
+/** token 可用性判定:非 null、非空、不含任何空白字符 */
+export function isUsableBearer(token: string | null | undefined): boolean {
+  if (token === null || token === undefined) {
+    return false;
+  }
+  const t: string = `${token}`;
+  if (t.length === 0) {
+    return false;
+  }
+  for (let i: number = 0; i < t.length; i++) {
+    const cc: number = t.charCodeAt(i);
+    if (cc === 0x20 || cc === 0x09 || cc === 0x0A || cc === 0x0B || cc === 0x0C ||
+      cc === 0x0D || cc === 0xA0 || cc === 0x1680 ||
+      (cc >= 0x2000 && cc <= 0x200A) || cc === 0x2028 || cc === 0x2029 ||
+      cc === 0x202F || cc === 0x205F || cc === 0x3000 || cc === 0xFEFF) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** POST /api/v1/auth/login 响应契约(TokenOut) */
+export interface TokenData {
+  access_token: string;
+  token_type: string;
+}
+
+/** GET /api/v1/auth/me 响应契约(UserOut,与后端 auth.py 精确对齐) */
+export interface MeData {
+  id: string;
+  username: string;
+  role: string;
+  created_at: string;
+}
+
 /** 统一 API 结果:如实承载成功与失败 */
 export interface ApiResult<T> {
   ok: boolean;
@@ -44,6 +111,7 @@ export enum AiosEndpoint {
   VERSION = '/api/v1/version',
   OPS_SNAPSHOT = '/api/v1/system/ops-snapshot',
   AUDIT = '/api/v1/audit?limit=100',
+  AUTH_ME = '/api/v1/auth/me',
   PAPERS = '/api/v1/papers',
   SEARCH_PROVIDERS = '/api/v1/search/providers',
   VOICE_PROVIDERS = '/api/v1/voice/providers',
@@ -323,7 +391,9 @@ async function getJson<T>(baseUrl: string, endpoint: AiosEndpoint | string): Pro
   try {
     const resp = await httpClient.request(fullUrl, {
       method: METHOD_GET,
-      header: { 'content-type': 'application/json', 'accept': 'application/json' },
+      // M14-89: 内存 token 可用(非空、无空白)才附加 Authorization 头;
+      // 空白/畸形 token 一律不附加 —— fail-closed,不让坏 token 变坏请求
+      header: buildProtectedHeader(),
       expectDataType: http.HttpDataType.STRING,
       usingCache: false,
       connectTimeout: TIMEOUT_MS,
@@ -428,4 +498,91 @@ export async function getExamSession(baseUrl: string, examId: string): Promise<A
   }
   const endpoint: string = `${EXAM_PATH_PREFIX}${encodeURIComponent(examId.trim())}`;
   return getJson<ExamSessionData>(baseUrl, endpoint);
+}
+
+/**
+ * 构造受保护请求头:默认 JSON 头;内存 token 可用时附加 Authorization。
+ * token 值只进入请求头,绝不进入任何返回值/日志/持久化。
+ */
+function buildProtectedHeader(): Record<string, string> {
+  const header: Record<string, string> = {
+    'content-type': 'application/json',
+    'accept': 'application/json'
+  };
+  if (inMemoryBearer !== null) {
+    header['Authorization'] = `Bearer ${inMemoryBearer}`;
+  }
+  return header;
+}
+
+/**
+ * POST /api/v1/auth/login — 用户名+密码换取 bearer token。
+ * 契约:200 => {access_token, token_type:'bearer'};401 => 用户名或密码错误;
+ * 密码只进请求体,响应/错误文案绝不回显用户名或密码。
+ * 本函数不落任何持久化;token 的持有/存储由调用方(AuthSession)决定。
+ */
+export async function postLogin(baseUrl: string, username: string, password: string): Promise<ApiResult<TokenData>> {
+  const check = validateBaseUrl(baseUrl);
+  if (check.code !== UrlPolicyCode.OK) {
+    return { ok: false, status: -1, data: null, error: urlPolicyMessage(check) };
+  }
+  const base: string = check.url.endsWith('/') ? check.url.substring(0, check.url.length - 1) : check.url;
+  const fullUrl: string = `${base}/api/v1/auth/login`;
+  // 请求体只含凭据本身;JSON 序列化失败按网络层失败处理
+  let bodyText: string;
+  try {
+    bodyText = JSON.stringify({ username: username, password: password });
+  } catch (e) {
+    return { ok: false, status: -1, data: null, error: '登录请求构造失败' };
+  }
+  const httpClient = http.createHttp();
+  try {
+    const resp = await httpClient.request(fullUrl, {
+      method: http.RequestMethod.POST,
+      header: { 'content-type': 'application/json', 'accept': 'application/json' },
+      extraData: bodyText,
+      expectDataType: http.HttpDataType.STRING,
+      usingCache: false,
+      connectTimeout: TIMEOUT_MS,
+      readTimeout: TIMEOUT_MS
+    });
+    const status: number = resp.responseCode;
+    const body: string = typeof resp.result === 'string' ? resp.result : `${resp.result}`;
+    if (status === 401) {
+      return { ok: false, status: status, data: null, error: '用户名或密码错误 (HTTP 401)' };
+    }
+    if (status >= 500) {
+      return { ok: false, status: status, data: null, error: SERVER_ERROR_TEXT };
+    }
+    if (!is2xx(status)) {
+      return { ok: false, status: status, data: null, error: `登录失败 (HTTP ${status})` };
+    }
+    if (body.trim().length === 0) {
+      return { ok: false, status: status, data: null, error: '登录响应体为空' };
+    }
+    try {
+      const parsed = JSON.parse(body) as TokenData;
+      return { ok: true, status: status, data: parsed, error: 'ok' };
+    } catch (e) {
+      return { ok: false, status: status, data: null, error: '登录响应 JSON 解析失败' };
+    }
+  } catch (e) {
+    return { ok: false, status: -1, data: null, error: `网络请求失败: ${safeErrorText(e)}` };
+  } finally {
+    httpClient.destroy();
+  }
+}
+
+/**
+ * GET /api/v1/auth/me — 以显式 token 校验当前用户(登录成功的判定依据)。
+ * 与受保护 GET 一致:token 可用才附加头;401 如实返回,由调用方决定会话去留。
+ */
+export async function getMe(baseUrl: string, token: string | null): Promise<ApiResult<MeData>> {
+  const keep: string | null = inMemoryBearer;
+  setBearerToken(token);
+  try {
+    return await getJson<MeData>(baseUrl, AiosEndpoint.AUTH_ME);
+  } finally {
+    setBearerToken(keep);
+  }
 }
