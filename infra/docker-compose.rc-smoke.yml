@@ -1,0 +1,154 @@
+# M14-96 RC 本地彩排冒烟 compose：任务自有隔离栈，绝不与生产彩排栈/开发栈
+# 共享任何 Docker 资源。本文件默认 no-op——只有被 tools/ops/rc_smoke_rehearsal.py
+# 以 -f 显式引用时才生效；生产 compose 与既有脚本零改动（字节级回归 pin 见
+# services/api/tests/test_rc_smoke_rehearsal.py）。
+#
+# 隔离设计（与 runner 契约一致，缺一即前置拒绝）：
+# - 独立项目名 aios-m14-96-rc-smoke：容器/网络/卷全部项目级命名，与运行中的
+#   生产栈及开发栈零共享；绝不与生产 compose 组合使用（其宿主端口硬编码
+#   5433/6379/9000-9001/8000/3000 与生产栈冲突，且 compose ports 合并语义为
+#   拼接、无法经 override 摘除）。
+# - api/web 镜像 tag 经必填变量注入（${VAR:?...}）：缺 env 即渲染失败，
+#   绝不静默回落 local/生产 tag；镜像由 runner 显式构建唯一 tag 后引用。
+# - 全部服务 pull_policy: never：绝不隐式 pull，缺本地镜像即 fail-closed 拒绝。
+# - 数据面（postgres/redis/minio）零宿主端口（健康经容器 healthcheck 证明）；
+#   边缘 api/web 只绑 127.0.0.1 独占端口 18096/13096（与生产 compose 端口
+#   全集零交集，runner 起栈前 bind 预检）。
+# - 零自愈策略（默认 no）：一次性冒烟栈；两卷为项目级一次性资源，runner
+#   收尾 down --volumes 只删本项目卷（compose 项目名前缀保证绝不波及他项目）。
+# - api environment 自生产 compose 逐字复制（env 键集与取值零漂移，契约测试
+#   逐键断言），唯一刻意差异：CORS_ORIGINS 默认指向冒烟 Web 端口 13096
+#   （CORS/Web 端口联动契约在冒烟拓扑下的对应形态）。
+name: aios-m14-96-rc-smoke
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    pull_policy: never
+    environment:
+      POSTGRES_USER: aios
+      POSTGRES_PASSWORD: aios
+      POSTGRES_DB: ai_learning_os
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aios -d ai_learning_os"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    pull_policy: never
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: aios/minio:RELEASE.2025-10-15T17-29-55Z
+    pull_policy: never
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: aios
+      MINIO_ROOT_PASSWORD: aios12345
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:9000/minio/health/cluster || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  api:
+    image: aios/api:${AIOS_RC_SMOKE_API_TAG:?AIOS_RC_SMOKE_API_TAG required (unique tag built by tools/ops/rc_smoke_rehearsal.py)}
+    pull_policy: never
+    environment:
+      APP_ENV: ${AIOS_APP_ENV:-docker}
+      HOST_BIND_IP: ${AIOS_BIND_IP:-127.0.0.1}
+      HOST_LIVEKIT_BIND_IP: ${AIOS_LIVEKIT_BIND_IP:-}
+      CORS_ORIGINS: ${AIOS_CORS_ORIGINS:-http://localhost:13096,http://127.0.0.1:13096}
+      DATABASE_URL: postgresql+asyncpg://aios:aios@postgres:5432/ai_learning_os
+      REDIS_URL: redis://redis:6379/0
+      S3_ENDPOINT: http://minio:9000
+      S3_BUCKET: aios-objects
+      S3_ACCESS_KEY: aios
+      S3_SECRET_KEY: aios12345
+      LIVEKIT_URL: ${AIOS_LIVEKIT_URL:-ws://127.0.0.1:7880}
+      PUBLIC_LIVEKIT_URL: ${AIOS_PUBLIC_LIVEKIT_URL:-}
+      LIVEKIT_API_KEY: ${AIOS_LIVEKIT_API_KEY:-devkey}
+      LIVEKIT_API_SECRET: ${AIOS_LIVEKIT_API_SECRET:-ailos-local-dev-secret-0f4c9a1e7b2d}
+      AUTH_SECRET: ${AIOS_AUTH_SECRET:-aios-local-dev-secret-7d21b9e4c8a3}
+      AUTH_TOKEN_EXPIRE_MINUTES: ${AIOS_AUTH_TOKEN_EXPIRE_MINUTES:-1440}
+      AUTH_COOKIE_SECURE: ${AIOS_AUTH_COOKIE_SECURE:-false}
+      AUTH_COOKIE_SAMESITE: ${AIOS_AUTH_COOKIE_SAMESITE:-lax}
+      VOICE_MODE: ${AIOS_VOICE_MODE:-local}
+      ASR_LOCAL_ENDPOINT: ${AIOS_ASR_LOCAL_ENDPOINT:-}
+      ASR_LOCAL_MODEL: ${AIOS_ASR_LOCAL_MODEL:-sensevoice}
+      ASR_LOCAL_API_KEY: ${AIOS_ASR_LOCAL_API_KEY:-}
+      TTS_LOCAL_ENDPOINT: ${AIOS_TTS_LOCAL_ENDPOINT:-}
+      TTS_LOCAL_MODEL: ${AIOS_TTS_LOCAL_MODEL:-Fun-CosyVoice3-0.5B-2512}
+      TTS_LOCAL_API_KEY: ${AIOS_TTS_LOCAL_API_KEY:-}
+      MODEL_ROUTE: ${AIOS_MODEL_ROUTE:-hybrid}
+      SEARCH_MODE: ${AIOS_SEARCH_MODE:-local}
+      PRIVACY_STORE_AUDIO: ${AIOS_PRIVACY_STORE_AUDIO:-false}
+      PRIVACY_SEND_CONTEXT_TO_CLOUD: ${AIOS_PRIVACY_SEND_CONTEXT_TO_CLOUD:-true}
+      ASR_PROVIDER: ${AIOS_ASR_PROVIDER:-}
+      TTS_PROVIDER: ${AIOS_TTS_PROVIDER:-}
+      ASR_CLOUD_ENDPOINT: ${AIOS_ASR_CLOUD_ENDPOINT:-}
+      ASR_CLOUD_API_KEY: ${AIOS_ASR_CLOUD_API_KEY:-}
+      ASR_CLOUD_MODEL: ${AIOS_ASR_CLOUD_MODEL:-whisper-1}
+      TTS_CLOUD_ENDPOINT: ${AIOS_TTS_CLOUD_ENDPOINT:-}
+      TTS_CLOUD_API_KEY: ${AIOS_TTS_CLOUD_API_KEY:-}
+      TTS_CLOUD_MODEL: ${AIOS_TTS_CLOUD_MODEL:-tts-1}
+      TTS_CLOUD_VOICE: ${AIOS_TTS_CLOUD_VOICE:-tongtong}
+      LLM_PROVIDER: ${AIOS_LLM_PROVIDER:-}
+      LLM_ENDPOINT: ${AIOS_LLM_ENDPOINT:-}
+      LLM_API_KEY: ${AIOS_LLM_API_KEY:-}
+      LLM_MODEL: ${AIOS_LLM_MODEL:-}
+      LLM_NUM_CTX: ${AIOS_LLM_NUM_CTX:-}
+      RUBRIC_JUDGE: ${AIOS_RUBRIC_JUDGE:-keyword}
+      EMBEDDING_PROVIDER: ${AIOS_EMBEDDING_PROVIDER:-}
+      SEARCH_PROVIDER: ${AIOS_SEARCH_PROVIDER:-}
+      SEARCH_CLOUD_ENDPOINT: ${AIOS_SEARCH_CLOUD_ENDPOINT:-}
+      SEARCH_CLOUD_API_KEY: ${AIOS_SEARCH_CLOUD_API_KEY:-}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    ports:
+      - "127.0.0.1:18096:8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+
+  web:
+    image: aios/web:${AIOS_RC_SMOKE_WEB_TAG:?AIOS_RC_SMOKE_WEB_TAG required (unique tag built by tools/ops/rc_smoke_rehearsal.py)}
+    pull_policy: never
+    environment:
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+    ports:
+      - "127.0.0.1:13096:3000"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  minio-data:
