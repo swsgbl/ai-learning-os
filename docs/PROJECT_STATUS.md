@@ -9,6 +9,47 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-98 current-main provider-smoke 门证据刷新**：worktree
+`m14-98-current-provider-smoke`，分支 `ops/m14-98-current-provider-smoke`，
+基于 main `841b36f48378108a1dd51d39896922ab58c1eb82`（PR #185 merge =
+M14-95 合入，精确基点，fetch 后 origin/main 全 SHA 复核一致），单 local
+commit，不 push、不开 PR。目标：对 current main 重新真实执行易失
+provider-smoke 三件套（search/local-voice/llm + aggregate），绝不复用
+M14-88 JSON 冒充当前、绝不手改 gate JSON、绝不合成 pass；零生产触碰
+（容器/计划任务/DB/MinIO/语音/secrets/代理生命周期零变更，对既有端点
+只读使用）。环境：worktree 从零 uv venv CPython 3.12.14 + api/dev
+requirements（canonical `.venv` 零触碰）。真实结果（执行窗口
+2026-09-22T16:54:20Z–17:07:08Z，预检全绿）：**search PASS**（exit 0，
+6449ms，results=5，authorities=community——当前真实返回）；**local-voice
+PASS**（exit 0，97934ms，ASR local-funasr 5102ms/真实中文转写 42 bytes +
+TTS local-cosyvoice 92410ms/218924 bytes RIFF WAV）；**llm 两跑真实
+FAIL**（exit 1，32402ms/30506ms `httpx.ReadTimeout`）——attempt1 模型
+冷加载 >300s（16GB GPU 与语音/训练/VMware 进程共存争抢）+ gateway 默认
+30s 超时 + 当次 shell NO_PROXY 参数展开传递异常（traceback 含代理帧）；
+attempt2 字面量 NO_PROXY 直连（代理帧消失）且模型已驻留 VRAM 后仍超时：
+thinking 模型 max_tokens=2048 在 GPU 100% 争抢下生成 >30s（warm 旁证
+max_tokens=8 直连 200/6.4s）。判定**本地资源/超时边界**（非 provider
+不可用、非工具/脚本缺陷、非代理阻断）；未重启任何进程（blocker 不是
+重启理由）；吞吐多档测量被中止未完成（如实记录）。
+**provider-smoke-aggregate 未运行**（链未全 pass 按纪律停止，无
+provider-smoke.json）——provider-smoke 门本轮未通过；本切片不刷新
+ci-main/release-check、不重新聚合 evidence-cockpit，
+`release_ready=false`/`production_ready=false` 不变，发布审批 human-only。
+验证：聚焦契约六件套（provider_smoke_evidence/release_readiness/
+searxng_local_provider/smoke_search/smoke_voice_local/
+provision_ollama_model）**235 passed**（4.61s，全部离线不依赖 live
+provider）；ruff（services/api）全绿（零 Python 变更基线复核，无
+py_compile 触及范围）；`git diff --check` 干净。证据 worktree
+`.verify/artifacts/m14-98-current-provider-smoke/` 13 文件 sha256 锚定
+（4 个工具生成 JSON 含 2 份 llm 失败证据 + stdout/window 留档 + 脱敏
+诊断/预检记录 + SHA256SUMS）；README
+`docs/evidence/m14-98-current-provider-smoke/README.md`（唯一入库证据
+文件），同步更新 CHANGELOG（M14-98 条目）与 ROADMAP（M14-98 状态更新）。
+后续：GPU 空闲窗口重跑 llm 步 + 补跑 aggregate 是后续运维动作（留
+supervisor 决策）。
+
+## 前一任务（M14-95 Harmony 真实认证冒烟——已随 PR #185 合并 main `841b36f48378108a1dd51d39896922ab58c1eb82`；current-main provider-smoke 门刷新由 M14-98 接续）
+
 **M14-95 Harmony 真实认证冒烟（real auth smoke）**：worktree
 `m14-95-harmony-real-auth-smoke`，分支 `harmony/m14-95-real-auth-smoke`，
 真实执行/代码基点 = main `001af38e8786c9578076143351978b96d0332874`
