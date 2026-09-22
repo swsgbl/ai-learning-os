@@ -9,6 +9,58 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-93 长稳到期审计/导出 runner（long-soak due-time audit/export
+runner）**：worktree `m14-93-long-soak-window-runner`，分支
+`ops/m14-93-long-soak-window-runner`，基于 main `0bfd560`（PR #179 merge =
+M14-92 证据合入，精确基点），单 local commit（含 supervisor correction R2
+amend；不 push、不开 PR）。目标：
+把 M14-79 权威锚定窗口（soak-window-anchor.json）到期后的「重跑 soak
+审计 + 逐字节导出 long-soak 门证据」从人工命令拼装固化为单一
+fail-closed 仓库工具——**移除手工拼装风险，而不是移除判定**。新工具
+`tools/ops/long_soak_release_window.py` + 契约测试
+`services/api/tests/test_long_soak_release_window.py`（45 项）：① 锚定
+记录严格校验（九键全集/schema_version/tool/follow_up_audit_tool 逐字
+匹配、window_minutes==审计策略窗口 1440、earliest_audit_collected_at
+恰等于锚点+窗口、generated_at==锚点零墙钟产锚不变式、precondition
+取值域（tail_non_ok_count==0——锚只可能产自 open 门）、boundaries 与
+产锚工具逐字一致——手改锚提前到期或篡改前置即拒绝）；② 到期判定
+零墙钟（**最新历史样本**对比 earliest_audit_collected_at，绝不读系统
+钟；未到期固定词汇 not-due 拒绝=零审计零证据 exit 1；样本早于锚点
+本身=history-before-anchor 拒绝）；③ 审计语义零重复实现（路径解析/
+逐行严格解析/全局校验/留存/分类全部直接调用既有 soak_stability_audit
+函数，策略固定 release-readiness 接受口径 1440/15/20/500、不暴露任何
+策略参数——策略漂移即证据不可用）；④ 导出纪律（pending 拒绝导出
+exit 2；只有 pass/blocked 把 soak-audit-report.json **逐字节复制**为
+`evidence/long-soak.json`——utf-8 往返预检 + 写后重读复核 + 双 sha256
+必须相等 + 审计输入哈希后置断言，绝不改写/重序列化门证据；blocked
+照常导出诚实 blocked 证据 exit 3；pass exit 0）；⑤ 全新输出目录强制
+（已存在/symlink 拒绝）、输出仅安全元数据（状态/固定词汇原因/时间戳/
+计数/sha256）、CLI stdout 与 argparse help 同纪律（R2：help 只作通用
+输入描述、绝不插值 DEFAULT_* 绝对路径值，stdout 只打印文件名/状态/
+时间戳/固定词汇原因、绝不回显 args 锚定/历史/输出目录路径——默认
+路径行为不变、默认值仍注册并被测试断言）、零子进程/零网络/零计划
+任务/零 env 读取/零生产触碰、生成时间戳取自最新样本（同输入重跑输出
+逐字节相同）。测试锚定记录
+fixture 由真实 `soak_window_gate --anchor` 在合成干净历史上产出后
+消费；覆盖四态（not-due/due-pass 恰在到期边界/due-blocked/due-pending
+拒绝导出）、篡改锚变体、损坏写入 read-back 拒绝、历史拒绝面、输出
+目录护栏、零墙钟重跑一致、隐私标记不泄漏、CLI 默认值、R2 回归（成功
+与拒绝路径 CLI stdout+stderr 及 parser help 逐字扫描：无盘符/绝对
+路径形态、无 DEFAULT_* 插值、无 REPO_ROOT）。验证：聚焦
+**45 passed**（0.96s）+ 邻域三件套（test_soak_window_gate/
+test_soak_stability_audit/test_release_readiness）**157 passed** 零回归
+（合计 202）；py_compile 通过；ruff 工具与测试双绿；`git diff --check`
+干净。诚实边界：本 runner **不使 long-soak 通过**（blocked 窗口导出的
+就是 blocked 证据）；真实 24h 长稳审计在本切片中未发生（全部验证基于
+合成 fixture，M14-79 锚 2026-09-22T15:00:01Z 到期后的真实执行是后续
+运维动作，本切片不预宣称其结果）；`release_ready=false`/
+`production_ready=false` 不变；发布审批 human-only；零生产触碰（工具
+从未对真实生产 history.jsonl 或真实锚定记录执行）。证据
+`docs/evidence/m14-93-long-soak-window-runner/README.md`（唯一入库证据
+文件），同步更新 CHANGELOG（M14-93 条目）与 ROADMAP（M14-93 状态
+更新）。
+
+## 前一任务（M14-92 current-main 代码绑定门证据刷新 + evidence-cockpit 聚合——已随 PR #179 合并 main `0bfd560`；长稳到期审计/导出 runner 由 M14-93 接续）
 **M14-92 current-main 代码绑定门证据刷新 + evidence-cockpit 聚合（code-bound
 gates refresh + cockpit aggregation）**：worktree `m14-92-current-main-code-evidence`，
 分支 `ops/m14-92-current-main-code-evidence`，基于 main
