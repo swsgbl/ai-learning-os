@@ -119,6 +119,8 @@ provider-smoke 易失性如 M14-88 记录）；turn-tls optional 未 stage；生
 `docs/evidence/m14-92-current-main-code-evidence/README.md`（唯一入库证据
 文件），同步更新 CHANGELOG（M14-92 条目）与 ROADMAP（M14-92 状态更新）。
 
+**M14-89 Harmony 认证会话闭环（auth session）**：worktree `m14-89-harmony-auth-session`（基于 main `5ff1e68`，PR #174 merge），单 local commit，不 push。目标：认证会话全链路（登录/401/安全存储恢复/登出）在真实模拟器 + 本机 mock 认证服务器上闭环验证。结果（全部真实执行，原始证据 gitignored .verify/m14-89-harmony-auth-session/）：契约 79/79、android mock pytest 36 passed、全量 tests/harmony_release 通过、compileall/ruff 通过、release 构建 exit 0（unsigned HAP 219684 bytes SHA256 `D1FB2C30…EFC1`）；R12 auth-off exit 0（ok=7/not_run=5）、R13 auth-on exit 0（ok=11/12）、R14d auth-on 新 HAP 复跑 exit 0（total=12 ok=11 failure=0 not_run=1 唯一 auth_off_local/auth_phase_skip，warnings=0，request_failures=0，mutation_performed=true，cleanup_attempted=true；未签名 HAP 直接安装成功，未触发 sign_hap 回退，零签名材料接触）；任务自有 mock（PID 77624）停止并证明 8765 端口释放，模拟器与 net.uniterm.poc 未触碰。**R16-R18 监督者修正后复验**：焦点 34/34、mock 契约 81/81（含 2 个新 token_type 故障）、全量 tests/harmony_release 483 passed + 1 skipped、ruff F,E9,W605 干净、clean/assembleHap exit 0；R17 auth-on 冒烟 exit 0（同 R14d 指标；首跑一次错误文案渲染时序 flake，复跑即过）；修正内容：validate_api_base 改真实 URL 解析（仅精确 loopback、拒 userinfo/query/fragment/path 绕过、永不回显原始 URL）、客户端 token_type=="bearer" 前置校验（先于内存/vault 会话建立）、34 用例焦点测试。诚实边界：未签名 HAP、mock 合成凭据（非生产认证）、production_ready=false，不声明 Harmony 生产就绪。证据 docs/evidence/m14-89-harmony-auth-session/README.md（唯一入库证据文件）。
+
 ## 前一任务（M14-91 release-evidence-cockpit 跨切片证据驾驶舱——已随 PR #178 合并 main `ddec7df463d2ae7d751e82a0b4fd319c1439c391`；current-main 代码绑定门证据刷新 + cockpit 聚合由 M14-92 接续）
 **M14-91 release-evidence-cockpit 跨切片证据驾驶舱（evidence cockpit）**：worktree
 `m14-91-release-evidence-cockpit`，分支 `ops/m14-91-release-evidence-cockpit`，基于 main
@@ -315,6 +317,7 @@ missing（最新真实记录见 M14-83/M14-85/M14-86 canonical，对 ddcaa22 sta
 
 
 ## 前一任务（M14-84 Harmony 模拟器真实 API 后端冒烟——已随 PR #174 合并 main `5ff1e685c52f3111efa3d508b17ca16558e72171`；audit-chain-anchor current gate 闭合由 M14-87 接续）
+
 **M14-84 Harmony 模拟器真实 API 后端冒烟（emulator real-API smoke）**：worktree
 `m14-84-harmony-real-api-smoke`，分支 `harmony/m14-84-emulator-real-api-smoke`，基于 main
 `ddcaa229d308a8e5a46e46dae3a9d7a10ac6640e`（PR #173 merge，精确基点），单 local

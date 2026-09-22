@@ -68,6 +68,7 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, ".")
+from tools.harmony_mock import server as mock_server
 from tools.harmony_mock.server import HarmonyMockServer
 
 
@@ -326,47 +327,289 @@ def test_endpoint_404(method: str, path: str, host: str, port: int) -> tuple[boo
     return False, f"Expected 404, got HTTP {status}"
 
 
+def fetch_json(
+    method: str,
+    path: str,
+    host: str,
+    port: int,
+    body: bytes | None = None,
+    headers: dict | None = None,
+) -> tuple[int, str]:
+    """带 body/header 的 HTTP 请求;连接层错误与 fetch() 同义(-1)。"""
+    url = build_base(host, port) + path
+    req = urllib.request.Request(url, data=body, method=method)
+    for key, val in (headers or {}).items():
+        req.add_header(key, val)
+    try:
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            return resp.status, resp.read().decode("utf-8")
+    except urllib.error.HTTPError as e:
+        return e.code, e.read().decode("utf-8", errors="replace")
+    except urllib.error.URLError as e:
+        return -1, f"Connection failed: {e.reason}"
+    except (OSError, ValueError, http.client.HTTPException) as e:
+        return -1, f"Error: {e}"
+
+
+class _Suite:
+    """计数器:逐项打印 PASS/FAIL,绝不打印凭据或 token 值。"""
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.passed = 0
+        self.failed = 0
+
+    def check(self, label: str, ok: bool, msg: str) -> None:
+        status = "PASS" if ok else "FAIL"
+        if ok:
+            self.passed += 1
+        else:
+            self.failed += 1
+        print(f"  [{status}] {label}: {msg}")
+
+    @property
+    def total(self) -> int:
+        return self.passed + self.failed
+
+
+def _login(host: str, port: int) -> str | None:
+    """执行一次正确登录;契约不符(空/带空白/缺字段 token)返回 None。
+
+    凭据取自 server.AUTH_STATE(合成 mock 值),本函数与其调用方
+    均不打印凭据或 token 值。
+    """
+    payload = json.dumps({
+        "username": mock_server.AUTH_STATE["login_user"],
+        "password": mock_server.AUTH_STATE["login_pass"],
+    }).encode("utf-8")
+    status, body = fetch_json(
+        "POST", "/api/v1/auth/login", host, port,
+        body=payload, headers={"Content-Type": "application/json"},
+    )
+    if status != 200:
+        return None
+    try:
+        data = json.loads(body)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    token = data.get("access_token")
+    if not (isinstance(token, str) and token and token == token.strip()):
+        return None
+    if data.get("token_type") != "bearer":
+        return None
+    return token
+
+
+def run_auth_off_suite(suite: _Suite, host: str, port: int) -> None:
+    """M14-89 auth-off:status 如实 false,login/me 关闭,既有端点不受影响。"""
+    print("\n--- M14-89 auth-off 契约 ---")
+    ok, msg = test_endpoint_200(
+        "GET", "/api/v1/auth/status", {"auth_enabled": False}, host, port
+    )
+    suite.check("GET /api/v1/auth/status (auth off)", ok, msg)
+
+    creds = json.dumps({
+        "username": mock_server.AUTH_STATE["login_user"],
+        "password": mock_server.AUTH_STATE["login_pass"],
+    }).encode("utf-8")
+    status, _ = fetch_json(
+        "POST", "/api/v1/auth/login", host, port,
+        body=creds, headers={"Content-Type": "application/json"},
+    )
+    suite.check("POST /api/v1/auth/login (auth off)", status == 404, f"HTTP {status}")
+
+    status, _ = fetch_json(
+        "GET", "/api/v1/auth/me", host, port,
+        headers={"Authorization": "Bearer whatever"},
+    )
+    suite.check("GET /api/v1/auth/me (auth off)", status == 404, f"HTTP {status}")
+
+    ok, msg = test_endpoint_200("GET", "/health", {"status": "ok"}, host, port)
+    suite.check("GET /health (ungated, auth off)", ok, msg)
+
+    status, body = fetch_json("GET", "/api/v1/papers", host, port)
+    suite.check(
+        "GET /api/v1/papers (protected path, auth off)",
+        status == 200 and body.lstrip().startswith("["),
+        f"HTTP {status}",
+    )
+
+
+def run_auth_on_suite(suite: _Suite, host: str, port: int) -> None:
+    """M14-89 auth-on:门禁 401、登录契约、me 投影与负断言。"""
+    print("\n--- M14-89 auth-on 契约 ---")
+    ok, msg = test_endpoint_200(
+        "GET", "/api/v1/auth/status", {"auth_enabled": True}, host, port
+    )
+    suite.check("GET /api/v1/auth/status (auth on)", ok, msg)
+
+    # 受保护 GET 无 bearer 一律 401(fail-closed)
+    for path in (
+        "/api/v1/system/privacy",
+        "/api/v1/papers",
+        "/api/v1/audit?limit=100",
+        "/api/v1/search/providers",
+        "/api/v1/exams/exam-m13-08-001",
+    ):
+        status, _ = fetch_json("GET", path, host, port)
+        suite.check(f"GET {path} without bearer", status == 401, f"HTTP {status}")
+
+    # 错误凭据 401(错误密码 / 错误用户名)
+    for label, user, password in (
+        ("wrong password", mock_server.AUTH_STATE["login_user"], "definitely-wrong-pass"),
+        ("wrong username", "definitely-wrong-user", mock_server.AUTH_STATE["login_pass"]),
+    ):
+        payload = json.dumps({"username": user, "password": password}).encode("utf-8")
+        status, _ = fetch_json(
+            "POST", "/api/v1/auth/login", host, port,
+            body=payload, headers={"Content-Type": "application/json"},
+        )
+        suite.check(f"POST /api/v1/auth/login ({label})", status == 401, f"HTTP {status}")
+
+    # 畸形/缺失字段载荷 422(校验错误,不是认证失败)
+    for label, raw in (
+        ("missing password", json.dumps({"username": mock_server.AUTH_STATE["login_user"]})),
+        ("missing username", json.dumps({"password": mock_server.AUTH_STATE["login_pass"]})),
+        ("malformed json", "{not-json"),
+        ("non-object payload", "[1,2,3]"),
+    ):
+        status, _ = fetch_json(
+            "POST", "/api/v1/auth/login", host, port,
+            body=raw.encode("utf-8"), headers={"Content-Type": "application/json"},
+        )
+        suite.check(f"POST /api/v1/auth/login ({label})", status == 422, f"HTTP {status}")
+
+    # 成功登录契约:非空、无首尾空白 token + token_type=bearer(不打印值)
+    token = _login(host, port)
+    suite.check(
+        "POST /api/v1/auth/login (success contract)",
+        token is not None,
+        "non-empty stripped access_token, token_type=bearer"
+        if token is not None else "login contract violated",
+    )
+
+    # me:有效 bearer → 200 且与 MOCK_USER 整包精确一致
+    status, body = fetch_json(
+        "GET", "/api/v1/auth/me", host, port,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    me_ok = status == 200
+    detail = f"HTTP {status}"
+    if me_ok:
+        try:
+            data = json.loads(body)
+            me_ok = data == dict(mock_server.MOCK_USER)
+            detail = "200 OK (exact MOCK_USER projection)" if me_ok else "projection mismatch"
+        except json.JSONDecodeError:
+            me_ok, detail = False, "JSON parse error"
+    suite.check("GET /api/v1/auth/me with valid bearer", me_ok, detail)
+
+    # me:无效 bearer → 401
+    status, _ = fetch_json(
+        "GET", "/api/v1/auth/me", host, port,
+        headers={"Authorization": "Bearer not-the-mock-token"},
+    )
+    suite.check("GET /api/v1/auth/me with invalid bearer", status == 401, f"HTTP {status}")
+
+    # me:任何查询串 → 404(fail-closed)
+    status, _ = fetch_json(
+        "GET", "/api/v1/auth/me?foo=bar", host, port,
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    suite.check("GET /api/v1/auth/me?foo=bar (query rejected)", status == 404, f"HTTP {status}")
+
+
+def run_fault_suite(suite: _Suite, host: str, port: int) -> None:
+    """M14-89 故障注入:客户端必须拒绝不可用 token;me_down 如实 401。"""
+    print("\n--- M14-89 故障注入契约 ---")
+    original = dict(mock_server.AUTH_STATE)
+    try:
+        for fault in ("blank_token", "whitespace_token", "malformed",
+                      "wrong_token_type", "missing_token_type", "me_down"):
+            mock_server.AUTH_STATE["fault"] = fault
+            token = _login(host, port)
+            if fault == "me_down":
+                status, _ = fetch_json(
+                    "GET", "/api/v1/auth/me", host, port,
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                suite.check(
+                    "fault=me_down: me 401 despite valid bearer",
+                    status == 401, f"HTTP {status}",
+                )
+            else:
+                suite.check(
+                    f"fault={fault}: login contract rejected",
+                    token is None,
+                    "client refuses unusable token" if token is None else "unusable token accepted",
+                )
+    finally:
+        mock_server.AUTH_STATE.clear()
+        mock_server.AUTH_STATE.update(original)
+
+
 def main() -> int:
-    parser = argparse.ArgumentParser(description="M13-02/M13-05/M13-06/M13-07/M13-08 mock contract tests")
-    parser.add_argument("--port", type=int, default=8765, help="listen port (default 8765)")
+    parser = argparse.ArgumentParser(
+        description="M13-02/05/06/07/08 + M14-89 mock contract tests"
+    )
+    parser.add_argument(
+        "--port", type=int, default=0,
+        help="listen port (0 = OS-assigned ephemeral loopback port, default)",
+    )
     parser.add_argument("--host", type=str, default="127.0.0.1", help="bind address")
     args = parser.parse_args()
 
-    server = HarmonyMockServer(host=args.host, port=args.port)
-    server.start()
-    bind_url = build_base(args.host, args.port)
-    print(f"Mock server started on {bind_url}", flush=True)
-    time.sleep(0.3)
+    m13 = _Suite("M13 read-only contract")
+    m14 = _Suite("M14-89 auth contract")
+    server: HarmonyMockServer | None = None
+    original_state = dict(mock_server.AUTH_STATE)
+    try:
+        # 阶段一:auth off(模块默认)。--port 0 时由 OS 分配隔离回环端口。
+        server = HarmonyMockServer(host=args.host, port=args.port).start()
+        port = server.server.server_address[1] if args.port == 0 else args.port
+        print(f"Mock server (auth=off) on {build_base(args.host, port)}", flush=True)
+        time.sleep(0.3)
 
-    passed = 0
-    failed = 0
-    results: list[str] = []
+        print("\n--- 200 OK 端点 ---")
+        for method, path, fields in ENDPOINTS_200:
+            ok, msg = test_endpoint_200(method, path, fields, args.host, port)
+            m13.check(f"{method} {path}", ok, msg)
 
-    print("\n--- 200 OK 端点 ---")
-    for method, path, fields in ENDPOINTS_200:
-        ok, msg = test_endpoint_200(method, path, fields, args.host, args.port)
-        status = "PASS" if ok else "FAIL"
-        if ok:
-            passed += 1
-        else:
-            failed += 1
-        results.append(f"  [{status}] {method} {path}: {msg}")
-        print(results[-1])
+        print("\n--- 404 端点 ---")
+        for method, path in ENDPOINTS_404:
+            ok, msg = test_endpoint_404(method, path, args.host, port)
+            m13.check(f"{method} {path}", ok, msg)
 
-    print("\n--- 404 端点 ---")
-    for method, path in ENDPOINTS_404:
-        ok, msg = test_endpoint_404(method, path, args.host, args.port)
-        status = "PASS" if ok else "FAIL"
-        if ok:
-            passed += 1
-        else:
-            failed += 1
-        results.append(f"  [{status}] {method} {path}: {msg}")
-        print(results[-1])
+        run_auth_off_suite(m14, args.host, port)
+        server.stop()
+        server = None
 
-    server.stop()
+        # 阶段二:auth on(fault 默认空),独立回环端口。
+        mock_server.AUTH_STATE["enabled"] = True
+        server = HarmonyMockServer(host=args.host, port=0).start()
+        auth_port = server.server.server_address[1]
+        print(f"Mock server (auth=on) on {build_base(args.host, auth_port)}", flush=True)
+        time.sleep(0.3)
+        run_auth_on_suite(m14, args.host, auth_port)
+        run_fault_suite(m14, args.host, auth_port)
+    except OSError as exc:
+        print(f"[FAIL] mock server bind/start error: {exc}")
+        m14.failed += 1
+    finally:
+        # fail-closed 清理:无论如何停服并还原全局 auth 状态
+        if server is not None:
+            server.stop()
+        mock_server.AUTH_STATE.clear()
+        mock_server.AUTH_STATE.update(original_state)
+
+    passed = m13.passed + m14.passed
+    failed = m13.failed + m14.failed
     total = passed + failed
-    print(f"\nResults: {passed}/{total} passed, {failed} failed")
+    print(f"\nM13 suite: {m13.passed}/{m13.total} passed, {m13.failed} failed")
+    print(f"M14-89 auth suite: {m14.passed}/{m14.total} passed, {m14.failed} failed")
+    print(f"Results: {passed}/{total} passed, {failed} failed")
     return 1 if failed > 0 else 0
 
 
