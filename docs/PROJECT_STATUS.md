@@ -9,6 +9,43 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-100 本地 LLM 冒烟超时与生成预算显式化**：worktree
+`m14-100-local-llm-timeout-budget`，分支 `ops/m14-100-local-llm-timeout-budget`，
+基于 main `a583f918fba4ea6223b08afc275d909fefef152b`（PR #186 merge =
+M14-98 合入，本地全 SHA 复核一致），单 local commit，不 push、不开 PR。
+目标：把 M14-98 实证的 llm 冒烟失败边界（gateway 30s 超时硬编码、
+max_tokens=2048 在饱和 GPU 生成 >30s、loopback 请求可被环境代理劫持、
+httpx.ReadTimeout 未映射 LlmUnavailable）修复为**显式、可配、离线可测**
+的配置与契约面——零 live provider/GPU 探测、零生产变更。四项窄修复：
+① `LlmGateway(timeout_seconds=…)`（>0 校验、与 transport 注入互斥）+
+`Settings.llm_timeout_seconds`（env `LLM_TIMEOUT_SECONDS`，空=既有默认
+30s，cloud 零漂移；compose/.env.example/rc-smoke 同槽位接线）+ main/
+build_llm_judge 装配全透传；② `HttpxTransport` 对 loopback URL
+（localhost/127.0.0.0/8/::1，ipaddress 判定）强制 `trust_env=False`
+（M14-98 attempt1 httpcore http_proxy 帧教训），云端 URL 保持 httpx 默认
+（语义零漂移）；③ httpx TimeoutException/HTTPError 统一映射
+`LlmUnavailable`（消息只含类型名与秒数，不含 URL/key——redaction 测试
+锁定）；④ 冒烟简单探针有界预算默认 256（`LLM_SMOKE_MAX_TOKENS` 可覆写；
+2048 实证超时、32 有 thinking-only 空 content 风险——256 为未实测折中），
+rubric judge 探针保持 gateway 生产默认 1024（冒烟不改变生产 chat 语义）。
+API 契约决策：留在 OpenAI 兼容 /v1 + 既有 max_tokens 字段（M10-01 既有
+契约；预算已被本地端点实证消费；未实证的 reasoning 控制字段不进 payload
+——M14-71 options.num_ctx 教训；native /api/chat think 适配器留待带 live
+验证的后续切片）。验证：新契约套件
+`test_llm_gateway_timeout_budget.py` **27 passed**（全部 fake transport/
+monkeypatched httpx.Client/本地 Response，零网络）+ 脚本契约
+`test_smoke_llm_script.py` 7 passed（含 timeout/预算/干净 FAIL 锚点）+
+gateway/provider-smoke/config/compose/rc-smoke 聚焦回归全绿 + **全量
+离线套件 4211 passed / 33 skipped** + ruff 全绿 + py_compile + `bash -n` +
+`git diff --check` 干净；M14-96 生产 pin（docker-compose.yml）按机制
+**显式更新**（空默认槽位，生产渲染零漂移）。证据
+`docs/evidence/m14-100-local-llm-timeout-budget/README.md`（设计/API 契约
+依据/测试矩阵/边界全录）。**边界：本切片未重跑任何 live LLM/provider/
+GPU 探测——llm provider-smoke 步仍为未验证状态**，真实重跑（GPU 空闲
+窗口 + 运维选定超时/预算值）是后续运维动作（M14-98 §4 纪律不变）。
+
+## 前一任务（M14-98 current-main provider-smoke 门证据刷新——已随 PR #186 合并 main `a583f918fba4ea6223b08afc275d909fefef152b`；本地 LLM 超时/预算修复由 M14-100 接续）
+
 **M14-98 current-main provider-smoke 门证据刷新**：worktree
 `m14-98-current-provider-smoke`，分支 `ops/m14-98-current-provider-smoke`，
 基于 main `841b36f48378108a1dd51d39896922ab58c1eb82`（PR #185 merge =

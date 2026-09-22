@@ -108,6 +108,9 @@ services:
       LLM_API_KEY: ${AIOS_LLM_API_KEY:-}
       LLM_MODEL: ${AIOS_LLM_MODEL:-}
       LLM_NUM_CTX: ${AIOS_LLM_NUM_CTX:-}
+      # M14-100 LLM 请求超时（秒，可选正数）：空 = gateway 既有默认 30s
+      # （cloud 零漂移）；本地慢速拓扑由部署显式调大（同 docker-compose.yml）
+      LLM_TIMEOUT_SECONDS: ${AIOS_LLM_TIMEOUT_SECONDS:-}
       RUBRIC_JUDGE: ${AIOS_RUBRIC_JUDGE:-keyword}
       EMBEDDING_PROVIDER: ${AIOS_EMBEDDING_PROVIDER:-}
       SEARCH_PROVIDER: ${AIOS_SEARCH_PROVIDER:-}

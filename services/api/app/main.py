@@ -86,6 +86,8 @@ def create_app(database_url: str | None = None) -> FastAPI:
                 "model": settings.llm_model,
                 # M14-71 可选 provider 特定请求级窗口提示（兼容性不保证）
                 "num_ctx": settings.llm_num_ctx,
+                # M14-100 可选请求超时：None = gateway 既有默认 30s（cloud 零漂移）
+                "timeout_seconds": settings.llm_timeout_seconds,
             }
         )
     else:

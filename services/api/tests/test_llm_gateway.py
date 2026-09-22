@@ -143,7 +143,7 @@ def test_build_llm_judge_passes_num_ctx_through(monkeypatch) -> None:
     captured: dict = {}
 
     class _SpyGateway:
-        def __init__(self, *, endpoint, api_key, model, num_ctx=None) -> None:
+        def __init__(self, *, endpoint, api_key, model, num_ctx=None, timeout_seconds=None) -> None:
             captured.update(
                 endpoint=endpoint, api_key=api_key, model=model, num_ctx=num_ctx
             )
@@ -160,7 +160,7 @@ def test_build_llm_judge_omits_num_ctx_when_unset(monkeypatch) -> None:
     captured: dict = {}
 
     class _SpyGateway:
-        def __init__(self, *, endpoint, api_key, model, num_ctx=None) -> None:
+        def __init__(self, *, endpoint, api_key, model, num_ctx=None, timeout_seconds=None) -> None:
             captured.update(num_ctx=num_ctx)
 
     monkeypatch.setattr("app.llm.rubric_judge.LlmGateway", _SpyGateway)

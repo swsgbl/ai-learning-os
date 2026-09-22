@@ -46,11 +46,15 @@ RC_BUILD_SCRIPT = REPO_ROOT / "infra" / "build_release_candidate.sh"
 SMOKE_DOCKER_SCRIPT = REPO_ROOT / "infra" / "smoke_docker.sh"
 RUNNER_PATH = REPO_ROOT / "tools" / "ops" / "rc_smoke_rehearsal.py"
 
-#: 生产面三文件在 M14-96 基点 c9de722 的 git blob（LF）sha256——
-#: `git show c9de722:<path> | sha256sum` 逐字登记，LF 归一化后对 pin。
+#: 生产面三文件的 git blob（LF）sha256——`git show <base>:<path> | sha256sum`
+#: 逐字登记，LF 归一化后对 pin。初始登记于 M14-96 基点 c9de722；M14-100
+#: 显式更新 docker-compose.yml pin（新增 LLM_TIMEOUT_SECONDS 空默认透传
+#: 槽位——空值 = gateway 既有默认 30s，生产渲染零漂移；见
+#: docs/evidence/m14-100-local-llm-timeout-budget/），另两文件仍为
+#: c9de722 原始登记。
 PRODUCTION_FILE_PINS = {
     "infra/docker-compose.yml":
-        "d21852918af56c0db4991acf119fd052e9876f17af7475c07a850436bbca2f3b",
+        "d2e4f4939fa5effdbb303dff9c3502daaff057ea08a4e69aaf12cb640efdc598",
     "infra/build_release_candidate.sh":
         "3efa02586c8a93a1d4b26f1fc981fd1233a87ae94be797cd3f939e9b464778b2",
     "infra/smoke_docker.sh":
