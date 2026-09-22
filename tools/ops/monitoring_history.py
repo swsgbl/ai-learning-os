@@ -41,6 +41,17 @@
   collected_at——全程零墙钟**（输出逐字节可复现）。两文件同目录 tmp +
   fsync + os.replace 原子落盘；symlink 组件/越界路径一律拒绝；仅在
   **全部输入校验通过之后**才写任何输出。
+- M14-101 性能修复：run 内路径安全检查去重（``PathSafetyCache``）。
+  基线实现（M14-13）对**每个候选文件**重复 walk 同一祖先链——源目录
+  深度 d 时每文件 ~2d 次 stat，946 文件即 ~1.3 万次冗余 stat，冷缓存
+  （计划任务唤醒后 OS 缓存被换出）下足以把 history 聚合拖到 90s 超时
+  （M14-101 生产观测 90.202s）。现改为：``run_history`` 创建单一
+  run 内缓存贯穿发现与写出，「已确认存在且非 symlink」的祖先目录
+  不再重复 stat（逐文件祖先检查摊还 O(1)；每文件仅保留自身 symlink
+  检查 + 内容读取）。fail-closed 语义不变：缓存只记录**正向结论**
+  （存在且非 symlink），不存在/未验证路径永不缓存、下次仍走完整
+  检查；mkdir 后的 TOCTOU 复查恒走无缓存完整检查（见 write_outputs）。
+  必经 I/O 下界 = 每文件 1 次 read + 1 次 symlink 自查（+目录级常数）。
 - M14-23 restart 增量评估入档：``threshold_results.restart_evaluation``
   为**可选加法字段**——缺省 = v1 旧工件（合法入档，记录不带新键，
   旧记录/旧消费者零破坏）；在场即严格校验（固定词汇
@@ -205,6 +216,49 @@ def reject_symlinked_path(store: Store, *paths: Path) -> None:
         for ancestor in path.parents:
             if store.exists(ancestor) and store.is_symlink(ancestor):
                 raise HistoryError("symlink-in-path")
+
+
+class PathSafetyCache:
+    """M14-101 run 内路径安全检查缓存：「已确认存在且非 symlink」的祖先
+    目录在本次 run 内不再重复 stat。
+
+    背景（基线实现的算法浪费）：逐候选文件对同一路径前缀重复 walk 祖先
+    链——源目录深度 d 时每文件 ~2d 次 stat，全部候选共享同一前缀，仅最后
+    一级文件名不同（文件名不是任何其他候选的祖先）。946 文件 × ~14 次冗
+    余 stat ≈ 1.3 万次，冷缓存下即 M14-101 观测的 history 聚合 90s 超时。
+
+    语义（fail-closed 不变）：与逐次完整重查等价——缓存只记录**正向结
+    论**（存在且非 symlink）；不存在/未验证的路径永不缓存，下次仍走完整
+    exists+is_symlink 检查。父目录已缓存 ⇒ 其全部现存祖先已随之验证
+    （缓存写入时走的是整条链），直接短路。源目录在单次 run 内为只读快照
+    （pipeline.lock + 单次 list_dir），与基线实现共享同一 TOCTOU 假设——
+    缓存不扩大该窗口；mkdir 后复查等需要真实再验证的场景应使用无缓存的
+    ``reject_symlinked_path``。
+
+    计数器（self_checks/ancestor_checks）仅供测试断言有界操作数——生
+    产路径零依赖。"""
+
+    def __init__(self, store: Store) -> None:
+        self._store = store
+        self._verified_ancestors: set[Path] = set()
+        self.self_checks = 0
+        self.ancestor_checks = 0
+
+    def reject_symlinked(self, path: Path) -> None:
+        """与 reject_symlinked_path 同语义：目标自身 + 现存祖先组件。"""
+        self.self_checks += 1
+        if self._store.is_symlink(path):
+            raise HistoryError("symlink-target")
+        if path.parent in self._verified_ancestors:
+            return  # 父目录已验证 ⇒ 其祖先链已随之验证——零重复 stat
+        for ancestor in path.parents:
+            if ancestor in self._verified_ancestors:
+                continue
+            self.ancestor_checks += 1
+            if self._store.exists(ancestor):
+                if self._store.is_symlink(ancestor):
+                    raise HistoryError("symlink-in-path")
+                self._verified_ancestors.add(ancestor)
 
 
 # ---------------------------------------------------------------- 校验（纯）
@@ -477,21 +531,26 @@ def load_sample(store: Store, source_dir: Path, name: str) -> Sample | None:
 # ---------------------------------------------------------------- 管道（去重/排序/留存）
 
 
-def discover_and_classify(store: Store, source_dir: Path) -> tuple[list[Sample], int]:
+def discover_and_classify(store: Store, source_dir: Path,
+                          safety: PathSafetyCache | None = None
+                          ) -> tuple[list[Sample], int]:
     """源目录 → （完整样本列表, 跳过的历史 incomplete 工件计数）。任何
     未识别类违规即抛错，先于任何输出写入；候选存在但全为 incomplete
     （零完整样本）→ no-complete-sources 拒绝（fail-closed，绝不从空集
-    构建历史）。symlink 防御覆盖全部候选（含跳过件）。"""
+    构建历史）。symlink 防御覆盖全部候选（含跳过件）。M14-101：逐候选
+    的祖先检查经 ``safety``（缺省内建一次性 PathSafetyCache）run 内去
+    重——fail-closed 语义不变，冗余 stat 消除。"""
     if not store.exists(source_dir):
         raise HistoryError("source-dir-missing")
-    reject_symlinked_path(store, source_dir)
+    checker = safety if safety is not None else PathSafetyCache(store)
+    checker.reject_symlinked(source_dir)
     candidates = discover_candidates(store.list_dir(source_dir))
     if not candidates:
         raise HistoryError("no-sources")
     samples: list[Sample] = []
     skipped_incomplete = 0
     for name in candidates:
-        reject_symlinked_path(store, source_dir / name)
+        checker.reject_symlinked(source_dir / name)
         sample = load_sample(store, source_dir, name)
         if sample is None:
             skipped_incomplete += 1
@@ -733,13 +792,17 @@ def render_summary_markdown(summary: dict[str, object]) -> str:
 
 
 def write_outputs(store: Store, output_dir: Path, records: list[dict[str, object]],
-                  summary: dict[str, object]) -> tuple[Path, Path]:
+                  summary: dict[str, object],
+                  safety: PathSafetyCache | None = None) -> tuple[Path, Path]:
     """全部输入校验通过后才可到达此处；两输出同目录原子落盘。
 
     先于 mkdir 拒绝 output_dir 自身/现存祖先 symlink（mkdir(parents=True)
     会穿越 symlink 建目录——拒绝必须发生在任何创建之前）；mkdir 后再复查
-    output_dir 与两输出目标（TOCTOU 窗口防御）。"""
-    reject_symlinked_path(store, output_dir)
+    output_dir 与两输出目标（TOCTOU 窗口防御——**复查恒走无缓存完整检查**，
+    mkdir 前的缓存结论不可复用于此）。M14-101：mkdir 前检查经 ``safety``
+    run 内去重。"""
+    checker = safety if safety is not None else PathSafetyCache(store)
+    checker.reject_symlinked(output_dir)
     store.mkdirs(output_dir)
     history_path = output_dir / HISTORY_OUTPUT_NAME
     summary_path = output_dir / SUMMARY_OUTPUT_NAME
@@ -754,8 +817,10 @@ def write_outputs(store: Store, output_dir: Path, records: list[dict[str, object
 def run_history(*, store: Store, source_dir: Path, output_dir: Path,
                 retention: int) -> dict[str, object]:
     """主管道：发现→分类（历史 incomplete 跳过）→校验→去重→排序→留存→
-    摘要→写出（拒绝时零输出）。"""
-    samples, skipped_incomplete = discover_and_classify(store, source_dir)
+    摘要→写出（拒绝时零输出）。M14-101：单一 run 内 PathSafetyCache 贯穿
+    发现与写出（mkdir 前检查）——逐文件祖先检查摊还 O(1)。"""
+    safety = PathSafetyCache(store)
+    samples, skipped_incomplete = discover_and_classify(store, source_dir, safety=safety)
     discovered = len(samples)
     unique, duplicates = dedupe_and_sort(samples)
     retained, omitted = apply_retention(unique, retention)
@@ -763,7 +828,7 @@ def run_history(*, store: Store, source_dir: Path, output_dir: Path,
     summary = build_summary(retained=retained, discovered=discovered, duplicates=duplicates,
                             omitted_older=omitted, retention=retention,
                             skipped_incomplete=skipped_incomplete)
-    write_outputs(store, output_dir, records, summary)
+    write_outputs(store, output_dir, records, summary, safety=safety)
     return summary
 
 

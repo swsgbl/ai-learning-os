@@ -50,8 +50,12 @@ HTTP/零计划任务注册，全部行为用 fake 注入测试锁定；真实执
   skipped/planned）与退出码、逐步 UTC 起止与时长、固定命令身份（仓内相对
   身份 + ``<python>`` 占位，绝无绝对本机路径）、有界脱敏错误类别/异常类名
   （固定词汇 detail）、步骤产物名 + SHA-256 + 字节数（若可得；monitor 产物
-  按「步骤前后目录差集」发现，仅 hash ≤8 个 monitor-*.json；history 产物
-  为两个固定名；insights 产物为两个固定名）、边界注记。**绝无 env 值/
+  按「步骤前后目录差集」发现，仅 hash ≤8 个 monitor-*.json；history 与
+  insights 产物为各两个固定名，M14-101 起经**同轮新鲜度判定**——步骤
+  执行前对每固定名取 (size, mtime_ns) 指纹基线，步骤后指纹未变的预存
+  文件记 ``stale-preexisting-not-cited``（sha=None，绝不引用为该轮产物），
+  仅新建/指纹变化者才带 SHA-256 引用——**绝无「超时报告引用旧固定名
+  产物」的歧义**）、边界注记。**绝无 env 值/
   token/header/子进程原文日志/生产 ID**（写前 redact_secrets 终防线 +
   生成面固定词汇双保险）。报告写入失败 = 证据不可失 → EXIT 2。
 - 退出码：0 plan 成功 / execute 三步全 ok；1 execute 已执行但有步骤失败
@@ -147,6 +151,16 @@ INSIGHTS_TIMEOUT_MAX = 50.0
 #: 产物发现边界：每步至多 hash 的文件数 + 单文件字节数上限（超限记数不记哈希）
 MAX_ARTIFACTS_HASHED_PER_STAGE = 8
 MAX_ARTIFACT_BYTES = 16 * 1024 * 1024
+
+#: M14-101 固定名产物同轮新鲜度判定词汇（报告 note 固定词汇；绝不携带路径
+#: /内容文本）。基线缺失 = 同轮产出不可证——预存固定名文件**绝不**引用为
+#: 本轮产物（超时/失败轮尤其如此：旧文件指纹未变即不是本轮写的）。
+NOTE_STALE_PREEXISTING = "stale-preexisting-not-cited"
+NOTE_CREATED_THIS_RUN = "created-this-run"
+NOTE_REMOVED_THIS_RUN = "removed-this-run"
+NOTE_SYMLINK_NOT_HASHED = "symlink-not-hashed"
+NOTE_BASELINE_UNREADABLE = "baseline-unreadable-not-cited"
+NOTE_UNREADABLE = "unreadable-not-hashed"
 
 #: monitor 产物 stem 白名单（与 monitoring_history.ARTIFACT_STEM_RE 同款）
 MONITOR_STEM_RE = re.compile(r"^monitor-[0-9]{8}-[0-9]{6}$")
@@ -323,6 +337,8 @@ class Fs(Protocol):
 
     def read_bytes(self, path: Path) -> bytes: ...
 
+    def stat_fingerprint(self, path: Path) -> tuple[int, int] | None: ...
+
     def lock_acquire(self, path: Path, body_text: str) -> bool: ...
 
     def lock_release(self, path: Path) -> None: ...
@@ -347,6 +363,17 @@ class RealFs:
 
     def read_bytes(self, path: Path) -> bytes:
         return path.read_bytes()
+
+    def stat_fingerprint(self, path: Path) -> tuple[int, int] | None:
+        """M14-101 同轮新鲜度指纹 (size, mtime_ns)；缺失/不可 stat → None
+        （如实入档，绝不猜）。写侧 tmp+fsync+os.replace 原子替换必然推进
+        mtime——指纹未变即未在本轮被重写（history 输出零墙钟逐字节可复现，
+        内容哈希无法区分「重写了相同字节」与「没写」，mtime 指纹可以）。"""
+        try:
+            info = path.stat()
+        except OSError:
+            return None
+        return (info.st_size, info.st_mtime_ns)
 
     def lock_acquire(self, path: Path, body_text: str) -> bool:
         """O_CREAT|O_EXCL|O_WRONLY 原子创建——已存在即 False（不读、不删、不覆盖）。"""
@@ -481,27 +508,112 @@ def _safe_listing(fs: Fs, directory: Path) -> list[str] | None:
         return None
 
 
+def fixed_name_fingerprints(fs: Fs, directory: Path,
+                             names: tuple[str, ...]
+                             ) -> dict[str, tuple[int, int] | None] | None:
+    """M14-101 步骤执行前基线：每固定名 → (size, mtime_ns) 指纹或 None
+    （基线时不存在）。目录不可读 → 整体 None（同轮新鲜度不可证——后续
+    对任何现存固定名零引用，fail-honest）。"""
+    fingerprints: dict[str, tuple[int, int] | None] = {}
+    for name in names:
+        try:
+            fingerprints[name] = fs.stat_fingerprint(directory / name)
+        except OSError:
+            return None
+    return fingerprints
+
+
+def _discover_fixed_name_artifacts(
+        fs: Fs, spec: StepSpec,
+        baseline: dict[str, tuple[int, int] | None] | None
+        ) -> list[dict[str, object]] | dict[str, str]:
+    """固定名产物（history/insights）同轮新鲜度发现（M14-101）：
+
+    仅当固定名能证明是**本步同一轮执行写入**的（基线后新建，或
+    (size, mtime_ns) 指纹相对基线变化——原子替换必然推进 mtime）才带
+    SHA-256 引用；指纹未变的预存文件记 ``stale-preexisting-not-cited``
+    （sha=None）——超时/失败轮引用旧固定名产物的歧义从此不可能。"""
+    after = _safe_listing(fs, spec.artifacts_dir)
+    if after is None:
+        return {"unavailable_reason": "artifact-dir-unreadable"}
+    entries: list[dict[str, object]] = []
+    for name in _fixed_names_for(spec.step_id):
+        present = name in after
+        if baseline is None:
+            # 基线不可读——同轮产出不可证：零引用（事实性 note，绝不带哈希）
+            if present:
+                try:
+                    fingerprint = fs.stat_fingerprint(spec.artifacts_dir / name)
+                except OSError:
+                    fingerprint = None
+                entries.append({"name": name, "sha256": None,
+                                "bytes": fingerprint[0] if fingerprint else None,
+                                "note": NOTE_BASELINE_UNREADABLE})
+            continue
+        baseline_fp = baseline.get(name)
+        if baseline_fp is None:
+            if not present:
+                continue  # 前后皆不存在：无事实，零条目
+        elif not present:
+            entries.append({"name": name, "sha256": None, "bytes": None,
+                            "note": NOTE_REMOVED_THIS_RUN})
+            continue
+        path = spec.artifacts_dir / name
+        if fs.is_symlink(path):
+            entries.append({"name": name, "sha256": None, "bytes": None,
+                            "note": NOTE_SYMLINK_NOT_HASHED})
+            continue
+        try:
+            current_fp = fs.stat_fingerprint(path)
+        except OSError:
+            current_fp = None
+        if baseline_fp is not None and current_fp == baseline_fp:
+            # 指纹未变 = 非本轮写入（旧文件）——记录名字/大小事实，零哈希引用
+            entries.append({"name": name, "sha256": None,
+                            "bytes": current_fp[0] if current_fp else None,
+                            "note": NOTE_STALE_PREEXISTING})
+            continue
+        try:
+            data = fs.read_bytes(path)
+        except OSError:
+            entries.append({"name": name, "sha256": None, "bytes": None,
+                            "note": NOTE_UNREADABLE})
+            continue
+        entry: dict[str, object] = {"name": name, "sha256": hashlib.sha256(data).hexdigest(),
+                                    "bytes": len(data)}
+        if len(data) > MAX_ARTIFACT_BYTES:
+            entry = {"name": name, "sha256": None, "bytes": len(data),
+                     "note": "oversize-not-hashed"}
+        elif baseline_fp is None:
+            entry["note"] = NOTE_CREATED_THIS_RUN
+        entries.append(entry)
+    return entries
+
+
+def _fixed_names_for(step_id: str) -> tuple[str, ...]:
+    return HISTORY_OUTPUT_NAMES if step_id == "history" else INSIGHTS_OUTPUT_NAMES
+
+
 def discover_stage_artifacts(fs: Fs, spec: StepSpec,
-                             baseline: list[str] | None) -> list[dict[str, object]] | dict[str, str]:
-    """步骤产物发现（只读）：monitor=前后差集 ∩ monitor-*.json；history 与
-    insights=各自两固定名（同款固定名模式）。"""
+                             baseline: object) -> list[dict[str, object]] | dict[str, str]:
+    """步骤产物发现（只读）：monitor=前后差集 ∩ monitor-*.json（baseline=
+    步骤前目录清单 list[str] | None）；history 与 insights=各自两固定名
+    + **同轮新鲜度判定**（baseline=步骤前固定名指纹 dict[name, (size,
+    mtime_ns) | None] | None——指纹未变的预存文件绝不引用为本轮产物）。"""
     if spec.step_id == "monitor":
         after = _safe_listing(fs, spec.artifacts_dir)
         if after is None:
             return {"unavailable_reason": "artifact-dir-unreadable"}
+        listing = baseline if isinstance(baseline, list) else None
         # 基线目录此前不存在 = 首次运行（差集即全部现存产物，不误报不可读）
-        new_names = sorted(set(after) - (set(baseline) if baseline is not None else set()))
+        new_names = sorted(set(after) - (set(listing) if listing is not None else set()))
         stems = [n[:-len(".json")] for n in new_names
                  if n.startswith("monitor-") and n.endswith(".json")
                  and MONITOR_STEM_RE.match(n[:-len(".json")]) is not None]
         return _artifact_entries(fs, spec.artifacts_dir,
                                  [f"{stem}.json" for stem in sorted(stems)])
-    fixed_names = HISTORY_OUTPUT_NAMES if spec.step_id == "history" else INSIGHTS_OUTPUT_NAMES
-    after = _safe_listing(fs, spec.artifacts_dir)
-    if after is None:
-        return {"unavailable_reason": "artifact-dir-unreadable"}
-    return _artifact_entries(fs, spec.artifacts_dir,
-                             [name for name in fixed_names if name in after])
+    fingerprint_baseline = (baseline if isinstance(baseline, dict) else None)
+    return _discover_fixed_name_artifacts(fs, spec, fingerprint_baseline)
 
 
 def run_step(runner: Runner, spec: StepSpec, argv: tuple[str, ...],
@@ -568,6 +680,7 @@ PIPELINE_BOUNDARIES: tuple[str, ...] = (
     "per-step bounded timeouts with conservative hard caps (monitor 60-540s, history 10-120s, insights 5-50s; caps sum to 710s below the PT12M task execution time limit; history default raised 45s -> 90s in M14-79 after three observed 45.2-47.0s kills in production, about 1.9x worst observed (46.955s) while completed runs take 0.3-7.2s; timeout facts remain recorded as-is and are never suppressed)",
     "overlap protection: fail-closed exclusive lock; zero destructive stale-lock cleanup in this round",
     "report contains only safe facts: statuses, exit codes, stage timing, fixed command identities, sanitized error categories/classes, artifact names/hashes",
+    "fixed-name stage artifacts (history/insights) are cited with a SHA-256 only when the same run provably wrote them (pre-step (size, mtime_ns) fingerprint baseline; new file or changed fingerprint); preexisting unchanged files are recorded as stale-preexisting-not-cited and never cited as this run's evidence, so a timeout or failed stage can no longer reference an old fixed-name artifact",
     "no env values, tokens, headers, raw child output, or production IDs are ever read into the report",
     "single pipeline success is not production readiness; scheduled registration is supervisor-only; this tool never claims production ready",
 )
@@ -743,11 +856,15 @@ def run_execute(*, runner: StepRunner, clock: Clock, fs: Fs, artifact_dir: Path,
         monitor = run_step(runner, monitor_spec, argvs["monitor"], clock)
         monitor["artifacts"] = discover_stage_artifacts(fs, monitor_spec, baseline)
         log.say(f"步骤 monitor: status={monitor['status']} exit_code={monitor['exit_code']}")
-        # 3) history 步——仅 monitor exit 0（ok|warn）后运行
+        # 3) history 步——仅 monitor exit 0（ok|warn）后运行；执行前取固定名
+        #    指纹基线（M14-101 同轮新鲜度：指纹未变的预存文件绝不引用为
+        #    本轮产物——超时轮引用旧固定名产物的歧义不可能）
         if monitor["status"] == "ok":
             log.say(f"步骤 history: 执行（timeout {history_timeout:g}s，固定白名单形态）")
+            history_baseline = fixed_name_fingerprints(fs, history_spec.artifacts_dir,
+                                                       HISTORY_OUTPUT_NAMES)
             history = run_step(runner, history_spec, argvs["history"], clock)
-            history["artifacts"] = discover_stage_artifacts(fs, history_spec, None)
+            history["artifacts"] = discover_stage_artifacts(fs, history_spec, history_baseline)
             log.say(f"步骤 history: status={history['status']} exit_code={history['exit_code']}")
         else:
             history = skipped_step(history_spec, "monitor", monitor)
@@ -755,12 +872,15 @@ def run_execute(*, runner: StepRunner, clock: Clock, fs: Fs, artifact_dir: Path,
                     f"exit_code={monitor['exit_code']}——失败如实保留不遮蔽）")
         # 4) insights 步——仅 history status=ok 后运行（history.jsonl 完整
         #    落盘才可洞察）；输入恒为 insights 默认源 = history canonical
-        #    输出目录（固定命令形态不带 --source，无用户可注入面）
+        #    输出目录（固定命令形态不带 --source，无用户可注入面）；同款
+        #    指纹基线（M14-101）
         if monitor["status"] == "ok" and history["status"] == "ok":
             log.say(f"步骤 insights: 执行（timeout {insights_timeout:g}s，固定白名单形态，"
                     "默认源=history canonical 输出）")
+            insights_baseline = fixed_name_fingerprints(fs, insights_spec.artifacts_dir,
+                                                       INSIGHTS_OUTPUT_NAMES)
             insights = run_step(runner, insights_spec, argvs["insights"], clock)
-            insights["artifacts"] = discover_stage_artifacts(fs, insights_spec, None)
+            insights["artifacts"] = discover_stage_artifacts(fs, insights_spec, insights_baseline)
             log.say(f"步骤 insights: status={insights['status']} exit_code={insights['exit_code']}")
         else:
             insights = skipped_step(insights_spec, "history", history)
