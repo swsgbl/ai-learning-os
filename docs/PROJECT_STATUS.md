@@ -9,6 +9,39 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-102 监控自然窗口证据回填**：worktree
+`m14-102-monitoring-natural-evidence`，分支
+`docs/m14-102-monitoring-natural-evidence`，基于 main
+`3bb95a17898d3e4aea71570deee9d173945b5f80`（PR #188 merge = M14-101
+合入，精确基点），单 local commit，不 push、不开 PR。docs-only：把
+M14-101 合入（2026-09-23 06:45:08 +0800 = 2026-09-22T22:45:08Z）
+15 分钟后计划任务 `AIOS-Monitoring-Pipeline` 的第一次自然调度运行
+（2026-09-22T23:00:01Z，本地 07:00:01 GMT+8，PT15M :00 边界）回填为
+可审计仓库证据——**本回填未触发任何运行**（被动观测：工件 mtime
+2026-09-23 07:00:04 +0800 与报告 ended_at 精确一致，由该轮自身写出；
+未运行/未查询/未修改计划任务）。canonical 工件
+`.verify/artifacts/m14-14-monitoring-pipeline/pipeline-20260922-230004.json`
+（gitignored 只读核验：**5871 bytes / SHA-256
+`F913CEE7078DC308F7E77DB8954011FC865B7C94C3933981B107DFDCE01BFC04`**，
+wc -c + sha256sum 与 Python hashlib 双轨复核一致）：
+`overall_status=ok`；monitor ok/exit 0/**1.375s**（预算 480s）、
+history ok/exit 0/**1.263s**（预算 90s，未超时）、insights ok/exit
+0/**0.208s**（预算 15s）；lock acquired+released；全部步骤产物带
+SHA-256 引用。判定：history 步回到 M14-79 正常轮量级（0.3–7.2s），
+M14-101 针对的 ~90s 冷缓存超时形态未再现；boundaries 含 M14-101
+同轮 provenance 边界原文（该文本只存在于 M14-101 后的
+`PIPELINE_BOUNDARIES`）+ PR #188 合并早于运行 15 分钟——该轮运行的
+是合入后管道代码；超时数值未放宽（history 仍 90s）。诚实边界：单轮
+ok ≠ production readiness、不授权 cutover；`release_ready=false`/
+`production_ready=false` 不变，发布门状态不变；**生产仍运行 m14-70
+镜像**（current main 生产切换未另行完成则不变）；M14-101 本身未运行
+计划任务的历史事实保持（本切片是其合入后自然窗口观测，兑现其证据
+README §7 后续项）。验证：工件哈希/字节独立重算 + JSON 字段逐键断言
+全过 + `git diff --check` 干净。证据
+`docs/evidence/m14-102-monitoring-natural-evidence/README.md`（唯一
+入库证据文件），同步更新 CHANGELOG（M14-102 条目）与 ROADMAP（M14-102
+状态更新）。
+
 **M14-101 监控历史聚合性能修复 + 管道固定名产物同轮新鲜度**：worktree
 `m14-101-monitoring-history-performance`，分支
 `ops/m14-101-monitoring-history-performance`，基于 main
