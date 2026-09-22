@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -1160,3 +1160,39 @@ python tools/ops/soak_window_gate.py --consecutive-ok 8  # 前置可配置
 `production_ready=false` 不变。输出 gitignored
 `.verify/artifacts/m14-79-soak-window-anchor/`；契约测试
 `services/api/tests/test_soak_window_gate.py` 锁定。
+
+## long_soak_release_window.py（M14-93）
+
+长稳到期审计/导出 runner：M14-79 权威锚定窗口（soak-window-anchor.json）
+到点后，把「重跑 soak 审计 + 逐字节导出 long-soak 门证据」从人工命令
+拼装固化为单一 fail-closed 仓库工具。到期判定零墙钟——**最新历史样本
+collected_at** 对比锚定记录 `earliest_audit_collected_at`（绝不读系统钟）：
+未到期 → 固定词汇 not-due 拒绝（exit 1，零审计零证据）；到期 → **原样
+复用** `soak_stability_audit.py` 的解析/校验/分类语义（固定
+release-readiness 接受策略 1440/15/20/500，不暴露任何策略参数——策略
+漂移即证据不可用）审计进全新输出目录；pending 拒绝证据导出；只有
+pass/blocked 才把 `soak-audit-report.json` **逐字节复制**为
+`evidence/long-soak.json`（utf-8 往返预检 + 写后重读复核，任何字节差异
+拒绝并移除坏副本——绝不改写/重序列化门证据），runner 报告登记源/副本
+双哈希（必须相等）。锚定记录严格校验（九键全集/schema_version/tool/
+follow_up_audit_tool 逐字匹配/earliest == anchor + 窗口/generated_at ==
+anchor 零墙钟产锚不变式/precondition 取值域——手改锚提前到期或
+tail_non_ok_count>0 篡改即拒绝）。
+
+```
+# 仓库根执行（canonical venv，纯标准库）
+python tools/ops/long_soak_release_window.py             # 默认输入/输出
+python tools/ops/long_soak_release_window.py --anchor <soak-window-anchor.json> \
+    --history <dir-or-file> --output-dir <fresh-dir>
+```
+
+退出码：0 到期 pass 且证据已导出 / 1 not-due（零审计零证据）/ 2 到期
+pending（审计已跑、证据导出拒绝）/ 3 到期 blocked（blocked 证据已逐字节
+导出——诚实结论非崩溃）/ 4 输入拒绝（锚定/历史 malformed、输出目录已
+存在、symlink、哈希不符、写失败——零输出）。**本 runner 不使
+long-soak 通过**：blocked 窗口导出的就是 blocked 证据；
+`release_ready=false` / `production_ready=false` 不变，发布审批
+human-only。输出 gitignored
+`.verify/artifacts/m14-93-long-soak-window-runner/`；契约测试
+`services/api/tests/test_long_soak_release_window.py` 锁定（锚定记录
+由真实 soak_window_gate --anchor 在合成历史上产出后消费）。
