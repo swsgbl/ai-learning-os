@@ -98,6 +98,27 @@ TOOL_NAME = "harmony_auth_smoke"
 DEFAULT_API_BASE = "http://127.0.0.1:8765/"
 DEVICE_API_BASE_URL = "http://10.0.2.2:8765/"
 
+
+def device_api_base(api_base: str) -> str:
+    """Derive the Android-emulator device URL from a validated loopback
+    host URL (M14-95): host 127.0.0.1/localhost -> 10.0.2.2, same port,
+    scheme and trailing slash preserved (default -> http://10.0.2.2:8765/).
+    Input must come from validate_api_base (exact loopback, empty-or-/
+    path); anything else is rejected fail-closed.
+    """
+    parts = urllib.parse.urlsplit(api_base)
+    if (parts.scheme != "http"
+            or parts.hostname not in ("127.0.0.1", "localhost")
+            or parts.username is not None or parts.password is not None
+            or parts.query or parts.fragment
+            or parts.path not in ("", "/")):
+        raise ValueError("api_base_not_validated_loopback")
+    host = "10.0.2.2"
+    port = parts.port
+    if port is not None:
+        host += ":" + str(port)
+    return "http://" + host + "/"
+
 # Fixed synthetic credentials (mock-only; never a real secret). They are
 # typed into the emulator's own input fields and are never recorded.
 MOCK_LOGIN_USER = "aiosstudent"
@@ -915,8 +936,12 @@ def _owns_layout(texts: Sequence[Tuple[str, str]]) -> bool:
             or HOME_TAB_TEXT in joined)
 
 
-def _drive_settings_url(driver: UiDriver) -> Tuple[bool, List[dict]]:
-    """Type the fixed device mock URL into Settings and save.
+def _drive_settings_url(
+    driver: UiDriver,
+    device_base: str,
+) -> Tuple[bool, List[dict]]:
+    """Type the device mock URL (derived from --api-base) into
+    Settings and save.
 
     Input handling (proven on emulator, M14-89 round 4): inputText
     APPENDS to the field, so existing content is cleared first with a
@@ -971,7 +996,7 @@ def _drive_settings_url(driver: UiDriver) -> Tuple[bool, List[dict]]:
         # settings_input_mismatch x1). With no host round trip between
         # focus acquisition and text entry the whole action is atomic.
         driver.type_url_field(
-            fx, fy, DEVICE_API_BASE_URL, min(len(current) + 8, 64))
+            fx, fy, device_base, min(len(current) + 8, 64))
         time.sleep(UI_SETTLE_SECONDS)
 
         # Dismiss the IME BEFORE verification (R12). R11 proved at
@@ -1037,7 +1062,7 @@ def _drive_settings_url(driver: UiDriver) -> Tuple[bool, List[dict]]:
             time.sleep(HOME_SETTLE_SECONDS)
             continue
         vfield = find_url_input(vtexts)
-        if vfield is None or DEVICE_API_BASE_URL not in vfield[2]:
+        if vfield is None or device_base not in vfield[2]:
             failures.append({
                 "code": "settings_input_mismatch",
                 "detail": {"attempt": attempt},
@@ -1077,7 +1102,7 @@ def _drive_settings_url(driver: UiDriver) -> Tuple[bool, List[dict]]:
             time.sleep(HOME_SETTLE_SECONDS)
             continue
         joined = "\n".join(t for t, _b in final_texts)
-        if SETTINGS_SAVED_PREFIX + DEVICE_API_BASE_URL in joined:
+        if SETTINGS_SAVED_PREFIX + device_base in joined:
             # Cold-restart so AuthPane re-queries auth/status with the
             # persisted URL (it only queries on aboutToAppear); a fresh
             # start also lands IME-free on the Home tab.
@@ -1604,6 +1629,15 @@ def run_auth_smoke(
     request_failures += target_failures
     base, base_failures = validate_api_base(api_base)
     request_failures += base_failures
+    device_base: Optional[str] = None
+    if base is not None:
+        try:
+            device_base = device_api_base(base)
+        except ValueError:
+            request_failures.append({
+                "code": "device_url_derivation_failed",
+                "detail": {"argument": "--api-base"},
+            })
     if not target_failures:
         hap_record, hap_failures = _inspect_hap(root, hap)
         request_failures += hap_failures
@@ -1740,7 +1774,7 @@ def run_auth_smoke(
                 else:
                     step_failures += driver.ensure_foreground()
             elif name == STEP_SETTINGS_UI:
-                ok, step_failures = _drive_settings_url(driver)
+                ok, step_failures = _drive_settings_url(driver, device_base)
                 if not ok and not step_failures:
                     step_failures.append(
                         {"code": "settings_drive_failed"})
@@ -1796,7 +1830,7 @@ def run_auth_smoke(
         "tool": TOOL_NAME,
         "expect_auth": expect_auth,
         "api_base": base,
-        "device_api_base_typed": DEVICE_API_BASE_URL,
+        "device_api_base_typed": device_base,
         "bundle": bundle_name,
         "ability": ability,
         "hap": hap_record,
