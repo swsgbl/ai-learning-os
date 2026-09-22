@@ -173,6 +173,10 @@ services:
       # aios-qwen3.5-9b-4096（模型层 num_ctx，见 infra/provision_ollama_model.ps1），
       # 本槽位保持空 = 不带 options（payload 与既有形态一致，零行为漂移）
       LLM_NUM_CTX: ${AIOS_LLM_NUM_CTX:-}
+      # M14-100 LLM 请求超时（秒，可选正数）：空 = gateway 既有默认 30s
+      # （cloud 零漂移）；本地慢速拓扑（饱和 GPU 上的 thinking 模型生成
+      # 可 >30s，M14-98 实证）由部署显式调大。值非敏感（秒数）
+      LLM_TIMEOUT_SECONDS: ${AIOS_LLM_TIMEOUT_SECONDS:-}
       # M14-70 主观题判分 judge selector（config.py rubric_judge 槽位）：默认
       # keyword = 内置确定性 judge，与应用默认严格一致；AIOS_RUBRIC_JUDGE=llm
       # 显式切换 LLM judge（复用上方 LLM_* 槽位）。`:-` 语义与 TTS_CLOUD_VOICE

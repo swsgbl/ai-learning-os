@@ -92,16 +92,19 @@ def build_llm_judge(config: dict) -> LlmRubricJudge | None:
 
     config: {"endpoint": str|None, "api_key": str|None, "model": str|None,
              "num_ctx": int|None（M14-71 可选 provider 特定请求级窗口提示，
-             兼容性不保证——Ollama /v1 实证不可靠消费）}
+             兼容性不保证——Ollama /v1 实证不可靠消费）,
+             "timeout_seconds": float|None（M14-100 可选请求超时——None =
+             gateway 既有默认 30s，cloud 零漂移；本地慢速拓扑显式调大）}
     """
     import logging
 
     logger = logging.getLogger(__name__)
-    endpoint, api_key, model, num_ctx = (
+    endpoint, api_key, model, num_ctx, timeout_seconds = (
         config.get("endpoint"),
         config.get("api_key"),
         config.get("model"),
         config.get("num_ctx"),
+        config.get("timeout_seconds"),
     )
     if not (endpoint and api_key and model):
         logger.warning(
@@ -111,5 +114,11 @@ def build_llm_judge(config: dict) -> LlmRubricJudge | None:
         )
         return None
     return LlmRubricJudge(
-        LlmGateway(endpoint=endpoint, api_key=api_key, model=model, num_ctx=num_ctx)
+        LlmGateway(
+            endpoint=endpoint,
+            api_key=api_key,
+            model=model,
+            num_ctx=num_ctx,
+            timeout_seconds=timeout_seconds,
+        )
     )

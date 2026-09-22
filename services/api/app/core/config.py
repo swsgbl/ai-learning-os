@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     # （模型层 num_ctx，infra/provision_ollama_model.ps1）。值非敏感（窗口
     # 大小）；默认 None = payload 不带 options（零行为漂移）
     llm_num_ctx: int | None = None
+    # M14-100 LLM 请求超时（秒，env LLM_TIMEOUT_SECONDS）：可选 >0 数值——
+    # None = gateway 既有默认 30s（cloud 部署零行为漂移）；本地慢速拓扑
+    # （饱和 GPU 上的 thinking 模型单次生成可 >30s，M14-98 两跑 llm 冒烟
+    # 真实超时）由部署显式调大。值非敏感（秒数）
+    llm_timeout_seconds: float | None = None
     embedding_provider: str | None = None
     search_provider: str | None = None
     search_cloud_endpoint: str | None = None  # M5-01 cloud-web 搜索源
@@ -130,6 +135,23 @@ class Settings(BaseSettings):
         # M14-71: 窗口提示必须是 >=1 的整数；bool 是 int 子类，一并拒绝
         if value is not None and (isinstance(value, bool) or value < 1):
             raise ValueError("LLM_NUM_CTX 必须是 >=1 的整数")
+        return value
+
+    @field_validator("llm_timeout_seconds", mode="before")
+    @classmethod
+    def blank_llm_timeout_to_none(cls, value: object) -> object:
+        # M14-100: compose 的 `${AIOS_LLM_TIMEOUT_SECONDS:-}` 空值形态归一为
+        # None（未配置语义 = gateway 既有默认 30s），与 llm_num_ctx 同款处理
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("llm_timeout_seconds")
+    @classmethod
+    def positive_llm_timeout_seconds(cls, value: float | None) -> float | None:
+        # M14-100: 超时必须是 >0 的数值；bool 是 int 子类，一并拒绝
+        if value is not None and (isinstance(value, bool) or value <= 0):
+            raise ValueError("LLM_TIMEOUT_SECONDS 必须是 >0 的数值")
         return value
 
     @field_validator("cors_origins")
