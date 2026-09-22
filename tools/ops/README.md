@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -1196,3 +1196,40 @@ human-only。输出 gitignored
 `.verify/artifacts/m14-93-long-soak-window-runner/`；契约测试
 `services/api/tests/test_long_soak_release_window.py` 锁定（锚定记录
 由真实 soak_window_gate --anchor 在合成历史上产出后消费）。
+
+## rc_smoke_rehearsal.py（M14-96）
+
+RC 本地彩排冒烟 runner：从当前 worktree 构建唯一 tag
+（`m14-96-rc-smoke-<HEAD 40hex>`，绝不覆盖 v0.1.0/生产 tag）的
+API/Web 镜像，在任务自有隔离 compose 项目
+（`infra/docker-compose.rc-smoke.yml`，项目名 `aios-m14-96-rc-smoke`，
+loopback 独占 18096/13096，数据面零宿主端口）里起栈、逐服务健康轮询、
+八项 loopback 探针（/health、version==VERSION、auth_enabled、匿名
+/papers 401、匿名 /resources/upload 401、Web / 与 /login、CORS
+preflight 回显）、只拆除本项目（down --volumes），并以**前后全机
+docker ps -a/volume/network/compose-ls 快照等价**证明零外部（生产）
+漂移。fail-closed 前置：HEAD==--base-sha、porcelain 脏文件必须在镜像
+构建输入面之外、项目零残留、tag 镜像不存在、infra 镜像在库（绝不
+pull）、端口可 bind、compose config 渲染精确；compose 子进程 env
+全量剥离宿主 AIOS_* 漂移变量；运行期 assert_safe_argv 白名单护栏
+（compose 恒 -f 冒烟文件 + -p 任务项目名，stop/rm/push/system 等动词
+一律拒绝）。与生产默认零漂移：生产 compose/RC 构建器/冒烟脚本三文件
+字节级 sha256 pin（基点 c9de722 git blob），冒烟 compose 默认 no-op。
+
+```
+# 仓库根执行（canonical venv，纯标准库）
+python tools/ops/rc_smoke_rehearsal.py --base-sha <40-hex>
+```
+
+退出码：0 pass / 1 refused（前置 fail-closed）/ 2 failed（构建、起栈、
+健康、探针、拆栈或快照等价失败——诚实失败证据照常落盘）/ 3 用法错误。
+**本地彩排冒烟，不是 production readiness 声明**：release_ready /
+production_ready 不变，发布审批 human-only；不推镜像仓库、不打 git
+标签、不发 GitHub Release。输出 gitignored
+`.verify/artifacts/m14-96-release-candidate-smoke/`（rc-smoke-report
+.json/.md + 逐阶段原始输出 + SHA256SUMS）；契约测试
+`services/api/tests/test_rc_smoke_rehearsal.py` 锁定（59 项，含生产
+字节级 pin 回归）。执行结论见
+`docs/evidence/m14-96-release-candidate-smoke/README.md`（attempt-1
+build-failed:api——本机 daemon 出站 mirror+静态代理不可用且本地无
+python/node 基镜像，按 supervisor 边界诚实停止；机制零改动可复跑）。

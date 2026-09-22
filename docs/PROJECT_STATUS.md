@@ -9,6 +9,81 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-96 RC 本地彩排冒烟（release-candidate local rehearsal smoke）**：worktree
+`m14-96-release-candidate-smoke`，分支
+`ops/m14-96-release-candidate-smoke`，基于 main
+`c9de72214fbe07f41f5d6706e1c72ccb7e60cac3`（PR #182 merge = M14-94
+证据合入，精确基点），单 local commit（不 push、不开 PR）。目标：
+为 API/Web 镜像提供**与运行中生产栈（aios-m14-03-production-rehearsal）
+并存**的隔离 RC 本地彩排冒烟机制并真实执行一次——任务自有 compose
+项目、唯一镜像 tag、独占 loopback 端口、生产默认零漂移；失败必须如实
+报告。交付：① `infra/docker-compose.rc-smoke.yml`（name
+`aios-m14-96-rc-smoke`，恰五服务 postgres/redis/minio/api/web，零
+build 段 + 全服务 `pull_policy: never`，api/web 镜像 tag 经 `${VAR:?}`
+必填变量注入，数据面零宿主端口、边缘面仅 127.0.0.1:18096/13096（与
+生产 compose 端口全集 5433/6379/9000-9001/8000/3000/7880-7892/8878
+零交集，契约测试静态断言），零 restart 策略、卷仅项目级一次性两卷，
+api environment 逐键逐字复制生产 compose（唯一刻意差异 CORS 默认指向
+冒烟 Web 13096），healthcheck/depends_on 与生产逐块一致；默认 no-op
+——只有被 -f 显式引用才生效；不用 overlay 组合生产文件的原因：
+compose ports 合并语义为拼接，无法摘除生产硬编码宿主端口）；②
+`tools/ops/rc_smoke_rehearsal.py`（M14-93 同款单文件纯标准库
+fail-closed runner，子进程/HTTP/bind/时钟全注入可测）：前置校验
+（HEAD==--base-sha、porcelain 脏文件全部落在镜像构建输入面
+services/api/{app,requirements.txt,alembic*}/Dockerfile/VERSION/
+.dockerignore/package*.json/apps/web 之外、项目零残留容器/卷、唯一
+tag `aios/{api,web}:m14-96-rc-smoke-<HEAD>` 不存在（绝不覆盖
+v0.1.0/生产 tag）、infra 镜像本地在库（自 compose 解析 pin，绝不
+pull）、127.0.0.1:18096/13096 bind 预检、compose config 渲染且项目
+名/服务集精确）→ 唯一 tag 构建（Web build-arg NEXT_PUBLIC_API_BASE_URL
+指向冒烟 API）→ 隔离 up --no-build（compose env 全量剥离宿主 AIOS_*
+漂移变量、只注入纯 tag 后缀）→ 五服务健康轮询 → docker port
+loopback 独占证明 → 八项 loopback 探针（/health、version==VERSION
+文件、auth_enabled=true、匿名 GET /papers 401、匿名 POST
+/resources/upload 401（既有 require_user 应用级门禁契约——「已契约
+定义」的匿名保护写断言）、Web / 与 /login、CORS preflight 回显）→
+无论成败恒拆本项目（down --volumes --remove-orphans）+ 残留复核 →
+前后全机 docker ps -a/volume/network/compose-ls 快照等价证明（本项目
+之外任何漂移即失败）→ 证据 + SHA256SUMS；assert_safe_argv 运行期
+白名单护栏（compose 恒 -f 冒烟文件 + -p 项目名，stop/rm/push/system
+等动词一律 GuardError）；退出码 0 pass / 1 refused / 2 failed / 3
+用法错误。③ 生产默认零漂移回归：infra/docker-compose.yml、
+build_release_candidate.sh、smoke_docker.sh 三文件 LF 归一化字节级
+sha256 pin 基点 c9de722 git blob（任何生产面改动击穿 pin）。真实
+执行（2026-09-22T13:46:06–10Z，canonical gitignored
+`.verify/artifacts/m14-96-release-candidate-smoke/` 7 文件 +
+SHA256SUMS）：前置校验全绿（HEAD==c9de722、porcelain 恰本切片 3 个
+tooling 新文件且全部在镜像构建输入面之外=build_inputs_clean、真实
+docker compose config 渲染通过、全机 before 快照：生产 7 容器全部
+healthy Up 33 hours）；构建在 `FROM python:3.12-slim` metadata 解析
+失败——本机 daemon registry mirror（docker.m.daocloud.io）经静态系统
+代理 http://127.0.0.1:7892（当时无监听，连接拒绝）不可达，且本地
+镜像库经只读核查无 python:3.12-slim / node:22-alpine → 离线/no-pull
+构建前提不成立；按 supervisor 纠正边界（禁启停 VPN/sing-box/代理/
+daemon 配置）**诚实停止，不重试**——最终结论 **status=failed，
+reasons=[build-failed:api]（runner exit 2）**。fail-closed 按设计
+生效：compose 从未 up、零容器/零卷创建（事后复核项目 label 0）、
+无清理面、生产零触碰。执行暴露并已修复真实缺陷：runner 曾把完整
+ref 注入 tag env（compose image 已带前缀 → 渲染双重前缀镜像名，栈
+未起零影响）——修复为纯 tag 后缀 + 回归测试锁定。VPN 事件披露：
+supervisor 纠正前误调用 vpn-manager on（sing-box 已被拉起、7892
+监听），纠正后零 VPN/代理/daemon 操作，会话 Stop 钩子按环境规约
+兜底清理。验证：聚焦契约 **59 passed**（compose 静态 15 + 真实
+compose 渲染 3（有 Docker）+ 生产字节级 pin/语义回归 5 + runner 36）
++ 邻域回归 **176 passed, 3 skipped**（test_release_candidate /
+test_release_check_isolated / test_compose_profiles /
+test_compose_restart_policy 零回归）+ `ruff check services/api
+tools/ops/rc_smoke_rehearsal.py` 全绿 + py_compile + `git diff --check`
+干净。诚实边界：起栈/健康/探针/拆栈证明未发生（构建失败是前置，
+机制零改动待出站面可用后一次复跑补齐）；运行时生产并存未被执行
+证明（由静态契约 + before 快照 + 零容器事实支撑）；`release_ready=
+false`/`production_ready=false` 不变，发布审批 human-only；生产仍
+运行 m14-70 镜像。证据 `docs/evidence/m14-96-release-candidate-smoke/
+README.md`（唯一入库证据文件），同步更新 CHANGELOG（M14-96 条目）、
+ROADMAP（M14-96 状态更新）与 tools/ops/README.md 工具注册。
+
+## 前一任务（M14-94 current-main 代码绑定门证据刷新 + evidence-cockpit 聚合——已随 PR #182 合并 main `c9de722`；RC 本地彩排冒烟由 M14-96 接续）
+
 **M14-94 current-main 代码绑定门证据刷新 + evidence-cockpit 聚合（code-bound
 gates refresh + cockpit aggregation）**：worktree
 `m14-94-current-main-release-evidence`，分支
