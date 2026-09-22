@@ -9,6 +9,50 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-101 监控历史聚合性能修复 + 管道固定名产物同轮新鲜度**：worktree
+`m14-101-monitoring-history-performance`，分支
+`ops/m14-101-monitoring-history-performance`，基于 main
+`a583f918fba4ea6223b08afc275d909fefef152b`，后受控 rebase 到 main
+`df24125f131de64c8c8d4b5c675b228646b9ea8a`（PR #187 / M14-100 已合入；
+rebase 仅解决三台账 docs 冲突，代码零变更），单 local commit，不 push、
+不开 PR。目标：修复计划任务
+`AIOS-Monitoring-Pipeline` LastTaskResult=1 背后的两处代码级根因
+（monitor ok、history 聚合 ~90.202s 超时；源 ~946 份 monitor JSON），并
+消除「超时报告引用旧固定名 history 产物」的证据歧义；**绝不只提高超时**。
+交付：① `tools/ops/monitoring_history.py` 新增 `PathSafetyCache`（run 内
+单一缓存贯穿发现与写出）：基线实现每候选文件重复 walk 同一祖先 symlink
+检查链（每文件 ~17 次 stat × 946 ≈ 1.7 万次 stat 代理调用，~89% 冗余，
+冷缓存毫秒级/次即 ~90s——与生产观测定量吻合）；缓存后祖先检查摊还
+O(1)（`O(N·d)→O(N+d)`，ancestor_checks=8 与 N 无关），fail-closed 语义
+逐项保留（正向结论才缓存、不存在路径永不缓存、mkdir 后 TOCTOU 复查恒
+无缓存、`symlink-target`/`symlink-in-path`/`symlink-source` 词汇与
+双层检查不变）；实测 N=946 stat 代理 17,044→~1,900（−89%）、N=1200
+全程 0.172s（热缓存）；零超时数值变更（history 默认 90s 保持）。
+② `tools/ops/monitoring_pipeline.py` history/insights 步固定名产物同轮
+新鲜度：步骤执行前对每固定名采集 `(size, mtime_ns)` 指纹基线
+（`Fs.stat_fingerprint` 注入点新增），步骤后仅新建/指纹变化者带 SHA-256
+引用，预存未变文件记 `stale-preexisting-not-cited`（sha=null）——
+mtime 指纹可区分零墙钟工具「重写产出逐字节相同内容」与「没写」（内容
+哈希不可区分）；超时半写如实分列；monitor 步差集基线语义不变。
+③ 新增 `services/api/tests/test_m14_101_monitoring_history_performance.py`
+**16 passed**：1000+ 合成 monitor JSON 规模端到端/严格排序/malformed
+拒绝零写入/同哈希去重/冲突拒绝；N=300 vs N=900 操作计数断言（exists
+调用次数完全相等、祖先检查不随候选数重复、每文件 is_symlink ≤2）；
+symlink fail-closed 双层保持；同轮 provenance 全场景（超时/失败 + 预存
+旧产物零引用、ok 轮带哈希、半写分列、移除/基线不可读/symlink 产物）；
+零子进程/零网络/零 env/零墙钟。验证：聚焦回归六件套
+（monitoring_history/monitoring_pipeline/monitoring_insights/
+monitoring_pipeline_task/m14-101/production_monitor）**652 passed**
+（10.15s）；ruff + py_compile + `git diff --check` 全绿。诚实边界：
+**真实 Windows 计划任务本切片未运行未触碰**（冷缓存推算为合成证据，
+非生产实测）；零生产触碰（容器/计划任务/DB/MinIO/语音/secrets/日志/
+代理零变更，canonical `.verify` 证据历史零接触）。证据
+`docs/evidence/m14-101-monitoring-history-performance/README.md`（唯一
+入库证据文件），同步更新 CHANGELOG（M14-101 条目）与 ROADMAP（M14-101
+状态更新）。后续：下一次获准窗口让真实计划任务自然运行一轮，观测
+history 步是否回到秒级（M14-79 正常轮观测 0.3–7.2s）——留 supervisor
+决策。
+
 **M14-100 本地 LLM 冒烟超时与生成预算显式化**：worktree
 `m14-100-local-llm-timeout-budget`，分支 `ops/m14-100-local-llm-timeout-budget`，
 基于 main `a583f918fba4ea6223b08afc275d909fefef152b`（PR #186 merge =
@@ -50,7 +94,7 @@ GPU 探测——llm provider-smoke 步仍为未验证状态**，真实重跑（G
 `m14-98-current-provider-smoke`，分支 `ops/m14-98-current-provider-smoke`，
 基于 main `841b36f48378108a1dd51d39896922ab58c1eb82`（PR #185 merge =
 M14-95 合入，精确基点，fetch 后 origin/main 全 SHA 复核一致），单 local
-commit，不 push、不开 PR。目标：对 current main 重新真实执行易失
+commit，不 push。目标：对 current main 重新真实执行易失
 provider-smoke 三件套（search/local-voice/llm + aggregate），绝不复用
 M14-88 JSON 冒充当前、绝不手改 gate JSON、绝不合成 pass；零生产触碰
 （容器/计划任务/DB/MinIO/语音/secrets/代理生命周期零变更，对既有端点
