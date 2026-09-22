@@ -146,6 +146,12 @@ HOME_REFRESH_BUTTON_TEXT = "整体刷新"
 HOME_AUTH_ON_TEXT = "远程模式(认证已开启)"
 HOME_401_TEXT = "HTTP 401"
 HOME_PRIVACY_KV = "模型路由"
+# HomePane renders this exact text (Unicode ellipsis …, U+2026)
+# in every zone while its ZoneStatus is LOADING (M14-99 B1).
+HOME_ZONE_LOADING_TEXT = "加载中\u2026"
+# Bounded polling limits for the readiness helper (M14-99 B1).
+HOME_ZONE_LOADING_DEADLINE_SECONDS = 15.0
+HOME_ZONE_LOADING_POLL_INTERVAL_SECONDS = 0.5
 SETTINGS_SAVE_TEXT = "保存"
 SETTINGS_SAVED_PREFIX = "已保存: "
 QUERY_LOADING_TEXT = "正在查询认证状态"
@@ -1365,6 +1371,39 @@ def _step_wrong_password(
     return _layout_record(driver, texts), failures
 
 
+def _poll_home_zones_settled(
+    driver: "UiDriver",
+) -> Tuple[Optional[List[Tuple[str, str]]], List[dict]]:
+    """Bounded readiness poll: dump Home until no zone still shows 加载中….
+
+    Returns (texts, failures) where:
+      * texts is the post-settle layout text list, or None on timeout;
+      * failures is an empty list on success or a single
+        {"code": "home_zones_still_loading"} on timeout.
+    Terminal error states (zone ERROR, 401, 重试 buttons, etc.)
+    are NOT treated as "still loading" - polling stops immediately
+    when HOME_ZONE_LOADING_TEXT is absent, so an error state resolves
+    in a single dump. The deadline guards against a perpetual spin.
+    """
+    import time as _t
+    deadline = _t.monotonic() + HOME_ZONE_LOADING_DEADLINE_SECONDS
+    interval = HOME_ZONE_LOADING_POLL_INTERVAL_SECONDS
+    while True:
+        parsed, dump_failures = driver.dump()
+        if parsed is None:
+            # Dump is unreadable: report the actual failures now -
+            # waiting for the deadline would mislabel this as
+            # "zones still loading" (M14-99 B2).
+            return None, dump_failures or [{"code": "layout_unreadable"}]
+        texts = layout_texts(parsed)
+        joined = "\n".join(t for t, _b in texts)
+        if HOME_ZONE_LOADING_TEXT not in joined:
+            return texts, []
+        if _t.monotonic() >= deadline:
+            return None, [{"code": "home_zones_still_loading"}]
+        _t.sleep(interval)
+
+
 def _refresh_home_and_dump(
     driver: UiDriver,
 ) -> Tuple[Optional[List[Tuple[str, str]]], List[dict]]:
@@ -1394,19 +1433,16 @@ def _refresh_home_and_dump(
         failures.append({"code": "home_refresh_button_not_found"})
         return None, failures
     driver.click(*refresh_btn)
-    # six zones re-fetch in parallel; wait out the round-trip
-    time.sleep(LONG_SETTLE_SECONDS + LONG_SETTLE_SECONDS)
-    parsed, dump_failures = driver.dump()
-    if parsed is None:
-        return None, dump_failures or [{"code": "layout_unreadable"}]
-    joined = "\n".join(t for t, _b in layout_texts(parsed))
-    if "正在" in joined:
-        time.sleep(LONG_SETTLE_SECONDS)
-        parsed, dump_failures = driver.dump()
-        if parsed is None:
-            return None, dump_failures or [
-                {"code": "layout_unreadable"}]
-    return layout_texts(parsed), failures
+    # Six zones re-fetch in parallel; wait for all to leave LOADING
+    # state via bounded readiness polling (M14-99 B1 - replaces the
+    # old fixed-sleep + single "正在" check that let post_login_
+    # privacy_missing fire while a zone still showed 加载中…).
+    settled_texts, poll_failures = _poll_home_zones_settled(driver)
+    if poll_failures:
+        failures.extend(poll_failures)
+    if settled_texts is None:
+        return None, failures
+    return settled_texts, failures
 
 
 def _step_login_and_refresh(

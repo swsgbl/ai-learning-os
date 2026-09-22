@@ -646,3 +646,141 @@ def test_report_and_serialization_stay_secret_free_with_dynamic_port(
     # host URL appears in the report; device URL is derived, same port
     assert "http://127.0.0.1:9123/" in serialized
     assert "http://10.0.2.2:9123/" in serialized
+
+# ------------------------- M14-99 B2: dump-failure honesty in poll ------
+
+
+class _FakePollDriver:
+    """Minimal driver with only dump(): successive (parsed, failures)
+    pairs from the queue; after the queue is empty the last pair
+    repeats. No emulator, no hdc."""
+
+    def __init__(self, queue):
+        self._queue = list(queue)
+        self._last = queue[-1] if queue else (None, [{"code": "layout_unreadable"}])
+        self.calls = 0
+
+    def click(self, x, y):
+        """No-op: the fake driver does not drive real hdc."""
+
+    def dump(self):
+        self.calls += 1
+        if self._queue:
+            self._last = self._queue.pop(0)
+        return self._last
+
+
+def _poll_layout(texts):
+    """Minimal parsed layout: one Root whose Text children carry the
+    given strings. layout_texts() only collects entries that live
+    under an ``attributes`` dict, so each node is wrapped that way."""
+    return {
+        "attributes": {"type": "Root"},
+        "children": [
+            {"attributes": {"type": "Text", "text": t,
+                           "bounds": "[0,0][100,30]"}}
+            for t in texts
+        ],
+    }
+
+
+def test_b2_poll_loading_then_settled_stops_and_returns_settled(
+        monkeypatch):
+    """B2-1: first dump still loading, second dump settled ->
+    settled texts returned, polling stops after exactly 2 dumps."""
+    monkeypatch.setattr(
+        auth_smoke, "HOME_ZONE_LOADING_DEADLINE_SECONDS", 1.0)
+    monkeypatch.setattr(
+        auth_smoke, "HOME_ZONE_LOADING_POLL_INTERVAL_SECONDS", 0.0)
+    driver = _FakePollDriver([
+        (_poll_layout(["加载中…", "首页"]), []),
+        (_poll_layout(["模型路由", "首页", "远程模式(认证已开启)"]), []),
+    ])
+    texts, failures = auth_smoke._poll_home_zones_settled(driver)
+    assert driver.calls == 2
+    assert failures == []
+    assert texts is not None
+    assert "模型路由" in [t for t, _b in texts]
+
+
+def test_b2_poll_persistent_loading_yields_still_loading_code(
+        monkeypatch):
+    """B2-2: 加载中… on every dump reaches the (fake) deadline and
+    yields exactly home_zones_still_loading."""
+    monkeypatch.setattr(
+        auth_smoke, "HOME_ZONE_LOADING_DEADLINE_SECONDS", 0.0)
+    monkeypatch.setattr(
+        auth_smoke, "HOME_ZONE_LOADING_POLL_INTERVAL_SECONDS", 0.0)
+    driver = _FakePollDriver([(_poll_layout(["加载中…"]), [])])
+    texts, failures = auth_smoke._poll_home_zones_settled(driver)
+    assert texts is None
+    assert failures == [{"code": "home_zones_still_loading"}]
+
+
+def test_b2_poll_dump_failure_returns_immediately_with_real_code(
+        monkeypatch):
+    """B2-3: a failed dump returns at once with its own failure
+    code - the (deliberately huge) deadline is never consulted."""
+    monkeypatch.setattr(
+        auth_smoke, "HOME_ZONE_LOADING_DEADLINE_SECONDS", 999.0)
+    monkeypatch.setattr(
+        auth_smoke, "HOME_ZONE_LOADING_POLL_INTERVAL_SECONDS", 0.0)
+    driver = _FakePollDriver(
+        [(None, [{"code": "layout_invalid_json"}])])
+    texts, failures = auth_smoke._poll_home_zones_settled(driver)
+    assert driver.calls == 1
+    assert texts is None
+    assert failures == [{"code": "layout_invalid_json"}]
+    assert "home_zones_still_loading" not in [f["code"] for f in failures]
+
+
+def test_b2_poll_dump_failure_empty_list_labels_layout_unreadable(
+        monkeypatch):
+    """B2-3b: failed dump with an EMPTY failure list is labeled
+    layout_unreadable (the documented fallback), not still-loading."""
+    monkeypatch.setattr(
+        auth_smoke, "HOME_ZONE_LOADING_DEADLINE_SECONDS", 999.0)
+    monkeypatch.setattr(
+        auth_smoke, "HOME_ZONE_LOADING_POLL_INTERVAL_SECONDS", 0.0)
+    driver = _FakePollDriver([(None, [])])
+    texts, failures = auth_smoke._poll_home_zones_settled(driver)
+    assert driver.calls == 1
+    assert texts is None
+    assert failures == [{"code": "layout_unreadable"}]
+
+
+def test_b2_poll_terminal_401_or_error_resolves_on_first_dump(
+        monkeypatch):
+    """B2-4: terminal non-loading text (401/ERROR) stops polling
+    on the first dump."""
+    monkeypatch.setattr(
+        auth_smoke, "HOME_ZONE_LOADING_DEADLINE_SECONDS", 1.0)
+    monkeypatch.setattr(
+        auth_smoke, "HOME_ZONE_LOADING_POLL_INTERVAL_SECONDS", 0.0)
+    driver = _FakePollDriver(
+        [(_poll_layout(["HTTP 401", "重试", "首页"]), [])])
+    texts, failures = auth_smoke._poll_home_zones_settled(driver)
+    assert driver.calls == 1
+    assert failures == []
+    assert "HTTP 401" in [t for t, _b in texts]
+
+
+def test_b2_refresh_home_and_dump_propagates_dump_failure(
+        monkeypatch):
+    """B2-5: _refresh_home_and_dump honestly propagates the real
+    dump failure from the poll instead of a bare None."""
+    monkeypatch.setattr(
+        auth_smoke, "HOME_ZONE_LOADING_DEADLINE_SECONDS", 0.0)
+    monkeypatch.setattr(
+        auth_smoke, "HOME_ZONE_LOADING_POLL_INTERVAL_SECONDS", 0.0)
+    home_ok = _poll_layout(
+        ["首页", "设置", "整体刷新", "远程模式(认证已开启)"])
+    driver = _FakePollDriver([
+        (home_ok, []),
+        (None, [{"code": "layout_pull_failed"}]),
+    ])
+    texts, failures = auth_smoke._refresh_home_and_dump(driver)
+    assert texts is None
+    codes = [f["code"] for f in failures]
+    assert "layout_pull_failed" in codes
+    assert "home_zones_still_loading" not in codes
