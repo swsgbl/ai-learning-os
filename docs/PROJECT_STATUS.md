@@ -9,6 +9,73 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-94 current-main 代码绑定门证据刷新 + evidence-cockpit 聚合（code-bound
+gates refresh + cockpit aggregation）**：worktree
+`m14-94-current-main-release-evidence`，分支
+`ops/m14-94-current-main-release-evidence`，基于 main
+`001af38e8786c9578076143351978b96d0332874`（PR #181 merge = M14-89
+auth session 合入，精确基点；fetch 后 origin/main 复核一致），单 local
+commit（不 push、不开 PR）。目标：对 current main `001af38` 只刷新
+**代码绑定发布门**（ci-main / release-check），并以 M14-91
+evidence-cockpit 聚合器重新汇总发布证据；沿用 M14-92/M14-90 证据契约/
+流程，绝不手改 gate JSON、不合成 pass、不复制 M14-92 产物（CI run/
+隔离环境/release-check 运行全部本轮新执行）、不搬运旧生产状态证据冒充
+新执行；`release_ready=false`/`production_ready=false` 全程不变。基点
+增量（ddec7df→001af38，6 commits/18 文件 +5529/−43）：PR #179 M14-92
+证据（docs）+ PR #180 M14-93 runner（**真实代码**：
+`tools/ops/long_soak_release_window.py` +554、
+`services/api/tests/test_long_soak_release_window.py` +686）+ PR #181
+M14-89 harmony auth session（**真实代码**：Harmony AuthPane/
+AuthSession/TokenVault、`tools/harmony_release/auth_smoke.py` +1925、
+`tools/harmony_mock/` +465、`tests/harmony_release/test_auth_smoke.py`
++520）——services/api 测试集 +45，代码绑定门必须真实重新执行才对
+001af38 成立。执行（canonical
+`.verify/artifacts/m14-94-current-main-release-evidence/` 6 文件
+sha256 锚定，gitignored 不入库）：① **ci-main** `gh api`
+（runs?head_sha=001af38… + runs/35719771321/jobs，raw 归档）命中真实
+push/main run **35719771321**（该 SHA 唯一 run，run_number 482；created
+2026-09-22T11:08:11Z，conclusion=success，**5/5 jobs success**——
+API/Docker/Release tools/Android/Web，job 名集合精确断言），按
+`_eval_ci_main` 契约由断言脚本（失败即非零退出不产出，ruff +
+py_compile 通过）从 raw 事实程序化派生 `evidence/ci-main.json`
+（1120 bytes，未复用 M14-92 run 35670971994）；② **release-check**
+从零重建环境（uv venv CPython 3.12.14 + npm ci 411 packages）新工作区
+跑 `release-check-isolated` full——运行前前置核验执行树
+`git rev-parse HEAD`==001af38 且 porcelain 为空（后续
+`--gate-declared-head release-check=001af38` 声明的诚实性前提），
+**all_green=true 10/10 pass**（pytest **4099 passed / 33 skipped** in
+238.33s，较 M14-92 @ ddec7df 的 4054 恰 +45 = PR #180 新增 soak-window
+runner 测试的预期对账；migration current==head==0027_audit_chain；
+backup tables:30 files:1；voice local 17324 bytes；license api 15/web
+ok/models 7/sources 6；e2e 5 步 1179 ms），产物逐字节复制改名
+`evidence/release-check.json`（byte-identical=True）；③
+**evidence-cockpit 聚合**（docs 编辑前、HEAD 仍为干净 001af38 时运行；
+canonical 源路径逐一取自 M14-91 README/staged-inventory/cockpit-smoke
+gate_bindings 登记，不猜测；staging 前 7 个既有生产状态源文件 sha256
+与 M14-91 登记值逐一 MATCH）：staged 本切片新 ci-main/release-check +
+既有 M14-83/85/87/88 canonical 六门 + anchor companion——**evaluator
+pass=8 / pending=0 / blocked=0 / missing=3 / malformed=0 / tampered=0**，
+ci-main stale=**current**（内嵌 merge_commit=001af38）、release-check
+stale=**current**（flag 声明，执行树核验成立），**blockers 仅剩
+`long-soak:not-staged-required`**，`release_ready=false`/
+`production_ready=false`/cockpit_ready=false、**exit 1 如实**（不以任何
+方式强制 exit 0）；staged 9 文件外部复核 **9/9 IDENTICAL**。验证：cockpit
+三件套 **145 passed**（1.44s）+ release-check 三件套 **137 passed,
+1 warning**（3.22s）；canonical 六文件 json.load 通过 + staged/canonical
+哈希一致性复核；`git diff --check` 干净（docs-only）。诚实边界：long-soak
+24h 审计未发生（M14-79 权威锚最早审计 2026-09-22T15:00:01Z 未届满，
+cockpit 生成于 11:30Z 早于该时点；已合入的 M14-93 runner 到期后对真实
+history 的执行是后续运维动作，本切片零 soak 接触）；release-approval
+human-only 从未发生；production-state 六门为各切片时点快照呈现不
+block（效力判断留 supervisor + 声明通道；provider-smoke 易失性如
+M14-88 记录，发布窗口前需按当时拓扑真实重推导）；turn-tls optional；
+生产仍运行 m14-70 镜像；代码绑定门只对执行时点树成立、main 再前移即
+再 stale。证据
+`docs/evidence/m14-94-current-main-release-evidence/README.md`（唯一
+入库证据文件），同步更新 CHANGELOG（M14-94 条目）与 ROADMAP（M14-94
+状态更新）。
+
+## 前一任务（M14-93 长稳到期审计/导出 runner——已随 PR #180 合并 main `6917154`；current-main 代码绑定门证据刷新 + cockpit 聚合由 M14-94 接续）
 **M14-93 长稳到期审计/导出 runner（long-soak due-time audit/export
 runner）**：worktree `m14-93-long-soak-window-runner`，分支
 `ops/m14-93-long-soak-window-runner`，基于 main `0bfd560`（PR #179 merge =
