@@ -1042,7 +1042,12 @@ def _run_evidence_cockpit(args) -> int:
     code-bound / production-state 分类 + 声明 commit（内嵌或旗标）与
     current HEAD 的比对标记 current/stale/undeclared。**永不接受、stage
     或生成 release-approval**（传入即 fail-closed）；production_ready 恒
-    false。退出码：cockpit_ready=true=0（全部必需门（release-approval
+    false。--output 复用 artifacts/temp gitignore 路径护栏并原子落盘（唯一
+    tmp + fsync + os.replace；目标已是 symlink（含 dangling）或已存在即
+    拒绝；写入前预创建父目录，与兄弟子命令一致；--json 模式下「报告已
+    写入」提示走 stderr，stdout 保持纯 JSON）；报告写入失败则移除本次
+    新建 staging 后 exit 2（清理失败时如实说明目录残留，不虚称零产出）。
+    退出码：cockpit_ready=true=0（全部必需门（release-approval
     除外）staged 且 pass 且无 stale/undeclared-code-bound blocker——不是
     staged 子集干净）/ 有 blocker（staged 门非 pass、stale、code-bound
     undeclared、**required 门未 stage（not-staged-required）**；唯一例外
@@ -1081,19 +1086,35 @@ def _run_evidence_cockpit(args) -> int:
         )
         if args.output:
             try:
+                # 兄弟子命令同款：写入前确保父目录存在（护栏预检已过；
+                # mkdir 与写入同走 staging 清理路径，不留半成品现场）
+                Path(args.output).parent.mkdir(parents=True, exist_ok=True)
                 write_cockpit_report(report, args.output)
             except (CockpitInputError, OSError) as cause:
                 # 报告落盘失败：staging 虽已建成也不留半成品现场——移除
-                # 本次新建目录后如实 exit 2（清理失败时异常自带残留说明）。
+                # 本次新建目录后如实 exit 2。
                 from app.ops.evidence_cockpit import _remove_created_staging
-                _remove_created_staging(
-                    Path(report["staging"]["dir"]), cause)
+                try:
+                    _remove_created_staging(
+                        Path(report["staging"]["dir"]), cause)
+                except CockpitInputError as cleanup_failure:
+                    # 清理本身失败：staging 目录残留待人工核查——如实
+                    # 说明，绝不套用「零 staging」措辞虚称无产出。
+                    print(
+                        "cockpit 报告写入失败且 staging 清理失败"
+                        f"（{cleanup_failure}）"
+                    )
+                    return 2
                 print(
                     f"cockpit 报告写入失败（已移除本次 staging）: "
                     f"{type(cause).__name__}: {cause}"
                 )
                 return 2
-            print(f"报告已写入: {args.output}")
+            # --json 模式下提示走 stderr，stdout 保持纯 JSON（可管道给 jq）
+            print(
+                f"报告已写入: {args.output}",
+                file=sys.stderr if args.as_json else sys.stdout,
+            )
     except CockpitInputError as cause:
         print(f"cockpit 输入无效（未产生报告/零 staging）: {cause}")
         return 2

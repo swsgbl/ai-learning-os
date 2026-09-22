@@ -3,7 +3,7 @@
 - 切片：分支 `ops/m14-91-release-evidence-cockpit`（独立 worktree
   `m14-91-release-evidence-cockpit`，基于 main
   `650b02dbf2372afb4617fd6b77b01ecf0f46382f`（PR #177 merge，精确基点）），
-  单次本地 commit（不推送、不建 PR）。
+  单 commit 开发 + 一 commit PR #178 review remediation（见 §4），未合并。
 - 目标：降低发布门证据的人工拼装风险。M14 系列各证据切片的 canonical 门
   证据分散在各 worktree 的 gitignored `.verify/artifacts/<slice>/` 目录，
   发布前的门拼装长期依赖人工复制与一次性脚本（M14-83 §3.3 转录、M14-86
@@ -73,10 +73,17 @@ pass 且无 stale/undeclared-code-bound/not-staged-required blocker）；
 
 `--gate-source/--current-head/--staging-dir/--gate-declared-head/
 --anchor-companion/--json/--output`（output 复用 `is_safe_artifact_path`
-gitignored artifacts/temp 护栏 + 原子落盘 + 已存在拒绝覆盖）；无 --yes
-执行形态（纯汇总器）。dispatch 插在 release-readiness 之后。
+gitignored artifacts/temp 护栏；原子落盘对齐 `cli._write_report_atomic`
+纪律——唯一 mkstemp tmp 名 + fsync + os.replace，任一步失败先删 tmp 再
+上抛，不留 .tmp 残留/半成品报告；目标自身是 symlink 即拒绝，lstat 语义
+连 dangling 形态一并拒绝且 replace 前二次复核；已存在常规文件拒绝覆盖；
+写入前预创建父目录（全部 16 个带 --output 的兄弟子命令同款约定）；
+--json 模式下「报告已写入」提示走 stderr、stdout 保持纯 JSON（8 个兄弟
+子命令同款）；报告写入失败则移除本次新建 staging 后 exit 2，清理本身
+失败时如实说明目录残留、不虚称零产出）；无 --yes 执行形态（纯汇总器）。
+dispatch 插在 release-readiness 之后。
 
-## 2. 聚焦测试 `services/api/tests/test_evidence_cockpit.py`（23 项）
+## 2. 聚焦测试 `services/api/tests/test_evidence_cockpit.py`（30 项）
 
 任务验收面全覆盖：pass/missing/blocked/stale 四态（含 embedded 与 flag
 两种 stale、flag/embedded 冲突拒绝、非 40-hex current-head 拒绝）；分类
@@ -94,7 +101,14 @@ staging 目录被完整移除）；**来源零改动**（运行前后字节/哈�
 readiness.release_ready 恒 false）；**malformed**（非 JSON 对象、gate
 自声明错位、staging 目录已存在、symlink 源（无特权环境 skip）、未知门）；
 anchor companion 字节一致；CLI 注册/dispatch/无 --yes（单门 CLI 端到端
-exit 1 + not-staged-required blocker 断言）。全部零网络零 DB。
+exit 1 + not-staged-required blocker 断言）；**报告落盘与 CLI --output
+回归（PR #178 remediation 新增 7 项）**：write_cockpit_report 全路径
+（写入/回读/已存在拒绝/无 .tmp 残留）、symlink 目标（常规与 dangling）
+拒绝且链接不被原地替换、replace 失败无 .tmp 残留、symlink 祖先（常规
+与 dangling）拒绝且零意外父目录创建、CLI `--output --json` 端到端
+（stdout 纯 JSON 可解析 + 提示走 stderr + 父目录预创建）、CLI 报告
+写入失败 → staging 完整移除 + exit 2、清理本身失败 → 残留如实说明
+（不虚称零 staging）。全部零网络零 DB。
 
 ## 3. 真实 canonical 冒烟（工具价值实证，2026-09-22T05:5xZ 本地）
 
@@ -124,17 +138,29 @@ canonical `cockpit-smoke.json`，sha256 `a1c33a23…fca4fd`）：
   / draft `e90ae04c…` 等，见 canonical `staged-inventory.txt`）——来源
   零改动 + 逐字节 staging 的端到端实证。
 
-## 4. 验证与静态检查（真实执行结果）
+## 4. 验证与静态检查（真实执行结果；remediation 后重跑）
 
-- 聚焦 pytest：`tests/test_evidence_cockpit.py` **23 passed**；
-  加回归 `tests/test_release_readiness.py`（75）+
-  `tests/test_release_closure_manifest.py`（40）→ **138 passed in 1.35s**
+PR #178 review remediation（第二 commit，gate 语义/审批边界零改动）：
+M1 报告输出目标 symlink（含 dangling）拒绝；M2 `--json` stdout 纯净化
+（「报告已写入」提示改条件 stderr，对齐 8 个兄弟子命令）；M3 补 7 项
+聚焦回归（见 §2 末）；L1 唯一 tmp 名 + fsync + 失败清理；L2 dangling
+symlink 祖先显式拒绝（lstat 语义，零意外父目录创建）；L3 清理失败时
+如实呈现残留（不虚称零 staging）；L4 `--output` 父目录预创建（对齐
+兄弟约定）。
+
+- 聚焦 pytest：`tests/test_evidence_cockpit.py` **30 passed in 0.56s**
+  （symlink 测试本机真实执行、零 skip）；加回归
+  `tests/test_release_readiness.py`（75）+
+  `tests/test_release_closure_manifest.py`（40）→ **145 passed in 1.67s**
   （CLI 新子命令未破坏既有注册/契约面）。
-- `ruff check services/api`：**All checks passed**（新增两文件 + cli.py
-  改动零告警）。
-- `git diff --check`：干净。
-- 分支卫生：单 commit 后 tracked-clean（staging/报告在 gitignored
-  `services/artifacts/temp/`，不入库）；未 push、未建 PR。
+- `ruff check services/api`：**All checks passed**；`py_compile`
+  （evidence_cockpit.py / cli.py / 测试）通过；`git diff --check`：干净。
+- 真实 CLI 探针（`--output --json`，进程级分离 stdout/stderr）：stdout
+  `json.loads` 解析成功（tool=evidence-cockpit）、提示仅出现在 stderr、
+  嵌套父目录（gitignored `services/artifacts/temp/` 内）预创建、报告
+  文件与 stdout JSON 同源；单门 staged → exit 1 如实。
+- 分支卫生：tracked-clean（staging/报告/探针产物均在 gitignored
+  `services/artifacts/temp/`，已清理，不入库）。
 
 ## 5. canonical 证据清单（主仓 gitignored `.verify`，不入 git；本 README 为唯一入库证据文件）
 

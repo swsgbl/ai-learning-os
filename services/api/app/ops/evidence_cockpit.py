@@ -59,6 +59,7 @@ import json
 import os
 import re
 import shutil
+import tempfile
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -107,9 +108,14 @@ def _require_hex40_commit(value: str, label: str) -> str:
 
 
 def _reject_symlink_ancestors(path: Path) -> None:
-    """已存在的祖先组件含 symlink 即拒绝（fail-closed 防路径漂移）。"""
+    """祖先组件含 symlink 即拒绝（fail-closed 防路径漂移）。
+
+    ``is_symlink()`` 是 lstat 语义：dangling symlink（指向不存在的
+    目标）同样拒绝——不能因链接目标缺席而放行（否则拒绝时机退化为
+    ``mkdir`` 的 OSError 兜底，且可能已创建中间父目录）。
+    """
     for ancestor in path.parents:
-        if ancestor.exists() and ancestor.is_symlink():
+        if ancestor.is_symlink():
             raise CockpitInputError(f"路径祖先含 symlink：{ancestor}")
 
 
@@ -464,12 +470,38 @@ def format_cockpit_summary(report: Mapping[str, Any]) -> str:
 
 
 def write_cockpit_report(report: Mapping[str, Any], output: str | Path) -> None:
-    """报告 JSON 原子落盘（tmp + os.replace；目标已存在即拒绝覆盖）。"""
+    """报告 JSON 原子落盘（唯一 tmp + fsync + os.replace）。
+
+    纪律（对齐 cli._write_report_atomic，语义差异：目标已存在即拒绝
+    覆盖，不整体替换）：目标自身是 symlink 即拒绝——``is_symlink()``
+    是 lstat 语义，dangling symlink 同样拒绝（``exists()`` 跟随链接，
+    会放行 dangling 形态并让 replace 原地吃掉链接）；写入/fsync/replace
+    任一步失败都先删除 tmp 再上抛原始错误——不留固定名 .tmp 残留、
+    不产生半成品报告（mkstemp 唯一命名消除并发碰撞窗口）；replace 前
+    二次复核目标未被换成 symlink。
+    """
     target = Path(output)
+    if target.is_symlink():
+        raise CockpitInputError(f"输出路径是 symlink（拒绝写入）：{target}")
     if target.exists():
         raise CockpitInputError(f"输出文件已存在（拒绝覆盖）：{target}")
     _reject_symlink_ancestors(target)
-    tmp = target.with_name(target.name + ".tmp")
-    tmp.write_bytes(
-        (json.dumps(report, indent=2, ensure_ascii=False) + "\n").encode("utf-8"))
-    os.replace(tmp, target)
+    payload = (
+        json.dumps(report, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    tmp_fd, tmp_name = tempfile.mkstemp(
+        dir=target.parent, prefix=target.name + ".", suffix=".tmp")
+    tmp_path = Path(tmp_name)
+    try:
+        with os.fdopen(tmp_fd, "wb") as handle:
+            handle.write(payload)
+            handle.flush()
+            os.fsync(handle.fileno())
+        if target.is_symlink():  # 写入期间路径被换成链接：拒绝替换
+            raise CockpitInputError(f"输出路径是 symlink（拒绝写入）：{target}")
+        os.replace(tmp_path, target)
+    except (CockpitInputError, OSError):
+        try:
+            tmp_path.unlink()
+        except OSError:
+            pass  # tmp 清理失败不掩盖原始错误（残留是 .tmp 后缀，非报告）
+        raise

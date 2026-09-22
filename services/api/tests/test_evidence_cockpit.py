@@ -17,7 +17,14 @@
    staging 目录永不出现 release-approval.json；
 6. malformed/护栏：source 非 JSON 对象、gate 自声明错位、staging 目录已
    存在、source 是 symlink（无特权环境 skip）一律 CockpitInputError 且零
-   staging 产出。
+   staging 产出；
+7. 报告落盘与 CLI --output 回归：write_cockpit_report 全路径（写入/回读/
+   已存在拒绝/symlink 目标（含 dangling）拒绝且链接不被原地替换/replace
+   失败无 .tmp 残留）；symlink 祖先（常规与 dangling）拒绝且零意外父目录
+   创建；CLI --output 端到端（--json 模式 stdout 纯 JSON 可解析、「报告已
+   写入」提示走 stderr、父目录预创建）；CLI 报告写入失败 → 本次 staging
+   完整移除后 exit 2；清理本身失败 → staging 残留如实说明（不虚称零
+   staging 产出）。
 
 全部测试只用临时目录与本地文件，零网络/零 DB/零环境变量。
 """
@@ -37,6 +44,7 @@ from app.ops.evidence_cockpit import (
     CockpitInputError,
     build_evidence_cockpit,
     format_cockpit_summary,
+    write_cockpit_report,
 )
 
 HEAD = "a" * 40
@@ -507,3 +515,209 @@ def test_cli_registration_and_dispatch(
         ])
     with pytest.raises(SystemExit):
         cli_module.main()
+
+
+# --- 报告落盘与 CLI --output 回归（PR #178 remediation） --------------------
+
+
+def test_write_cockpit_report_roundtrip(tmp_path: Path) -> None:
+    """write_cockpit_report 全路径：原子写入、回读一致、已存在拒绝覆盖。"""
+    sources_dir = _mk_sources(tmp_path)
+    ci = _write_json(sources_dir / "ci.json", _ci_main_payload())
+    report = _run(tmp_path, {"ci-main": ci})
+    out_dir = tmp_path / "artifacts"
+    out_dir.mkdir()
+    target = out_dir / "cockpit.json"
+
+    write_cockpit_report(report, target)
+
+    written = json.loads(target.read_text(encoding="utf-8"))
+    assert written["tool"] == "evidence-cockpit"
+    assert written["exit_code"] == report["exit_code"]
+    with pytest.raises(CockpitInputError, match="拒绝覆盖"):
+        write_cockpit_report(report, target)
+    assert list(out_dir.iterdir()) == [target]  # 无 .tmp 残留
+
+
+def test_write_cockpit_report_rejects_symlink_target(tmp_path: Path) -> None:
+    """目标自身是 symlink（常规与 dangling）即拒绝：不跟随、不原地替换
+    链接（exists() 跟随链接会放行 dangling 形态——lstat 语义堵住）。"""
+    report = {"tool": "evidence-cockpit"}
+    out_dir = tmp_path / "artifacts"
+    out_dir.mkdir()
+    real = out_dir / "real.json"
+    real.write_text("{}", encoding="utf-8")
+    dangling = out_dir / "dangling.json"
+    linked = out_dir / "linked.json"
+    try:
+        os.symlink(out_dir / "no-such-file", dangling)
+        os.symlink(real, linked)
+    except OSError:
+        pytest.skip("此环境无 symlink 特权")
+    with pytest.raises(CockpitInputError, match="symlink"):
+        write_cockpit_report(report, dangling)
+    with pytest.raises(CockpitInputError, match="symlink"):
+        write_cockpit_report(report, linked)
+    # 链接本身未被 replace 成常规文件；dangling 目标也未被隐式创建
+    assert dangling.is_symlink()
+    assert linked.is_symlink()
+    assert not (out_dir / "no-such-file").exists()
+    # 无 .tmp 残留（拒绝发生在 mkstemp 之前）
+    assert sorted(p.name for p in out_dir.iterdir()) == [
+        "dangling.json", "linked.json", "real.json"]
+
+
+def test_write_cockpit_report_failure_leaves_no_tmp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """写入/fsync/replace 失败：tmp 先被删除再上抛原始错误——不留 .tmp
+    残留、不产生半成品报告（对齐 cli._write_report_atomic 纪律）。"""
+    sources_dir = _mk_sources(tmp_path)
+    ci = _write_json(sources_dir / "ci.json", _ci_main_payload())
+    report = _run(tmp_path, {"ci-main": ci})
+    out_dir = tmp_path / "artifacts"
+    out_dir.mkdir()
+    target = out_dir / "cockpit.json"
+
+    def broken_replace(src, dst):
+        raise OSError("injected replace failure")
+
+    monkeypatch.setattr("os.replace", broken_replace)
+    with pytest.raises(OSError, match="injected replace failure"):
+        write_cockpit_report(report, target)
+    assert not target.exists()
+    assert list(out_dir.iterdir()) == []  # mkstemp 的 tmp 已清理
+
+
+def test_symlink_ancestor_rejected_regular_and_dangling(
+    tmp_path: Path
+) -> None:
+    """staging 路径祖先含 symlink（常规与 dangling）即拒绝，且拒绝发生在
+    任何 mkdir 之前——dangling 祖先不再依赖 mkdir 的 OSError 兜底，也
+    不产生中间父目录。"""
+    sources_dir = _mk_sources(tmp_path)
+    ci = _write_json(sources_dir / "ci.json", _ci_main_payload())
+    base = tmp_path / "anc"
+    base.mkdir()
+    regular_dir = base / "real-dir"
+    regular_dir.mkdir()
+    dangling_link = base / "dangling-link"  # 指向不存在的目录
+    regular_link = base / "regular-link"
+    try:
+        os.symlink(base / "no-such-dir", dangling_link)
+        os.symlink(regular_dir, regular_link)
+    except OSError:
+        pytest.skip("此环境无 symlink 特权")
+    for ancestor_link in (dangling_link, regular_link):
+        staging = ancestor_link / "staging"
+        with pytest.raises(CockpitInputError, match="路径祖先含 symlink"):
+            _run(tmp_path, {"ci-main": ci}, staging_dir=staging)
+    # dangling 指向位置未被 mkdir 隐式创建；常规链接目标目录零写入
+    assert not (base / "no-such-dir").exists()
+    assert list(regular_dir.iterdir()) == []
+
+
+def test_cli_output_writes_report_json_stdout_pure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """CLI --output + --json 端到端：stdout 是纯 JSON（可解析、无提示
+    混入）；「报告已写入」提示走 stderr；输出父目录预创建（兄弟子命令
+    同款）；报告文件与 stdout JSON 同源。"""
+    sources_dir = _mk_sources(tmp_path)
+    ci = _write_json(sources_dir / "ci.json", _ci_main_payload())
+    staging = tmp_path / "cli-staging"
+    output = tmp_path / "artifacts" / "cockpit.json"  # 父目录不存在
+    monkeypatch.setattr(
+        "sys.argv", [
+            "aios-backup", "evidence-cockpit",
+            "--gate-source", f"ci-main={ci}",
+            "--current-head", HEAD,
+            "--staging-dir", str(staging),
+            "--json", "--output", str(output),
+        ])
+    with pytest.raises(SystemExit) as excinfo:
+        cli_module.main()
+    # 单门 staged：其余 required not-staged → blocker → exit 1（如实）
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)  # stdout 纯 JSON：可解析（M2 回归）
+    assert payload["tool"] == "evidence-cockpit"
+    assert "报告已写入" not in captured.out
+    assert "报告已写入" in captured.err  # 提示走 stderr（M2 回归）
+    written = json.loads(output.read_text(encoding="utf-8"))
+    assert written["tool"] == "evidence-cockpit"  # 父目录已预创建（L4 回归）
+    assert (staging / "ci-main.json").read_bytes() == ci.read_bytes()
+
+
+def test_cli_output_failure_removes_staging(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """CLI 报告写入失败 → 本次新建 staging 完整移除 + exit 2 + 如实说明
+    （报告文件不产生）。"""
+    from app.ops import evidence_cockpit as cockpit_module
+
+    sources_dir = _mk_sources(tmp_path)
+    ci = _write_json(sources_dir / "ci.json", _ci_main_payload())
+    staging = tmp_path / "cli-staging"
+    output = tmp_path / "artifacts" / "cockpit.json"
+
+    def broken_write(report, out):
+        raise OSError("injected report write failure")
+
+    monkeypatch.setattr(cockpit_module, "write_cockpit_report", broken_write)
+    monkeypatch.setattr(
+        "sys.argv", [
+            "aios-backup", "evidence-cockpit",
+            "--gate-source", f"ci-main={ci}",
+            "--current-head", HEAD,
+            "--staging-dir", str(staging),
+            "--output", str(output),
+        ])
+    with pytest.raises(SystemExit) as excinfo:
+        cli_module.main()
+    assert excinfo.value.code == 2
+    assert not staging.exists()  # 写入失败 → staging 已完整移除
+    assert not output.exists()  # 报告文件不产生
+    captured = capsys.readouterr()
+    assert "已移除本次 staging" in captured.out
+    assert "报告写入失败" in captured.out
+
+
+def test_cli_output_failure_cleanup_failure_reports_residue(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys
+) -> None:
+    """报告写入失败且 staging 清理本身失败：目录残留如实说明——绝不
+    虚称「零 staging」（L3 回归；对应 _remove_created_staging 折叠分支）。"""
+    import shutil as shutil_module
+
+    from app.ops import evidence_cockpit as cockpit_module
+
+    sources_dir = _mk_sources(tmp_path)
+    ci = _write_json(sources_dir / "ci.json", _ci_main_payload())
+    staging = tmp_path / "cli-staging"
+    output = tmp_path / "artifacts" / "cockpit.json"
+
+    def broken_write(report, out):
+        raise OSError("injected report write failure")
+
+    def broken_rmtree(path, *args, **kwargs):
+        raise OSError("injected cleanup failure")
+
+    monkeypatch.setattr(cockpit_module, "write_cockpit_report", broken_write)
+    monkeypatch.setattr(shutil_module, "rmtree", broken_rmtree)
+    monkeypatch.setattr(
+        "sys.argv", [
+            "aios-backup", "evidence-cockpit",
+            "--gate-source", f"ci-main={ci}",
+            "--current-head", HEAD,
+            "--staging-dir", str(staging),
+            "--output", str(output),
+        ])
+    with pytest.raises(SystemExit) as excinfo:
+        cli_module.main()
+    assert excinfo.value.code == 2
+    assert staging.exists()  # 清理失败：目录实际残留（如实）
+    captured = capsys.readouterr()
+    assert "清理失败" in captured.out
+    assert str(staging) in captured.out  # 残留路径可见
+    assert "零 staging" not in captured.out  # 绝不虚称零产出（L3 回归）
