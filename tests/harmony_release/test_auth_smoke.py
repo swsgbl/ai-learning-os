@@ -518,3 +518,131 @@ def test_step_order_is_the_documented_twelve():
     assert len(auth_smoke.STEP_ORDER) == 12
     assert auth_smoke.STEP_ORDER[0][0] == auth_smoke.STEP_HOST_AUTH_CONTRACT
     assert auth_smoke.STEP_ORDER[-1][0] == auth_smoke.STEP_UNINSTALL
+
+
+# -------------------------------- M14-95: dynamic device URL derivation ----
+
+@pytest.mark.parametrize("host_url,device_url", [
+    # default: exact same port, scheme and trailing slash preserved
+    ("http://127.0.0.1:8765/", "http://10.0.2.2:8765/"),
+    # non-default dynamic port follows the host URL
+    ("http://127.0.0.1:9123/", "http://10.0.2.2:9123/"),
+    ("http://127.0.0.1:9123", "http://10.0.2.2:9123/"),
+    # localhost loopback also maps to the emulator gateway
+    ("http://localhost:8765/", "http://10.0.2.2:8765/"),
+    # explicit default port normalizes the same as the implicit one
+    ("http://127.0.0.1:80/", "http://10.0.2.2:80/"),
+])
+def test_device_api_base_derives_same_port(host_url, device_url):
+    assert auth_smoke.device_api_base(host_url) == device_url
+    # default contract is unchanged
+    assert auth_smoke.device_api_base(auth_smoke.DEFAULT_API_BASE) == \
+        "http://10.0.2.2:8765/"
+
+
+@pytest.mark.parametrize("url", [
+    "http://evil.example:8765/",
+    "https://127.0.0.1:8765/",
+    "http://127.0.0.1:8765/?x=1",
+    "http://127.0.0.1:8765/#f",
+    "http://127.0.0.1:8765/api",
+    "http://u:p@127.0.0.1:8765/",
+])
+def test_device_api_base_rejects_unvalidated_urls(url):
+    with pytest.raises(ValueError):
+        auth_smoke.device_api_base(url)
+
+
+def test_run_reports_derived_device_url_for_dynamic_port(fake_repo):
+    """A non-default port flows into the settings typing/report fields."""
+    http = FakeHttp(
+        gets={
+            "http://127.0.0.1:9123/api/v1/auth/status":
+                (200, {"auth_enabled": False}),
+        },
+    )
+    result, exit_code = auth_smoke.run_auth_smoke(
+        fake_repo,
+        target="127.0.0.1:5555",
+        hap="entry-default-signed.hap",
+        api_base="http://127.0.0.1:9123/",
+        confirm_mutation=False,
+        runner=FakeRunner(),
+        http_get=http.get,
+        http_post=http.post,
+        tool_resolver=ok_tool,
+        target_resolver=ok_target,
+        bundle_resolver=ok_bundle,
+    )
+    assert exit_code == auth_smoke.EXIT_OK
+    assert result["api_base"] == "http://127.0.0.1:9123/"
+    assert result["device_api_base_typed"] == "http://10.0.2.2:9123/"
+
+
+def test_run_reports_default_device_url(fake_repo):
+    result, _ = auth_smoke.run_auth_smoke(
+        fake_repo,
+        target="127.0.0.1:5555",
+        hap="entry-default-signed.hap",
+        confirm_mutation=False,
+        runner=FakeRunner(),
+        http_get=auth_on_http().get,
+        http_post=auth_on_http().post,
+        tool_resolver=ok_tool,
+        target_resolver=ok_target,
+        bundle_resolver=ok_bundle,
+    )
+    assert result["api_base"] == auth_smoke.DEFAULT_API_BASE
+    assert result["device_api_base_typed"] == "http://10.0.2.2:8765/"
+
+
+def test_non_loopback_api_base_leaves_device_url_none(fake_repo):
+    """Fail-closed: a rejected host URL blocks the run and the derived
+    device URL is never invented."""
+    result, exit_code = auth_smoke.run_auth_smoke(
+        fake_repo,
+        target="127.0.0.1:5555",
+        hap="entry-default-signed.hap",
+        api_base="http://127.0.0.1.evil.example/",
+        confirm_mutation=True,
+        runner=FakeRunner(),
+        http_get=auth_on_http().get,
+        http_post=auth_on_http().post,
+        tool_resolver=ok_tool,
+        target_resolver=ok_target,
+        bundle_resolver=ok_bundle,
+    )
+    assert exit_code == auth_smoke.EXIT_BLOCKED
+    assert "api_base_not_loopback" in [
+        f["code"] for f in result["request_failures"]]
+    assert result["device_api_base_typed"] is None
+    serialized = auth_smoke.render_json(result)
+    assert "10.0.2.2" not in serialized
+    assert "evil.example" not in serialized
+
+
+def test_report_and_serialization_stay_secret_free_with_dynamic_port(
+        fake_repo):
+    """Dynamic-port result: redaction contract still holds end-to-end."""
+    result, _ = auth_smoke.run_auth_smoke(
+        fake_repo,
+        target="127.0.0.1:5555",
+        hap="entry-default-signed.hap",
+        api_base="http://127.0.0.1:9123/",
+        expect_auth="on",
+        confirm_mutation=False,
+        runner=FakeRunner(),
+        http_get=auth_on_http().get,
+        http_post=auth_on_http().post,
+        tool_resolver=ok_tool,
+        target_resolver=ok_target,
+        bundle_resolver=ok_bundle,
+    )
+    serialized = auth_smoke.render_json(result)
+    for secret in REDACTION_FORBIDDEN_VALUES:
+        assert secret not in serialized
+    assert MOCK_TOKEN not in serialized
+    assert str(fake_repo) not in serialized
+    # host URL appears in the report; device URL is derived, same port
+    assert "http://127.0.0.1:9123/" in serialized
+    assert "http://10.0.2.2:9123/" in serialized

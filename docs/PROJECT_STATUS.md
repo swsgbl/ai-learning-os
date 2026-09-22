@@ -9,6 +9,64 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-95 Harmony 真实认证冒烟（real auth smoke）**：worktree
+`m14-95-harmony-real-auth-smoke`，分支 `harmony/m14-95-real-auth-smoke`，
+真实执行/代码基点 = main `001af38e8786c9578076143351978b96d0332874`
+（PR #181 merge = M14-89 合入）；单 local commit 后受控 rebase 至
+current origin/main
+`c0610e9e2ed13864a0bd00df2e213ab13b4830d8`（PR #184 merge = M14-97
+合入；rebase 仅解三台账 docs 冲突零代码变更），不 push、不开 PR。
+目标：把 M14-89 认证会话冒烟的认证面对象从 mock 服务器升级为**仓库
+真实 FastAPI 认证后端**（隔离 SQLite + 合成用户 + OS 分配 loopback
+动态端口），在真实 Harmony 模拟器上闭环验证登录/401/冷重启会话/
+登出。交付：① `services/api/app/ops/auth_smoke_server.py`
+（`AuthSmokeServer`——复用 `create_app()` 零重复造认证（M9-01/M9-04/
+M9-06 门禁 + M10-03 cookie 行为）、隔离 SQLite 文件库不碰主库、
+`bind(0)` OS 分配任务自有端口、种子合成用户走真实 bcrypt 登录路径、
+受保护 `GET /api/v1/smoke/protected` 证明业务门禁真实生效、
+AUTH_SECRET 显式且 ≥32 字节否则拒绝启动、全输出对 secret/口令/token
+脱敏、冷重启=同库+同 secret 新进程）；②
+`tools/harmony_release/auth_smoke_launcher.py`（默认 plan-only 零副作用
+——不执行时 server 工厂从不调用；`--execute` 才起后端并把动态 base
+注入冒烟；`finally` 只停自有后端；报告永不携带口令/令牌/secret/绝对
+私有路径（db_path→`<task-work-dir>`）；直接脚本导入回退 + `--help`
+零副作用）；③ `auth_smoke.py` 增强 `device_api_base()`（从已验证
+loopback `--api-base` 动态端口派生设备侧 10.0.2.2 URL，fail-closed
+拒绝一切未验证形态，Settings 输入/断言改用派生值）。轮次史（全部
+真实）：B3 失败——相对 db_path 在宿主种子 cwd 与 uvicorn 子进程 cwd
+间漂移致登录 401（遗留 `services/api/m14-95-auth-smoke.db`
+gitignored 未入库）；B4 修复相对 db_path 解析到 work_dir 下；B5 复跑
+仍失败——work_dir 本身可为相对路径仍漂移（`server_start_failed`/
+RuntimeError）；B6 修复——work_dir `Path.resolve()` 绝对化 + sqlite
+URL 保持 `Path.as_posix()` + launcher 直接脚本导入回退 + 零副作用
+`--help`；**B7 真实模拟器复跑通过**——exit 0，**12 步=11 ok+1
+not_run**（唯一 `auth_off_local`/`auth_phase_skip`），
+install/start/settings/home/wrong-password/login/cold-restart/logout/
+background/uninstall 全 ok，宿主契约 7/7 matched（`login_200_token`
+200 usable_token=True token_type_bearer=True），warnings=0、
+request_failures=0、mutation/cleanup=true；后端 127.0.0.1:52439（OS
+动态端口），设备侧派生 `http://10.0.2.2:52439/`；HAP 533946 bytes
+SHA256
+`A8348FDEF303A63F95F4C380F32F016B6F6F4E047624A3FB5736BBB5893F78BB`
+（未签名）；证据 SHA256 锚定 `auth_smoke_launcher.json`
+`6E9B300FC688D7649643155ABB4ED14ADFABB8C1CB65823122572F6C34F1B166`
+（5658 bytes）与 `auth_smoke_on.json`
+`1E87FA99AAA08BFDBEF155570F9013629CAE0B1B449B0461A8B8E1E814E22818`
+（4573 bytes）；server log 0 字节如实记录；布局证据=摘要哈希+节点数
+（content_recorded=false，无截图不虚构）。边界：突变仅限目标 HAP 且
+收尾已卸载；Android 真机 EYFBB22923201473 未触碰；模拟器与生产服务
+未重启/停止/触碰；真实后端≠生产后端（loopback 一次性隔离 SQLite+
+合成凭据）；未签名 HAP 不构成发布授权；`production_ready=false`
+不变。验证（canonical venv）：API 聚焦 **24 passed**、launcher 聚焦
+**20 passed**、`test_auth_smoke.py` **49 passed**（基线 34+15 新参数
+化项）；py_compile/ruff（F,E9,W605）/`git diff --check` 全绿（rebase
+后复跑同绿）。证据
+`docs/evidence/m14-95-harmony-real-auth-smoke/README.md`（唯一入库
+证据文件），同步更新 CHANGELOG（M14-95 条目）与 ROADMAP（M14-95
+状态更新）。
+
+## 前一任务（M14-97 current-main 代码绑定门证据刷新 + evidence-cockpit 聚合——已随 PR #184 合并 main `c0610e9e`；Harmony 真实认证冒烟由 M14-95 接续）
+
 **M14-97 current-main 代码绑定门证据刷新 + evidence-cockpit 聚合（code-bound
 gates refresh + cockpit aggregation）**：worktree
 `m14-97-current-main-release-evidence`，分支
