@@ -161,6 +161,15 @@ def test_settings_enable_html_and_json_formats(settings: dict) -> None:
     assert "html" in formats and "json" in formats
 
 
+def test_settings_enable_china_bing_search_engine(settings: dict) -> None:
+    """启用 China Bing 作为本机可用的搜索引擎；出站仍可按部署显式代理。"""
+    engines = {item["name"]: item for item in settings["engines"]}
+    assert engines["bing"]["disabled"] is False
+    assert engines["bing"]["base_url"] == "https://cn.bing.com"
+    assert engines["bing"]["enable_http2"] is False
+    assert engines["bing"]["timeout"] == 20.0
+
+
 def test_settings_private_instance_semantics(settings: dict) -> None:
     """私有本地实例：limiter false（bot 防护面向公网部署）、public_instance false。"""
     assert settings["server"]["limiter"] is False
