@@ -29,7 +29,8 @@ error_total=6）。三件事语义不同：① monitor 非零退出但**写出�
   ``plan-YYYYMMDD-HHMMSS.json``（mode=plan，只计数不复盘）；``.md``
   与 ``pipeline.lock`` 忽略；其它 ``*.json`` stem → fail-closed 拒绝。
   逐报告严格校验：schema_version、mode 与文件名一致、overall_status
-  词汇、三步 stage 齐全、stage status 词汇、started_at_utc 可解析且
+  词汇、stage 键集 ⊆ 已知 step_id 词汇且 monitor 在场、stage status
+  词汇、started_at_utc 可解析且
   全目录唯一、按时间严格递增、monitor 绝不允许 skipped（管道结构性
   不变量）。history.jsonl 逐行严格解析（五字段 schema，复用
   monitoring_history 单一事实源），全局时序/唯一/项目单一。
@@ -41,7 +42,11 @@ error_total=6）。三件事语义不同：① monitor 非零退出但**写出�
   - ``execution_failure_kinds``：固定词汇清单（monitor-no-artifact /
     monitor-timeout / monitor-error / history-timeout / history-error /
     history-nonzero / insights-timeout / insights-error /
-    insights-nonzero），超时运行标注 ``timed_out`` 与时长。
+    insights-nonzero / M14-110 起 calibration-timeout / calibration-error /
+    calibration-nonzero，以及 calibration 步「退出 0 但 stdout 未过 JSON
+    产物契约/写入拒绝」时的 calibration-output-not-json /
+    calibration-artifact-write-error——按 stage failure_category 原词汇
+    引用），超时运行标注 ``timed_out`` 与时长。
   - ``monitoring_sample``：样本工件名（若写出）→ 推导 collected_at →
     在 history 中反查是否已索引及索引状态（ok/warn/critical）——
     把「history 步超时」与「样本最终入史」两件事分开陈述（超时可
@@ -110,8 +115,10 @@ PIPELINE_STEM_RE = _history.re.compile(r"^pipeline-[0-9]{8}-[0-9]{6}$")
 PLAN_STEM_RE = _history.re.compile(r"^plan-[0-9]{8}-[0-9]{6}$")
 #: 管道报告自身 schema 事实源（monitoring_pipeline.REPORT_SCHEMA_VERSION）
 PIPELINE_REPORT_SCHEMA_VERSION = 1
-#: 管道报告 step_id 固定三元组与 status 词汇（monitoring_pipeline 契约）
-STAGE_IDS: tuple[str, ...] = ("monitor", "history", "insights")
+#: 管道报告 step_id 固定词汇与 status 词汇（monitoring_pipeline 契约）。
+#: M14-110 起管道为四步（+calibration）；stages 键集仍按子集校验——
+#: M14-21 前两步/三步历史报告与 M14-110 起四步报告同面可解析。
+STAGE_IDS: tuple[str, ...] = ("monitor", "history", "insights", "calibration")
 STAGE_STATUS_VOCAB = frozenset({"ok", "failed", "timeout", "error",
                                 "skipped", "planned"})
 OVERALL_STATUS_VOCAB = frozenset({"ok", "failed", "planned"})
@@ -403,18 +410,29 @@ def classify_run(run: PipelineRun,
         execution_kinds.append(f"monitor-{monitor['status']}")
     # monitor skipped 已在解析层拒绝
 
-    # M14-21 前的两步形态：缺席的 step 属「该时代不存在」，不计失败
-    for stage_id in ("history", "insights"):
+    # M14-21 前的两步形态 / M14-110 前的三步形态：缺席的 step 属「该时代
+    # 不存在」，不计失败（stages 键集子集校验已保证无未知 step_id）
+    for stage_id in ("history", "insights", "calibration"):
         if stage_id not in run.stages:
             continue
         stage = run.stages[stage_id]
         status = stage["status"]
         if status == "skipped":
-            continue  # 前置门控后果（monitor 非零 / history 非 ok），非执行失败
+            continue  # 前置门控后果（monitor 非零 / history 非 ok / insights 非 ok），非执行失败
         if status in ("timeout", "error"):
             execution_kinds.append(f"{stage_id}-{status}")
         elif status == "failed":
-            execution_kinds.append(f"{stage_id}-nonzero")
+            # 非零退出在档 → 既有 -nonzero 词汇；退出 0 但失败在档
+            # （M14-110 calibration：stdout 未过 JSON 产物契约/写入拒绝）
+            # → 按 stage failure_category 原固定词汇引用
+            exit_code = stage.get("exit_code")
+            if isinstance(exit_code, int) and exit_code != 0:
+                execution_kinds.append(f"{stage_id}-nonzero")
+            else:
+                category = stage.get("failure_category")
+                execution_kinds.append(
+                    category if isinstance(category, str) and category
+                    else f"{stage_id}-failed")
         if status == "timeout":
             timeout_stages.append(stage_id)
 
@@ -624,6 +642,9 @@ REVIEW_BOUNDARIES: tuple[str, ...] = (
     ),
     (
         "history/insights stages skipped after a nonzero monitor verdict are designed gating consequences, not execution failures"
+    ),
+    (
+        "a calibration stage (M14-110 fourth step) failing after its exit-0 run with output that fails the JSON artifact contract, or being refused artifact persistence, is an execution-domain failure recorded under its fixed failure_category vocabulary; earlier-stage facts are never masked by it"
     ),
     (
         "incident recovery = first subsequent overall-ok pipeline run; an incident whose recovery run is absent stays open and is never masked"

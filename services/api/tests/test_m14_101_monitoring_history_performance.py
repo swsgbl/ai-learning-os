@@ -308,16 +308,29 @@ def test_fail_closed_symlink_semantics_preserved_under_cache() -> None:
 
 FAKE_PY = "C:/fake/python.exe"
 
+#: M14-110 第四步（calibration）默认伪 stdout：合法 JSON 产物——顶层
+#: schema_version/tool 与管道校准产物契约常量精确匹配（与主契约测试同款；
+#: 校准失败注入场景经 calibration_stdout 显式覆盖）
+CALIBRATION_FAKE_STDOUT = json.dumps(
+    {"schema_version": mp.CALIBRATION_SCHEMA_VERSION,
+     "tool": mp.CALIBRATION_TOOL_NAME, "window": {"records_used": 1}}) + "\n"
+
 
 class FakeRunner:
-    """伪子进程面（与既有 pipeline 契约测试同款形态）。"""
+    """伪子进程面（与既有 pipeline 契约测试同款形态；M14-110 起识别第四步
+    calibration——默认返回合法 JSON 产物 stdout）。"""
 
     def __init__(self, *, monitor_rc: int = 0, history_rc: int = 0,
-                 insights_rc: int = 0, history_exc: BaseException | None = None,
-                 insights_exc: BaseException | None = None, on_call=None) -> None:
+                 insights_rc: int = 0, calibration_rc: int = 0,
+                 history_exc: BaseException | None = None,
+                 insights_exc: BaseException | None = None,
+                 calibration_stdout: str = CALIBRATION_FAKE_STDOUT,
+                 on_call=None) -> None:
         self._rc = {"monitor": monitor_rc, "history": history_rc,
-                    "insights": insights_rc}
-        self._exc = {"monitor": None, "history": history_exc, "insights": insights_exc}
+                    "insights": insights_rc, "calibration": calibration_rc}
+        self._exc = {"monitor": None, "history": history_exc,
+                     "insights": insights_exc, "calibration": None}
+        self._calibration_stdout = calibration_stdout
         self._on_call = on_call
         self.calls: list[tuple[str, ...]] = []
 
@@ -329,6 +342,8 @@ class FakeRunner:
             step = "monitor"
         elif script.endswith("monitoring_history.py"):
             step = "history"
+        elif script.endswith("monitoring_threshold_calibration.py"):
+            step = "calibration"
         else:
             step = "insights"
         if self._on_call is not None:
@@ -336,7 +351,8 @@ class FakeRunner:
         exc = self._exc[step]
         if exc is not None:
             raise exc
-        return mp.CommandResult(tokens, self._rc[step], "", "")
+        stdout = self._calibration_stdout if step == "calibration" else ""
+        return mp.CommandResult(tokens, self._rc[step], stdout, "")
 
 
 class FakeClock:

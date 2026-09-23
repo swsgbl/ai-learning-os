@@ -9,6 +9,40 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-110 监控阈值标定管道集成（实现/测试/文档切片）**：worktree
+`m14-110-monitoring-calibration-pipeline`，分支
+`ops/m14-110-monitoring-calibration-pipeline`，基于 main
+`abdde29c700dd15ea5ad15a703c2009e3962d579`（PR #197 merge =
+M14-109 合入，精确基点），单 local commit，不 push、不开 PR。
+目标：把 M14-109 阈值标定/评估工具集成为 `monitoring_pipeline.py`
+的**显式可测试第四步**——monitor → history → insights →
+calibration。管道集成契约：固定形态仅 `--format json`（输入面全部
+经校准工具既有默认值生效，管道 CLI 结构性零校准注入面）；唯一
+stdout 捕获步——JSON 产物契约校验（schema_version/tool 精确匹配 +
+交叉 pin standalone 常量）→ 管道独占持久化固定名
+`calibration.json`（redact 终防线 + symlink 拒绝 + 原子写；校准
+工具零文件写入契约不变，history.jsonl 绝不改动）；malformed/契约
+不匹配 = 可见失败 `calibration-output-not-json`，绝不静默接受；
+失败/跳过轮绝不写、绝不引用旧产物（同轮新鲜度语义）。超时预算
+（supervisor Round 1 边界）：calibration 1–5s（默认 5s）——四步
+硬顶之和 715s 对 PT12M=720s **恒留 ≥5s** 管道自身开销，三步既有
+硬顶 710s pin 不变。报告 schema 保持 v1（add-stage-keep-version，
+M14-21 先例）；`pipeline_incident_review` 消费面最小同步。
+standalone 工具唯一调整：json 模式恒 ASCII-safe（ensure_ascii
+转义，JSON 语义逐键等值、M14-109 既有 57 项测试零改动全过）——
+根除 Windows ACP=cp936 调度链路下 GBK stdout 被 UTF-8 捕获的字节
+损坏（supervisor 无 PYTHONUTF8 真实冒烟：输出两轮 SHA-256 相同
+`FEAFBDE8…494DF`、9061 字节、零非 ASCII；输入 SHA-256 前后不变）。
+**诚实边界：本切片零真实管道 execute、零调度注册/改动——第四步
+真实调度轮尚未发生；不构成 production readiness 宣称，不解除任何
+release gate；`production_ready=false` 不变。**验证：监控家族九
+套件全绿（supervisor 终验命令口径）+ py_compile + ruff（默认与
+`--select F,E9`）+ `git diff --check` 全净。证据
+`docs/evidence/m14-110-monitoring-calibration-pipeline/README.md`。
+同步更新 CHANGELOG（M14-110 条目）、ROADMAP（M14-110 状态更新）与
+tools/ops/README.md（管道节四步 + M14-110 状态 + M14-109 管道
+集成注记）。
+
 **M14-109 监控阈值标定/评估工具（实现/文档切片）**：worktree
 `m14-109-monitoring-threshold-calibration`，分支
 `ops/m14-109-monitoring-threshold-calibration`，基于 main

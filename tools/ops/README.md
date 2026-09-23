@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -11,9 +11,13 @@
 摘要面（只读 M14-12 工件，零墙钟确定性输出）；`monitoring_pipeline.py` +
 `monitoring_pipeline_task.py` + `run_monitoring_pipeline_silent.vbs`
 （M14-14）承担持续/定时采集的**组合管道与调度**面（单次
-monitor → history → insights 组合（M14-21 起接入 insights）+ 计划任务
-管理器；**M14-22 起真实计划任务三步持续执行（两轮连续调度成功）与
-insights 两轮产出/刷新已经 supervisor 验收**，`production_ready=false`
+monitor → history → insights → calibration 四步组合（M14-21 起接入
+insights，M14-110 起第四步接入阈值标定——固定形态 `--format json`，
+stdout 捕获后 JSON 契约校验并由管道持久化为固定名 calibration.json；
+本切片**零真实 execute、零调度注册/改动**）+ 计划任务
+管理器；**M14-22 起真实计划任务持续执行（两轮连续调度成功）与
+insights 两轮产出/刷新已经 supervisor 验收（三步时代口径；M14-110
+第四步尚未有真实调度轮）**，`production_ready=false`
 不变）；
 `monitoring_insights.py`（M14-15）承担
 监控历史**洞察/告警摘要**面（只读 M14-13 history.jsonl 或 M14-12 monitor
@@ -481,14 +485,19 @@ fail-closed 输出零写入）。记录累计 `restart_counts` 口径不变，�
 - 路径防御：源文件/源目录/输出路径/输出祖先的 symlink 一律拒绝；
   退出码 0 成功 / 2 任何拒绝（含零源、零完整样本、源目录缺失、写失败）。
 
-## monitoring_pipeline.py（M14-14 / M14-21）
+## monitoring_pipeline.py（M14-14 / M14-21 / M14-110）
 
 持续/定时监控采集管道 readiness：**单次组合** M14-12 monitor → M14-13
-history → M14-15 insights（history 仅在 monitor exit 0 后运行；insights
-仅在 history status=ok 后运行，输入恒为 history canonical 输出目录——
-M14-21 起默认源常量三方 resolve 全等，单一事实源；任何失败/跳过固定词汇
+history → M14-15 insights → M14-109 calibration（history 仅在 monitor
+exit 0 后运行；insights 仅在 history status=ok 后运行，输入恒为 history
+canonical 输出目录——M14-21 起默认源常量三方 resolve 全等，单一事实源；
+calibration 仅在 insights status=ok 后运行——M14-110 第四步，固定形态
+仅 `--format json`、输入面全部经校准工具既有默认值生效，stdout 捕获后
+经 JSON 产物契约校验（schema_version/tool 精确匹配）并由管道持久化为
+固定名 `calibration.json`；任何失败/跳过固定词汇
 入档，前置步骤事实绝不遮蔽）。开发/排障默认零执行；真实执行仅由
-supervisor 在获准窗口运行。
+supervisor 在获准窗口运行。**M14-110 切片零真实 execute、零调度注册/
+改动——第四步的真实调度轮尚未发生。**
 
 **状态（M14-22 真实调度验收，2026-09-13，含 R1 修正）**：计划任务
 `AIOS-Monitoring-Pipeline` 在 PR #98 合并后**两轮连续真实调度成功**
@@ -518,6 +527,22 @@ M14-27 契约测试 35 passed、监控家族六套件最终回归 635 passed（�
 启动与生产监控切换尚未执行（留 M14-28 受控验收），`production_ready=
 false` 不变**。
 
+**状态（M14-110 calibration 第四步接入，2026-09-23，supervisor Round 1
+修正后收口）**：管道序列升级为 monitor → history → insights →
+calibration 四步——第四步为 M14-109 阈值标定/评估工具的固定形态
+`--format json`（输入面全部经其既有默认值生效），stdout 捕获 → JSON
+产物契约校验（schema_version/tool 精确匹配）→ 管道独占持久化为固定名
+`calibration.json`（校准工具零文件写入契约不变）；standalone 工具 json
+模式改恒 ASCII-safe（ensure_ascii 转义，JSON 语义逐键等值——supervisor
+真实无 PYTHONUTF8 冒烟实证输出 9061 字节全 ASCII、输入 SHA-256 前后
+不变、两轮输出 SHA-256 相同）。超时预算：calibration 1–5s（默认 5s），
+四步硬顶之和 715s 对 PT12M=720s 恒留 ≥5s 管道自身开销；三步既有硬顶
+710s pin 不变。报告 schema 保持 v1（add-stage-keep-version，M14-21 先例）；
+`pipeline_incident_review` 消费面同步（stages 键集 + calibration 失败
+归因词汇）。**本切片零真实管道 execute、零调度注册/改动——第四步的
+真实调度轮尚未发生；`production_ready=false` 不变。**证据
+`docs/evidence/m14-110-monitoring-calibration-pipeline/README.md`。
+
 ```
 python tools/ops/monitoring_pipeline.py                        # plan（默认，零执行）
 python tools/ops/monitoring_pipeline.py --execute \
@@ -531,36 +556,58 @@ python tools/ops/monitoring_pipeline.py --execute \
 - **双模式门禁**：默认 plan 完全惰性（零 subprocess/零网络/零生产读取/
   零调度器改动，Runner 零构造——计数工厂测试锁定）；execute 需
   `--execute` + 精确确认短语 `EXECUTE READ-ONLY MONITORING PIPELINE`
-  （一字不差），缺一/近似即 EXIT 2 且零 Runner 构造/调用；三步超时
+  （一字不差），缺一/近似即 EXIT 2 且零 Runner 构造/调用；四步超时
   非有限浮点/超硬顶同样拒绝（plan 同样校验）。
-- **固定命令白名单门（结构性）**：仅三个精确固定形态——
+- **固定命令白名单门（结构性）**：仅四个精确固定形态——
   `<python> production_monitor.py --execute --confirm "EXECUTE READ-ONLY
   PRODUCTION MONITORING"`（与 monitor 自身短语逐字一致，回归测试锁定）、
-  `<python> monitoring_history.py`（全默认参数）与
+  `<python> monitoring_history.py`（全默认参数）、
   `<python> monitoring_insights.py --execute --confirm "EXECUTE READ-ONLY
   MONITORING INSIGHTS"`（与 insights 自身短语逐字一致；**恒不带
-  --source**——输入恒为其默认源 = history canonical 输出目录）；任何其它
-  argv（含 --source/--event-limit 注入）在执行之前拒绝；无 shell=True、
-  无用户可注入命令/URL/env 展开；子进程输出只取 returncode，stdout/stderr
-  绝不持久化/回显。
+  --source**——输入恒为其默认源 = history canonical 输出目录）与
+  `<python> monitoring_threshold_calibration.py --format json`
+  （M14-110 第四步；**恒不带 --history/--samples/阈值参数**——输入面
+  全部经校准工具既有默认值生效，管道 CLI 不暴露任何校准 argv 注入面）；
+  任何其它 argv（含 --source/--event-limit/校准源·窗口·阈值注入）在执行
+  之前拒绝；无 shell=True、无用户可注入命令/URL/env 展开；子进程输出
+  纪律分两型：monitor/history/insights 只取 returncode，stdout/stderr
+  绝不持久化/回显；calibration 是唯一 stdout 捕获步（产物本体，绝不回显
+  控制台）。
+- **calibration 步产物纪律（M14-110）**：校准工具自身零文件写入
+  （stdout-only 契约不变，history.jsonl 绝不改动/删除）——管道捕获
+  stdout → JSON 产物契约校验（顶层对象且 schema_version/tool 与受支持
+  契约**精确匹配**；malformed/不匹配 = 可见失败
+  `calibration-output-not-json`，绝不静默接受）→ redact 终防线 + symlink
+  拒绝 + 原子写固定名 `calibration.json`（管道工件目录内）；写入失败 =
+  可见失败（`calibration-artifact-write-error`）；失败/跳过轮绝不写、
+  绝不引用旧 calibration.json。校准 json 模式恒 **ASCII-safe**
+  （ensure_ascii 转义，JSON 语义逐键等值）——任意子进程 stdout 编码
+  （含 Windows ACP=cp936 调度链路）下捕获字节零损坏。
 - **超时预算**：monitor 60–540s（默认 480s，覆盖 monitor 内部最坏 ~445s）、
   history 10–120s（**默认 90s——M14-79 由 45s 上调**：2026-09-21 生产三次
   实测 45.206/45.522/46.955s 刚过 45s 即被杀（工件目录 830+ 份时冷缓存
   重校验偶发超时），90s ≈ 1.9× 最坏观测（46.955s）、正常完成轮实测
   0.3–7.2s；超时事实照常入档 status=timeout，绝不隐藏或改记成功）、
   insights 5–50s（默认 15s，纯本地只读工件
-  处理秒级完成即兜底杀停）；默认总和 480+90+15=585s，三步硬顶之和
-  540+120+50=710s < 计划任务执行
-  时限 PT12M=720s < 重复间隔 PT15M——调度器绝不先于内部超时杀整任务。
+  处理秒级完成即兜底杀停）、calibration 1–5s（默认 5s，M14-110——
+  supervisor 边界：不把 PT12M 用满）；默认总和 480+90+15+5=590s，四步
+  硬顶之和 540+120+50+5=715s < 计划任务执行
+  时限 PT12M=720s（恒留 ≥5s 给管道自身开销：启动、锁、证据报告原子写与
+  调度器余量）< 重复间隔 PT15M——调度器绝不先于内部超时+收尾杀整任务。
+  三步既有硬顶 540+120+50=710s 由既有测试 pin 不变。
 - **重叠保护**：gitignored 工件目录内 `pipeline.lock`（O_CREAT|O_EXCL）；
   已存在即可见拒绝零执行；**本轮零 stale-lock 清理**（陈旧锁操作者人工
   处置）；锁体仅安全事实；symlink 全路径拒绝。
-- **报告**：schema v1 JSON+MD 原子写（tmp+fsync+os.replace），仅安全事实
-  （状态/退出码/时长/固定命令身份（无绝对本机路径）/脱敏错误类别类名/
-  产物名+SHA-256+字节数（差集发现、每步 ≤8 个 hash、超界记数；history
-  与 insights 各两固定名））；
+- **报告**：schema v1 JSON+MD 原子写（tmp+fsync+os.replace；M14-110 加
+  calibration 步为**加键扩展、版本保持 1**——与 M14-21 加第三步同款
+  add-stage-keep-version 先例，stages/config 既有键语义零变化，既有消费
+  面（pipeline_incident_review）旧两步/三步与新四步报告同面兼容），仅
+  安全事实（状态/退出码/时长/固定命令身份（无绝对本机路径）/脱敏错误
+  类别类名/产物名+SHA-256+字节数（差集发现、每步 ≤8 个 hash、超界记数；
+  history 与 insights 各两固定名；calibration 一固定名由管道从捕获
+  stdout 持久化））；
   报告写入失败 = 证据不可失 → EXIT 2。
-- 退出码：0 plan 成功 / execute 三步全 ok；1 execute 已执行但有可见失败；
+- 退出码：0 plan 成功 / execute 四步全 ok；1 execute 已执行但有可见失败；
  2 门禁/数值/锁/路径/报告写入拒绝。
 
 ## monitoring_pipeline_task.py + run_monitoring_pipeline_silent.vbs（M14-14）
@@ -1350,3 +1397,10 @@ python tools/ops/monitoring_threshold_calibration.py \
   （57 项：结构契约/参数 fail-closed/路径防御/行校验透传/标定语义/
   输出卫生）。切片说明见
   `docs/evidence/m14-109-monitoring-threshold-calibration/README.md`。
+- **M14-110 管道集成注记**：监控管道（monitoring_pipeline.py）第四步以
+  固定形态 `--format json` 调用本工具（输入面全部经既有默认值生效，
+  绝无源/窗口/阈值注入），stdout 经 JSON 产物契约校验后由**管道**持久化
+  为 `calibration.json`——本工具的只读/stdout-only/零文件写入契约**零
+  改动**；唯一调整 = json 模式输出恒 **ASCII-safe**（ensure_ascii 转义，
+  JSON 文档语义逐键等值——任意子进程 stdout 编码（含 Windows ACP=cp936
+  调度链路）下被管道捕获字节零损坏；summary 人读模式不受影响）。
