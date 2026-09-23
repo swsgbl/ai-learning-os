@@ -31,8 +31,11 @@ client 恒 ``trust_env=False``（Windows 注册表/环境系统代理不得劫�
 
 - **只读**：零子进程、零文件写入、零服务生命周期变更——不启动/停止/
   重启 CC Switch/代理/Docker/Ollama/FunASR/CosyVoice/SearXNG/模拟器/
-  设备/计划任务或任何用户进程；探测全部为 GET + 有界超时（10s，与
-  既有 smoke 健康探测同契约）+ 不追 redirects；
+  设备/计划任务或任何用户进程；探测全部为 GET + 有界超时 + 不追
+  redirects；超时分档（M14-115）：search 预检 30s——它是唯一触发真实
+  上游聚合的预检（China Bing 聚合延迟生产实测 10.3s/12.6s/18.5s，
+  10s 会把慢聚合误报为 endpoint_timeout）；voice/LLM 预检 10s（本机
+  listener/驻留面无上游聚合，与既有 smoke 健康探测同契约）；
 - **零 secret**：不读取任何 API key/凭据环境槽位；环境访问仅限
   ``urllib.request.getproxies``/``proxy_bypass`` 的**布尔**压力判定
   （代理值可能内嵌凭据，绝不进入输出）；endpoint URL 含 userinfo
@@ -83,6 +86,14 @@ PROVIDER_KEYS = SMOKE_PROVIDERS
 #: 有界只读探测超时（秒）：与 smoke_local_voice._probe_health / CloudWebProvider
 #: 默认值同契约（10s），固定常量不开放覆写（有界性是契约的一部分）
 PROBE_TIMEOUT_SECONDS = 10.0
+
+#: search 预检专用超时（秒，M14-115）：search 是唯一会触发真实上游聚合的
+#: 预检——China Bing 聚合延迟在 M14-115 生产恢复期实测 10.3s/12.6s/18.5s
+#: （真实冒烟 10342ms、手工查询 12664ms/18502ms），通用 10s 界会把慢聚合
+#: 误报为 endpoint_timeout（工具缺陷，本切片修复）。30s 为保守覆盖聚合延迟
+#: 的界，仍固定常量不开放覆写；voice（/health listener 面）与 LLM
+#: （/api/ps 驻留面）预检无上游聚合，维持 10s 语义不变。
+SEARCH_PROBE_TIMEOUT_SECONDS = 30.0
 
 #: 不追 redirects（有界探测；SearXNG /search?format=json 与 /health 均直答）
 _FOLLOW_REDIRECTS = False
@@ -334,15 +345,18 @@ def _probe_json(
     url: str,
     *,
     get: _Get,
+    timeout_seconds: float = PROBE_TIMEOUT_SECONDS,
 ) -> tuple[str, dict[str, Any] | None, int | None]:
     """探测一个 JSON 契约端点 -> (reason, payload, http_status)。
 
     reason 空 = HTTP 2xx 且 body 是 JSON 对象（进一步形状判定由调用方做）；
     http_status 在拿到 HTTP 响应时透出（归因与报告用）。404 等 ->
     http_failure；body 非 JSON 对象 -> malformed_response。
+    ``timeout_seconds``：探测界（search 传 SEARCH_PROBE_TIMEOUT_SECONDS，
+    其余默认 PROBE_TIMEOUT_SECONDS——分档依据见常量注释）。
     """
     try:
-        status, text = get(url, timeout_seconds=PROBE_TIMEOUT_SECONDS)
+        status, text = get(url, timeout_seconds=timeout_seconds)
     except PreflightTransportError as cause:
         return cause.reason, None, None
     if not 200 <= status < 300:
@@ -394,7 +408,12 @@ def _parse_unresponsive_engines(
 
 
 def _check_search(endpoint_raw: str | None, *, get: _Get) -> dict[str, Any]:
-    """search/SearXNG：base URL + 只读 /search?format=json 形状与上游归因。"""
+    """search/SearXNG：base URL + 只读 /search?format=json 形状与上游归因。
+
+    探测界为 SEARCH_PROBE_TIMEOUT_SECONDS（30s）——唯一触发真实上游聚合
+    的预检（M14-115：China Bing 聚合实测 10.3s/12.6s/18.5s，10s 误报
+    endpoint_timeout 的缺陷修复）；报告透出实际探测界供归因检视。
+    """
     endpoint, url_reason = _classify_url(endpoint_raw)
     if url_reason:
         # malformed/not_configured：不回显未通过校验的输入（可能内嵌凭据/
@@ -411,7 +430,9 @@ def _check_search(endpoint_raw: str | None, *, get: _Get) -> dict[str, Any]:
         f"{endpoint}/search?"
         f"{urlencode({'q': SEARCH_PROBE_QUERY, 'format': 'json'})}"
     )
-    reason, payload, status = _probe_json(probe_url, get=get)
+    reason, payload, status = _probe_json(
+        probe_url, get=get, timeout_seconds=SEARCH_PROBE_TIMEOUT_SECONDS
+    )
     # 非 loopback 端点保持 httpx 默认 trust_env（部署代理照常生效）；本核心
     # 探测恒 loopback 直连——trust_env 语义由注入的 get 闭包携带（见
     # _loopback_get），此处只记录探测实际使用的值（报告透明）。
@@ -421,6 +442,7 @@ def _check_search(endpoint_raw: str | None, *, get: _Get) -> dict[str, Any]:
         "recommendation": None,
         "endpoint": endpoint,
         "probe": "search_format_json",
+        "probe_timeout_seconds": SEARCH_PROBE_TIMEOUT_SECONDS,
         "loopback": loopback,
         "probe_trust_env": not loopback,
         "http_status": status,

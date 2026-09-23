@@ -9,6 +9,43 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-115 provider-smoke 当前生产恢复固化与 preflight search 超时缺陷修复（恢复证据固化/缺陷修复/文档切片）**：worktree
+`m14-115-provider-smoke-current-recovery`，分支
+`ops/m14-115-provider-smoke-current-recovery`，基于 main `cf0a512`
+（PR #201 merge = M14-114 China Bing 直连引擎合入，精确基点），单
+local commit，不 push、不开 PR。两件事：其一，把 supervisor 生产恢复
+（只 recreate searxng 一个容器、API/Web/Postgres/Redis/MinIO/LiveKit
+容器 ID 未变，新容器 healthy、settings 挂载回 canonical main、出站
+`socks5h host-gateway:7892` 不回显 secret；China Bing
+`https://cn.bing.com` 直连启用，PR #201 CI run 35905222519 5/5
+success）与其后的真实三步冒烟固化为入库证据——search pass 10342ms
+（results=5 query_len=21；前 3 次失败为 WSLENV 透传漏项
+envmiss/querymiss/endpointmiss，非 provider 失败）、local-voice pass
+25532ms（ASR 2682ms/42 bytes、TTS 22490ms/241964 bytes RIFF WAV）、
+llm pass 11945ms（第 1 次 256 tokens thinking-only 空 content 脚本
+正确 fail；第 2 次 MAX_TOKENS=1024、timeout 仍 300s，正文 12 chars，
+rubric [True,True] conf=1.0），`provider-smoke-aggregate` 三项 pass
+（2026-09-23T18:57Z），8 个 gitignored JSON SHA256+字节数锚定。其二，
+修复恢复期暴露的 preflight 工具缺陷：search 预检（唯一触发真实上游
+聚合的预检，实测聚合延迟 10.3s/12.6s/18.5s）被单一 10s 探测超时误报
+`endpoint_timeout`——新常量 `SEARCH_PROBE_TIMEOUT_SECONDS = 30.0` +
+`_probe_json` keyword-only `timeout_seconds` 参数（voice/LLM 调用点
+零改动、10s 语义不变）+ 报告 search 槽位透出 `probe_timeout_seconds`
++ docstring/CLI help/DEVELOPMENT.md 分档文案；不新增配置面（两档固定
+常量不开放覆写）。验证：`test_provider_smoke_preflight.py` 55 passed
+（基线 54 + 新增 `test_search_probe_timeout_30s_voice_llm_10s`）+
+`test_searxng_local_provider.py` 17 passed +
+`test_provider_smoke_evidence.py` 128 passed + ruff（默认与
+--select F,E9）+ py_compile + git diff --check 全净（canonical
+venv）。**诚实边界：不声称 release_ready/production_ready——
+provider-smoke 当前证据闭合但 long-soak、审批链、发布材料缺位；
+本切片零生产触碰、零 secret 读取；preflight 修复后未对生产 searxng
+重跑（30s 档正确性由契约测试+真实延迟样本论证）。**证据
+`docs/evidence/m14-115-provider-smoke-current-recovery/README.md`。
+同步更新 CHANGELOG（M14-115 条目）、ROADMAP（M14-115 状态更新）、
+DEVELOPMENT（预检超时分档）与 PROJECT_STATUS 顶部任务结构
+（M14-115 接替顶部、M14-112 移为次席，实现详情保留）。
+
 **M14-112 provider-smoke 前置只读预检与失败归因面（实现/测试/文档切片）**：worktree
 `m14-112-provider-smoke-preflight`，分支
 `ops/m14-112-provider-smoke-preflight`，基于 main

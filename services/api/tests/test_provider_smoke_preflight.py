@@ -252,6 +252,33 @@ def test_default_endpoints_are_repo_local_contract() -> None:
     assert any(u == "http://127.0.0.1:11434/api/ps" for u in urls)
 
 
+def test_search_probe_timeout_30s_voice_llm_10s() -> None:
+    """超时分档契约（M14-115）：search 30s（真实上游聚合延迟——China Bing
+    聚合实测 10.3s/12.6s/18.5s，10s 会误报 endpoint_timeout）；voice/LLM
+    维持 10s（本机 listener/驻留面无上游聚合）。报告透出 search 实际
+    探测界供归因检视。"""
+    get = _all_ok_get()
+    report = _run(get)
+    search_timeouts = [
+        kwargs["timeout_seconds"]
+        for url, kwargs in get.calls
+        if "/search" in url
+    ]
+    other_timeouts = [
+        kwargs["timeout_seconds"]
+        for url, kwargs in get.calls
+        if "/search" not in url
+    ]
+    assert search_timeouts == [psp.SEARCH_PROBE_TIMEOUT_SECONDS]
+    assert psp.SEARCH_PROBE_TIMEOUT_SECONDS == 30.0
+    assert other_timeouts and set(other_timeouts) == {
+        psp.PROBE_TIMEOUT_SECONDS
+    }
+    assert psp.PROBE_TIMEOUT_SECONDS == 10.0
+    # 报告透明：search 槽位透出实际探测界（endpoint_timeout 归因可检视）
+    assert report["providers"]["search"]["probe_timeout_seconds"] == 30.0
+
+
 # ---------- 3. 失败归因闭集 ----------
 
 
