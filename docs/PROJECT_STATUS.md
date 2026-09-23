@@ -138,6 +138,30 @@ gateway/provider-smoke/config/compose/rc-smoke 聚焦回归全绿 + **全量
 GPU 探测——llm provider-smoke 步仍为未验证状态**，真实重跑（GPU 空闲
 窗口 + 运维选定超时/预算值）是后续运维动作（M14-98 §4 纪律不变）。
 
+**M14-99 Harmony 登录回归（post-login regression）**：worktree
+`m14-99-harmony-post-login-regression`，分支 `harmony/m14-99-post-login-regression`，
+原基于 main `841b36f`（PR #185 merge = M14-95 合入，精确基点），后受控 rebase 到
+main `0982c24`（PR #190 / M14-103 已合入；rebase 仅解决三台账 docs 冲突，代码零
+变更），单 local commit，不 push、不开 PR。
+目标：post-login 回归路径下防止 Home 六区持续 LOADING 状态误判（M14-89/95 既有
+auth smoke 的已知缺口）。交付：① `tools/harmony_release/auth_smoke.py`
+新增 `_poll_home_zones_settled`（有界轮询布局 dump，判定 Home 六区是否加载
+完成）；② `tests/harmony_release/test_auth_smoke.py` 新增 6 个测试（4 个
+`_poll_home_zones_settled` 场景 + 2 个默认工厂 wire mock 用例，49 → 55）。
+Harmony 模拟器 `127.0.0.1:5555` 真实执行：HAP 533946 bytes
+SHA256 `91596B12DA6871C41B8581B7B3D6D51549B352585B701DFB9C99FFA67701C21F`（未签名）；12 步 = 11 ok + 0 failure + 1
+not_run（唯一 `auth_off_local`/`auth_phase_skip`），warnings=0、
+request_failures=0、mutation=true、cleanup=true；launcher status=executed；
+宿主后端 OS 动态 loopback 端口 57250、设备侧 `http://10.0.2.2:57250/`；
+首次 launcher 尝试 `server_start_failed` → 重跑成功。验证：`test_auth_smoke.py`
+**55 passed**、`test_auth_smoke_launcher.py` **20 passed**、py_compile/ruff
+（F,E9,W605）/`git diff --check` 全绿。诚实边界：未签名 HAP；Harmony 模拟器
+`127.0.0.1:5555`（非真机、未触碰 Android 真机）；零生产容器/DB/MinIO 接触；
+`production_ready=false` 不变。证据
+`docs/evidence/m14-99-harmony-post-login-regression/README.md`（唯一入库
+证据文件），同步更新 CHANGELOG（M14-99 条目）、ROADMAP（M14-99 状态更新）
+与 PROJECT_STATUS 顶部任务结构（M14-95 降级为前一任务）。
+
 ## 前一任务（M14-98 current-main provider-smoke 门证据刷新——已随 PR #186 合并 main `a583f918fba4ea6223b08afc275d909fefef152b`；本地 LLM 超时/预算修复由 M14-100 接续）
 
 **M14-98 current-main provider-smoke 门证据刷新**：worktree
@@ -236,6 +260,7 @@ SHA256
 `docs/evidence/m14-95-harmony-real-auth-smoke/README.md`（唯一入库
 证据文件），同步更新 CHANGELOG（M14-95 条目）与 ROADMAP（M14-95
 状态更新）。
+
 
 ## 前一任务（M14-97 current-main 代码绑定门证据刷新 + evidence-cockpit 聚合——已随 PR #184 合并 main `c0610e9e`；Harmony 真实认证冒烟由 M14-95 接续）
 
