@@ -406,7 +406,11 @@ def test_smoke_compose_render_fails_closed_without_tag_env() -> None:
              if not k.startswith("AIOS_RC_SMOKE_")},
     )
     assert result.returncode != 0, "缺必填 tag 变量必须渲染失败（fail-closed，绝不回落默认 tag）"
-    assert "AIOS_RC_SMOKE_API_TAG" in result.stderr
+    # M14-103：compose 版本间首个报错的缺失变量不定（CI 2.337 先报 WEB_TAG，
+    # 本机 v5.5.0 先报 API_TAG）。fail-closed 契约只耦合「stderr 必点名任一
+    # 必填 tag 变量」，不耦合报错顺序。
+    assert any(tag in result.stderr for tag in ("AIOS_RC_SMOKE_API_TAG", "AIOS_RC_SMOKE_WEB_TAG")), \
+        result.stderr
 
 
 @pytest.mark.skipif(not _docker_available(), reason="需要 docker compose CLI（只读 config 渲染，零容器）")
