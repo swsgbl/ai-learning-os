@@ -9,6 +9,80 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-107 current-main 发布证据刷新（ci-main + release-check + 首次
+staged long-soak + cockpit 聚合）**：worktree
+`m14-107-current-main-evidence-refresh`，分支
+`ops/m14-107-current-main-evidence-refresh`，基于 main
+`22a9cbf89472faf8cbcef3bbfc2fb2329371287e`（PR #194 merge =
+M14-106 合入，精确基点），单 local commit，不 push、不开 PR。
+证据刷新切片（ci-main/release-check 真实重跑 + long-soak 只读
+校验复制 + 文档，零应用代码/配置/工具改动）：M14-105 证据 @
+e5d5d3a 对 22a9cbf 已 stale（PR #193 证据 docs + PR #194 M14-106
+真实代码变更——本地语音 provider 与冒烟健康探测 loopback
+`trust_env=False` 加固 + 新增 6 个契约测试）——本切片刷新代码
+绑定两门、**首次 stage supervisor 已复核的 24h long-soak pass
+证据**、以 M14-91 cockpit 重新聚合；绝不搬运旧 JSON、绝不手改
+gate JSON、绝不合成 pass。结果：ci-main run **35811421324**
+（run_number 509，push/main 唯一 run，conclusion=success，5/5
+jobs 精确集合 API/Docker/Release tools/Android/Web 无重复——断言
+全过按 `_eval_ci_main` 契约程序化派生，raw gh-runs/gh-jobs 原样
+归档）；release-check 从零隔离环境（uv venv CPython 3.12.14 +
+api/dev requirements `NO_PROXY='*'` 直连镜像 + npm ci 411
+packages）运行前复核 HEAD==22a9cbf 且 porcelain 空，
+`release-check-isolated --json` **exit 0 / all_green=true / 10/10
+pass**（generated_at 2026-09-23T03:04:52Z；api-test **pytest
+4233 passed, 33 skipped, 1 warning in 296.02s**——较 M14-105 的
+4227 恰 +6 = M14-106 新增 6 个测试的预期对账，实测吻合非硬编码；
+migration/backup tables:30 files:1/voice local 17324 bytes/
+license/e2e 全过；原始产物逐字节复制为 canonical、
+byte-identical=True）；long-soak **不重跑、零生产/计划任务接触**
+——只读校验主仓 `.verify/tmp/m14-106-supervisor-long-soak-rerun/
+evidence/long-soak.json` 源 SHA256 `D939C6528B9FE739270FE6EA7068
+37FFA9DC13115665DC90740E6DB53A1056EC` 与任务指定值一致后逐字节
+复制为本切片 canonical（817 bytes 同哈希 + JSON 契约断言：
+audit_schema_version=2、策略 1440/15/20/500、classification=
+pass）；窗口事实：**24h 2026-09-22T02:00:01Z → 2026-09-23T02:00:01Z，
+97 ok / 0 warn / 0 critical，max gap 17.25m ≤ 20**；
+evidence-cockpit 在 tracked docs 编辑前、HEAD 干净时重新聚合——6
+个生产状态源文件 staging 前 sha256 复核与 M14-91 登记值全 MATCH
+（6/6：audit-chain-anchor/anchor-companion=M14-87、
+production-preflight/legacy-papers/draft-ownership=M14-83、
+backup-restore=M14-85），显式声明 current-head 与 release-check
+head=22a9cbf，**provider-smoke 本轮不 stage**（本基点最新真实
+执行即 M14-104 的 search/llm 失败轮，aggregate 未运行、无
+provider-smoke.json，required 门未 stage 按收紧语义如实阻断，
+不搬运 M14-88/M14-98 旧 JSON 冒充 current）——evaluator
+**pass=8 / pending=0 / blocked=0 / missing=3 / malformed=0 /
+tampered=0**，**cockpit_blockers = `provider-smoke:not-staged-
+required`（唯一——较 M14-105 双 blocker 收窄，long-soak 缺口已
+由 supervisor 复核的 pass 证据闭合）**；ci-main/release-check
+stale=**current**、long-soak staged pass（真实 24h 稳定窗口经
+`_eval_long_soak` 全语义校验）；release_ready=false、
+production_ready=false、cockpit_ready=false、exit 1（诚实预期，
+不强制 0）；staged 9 文件（8 门 + anchor companion）工具内建
+断言 + 外部独立复核 **9/9 IDENTICAL**（清单归档 canonical
+staged-inventory.txt）。验证：cockpit 三件套（evidence_cockpit/
+release_readiness/release_closure_manifest）**145 passed**
+（2.17s）+ release-check 三件套（release_readiness/
+release_check_isolated/release_checklist）**137 passed, 1
+warning**（2.86s）+ `ruff check`（4 个断言/复核脚本 +
+services/api 全量）全绿 + canonical 8 份 JSON `json.load` 通过 +
+SHA256 复核（release-check canonical==隔离原始、long-soak
+canonical==M14-106 源）+ `git diff --check` 干净（docs-only）。
+证据 `docs/evidence/m14-107-current-main-release-evidence/README.md`
+（唯一入库证据文件；gitignored canonical
+`.verify/artifacts/m14-107-current-main-release-evidence/` 13 文件
++ SHA256SUMS：三 gate JSON、raw gh-runs/gh-jobs、cockpit-report、
+staged-inventory、执行日志）。诚实边界：long-soak pass 是
+M14-106 运维轮时点证据（窗口外状态不承诺、本切片零 soak 接触）；
+代码绑定门证据只对执行时点的树成立（main 再前移即再 stale）；
+provider-smoke 解除（出站网络 + Ollama 在场 + GPU 空闲窗口重跑
+三件套 + aggregate）是后续运维动作留 supervisor 决策；
+release-approval human-only 从未发生；production-state 五门为
+历史 canonical 快照呈现、效力判断留 supervisor；生产仍运行
+m14-70 镜像，本切片零生产触碰、不授权任何部署。同步更新
+CHANGELOG（M14-107 条目）与 ROADMAP（M14-107 状态更新）。
+
 **M14-105 current-main 代码绑定门证据刷新 + evidence-cockpit 聚合**：worktree
 `m14-105-current-main-release-evidence`，分支
 `ops/m14-105-current-main-release-evidence`，基于 main
