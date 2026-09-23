@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -24,7 +24,15 @@ insights 两轮产出/刷新已经 supervisor 验收**，`production_ready=false
 （只读 M14-13 canonical history.jsonl → stdout 有界查询结果：时间窗/
 状态过滤 + 服务/端点维度选择 + limit 记录界；零网络/零子进程/零 env
 读取/**零文件写入**；**这是查询工具切片，不是生产查询服务**，不构成
-provider-smoke 或任何 release blocker 的解除）。
+provider-smoke 或任何 release blocker 的解除）；
+`monitoring_threshold_calibration.py`（M14-109）承担监控**阈值标定/
+评估**面（只读 canonical history.jsonl → stdout 分位数/候选阈值建议/
+覆盖率·告警率·ok 分歧评估（ok_status_conflict = 阈值评估结果与历史
+overall_status==ok 的代理分歧，不是误报率/真值标注）；既有阈值基准
+复用 production_monitor 常量；
+零网络/零子进程/零 env 读取/**零文件写入**；**这是离线标定/评估工具，
+不改变生产阈值、不接外部告警、不解除任何 release gate**，不授权任何
+部署）。
 
 ## production_recovery.py
 
@@ -1285,3 +1293,60 @@ python tools/ops/monitoring_history_query.py --format json \
   `services/api/tests/test_monitoring_history_query.py` 锁定（57 项：
   结构契约/参数 fail-closed/路径防御/行校验透传/查询语义/输出卫生）。
   切片说明见 `docs/evidence/m14-108-monitoring-history-query/README.md`。
+
+## monitoring_threshold_calibration.py（M14-109）
+
+监控**阈值标定/评估**面：把 `monitoring_history.py`（M14-13）已产出的
+canonical `history.jsonl` 变成离线、只读、fail-closed 的阈值标定/评估
+工具——分位数（nearest-rank，明确口径）、候选阈值建议（warn=p95/
+critical=p99 + applicable 机械判定）、候选/既有阈值在窗口上的覆盖率/
+告警率/ok 分歧评估（ok_status_conflict = 阈值评估结果与历史
+overall_status==ok 的代理分歧，不是误报率/真值标注）。**这是离线
+标定/评估工具，不改变生产阈值、不接外部
+告警、不解除 provider-smoke/long-soak/release gates**，不构成
+production readiness 宣称，不授权任何部署。
+
+```
+# 仓库根执行（canonical venv 或任意 Python ≥3.11，纯标准库）
+python tools/ops/monitoring_threshold_calibration.py                    # 默认窗口 200 + 既有阈值
+python tools/ops/monitoring_threshold_calibration.py --samples 100 \
+    --format json
+python tools/ops/monitoring_threshold_calibration.py \
+    --latency-warn-ms 800 --latency-critical-ms 4000   # 显式评估候选
+```
+
+- **单一事实源（零平行 schema）**：画像/schema 常量与行级加载复用同仓
+  `monitoring_history` + `monitoring_insights.parse_history_text` 已测语义
+  （M14-108 同款）；**既有阈值基准与配置界复用同仓 `production_monitor`
+  常量**（1000/5000ms、5/20 及 MIN/MAX——仅导入常量定义，从不调用其
+  任何采集/网络/子进程面）。本工具未改动 M14-13/M14-15/M14-108 任何
+  既有行为（监控家族回归 300 passed 实证）。
+- **有界参数（全部先于任何读取）**：`--samples`（默认 200、1–5000，
+  窗口 = 最新 N 条，全文件行级校验恒先行——窗口外交替 malformed 行仍
+  整体拒绝）；评估配置 `--latency-warn-ms`/`--latency-critical-ms`/
+  `--log-error-warn`/`--log-error-critical`（缺省 = production_monitor
+  既有默认 source=existing-defaults，显式提供 source=explicit；有限性/
+  界/严格 warn<critical 校验，固定词汇拒绝且零读取）。
+- **标定/评估口径（输出显式声明）**：分位数 min/p50/p90/p95/p99/max
+  （nearest-rank：rank=ceil(fraction·n)）；建议 warn=窗口 p95 /
+  critical=窗口 p99，`applicable` 机械判定（严格 p95<p99 且双双在
+  production_monitor 配置界内），不适用固定词汇原因
+  （degenerate-window/below-minimum/above-maximum），建议值如实保留绝不
+  抬升；评估告警语义 `value >= warn`/`>= critical`（含边界，与
+  production_monitor 同口径），coverage_rate/alarm_rate/critical_rate +
+  **ok_status_conflict = 阈值评估结果与历史 overall_status==ok 的代理
+  分歧（不是误报率/真值标注——overall_status 由既有受监控阈值生成，
+  非独立事件真值），ok_status_conflict_rate 分母 = 窗口样本总数**；
+  配置阈值与建议阈值双评估并排 = 建议与既有阈值对比。标定域 = 五端点 latency_ms +
+  六服务 log_error_totals；**restart 阈值为 M14-23 增量语义，累计
+  restart_counts 不作标定输入——诚实排除**；不伪造时序、不填充缺失点。
+- **只读纪律**：零网络、零子进程、零 env 读取、零计划任务、零生产
+  容器/DB/对象存储接触、**零文件写入**（只读 Store 协议层面即无写
+  面——只读输入文件、只写 stdout）。symlink 目标/现存 symlink 祖先
+  组件、缺失、目录形态一律拒绝；malformed/乱序/重复/混档/超 5000 一律
+  拒绝且零部分输出；零墙钟（同参数两次运行 stdout 逐字节相同）。
+- 退出码：0 标定/评估成功 / 2 任何拒绝。契约测试
+  `services/api/tests/test_monitoring_threshold_calibration.py` 锁定
+  （57 项：结构契约/参数 fail-closed/路径防御/行校验透传/标定语义/
+  输出卫生）。切片说明见
+  `docs/evidence/m14-109-monitoring-threshold-calibration/README.md`。

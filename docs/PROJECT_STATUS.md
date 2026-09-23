@@ -9,6 +9,46 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-109 监控阈值标定/评估工具（实现/文档切片）**：worktree
+`m14-109-monitoring-threshold-calibration`，分支
+`ops/m14-109-monitoring-threshold-calibration`，基于 main
+`ef95ab699f900c416850a62762521b69681a549f`（PR #196 merge =
+M14-108 合入，精确基点），单 local commit，不 push、不开 PR。
+目标：填补 monitoring 家族「阈值随时间的标定」工程缺口——新工具
+`tools/ops/monitoring_threshold_calibration.py`（离线、只读、
+fail-closed：`--samples` 有界样本窗口（默认 200、界 1–5000，窗口 =
+最新 N 条；全文件行级校验恒先行）、分位数 min/p50/p90/p95/p99/max
+（nearest-rank 明确口径）、候选阈值建议（warn=窗口 p95/critical=
+窗口 p99 + applicable 机械判定 + 固定词汇不适用原因）、阈值评估
+（告警语义 >= 含边界与 production_monitor 同口径；覆盖率/告警率/
+ok 分歧——ok_status_conflict = 阈值评估结果与历史
+overall_status==ok 样本的代理分歧（不是误报率/真值标注），
+分母 = 窗口样本总数；配置阈值（缺省即既有阈值）与建议阈值双评估
+并排 = 建议与既有阈值对比；restart 增量语义诚实排除），stdout-only
+双 format）+ 契约测试
+`services/api/tests/test_monitoring_threshold_calibration.py`。单一
+事实源：schema/画像常量与行级加载复用同仓 `monitoring_history` +
+`monitoring_insights.parse_history_text` 已测语义；**既有阈值基准
+与配置界复用同仓 `production_monitor` 常量**（仅导入常量定义）；
+M14-13/M14-15/M14-108 三既有工具零行为改动。只读纪律：零网络/
+零子进程/零 env 读取/零计划任务/零生产容器·DB·对象存储接触/
+**零文件写入**（只读 Store 协议层面即无写面）；symlink/缺失/目录
+拒绝；malformed/乱序/重复/混档/超 5000 一律拒绝且零部分输出；零墙钟
+（同参数两次运行 stdout 逐字节相同）。**诚实边界：这是离线标定/
+评估工具，不改变生产阈值、不接外部告警、不解除
+provider-smoke/long-soak/release gates，不授权任何部署；本切片从未
+对真实生产 history.jsonl 执行过标定/评估（全部验证基于合成
+fixture）；production_ready=false 不变。**验证：聚焦契约测试
+**57 passed** + 监控家族回归（calibration/history/insights/query
+四套件）**357 passed** + ruff（默认规则与 `--select F,E9`）全绿 +
+py_compile + 真实 CLI 端到端 smoke（canonical venv 直跑，producer
+函数生成 canonical 形状 fixture，summary/json 双形态 rc=0、
+nearest-rank 精确对账、建议与既有阈值对比完整可见）+
+`git diff --check` 干净。证据
+`docs/evidence/m14-109-monitoring-threshold-calibration/README.md`。
+同步更新 CHANGELOG（M14-109 条目）、ROADMAP（M14-109 状态更新）与
+tools/ops/README.md（M14-109 章节）。
+
 **M14-108 监控历史时序查询工具（实现/文档切片）**：worktree
 `m14-108-monitoring-history-query`，分支
 `ops/m14-108-monitoring-history-query`，基于 main
