@@ -9,6 +9,66 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-116 current-main 发布证据刷新（ci-main + release-check 真实重跑 + provider-smoke 首次 stage + long-soak 只读复用 + cockpit 零 blocker 聚合）（证据刷新切片）**：worktree
+`m14-116-current-main-release-evidence`，分支
+`ops/m14-116-current-main-release-evidence`，基于 main
+`2619ea77f3db291901e48eacdeea064b6f9b6fdb`（PR #202 merge =
+M14-115 合入，精确基点），单 commit，push 分支并开 PR（任务书
+指令，与 M14-105/M14-107 不 push 口径不同）。M14-107 证据 @
+22a9cbf 对 2619ea7 已 stale（区间含 M14-115 真实代码变更）——本切片
+刷新代码绑定两门、**首次 stage provider-smoke 真实 pass 证据**、
+long-soak 同哈希只读复用，以 M14-91 cockpit 重新聚合；绝不手改
+gate JSON、绝不合成 pass、绝不搬运哈希不符旧 JSON 冒充 current。
+ci-main：gh api 归档 raw runs/jobs（head_sha=2619ea7），断言全过
+（push/main 唯一 run、conclusion=success、5/5 jobs 精确集合
+API/Docker/Release tools/Android/Web、run_number 525）后按
+`_eval_ci_main` 契约程序化派生——run **35921247552**（2026-09-23
+T21:15:02Z，1193 bytes）。release-check：worktree 从零 uv venv
+CPython 3.12.14（59 packages）+ npm ci 411 packages，运行前复核
+HEAD==2619ea7 且 porcelain 空，`release-check-isolated --json`
+**exit 0 / all_green=true / 10/10 pass**（generated_at 2026-09-23
+T21:45:36Z；api-test pytest **4433 passed / 33 skipped / 1 warning
+in 269.80s**——较 M14-107 的 4233 恰 +200 = 区间各切片新增测试累计
+对账；migration/backup/voice/license/e2e 全过；临时 API 动态端口
+已收尾），产物逐字节复制为 canonical（2491 bytes）。
+provider-smoke：不重跑、零 provider/生产接触——M14-115 supervisor
+生产恢复轮真实聚合产物（2026-09-23T18:57:57Z，local 拓扑
+voice/search/llm 三槽位 executed+pass）SHA256
+`899feecb67285ccc4bd940462c4dc1944afa6dcfb6bbc5cc864ad9ddaf7ecdf6`
+逐字节一致复用 stage（564 bytes，**首次进入 cockpit 聚合**）。
+long-soak：不重跑——M14-106 运维轮 24h 窗口 pass 审计同哈希
+`d939c6528b9fe739270fe6ea706837ffa9dc13115665dc90740e6db53a1056ec`
+只读复用（817 bytes；窗口 2026-09-22T02:00:01Z→2026-09-23T02:00:01Z，
+97 ok/0 warn/0 critical，max gap 17.25m ≤ 20，span 恰 1440.0）。
+cockpit：docs 编辑前、HEAD 干净时重新聚合（6 个生产状态源 staging
+前 sha256 复核与 M14-91 登记值全 MATCH 6/6），显式声明 current-head
+与 release-check head=2619ea7。结果：**evaluator pass=9 / pending=0
+/ blocked=0 / missing=2 / malformed=0 / tampered=0**，
+**cockpit_ready=true / cockpit_blockers=[] / required_not_staged=[]
+/ exit 0——M14-91 cockpit 落地以来首次**（pass 7→8→9、blocker
+2→1→0）；ci-main/release-check stale=**current**；
+**release_ready=false / production_ready=false 不变**——
+not_pass_required 恰为 `release-approval`（human-only 从未发生，
+cockpit 按策略永不接受、不计 blocker——「无技术 blocker」与
+「不可放行」同时成立），not_pass_optional 为 `turn-tls`；staged
+10 文件（9 门 + anchor companion）**10/10 IDENTICAL**（工具断言 +
+外部复核，清单归档 canonical staged-inventory.txt）。验证：聚焦
+契约八套件 **407 passed, 1 warning**（6.83s；Windows 坑如实记录：
+pytest --basetemp 不自动创建缺失父目录链，先 mkdir -p 再跑）+
+`ruff check services/api` 全绿（零 Python 改动基线复核）+ canonical
+`tr -d '\r' < SHA256SUMS | sha256sum -c -` **18/18 OK** + JSON 契约
+断言脚本 **53 项全过** + canonical 18 文件秘密扫描五类模式 0 命中 +
+`git diff --check` 干净（docs-only）。**诚实边界：cockpit_ready=true
+≠ 可发布——release-approval human-only 缺席即不放行；provider-smoke/
+long-soak 为各运维轮时点证据不承诺窗口外状态；production-state 五门
+为历史 canonical 快照呈现、效力判断留 supervisor；生产仍运行 m14-70
+镜像，零生产触碰、不授权任何部署；代码绑定门只对 2619ea7 成立、
+main 再前移即再 stale。**证据
+`docs/evidence/m14-116-current-main-release-evidence/README.md`
+（唯一入库证据文件；gitignored canonical 18 文件 + SHA256SUMS）。
+同步更新 CHANGELOG（M14-116 条目）与 ROADMAP（M14-116 状态更新，
+M14-115 移为次席，实现详情保留）。
+
 **M14-115 provider-smoke 当前生产恢复固化与 preflight search 超时缺陷修复（恢复证据固化/缺陷修复/文档切片）**：worktree
 `m14-115-provider-smoke-current-recovery`，分支
 `ops/m14-115-provider-smoke-current-recovery`，基于 main `cf0a512`
