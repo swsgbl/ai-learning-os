@@ -546,7 +546,11 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   loopback 保持 httpx 默认；报告 `ambient_proxy` 字段以布尔观测
   环境/注册表代理压力是否覆盖被探测 loopback host（getproxies +
   proxy_bypass）——**代理值（可能内嵌凭据）绝不进入输出**。探测恒
-  10s 固定超时、GET-only、不追 redirects。
+  GET-only、不追 redirects；有界超时分档（M14-115）：search 预检
+  30s（唯一触发真实上游聚合的预检——China Bing 聚合延迟生产实测
+  10.3s/12.6s/18.5s，10s 会把慢聚合误报为 `endpoint_timeout`），
+  voice/LLM 预检 10s（本机 listener/驻留面，与既有 smoke 健康探测
+  同契约）；两档均固定常量不开放覆写。
 - **URL fail-closed（supervisor 修正 Round 1）**：endpoint 含 userinfo
   （`user@` 与 `user:pass@` 两形态）、query 或 fragment（含尾随裸
   `?`/`#` 分隔符）一律**先于探测拒绝**（`malformed_url`/

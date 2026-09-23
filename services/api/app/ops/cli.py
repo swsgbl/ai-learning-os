@@ -2568,7 +2568,8 @@ def main() -> None:
         help=(
             "provider 冒烟前置只读预检（M14-112；search/SearXNG 形状+上游"
             "归因、local 语音 /health、LLM /api/ps 模型驻留；loopback 探测"
-            "绕过代理；stdout-only 零写入零服务变更，不生成 provider-smoke.json；"
+            "绕过代理；有界超时 search 30s（真实上游聚合延迟，M14-115）/"
+            "voice·LLM 10s；stdout-only 零写入零服务变更，不生成 provider-smoke.json；"
             "pass=0 / blocked·partial=1 / 参数问题=2）"
         ),
     )
