@@ -9,6 +9,45 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-111 监控管道四步序列自然调度验收（docs-only 回填）**：worktree
+`m14-111-monitoring-pipeline-natural-acceptance`，分支
+`ops/m14-111-monitoring-pipeline-natural-acceptance`，基于 main
+`196da05a6e1e3c0971c1f93c84d9bcb1d46f6e62`（PR #198 merge =
+M14-110 合入，精确基点），单 local commit，不 push、不开 PR。
+内容：把 M14-110 四步管道（monitor → history → insights →
+calibration）**合入后的第一个自然调度轮**（计划任务
+`AIOS-Monitoring-Pipeline` 于 2026-09-23T13:00:01Z–13:00:03Z 自行
+执行）回填为可审计仓库证据——supervisor 独立验收 + 本切片对
+canonical gitignored 工件只读复核一致：`schema_version=1`、
+`config.sequence` 精确四步、`overall_status=ok`；各步 monitor
+ok/0/1.210s、history ok/0/0.297s、insights ok/0/0.146s、calibration
+ok/0/0.138s；管道锁 acquired+released；calibration 命令身份精确
+`['<python>','tools/ops/monitoring_threshold_calibration.py',
+'--format','json']`；`calibration.json` 8909 字节 SHA-256
+`2b53fe9b…ed9f0`（persisted-from-stage-stdout、ASCII-safe 零非
+ASCII——M14-110 修复在真实调度链路按设计生效）为**第四步首次由
+真实调度轮产出**；六个被引用工件（monitor-20260923-130001.json /
+history.jsonl / history-summary.md / insights.json /
+insights-summary.md / calibration.json）哈希/尺寸独立重算全
+MATCH（复核完成于 13:15 后续自然轮之前；固定名工件为最新成功轮
+产物、后续成功轮按设计覆写——13:00 首轮权威绑定 = 13:00 报告内
+SHA-256/bytes，当前固定名文件哈希随后续成功轮而异**属预期、非
+篡改**；后续 13:15 自然轮亦已全步 ok 并触发该预期覆写）；标定
+窗口 scanned 500 / 取最新 200（ok=200/warn=0/
+critical=0，newest 2026-09-23T13:00:01Z），建议仅咨询性、零阈值
+变更；13:00 轮为该目录首个四步报告（12:45 及更早均三步口径）。
+**诚实边界：仅证明 M14-110 合入后第一个自然四步轮端到端 ok（单轮
+≠ 长期稳定性）；不解除 provider-smoke/release approval/任何
+release gate；`production_ready=false` 不变；本切片零生产触碰、
+未运行任何管道/生产工具（M14-110 切片自身零 execute 的历史边界
+不变，自然轮互补非改写）。**验证：只读复核全 MATCH +
+`git diff --check` 干净 + 仅五个预期 docs 路径变更。证据
+`docs/evidence/m14-111-monitoring-pipeline-natural-acceptance/README.md`。
+同步更新 CHANGELOG（M14-111 条目）、ROADMAP（M14-111 状态更新）、
+tools/ops/README.md（M14-110 状态文本中「真实调度轮尚未发生」更新
+为自然验收事实）与 PROJECT_STATUS 顶部任务结构（M14-111 接替顶部、
+M14-110 移为次席，实现详情保留）。
+
 **M14-110 监控阈值标定管道集成（实现/测试/文档切片）**：worktree
 `m14-110-monitoring-calibration-pipeline`，分支
 `ops/m14-110-monitoring-calibration-pipeline`，基于 main
@@ -34,7 +73,9 @@ standalone 工具唯一调整：json 模式恒 ASCII-safe（ensure_ascii
 损坏（supervisor 无 PYTHONUTF8 真实冒烟：输出两轮 SHA-256 相同
 `FEAFBDE8…494DF`、9061 字节、零非 ASCII；输入 SHA-256 前后不变）。
 **诚实边界：本切片零真实管道 execute、零调度注册/改动——第四步
-真实调度轮尚未发生；不构成 production readiness 宣称，不解除任何
+真实调度轮尚未发生（切片时点快照；已由 M14-111 自然轮验收补齐：
+2026-09-23T13:00Z 首个自然四步轮全 ok）；不构成 production
+readiness 宣称，不解除任何
 release gate；`production_ready=false` 不变。**验证：监控家族九
 套件全绿（supervisor 终验命令口径）+ py_compile + ruff（默认与
 `--select F,E9`）+ `git diff --check` 全净。证据

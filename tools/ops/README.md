@@ -16,8 +16,10 @@ insights，M14-110 起第四步接入阈值标定——固定形态 `--format js
 stdout 捕获后 JSON 契约校验并由管道持久化为固定名 calibration.json；
 本切片**零真实 execute、零调度注册/改动**）+ 计划任务
 管理器；**M14-22 起真实计划任务持续执行（两轮连续调度成功）与
-insights 两轮产出/刷新已经 supervisor 验收（三步时代口径；M14-110
-第四步尚未有真实调度轮）**，`production_ready=false`
+insights 两轮产出/刷新已经 supervisor 验收（三步时代口径）；M14-110
+第四步首次自然调度轮已于 2026-09-23T13:00Z 发生并经 supervisor 验收
+（M14-111：四步全 ok，calibration.json 首次由真实调度轮产出）**，
+`production_ready=false`
 不变）；
 `monitoring_insights.py`（M14-15）承担
 监控历史**洞察/告警摘要**面（只读 M14-13 history.jsonl 或 M14-12 monitor
@@ -497,7 +499,10 @@ calibration 仅在 insights status=ok 后运行——M14-110 第四步，固定�
 固定名 `calibration.json`；任何失败/跳过固定词汇
 入档，前置步骤事实绝不遮蔽）。开发/排障默认零执行；真实执行仅由
 supervisor 在获准窗口运行。**M14-110 切片零真实 execute、零调度注册/
-改动——第四步的真实调度轮尚未发生。**
+改动；第四步的首次自然调度轮已于 2026-09-23T13:00:01Z–13:00:03Z
+发生并经 supervisor 自然轮验收（M14-111，docs-only 回填：四步全
+ok、`calibration.json` 首次由真实调度轮产出，证据
+`docs/evidence/m14-111-monitoring-pipeline-natural-acceptance/README.md`）。**
 
 **状态（M14-22 真实调度验收，2026-09-13，含 R1 修正）**：计划任务
 `AIOS-Monitoring-Pipeline` 在 PR #98 合并后**两轮连续真实调度成功**
@@ -539,9 +544,17 @@ calibration 四步——第四步为 M14-109 阈值标定/评估工具的固定�
 四步硬顶之和 715s 对 PT12M=720s 恒留 ≥5s 管道自身开销；三步既有硬顶
 710s pin 不变。报告 schema 保持 v1（add-stage-keep-version，M14-21 先例）；
 `pipeline_incident_review` 消费面同步（stages 键集 + calibration 失败
-归因词汇）。**本切片零真实管道 execute、零调度注册/改动——第四步的
-真实调度轮尚未发生；`production_ready=false` 不变。**证据
-`docs/evidence/m14-110-monitoring-calibration-pipeline/README.md`。
+归因词汇）。**本切片零真实管道 execute、零调度注册/改动；第四步的
+首次自然调度轮已于 2026-09-23T13:00:01Z–13:00:03Z 发生并经
+supervisor 自然轮验收（M14-111，docs-only 回填：四步全 ok、
+`calibration.json` 8909 字节首次由真实调度轮产出且 ASCII-safe，六个
+被引用工件哈希/尺寸独立重算全 MATCH——复核早于 13:15 后续自然轮；
+固定名 calibration.json 为最新成功轮产物、后续成功轮按设计覆写，
+13:00 首轮权威绑定 = 13:00 报告内 SHA-256/bytes，后续轮致当前
+文件哈希不同属预期非篡改）；`production_ready=false`
+不变。**证据
+`docs/evidence/m14-110-monitoring-calibration-pipeline/README.md`、
+`docs/evidence/m14-111-monitoring-pipeline-natural-acceptance/README.md`。
 
 ```
 python tools/ops/monitoring_pipeline.py                        # plan（默认，零执行）
