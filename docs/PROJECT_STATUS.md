@@ -9,6 +9,49 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-117 生产切换与运行验收证据收口（真实生产切换/验收/docs-only 回填）**：worktree
+`m14-117-production-cutover`，分支
+`ops/m14-117-production-cutover-evidence`，文档基点 main
+`6cc20dfe9656c20f6663433c72c5441a62c9b574`；实际生产发布源为
+`2619ea77f3db291901e48eacdeea064b6f9b6fdb`——`6cc20df` 相对
+`2619ea7` 仅 M14-116 docs-only 变化（4 文件 +412 行），运行时代码一致。
+本轮已完成切换前只读 preflight 5/5（Alembic current==head==
+`0027_audit_chain`、审计链 valid、外部锚 up-to-date、治理计数全 0）；
+`aios-backup-v1` 备份 30 表/2 文件，manifest SHA256
+`09dd1d834db8ae77fd71a337a69819805e82ea380ed4edb59fce3fe5d5716aa9`；
+env 手术仅改 `AIOS_IMAGE_TAG`/`AIOS_WEB_IMAGE_TAG`
+（`m14-70-production`→`m14-117-production`，键集合不变，术前/术后
+SHA256 与备份均已锚定）。生产 API/Web 分别切至镜像
+`sha256:a10b4b62…8db37b5` / `sha256:95aff24f…aacd03c`，容器
+`c240a736…16b8bfd` / `11cb1203…0bf7b0` 且 healthy；Postgres、Redis、
+LiveKit、MinIO、SearXNG 未重建并 healthy，FunASR/CosyVoice 保持
+managed-running 未触碰。
+
+切换后验收：provider smoke local 拓扑 voice/search/llm 三槽位 pass
+（search 4783ms results=5；ASR 1312ms/42 bytes + TTS 3079ms/226604 bytes
+RIFF WAV；LLM 11854ms 正文 12 chars rubric `[True,True]` conf=1.0），
+4 个失败 attempt 原样保留；真实浏览器 desktop/mobile `/` 与 `/login`
+四路径 `OVERALL=PASS`（零 page error、零意外 console error、零横向溢出）；
+监控第二轮 34 ok/0 warn/0 critical、partial=false、monitoring_ready=true
+（首轮无基线 full-tail warn 保留）；7 个端点正式复测全 200（SearXNG
+实际 loopback 端口为 8878，8888 错误端口 attempt 保留）；API/Web 1000 行
+日志快照无错误/异常/密钥命中，secret 扫描各 20 值均 `leaked_keys=NONE`；
+canonical env 下 production recovery dry-run OK（compose config pass、
+9/9 pin 一致、6/6 服务 healthy、语音引擎 healthy untouched）。RC 证据：
+GitHub workflow run `35930556891` @ `release/2619ea7-rc` success，artifact
+`10780298803` digest `sha256:e86f9298…ab9727d`；本地隔离 RC 构建 5 服务
+healthy、8/8 probes pass、容器/卷清理 0 残留，报告 status=failed 仅因无关
+`moneyprinterturbo-api` 状态文本漂移触发 external-container-drift，未触碰
+该外部进程且不改写结论。
+
+诚实边界：生产栈实际运行 `m14-117-production`，但 `release-approval`
+human-only 从未发生，`release_ready=false` / `production_ready=false`
+不变；provider/browser/monitor 为时点证据；回滚材料已备份但回滚演练未执行；
+完整 env/日志/数据库与对象内容不入库。证据
+`docs/evidence/m14-117-production-cutover/README.md`（gitignored canonical
+25 文件 + `SHA256SUMS` 索引）。同步更新 CHANGELOG（M14-117 条目）、ROADMAP
+（M14-117 状态更新）与 PROJECT_STATUS 顶部任务结构（M14-116 移为次席）。
+
 **M14-116 current-main 发布证据刷新（ci-main + release-check 真实重跑 + provider-smoke 首次 stage + long-soak 只读复用 + cockpit 零 blocker 聚合）（证据刷新切片）**：worktree
 `m14-116-current-main-release-evidence`，分支
 `ops/m14-116-current-main-release-evidence`，基于 main
