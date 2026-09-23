@@ -9,6 +9,56 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-104 current-main provider-smoke 门证据刷新**：worktree
+`m14-104-current-main-provider-smoke`，分支
+`ops/m14-104-current-main-provider-smoke`，基于 main
+`aa4bb55397dba7317f632cfae485867360b85d49`（PR #191 merge =
+M14-99 合入，精确基点），单 local commit，不 push、不开 PR。
+证据刷新切片（真实重跑 + 诊断 + 文档，零应用代码/配置/工具
+改动）：M14-98 后 main 前移六个 PR、M14-100 交付的 llm 超时/预算
+控制尚未经任何 live 重跑验证——本切片从零 worktree venv（uv
+CPython 3.12.14）以仓库既有 `provider-smoke-export` 按 M14-98 同
+拓扑真实重跑三件套，绝不复用旧 JSON、绝不手改 gate JSON。结果
+（窗口 2026-09-23T00:37:12Z–00:49:05Z）：search **fail**
+（exit 1/5407ms/0 条结果——SearXNG `127.0.0.1:8878` 自身 200 但
+五上游引擎 brave/duckduckgo/google cse/wikidata/wikipedia 全
+"HTTP connection error"；宿主直连 google 超时/baidu 200 = 境外
+网络不可达、出站代理未运行且切片约束禁启——确定性复现，不
+重试）；local-voice attempt1 **fail**（4376ms，两 `/health` 报
+不可达而同刻 curl 200——新发现：Windows 注册表系统代理
+`127.0.0.1:7892`（未运行）经 `urllib.getproxies()` 回退劫持
+httpx `trust_env` 回环调用；复现诊断 httpx 默认 3/3 ConnectError
+10061 vs `trust_env=False` 3/3 200，python 环境零代理变量）→
+attempt2 **pass**（exit 0/29284ms，ASR local-funasr 8926ms/42 字节
+真实中文转写、TTS local-cosyvoice 19769ms/226604 字节 RIFF WAV；
+仅以 `NO_PROXY=127.0.0.1,localhost` 调用环境绕过——M14-66/
+M14-100 既有控制类，理由先录后跑，零代码/服务/判定变更；较
+M14-98 的 97934ms 显著更快）；llm 单次真实尝试 **fail**（exit 1/
+2575ms `LLM 端点不可用: LLM 传输失败: ConnectError`——Ollama
+11434 无监听无进程、服务未运行；M14-100 控制显式套用并回显
+`LLM_TIMEOUT_SECONDS=300`/`LLM_SMOKE_MAX_TOKENS=256` 但端点缺席
+未获实测；重试前置条件「只读核验模型已驻留」不可满足（/api/ps
+不可达）故无第二次尝试，启动 Ollama 为安全约束所禁；GPU 100%/
+15837/16303 MiB 争抢背景如实记录）。**aggregate 未运行、无
+provider-smoke.json**（任一步失败即停止）；`release_ready=false`/
+`production_ready=false` 不变；ci-main/release-check 不在本切片
+范围。验证：聚焦契约六件套（provider_smoke_evidence/
+release_readiness/smoke_llm/smoke_search/smoke_voice_local/
+provision_ollama_model script）**226 passed**（5.14s）+ ruff
+（services/api）全绿 + `git diff --check` 干净。证据
+`docs/evidence/m14-104-current-main-provider-smoke/README.md`
+（唯一入库证据文件；gitignored 原始证据 28 文件 + SHA256SUMS，
+含 attempt1 失败留档、重试理由、注册表代理诊断与运维注记——
+首轮 `../` 相对输出误落 `services/.verify/`，三 gate JSON 以 mv
+字节原样迁回、零内容编辑）。诚实边界：local-voice pass 只代表
+执行窗口内本机拓扑；search/llm 失败为本机外部环境边界（SearXNG
+出站依赖、Ollama 进程缺席），解除与三件套/缺步重跑 + aggregate
+补跑是后续运维动作，留 supervisor 决策；新记录工具面缺口——本地
+语音探针与 app/voice/providers.py 的 httpx 客户端未对 loopback 设
+`trust_env=False`（M14-100 只加固 LLM gateway），代码加固留待后续
+实现切片评估。同步更新 CHANGELOG（M14-104 条目）与 ROADMAP
+（M14-104 状态更新）。
+
 **M14-103 CI-only Compose 断言回归修复**：worktree
 `m14-103-ci-smoke-tag-assertion`，分支 `fix/m14-103-ci-smoke-tag-assertion`，
 基于 main `0c750aa9eb6a87c92606867d8bd1b142cbb62976`（PR #189 merge =
@@ -161,6 +211,8 @@ request_failures=0、mutation=true、cleanup=true；launcher status=executed；
 `docs/evidence/m14-99-harmony-post-login-regression/README.md`（唯一入库
 证据文件），同步更新 CHANGELOG（M14-99 条目）、ROADMAP（M14-99 状态更新）
 与 PROJECT_STATUS 顶部任务结构（M14-95 降级为前一任务）。
+
+## 前一任务（M14-99 Harmony 登录回归——已随 PR #191 合并 main `aa4bb55397dba7317f632cfae485867360b85d49`；current-main provider-smoke 门刷新由 M14-104 接续）
 
 ## 前一任务（M14-98 current-main provider-smoke 门证据刷新——已随 PR #186 合并 main `a583f918fba4ea6223b08afc275d909fefef152b`；本地 LLM 超时/预算修复由 M14-100 接续）
 
