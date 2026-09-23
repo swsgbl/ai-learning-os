@@ -216,7 +216,10 @@ def test_build_task_xml_key_fields(fake_repo: Path) -> None:
 
 def test_interval_covers_pipeline_budget(fake_repo: Path) -> None:
     """保守间隔交叉 pin：间隔 > 执行时限 > 三步超时硬顶之和；monitor 硬顶 ≥
-    monitor 内部最坏预算（compose ps 60 + 6×inspect 30 + 6×logs 30 + 5×HTTP 5）。"""
+    monitor 内部最坏预算（compose ps 60 + 6×inspect 30 + 6×logs 30 + 5×HTTP 5）。
+    M14-110 起同面 pin 四步形态（+calibration 硬顶 5s）：四步硬顶之和
+    715s 严格小于 PT12M=720s 且恒留 ≥5s 给管道自身开销（启动、锁、证据
+    报告与调度器余量）——调度器绝不先于内部超时+收尾杀整任务。"""
     interval = _minutes(mpt.REPETITION_INTERVAL)
     limit = _minutes(mpt.EXECUTION_TIME_LIMIT)
     monitor_worst = 60 + 6 * 30 + 6 * 30 + 5 * 5
@@ -229,6 +232,13 @@ def test_interval_covers_pipeline_budget(fake_repo: Path) -> None:
     default_sum = (mp.MONITOR_TIMEOUT_DEFAULT + mp.HISTORY_TIMEOUT_DEFAULT
                    + mp.INSIGHTS_TIMEOUT_DEFAULT)
     assert default_sum <= limit  # 默认超时总和也落在执行时限内
+    # M14-110：四步（monitor→history→insights→calibration）预算仍收口
+    four_stage_hard = hard_sum + mp.CALIBRATION_TIMEOUT_MAX
+    assert four_stage_hard == 715.0
+    assert limit > four_stage_hard  # 四步硬顶之和严格小于 PT12M=720s
+    assert limit - four_stage_hard >= 5  # 恒留 ≥5s 管道自身开销（supervisor 边界）
+    four_stage_default = default_sum + mp.CALIBRATION_TIMEOUT_DEFAULT
+    assert four_stage_default <= limit
 
 
 def test_esc_unit() -> None:

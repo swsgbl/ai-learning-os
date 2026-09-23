@@ -1,30 +1,40 @@
-r"""M14-14/M14-21 tools/ops/monitoring_pipeline.py 契约测试：monitor(M14-12)
-→ history(M14-13) → insights(M14-15) 单次组合管道的安全边界（零真实容器
-面/零网络/零生产读取/零计划任务改动）。
+r"""M14-14/M14-21/M14-110 tools/ops/monitoring_pipeline.py 契约测试：
+monitor(M14-12) → history(M14-13) → insights(M14-15) → calibration(M14-109)
+单次组合管道的安全边界（零真实容器面/零网络/零生产读取/零计划任务改动）。
 
 覆盖（全部 I/O 经真实临时目录或注入 Fake；绝不触碰 canonical 仓库与真实
 .verify 目录；子进程经 FakeRunner 注入——绝不真实调用 production_monitor /
-monitoring_history / monitoring_insights）：
+monitoring_history / monitoring_insights / monitoring_threshold_calibration）：
 - 结构契约：源码零网络/零 env/零容器面 token；唯一 subprocess 执行点无
   shell=；Windows 侧 CREATE_NO_WINDOW；os.replace 唯一落盘机制；
-- plan 惰性：socket+subprocess 双阻断下照常出计划与 plan 报告；Runner
-  零构造（计数工厂）；plan 报告零状态宣称；仅 --confirm（缺 --execute）
-  仍是 plan；
+- plan 惰性：socket+subprocess 双阻断下照常出四步计划与 plan 报告；Runner
+  零构造（计数工厂）；plan 报告零状态宣称（四步全 planned）；仅 --confirm
+  （缺 --execute）仍是 plan；
 - 门禁（fail-closed，零 Runner 构造/调用）：--execute 无 confirm、近似
-  短语 ×5；三步超时超硬顶/非有限浮点 ×N（plan 同样拒绝，零报告写入）；
+  短语 ×5；四步超时超硬顶/非有限浮点 ×N（plan 同样拒绝，零报告写入）；
 - 固定命令白名单门：StepRunner 对一切非精确形态（追加旗标/错误脚本/
-  错误短语/顺序错乱/--source 注入）在任何执行之前拒绝且内层零调用；
-  三固定形态全等；insights 形态不带 --source（依赖 canonical history
-  默认输入——单一事实源，无用户可注入 argv）；
-- 序列语义：monitor → history → insights 顺序执行（调用序断言）；
-  monitor exit 0 才运行 history；history exit 0 才运行 insights；
-  monitor 非零退出 → history/insights skipped + 固定词汇原因 + monitor
-  退出码如实保留（不遮蔽）；history 失败 → insights skipped 同理；
-  insights 失败不改变 monitor/history 事实；
+  错误短语/顺序错乱/--source 注入/calibration --history、--samples、阈值
+  注入）在任何执行之前拒绝且内层零调用；四固定形态全等；insights 形态
+  不带 --source（依赖 canonical history 默认输入——单一事实源，无用户
+  可注入 argv）；calibration 形态仅 --format json（输入面全部经校准工具
+  既有默认值生效）；管道 CLI 不暴露任何校准 argv/源/阈值参数；
+- 序列语义：monitor → history → insights → calibration 顺序执行（调用
+  序断言）；monitor exit 0 才运行 history；history exit 0 才运行 insights；
+  insights status=ok 才运行 calibration；monitor 非零退出 → 后续三步
+  skipped + 固定词汇原因 + monitor 退出码如实保留（不遮蔽）；history
+  失败 → insights/calibration skipped 同理；insights 失败不改变
+  monitor/history 事实，calibration 失败不改变前三步事实；
+- calibration 步产物纪律（M14-110）：stdout 捕获 → JSON 校验（非 JSON/
+  非对象/缺 schema_version = 可见失败 calibration-output-not-json，零
+  写入）→ redact 终防线 + 原子写固定名 calibration.json（sha256/bytes
+  与磁盘一致）；非零退出/超时/执行错误/写入拒绝 = 可见失败且预存旧
+  calibration.json 原样保留、零引用（同轮新鲜度）；secret 形态经终防线
+  脱敏入产物文件；
 - 超时/执行错误：RunnerTimeout → status=timeout + 后续步 skipped；
-  RunnerError → status=error；配置超时逐字传给 runner；三步超时硬顶
+  RunnerError → status=error；配置超时逐字传给 runner；四步超时硬顶
   总和 < 计划任务执行时限 PT12M=720s（与 monitoring_pipeline_task 交叉
-  pin）；insights 默认输入/输出与同仓工具 canonical 常量三方一致；
+  pin；三步既有硬顶 540+120+50=710 pin 不变，calibration 吃余量 9s）；
+  insights/calibration 默认输入与同仓工具 canonical 常量三方一致；
 - 重叠锁：锁已存在 → 可见拒绝 EXIT 2 零步骤执行（且零 stale-lock 清理
   ——不代删）；成功/步骤失败后锁释放；锁体仅安全事实；锁路径/输出祖先
   symlink 拒绝（真实文件面，目标零写入）；锁释放失败可见 EXIT 1 且入档；
@@ -32,11 +42,12 @@ monitoring_history / monitoring_insights）：
   EXIT 2；仅安全事实（无绝对本机路径/无子进程 stdout/stderr 原文/
   secret 形态经终防线脱敏——异常类名投毒实证）；产物名+SHA-256+字节数
   （monitor 差集发现/非 monitor-*.json 忽略/hash 上限边界；history 与
-  insights 各两固定名）；
+  insights 各两固定名；calibration 一固定名由管道持久化）；
 - 回归 pin（管道组合所依赖的既有工具契约）：monitor/insights 门禁短语
   常量逐字一致、monitor 退出码映射（ok|warn→0，incomplete|critical→2）、
   monitor 门禁拒绝零采集、monitor plan 惰性、history 零源拒绝 EXIT 2、
-  insights 默认 source == history canonical 输出目录。
+  insights 默认 source == history canonical 输出目录、calibration 默认
+  history == 同一 canonical 输出（三方 resolve 全等）。
 """
 from __future__ import annotations
 
@@ -56,6 +67,7 @@ SCRIPT = REPO_ROOT / "tools" / "ops" / "monitoring_pipeline.py"
 MONITOR_SCRIPT = REPO_ROOT / "tools" / "ops" / "production_monitor.py"
 HISTORY_SCRIPT = REPO_ROOT / "tools" / "ops" / "monitoring_history.py"
 INSIGHTS_SCRIPT = REPO_ROOT / "tools" / "ops" / "monitoring_insights.py"
+CALIBRATION_SCRIPT = REPO_ROOT / "tools" / "ops" / "monitoring_threshold_calibration.py"
 
 #: 标记值（注入 FakeRunner 输出/异常类名，断言绝不进入报告与 stdout）
 MARK_TOKEN = "sk-ZXmarker0123456789"
@@ -78,26 +90,40 @@ mp = _load_module(SCRIPT, "monitoring_pipeline_under_test")
 pm = _load_module(MONITOR_SCRIPT, "production_monitor_for_pipeline_regression")
 mh = _load_module(HISTORY_SCRIPT, "monitoring_history_for_pipeline_regression")
 mi = _load_module(INSIGHTS_SCRIPT, "monitoring_insights_for_pipeline_regression")
+mtc = _load_module(CALIBRATION_SCRIPT,
+                   "monitoring_threshold_calibration_for_pipeline_regression")
 
 FAKE_PY = "C:/fake/python.exe"
+
+#: FakeRunner 默认 calibration stdout：合法 JSON 产物（顶层对象 +
+#: schema_version 键——与管道 validate_calibration_stdout 契约一致）
+CALIBRATION_FAKE_STDOUT = json.dumps(
+    {"schema_version": mtc.CALIBRATION_SCHEMA_VERSION,
+     "tool": mtc.TOOL_NAME, "project": "fake-project",
+     "window": {"records_used": 3}}, ensure_ascii=False) + "\n"
 
 
 # ---------------------------------------------------------------- Fake 注入
 
 
 class FakeRunner:
-    """伪子进程面：按 argv[1] 判步（monitor/history/insights），可注入 rc/异常/回调。"""
+    """伪子进程面：按 argv[1] 判步（monitor/history/insights/calibration），
+    可注入 rc/异常/回调；calibration 默认返回合法 JSON 产物 stdout（第四步
+    产物契约），其余步 stdout 恒为非产物占位文本。"""
 
     def __init__(self, *, monitor_rc: int = 0, history_rc: int = 0,
-                 insights_rc: int = 0,
+                 insights_rc: int = 0, calibration_rc: int = 0,
                  monitor_exc: BaseException | None = None,
                  history_exc: BaseException | None = None,
                  insights_exc: BaseException | None = None,
+                 calibration_exc: BaseException | None = None,
+                 calibration_stdout: str = CALIBRATION_FAKE_STDOUT,
                  on_call=None) -> None:
         self._rc = {"monitor": monitor_rc, "history": history_rc,
-                    "insights": insights_rc}
+                    "insights": insights_rc, "calibration": calibration_rc}
         self._exc = {"monitor": monitor_exc, "history": history_exc,
-                     "insights": insights_exc}
+                     "insights": insights_exc, "calibration": calibration_exc}
+        self._calibration_stdout = calibration_stdout
         self._on_call = on_call
         self.calls: list[tuple[tuple[str, ...], float]] = []
 
@@ -109,6 +135,8 @@ class FakeRunner:
             step = "monitor"
         elif script.endswith("monitoring_history.py"):
             step = "history"
+        elif script.endswith("monitoring_threshold_calibration.py"):
+            step = "calibration"
         else:
             step = "insights"
         if self._on_call is not None:
@@ -116,7 +144,11 @@ class FakeRunner:
         exc = self._exc[step]
         if exc is not None:
             raise exc
-        return mp.CommandResult(tokens, self._rc[step], f"stdout-{step}", f"stderr-{step}")
+        if step == "calibration":
+            stdout = self._calibration_stdout
+        else:
+            stdout = f"stdout-{step}"
+        return mp.CommandResult(tokens, self._rc[step], stdout, f"stderr-{step}")
 
 
 class FakeClock:
@@ -238,11 +270,13 @@ def test_plan_mode_zero_side_effects(monkeypatch, tmp_path) -> None:
     report = json.loads(reports[0].read_text(encoding="utf-8"))
     assert report["mode"] == "plan"
     assert report["overall_status"] == "planned"
-    assert report["stages"]["monitor"]["status"] == "planned"
-    assert report["stages"]["history"]["status"] == "planned"
-    assert report["stages"]["insights"]["status"] == "planned"
-    # plan 零锁
+    assert report["config"]["sequence"] == ["monitor", "history", "insights",
+                                            "calibration"]
+    for step in ("monitor", "history", "insights", "calibration"):
+        assert report["stages"][step]["status"] == "planned"
+    # plan 零锁 + 零 calibration 产物
     assert not (tmp_path / "out" / mp.LOCK_NAME).exists()
+    assert not (tmp_path / "out" / mp.CALIBRATION_OUTPUT_NAME).exists()
 
 
 def test_plan_report_no_status_claims(tmp_path) -> None:
@@ -292,6 +326,7 @@ def test_execute_gate_wrong_phrase(monkeypatch, tmp_path, bad_phrase: str) -> No
     ("--monitor-timeout-seconds", ["59", "541", "nan", "inf", "-inf"]),
     ("--history-timeout-seconds", ["9", "121", "nan", "inf"]),
     ("--insights-timeout-seconds", ["4", "51", "nan", "inf", "-inf"]),
+    ("--calibration-timeout-seconds", ["0", "6", "nan", "inf", "-inf"]),
 ])
 def test_timeout_bounds_refused_in_plan_too(monkeypatch, tmp_path,
                                             option: str, bad: list[str]) -> None:
@@ -307,6 +342,7 @@ def test_timeout_bounds_refused_in_plan_too(monkeypatch, tmp_path,
     ("--monitor-timeout-seconds", ["60", "540"]),
     ("--history-timeout-seconds", ["10", "120"]),
     ("--insights-timeout-seconds", ["5", "50"]),
+    ("--calibration-timeout-seconds", ["1", "5"]),
 ])
 def test_timeout_bounds_inclusive_edges_accepted(tmp_path, option: str,
                                                  value: list[str]) -> None:
@@ -320,16 +356,25 @@ def test_timeout_bounds_inclusive_edges_accepted(tmp_path, option: str,
 
 def test_allowed_forms_exact() -> None:
     forms = mp.allowed_step_argv(FAKE_PY)
-    assert set(forms) == {"monitor", "history", "insights"}
+    assert set(forms) == {"monitor", "history", "insights", "calibration"}
     assert forms["monitor"] == (FAKE_PY, str(mp.MONITOR_SCRIPT),
                                 "--execute", "--confirm", mp.MONITOR_CONFIRM_PHRASE,
                                 "--voice-health-source", "sidecar")
     assert forms["history"] == (FAKE_PY, str(mp.HISTORY_SCRIPT))
     assert forms["insights"] == (FAKE_PY, str(mp.INSIGHTS_SCRIPT),
                                  "--execute", "--confirm", mp.INSIGHTS_CONFIRM_PHRASE)
+    # M14-110 第四步：仅 --format json（工具既有输出形态选项——JSON 产物
+    # 契约所必需）；输入面恒经校准工具既有默认值，绝无注入面
+    assert forms["calibration"] == (FAKE_PY, str(mp.CALIBRATION_SCRIPT),
+                                    "--format", "json")
     # insights 形态恒不带 --source：输入恒为 canonical history 默认目录
     # （单一事实源，绝无用户可注入 argv 面）
     assert "--source" not in forms["insights"]
+    # calibration 形态恒不带源/窗口/阈值参数（全部经工具既有默认值生效）
+    for token in ("--history", "--samples", "--latency-warn-ms",
+                  "--latency-critical-ms", "--log-error-warn",
+                  "--log-error-critical"):
+        assert token not in forms["calibration"]
     for form in forms.values():
         assert mp.is_allowed_step_command(form, FAKE_PY)
 
@@ -355,6 +400,20 @@ def test_allowed_forms_exact() -> None:
      mp.INSIGHTS_CONFIRM_PHRASE, "--source", "C:/evil"),              # source 注入
     (FAKE_PY, str(mp.INSIGHTS_SCRIPT), "--execute", "--confirm",
      mp.INSIGHTS_CONFIRM_PHRASE, "--event-limit", "500"),             # 非默认参数
+    # M14-110：calibration 注入面一律拒绝——裸脚本（缺 --format json）、
+    # summary 形态、任何源/窗口/阈值注入、追加旗标
+    (FAKE_PY, str(mp.CALIBRATION_SCRIPT)),                            # 缺 --format json
+    (FAKE_PY, str(mp.CALIBRATION_SCRIPT), "--format", "summary"),     # 非 json 形态
+    (FAKE_PY, str(mp.CALIBRATION_SCRIPT), "json"),                    # 非旗标形态
+    (FAKE_PY, str(mp.CALIBRATION_SCRIPT), "--format", "json",
+     "--history", "C:/evil"),                                         # 源注入
+    (FAKE_PY, str(mp.CALIBRATION_SCRIPT), "--format", "json",
+     "--samples", "10"),                                              # 窗口注入
+    (FAKE_PY, str(mp.CALIBRATION_SCRIPT), "--format", "json",
+     "--latency-warn-ms", "800"),                                     # 阈值注入
+    (FAKE_PY, str(mp.CALIBRATION_SCRIPT), "--format", "json",
+     "--log-error-critical", "30"),                                   # 阈值注入
+    (FAKE_PY, str(mp.CALIBRATION_SCRIPT), "--samples", "10"),         # 缺 format + 窗口注入
     (FAKE_PY, "tools/ops/other_tool.py"),                             # 非许可脚本
     ("cmd.exe", "/c", "anything"),                                    # 非 python 形态
     (FAKE_PY,),
@@ -379,7 +438,7 @@ def test_step_runner_passes_allowed_forms_with_timeout() -> None:
 # ---------------------------------------------------------------- 序列语义
 
 
-def test_sequence_monitor_history_insights_ok(monkeypatch, tmp_path) -> None:
+def test_sequence_monitor_history_insights_calibration_ok(monkeypatch, tmp_path) -> None:
     monitor_dir, history_dir, insights_dir = _patch_stage_dirs(monkeypatch, tmp_path)
 
     def on_call(step: str) -> None:
@@ -388,21 +447,24 @@ def test_sequence_monitor_history_insights_ok(monkeypatch, tmp_path) -> None:
         elif step == "history":
             (history_dir / "history.jsonl").write_text("rows\n", encoding="utf-8")
             (history_dir / "history-summary.md").write_text("# s\n", encoding="utf-8")
-        else:
+        elif step == "insights":
             (insights_dir / "insights.json").write_bytes(b"{}")
             (insights_dir / "insights-summary.md").write_bytes(b"# i\n")
+        # calibration：产物由管道写（子进程零文件写入），无 on_call 副作用
 
     fake = FakeRunner(on_call=on_call)
     rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock())
     assert rc == mp.EXIT_OK
-    # 顺序断言：monitor → history → insights，且各自为固定白名单形态
+    # 顺序断言：monitor → history → insights → calibration，且各自为固定白名单形态
     assert [argv[1] for argv, _ in fake.calls] == [
-        str(mp.MONITOR_SCRIPT), str(mp.HISTORY_SCRIPT), str(mp.INSIGHTS_SCRIPT)]
+        str(mp.MONITOR_SCRIPT), str(mp.HISTORY_SCRIPT), str(mp.INSIGHTS_SCRIPT),
+        str(mp.CALIBRATION_SCRIPT)]
     for argv, _timeout in fake.calls:
         assert mp.is_allowed_step_command(argv, FAKE_PY)
     report = _report(tmp_path / "out")
-    assert report["config"]["sequence"] == ["monitor", "history", "insights"]
-    for step in ("monitor", "history", "insights"):
+    assert report["config"]["sequence"] == ["monitor", "history", "insights",
+                                            "calibration"]
+    for step in ("monitor", "history", "insights", "calibration"):
         assert report["stages"][step]["status"] == "ok"
         assert report["stages"][step]["exit_code"] == 0
     assert report["overall_status"] == "ok"
@@ -419,16 +481,28 @@ def test_sequence_monitor_history_insights_ok(monkeypatch, tmp_path) -> None:
     assert {entry["name"] for entry in insights_artifacts} == {"insights.json", "insights-summary.md"}
     assert {entry["sha256"] for entry in insights_artifacts} == {
         hashlib.sha256(b"{}").hexdigest(), hashlib.sha256(b"# i\n").hexdigest()}
+    # calibration 产物：管道持久化的固定名 calibration.json——磁盘字节
+    # 与报告 sha256/bytes 一致，note 固定词汇
+    calibration = report["stages"]["calibration"]
+    assert isinstance(calibration["artifacts"], list)
+    entry = calibration["artifacts"][0]
+    assert entry["name"] == mp.CALIBRATION_OUTPUT_NAME
+    assert entry["note"] == mp.NOTE_PERSISTED_FROM_STAGE
+    on_disk = (tmp_path / "out" / mp.CALIBRATION_OUTPUT_NAME).read_bytes()
+    assert entry["bytes"] == len(on_disk)
+    assert entry["sha256"] == hashlib.sha256(on_disk).hexdigest()
+    assert json.loads(on_disk.decode("utf-8"))["schema_version"] == (
+        mtc.CALIBRATION_SCHEMA_VERSION)
     assert not (tmp_path / "out" / mp.LOCK_NAME).exists()  # 成功后锁释放
 
 
-def test_monitor_failure_skips_history_and_insights(monkeypatch, tmp_path,
-                                                    capsys) -> None:
+def test_monitor_failure_skips_history_insights_calibration(monkeypatch, tmp_path,
+                                                             capsys) -> None:
     _patch_stage_dirs(monkeypatch, tmp_path)
     fake = FakeRunner(monitor_rc=2)
     rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock())
     assert rc == mp.EXIT_STAGE_FAILED
-    assert len(fake.calls) == 1  # history/insights 零调用
+    assert len(fake.calls) == 1  # history/insights/calibration 零调用
     report = _report(tmp_path / "out")
     monitor = report["stages"]["monitor"]
     assert monitor["status"] == "failed"
@@ -440,17 +514,20 @@ def test_monitor_failure_skips_history_and_insights(monkeypatch, tmp_path,
     insights = report["stages"]["insights"]
     assert insights["status"] == "skipped"
     assert insights["skipped_reason"] == "history-status-skipped"
+    calibration = report["stages"]["calibration"]
+    assert calibration["status"] == "skipped"
+    assert calibration["skipped_reason"] == "insights-status-skipped"
     assert report["overall_status"] == "failed"
     assert "monitor status=failed" in capsys.readouterr().out
 
 
-def test_history_failure_skips_insights_reason_visible(monkeypatch, tmp_path,
-                                                       capsys) -> None:
+def test_history_failure_skips_insights_and_calibration_reason_visible(
+        monkeypatch, tmp_path, capsys) -> None:
     _patch_stage_dirs(monkeypatch, tmp_path)
     fake = FakeRunner(monitor_rc=0, history_rc=2)
     rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock())
     assert rc == mp.EXIT_STAGE_FAILED
-    assert len(fake.calls) == 2  # insights 零调用
+    assert len(fake.calls) == 2  # insights/calibration 零调用
     report = _report(tmp_path / "out")
     assert report["stages"]["monitor"]["status"] == "ok"
     assert report["stages"]["monitor"]["exit_code"] == 0
@@ -460,17 +537,20 @@ def test_history_failure_skips_insights_reason_visible(monkeypatch, tmp_path,
     assert insights["status"] == "skipped"
     assert insights["skipped_reason"] == "history-status-failed"
     assert insights["exit_code"] is None
+    calibration = report["stages"]["calibration"]
+    assert calibration["status"] == "skipped"
+    assert calibration["skipped_reason"] == "insights-status-skipped"
     assert report["overall_status"] == "failed"
     assert "insights: skipped" in capsys.readouterr().out
 
 
-def test_insights_failure_preserves_monitor_history_facts(
+def test_insights_failure_skips_calibration_preserves_facts(
         monkeypatch, tmp_path) -> None:
     _patch_stage_dirs(monkeypatch, tmp_path)
     fake = FakeRunner(monitor_rc=0, history_rc=0, insights_rc=2)
     rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock())
     assert rc == mp.EXIT_STAGE_FAILED
-    assert len(fake.calls) == 3  # 三步都真实执行（insights 失败不回滚事实）
+    assert len(fake.calls) == 3  # calibration 零调用（insights 失败不回滚事实）
     report = _report(tmp_path / "out")
     assert report["stages"]["monitor"]["status"] == "ok"
     assert report["stages"]["monitor"]["exit_code"] == 0
@@ -480,7 +560,12 @@ def test_insights_failure_preserves_monitor_history_facts(
     assert insights["status"] == "failed"
     assert insights["exit_code"] == 2
     assert insights["failure_category"] == "stage-exit-nonzero"
+    calibration = report["stages"]["calibration"]
+    assert calibration["status"] == "skipped"
+    assert calibration["skipped_reason"] == "insights-status-failed"
     assert report["overall_status"] == "failed"
+    # calibration 未执行 → 零产物写入
+    assert not (tmp_path / "out" / mp.CALIBRATION_OUTPUT_NAME).exists()
 
 
 def test_insights_timeout_categorized(monkeypatch, tmp_path) -> None:
@@ -493,9 +578,125 @@ def test_insights_timeout_categorized(monkeypatch, tmp_path) -> None:
     assert insights["status"] == "timeout"
     assert insights["timed_out"] is True
     assert insights["failure_category"] == "command-timeout"
-    # 前置步骤事实不受 insights 超时影响
+    # 前置步骤事实不受 insights 超时影响；calibration 随之 skipped
     assert report["stages"]["monitor"]["status"] == "ok"
     assert report["stages"]["history"]["status"] == "ok"
+    assert report["stages"]["calibration"]["skipped_reason"] == "insights-status-timeout"
+
+
+# ---------------------------------------------------------------- calibration 步行为（M14-110）
+
+
+def test_calibration_nonzero_exit_visible_failure_no_write(monkeypatch, tmp_path) -> None:
+    """校准工具自身拒绝（rc=2，如 history malformed）= 可见 calibration 失败：
+    退出码如实保留、零产物写入、预存旧 calibration.json 原样保留且零引用。"""
+    _patch_stage_dirs(monkeypatch, tmp_path)
+    out = tmp_path / "out"
+    out.mkdir()
+    stale = out / mp.CALIBRATION_OUTPUT_NAME
+    stale.write_text('{"old": true}', encoding="utf-8")
+    fake = FakeRunner(calibration_rc=2)
+    rc = _execute(out, _gated(fake), clock=FakeClock())
+    assert rc == mp.EXIT_STAGE_FAILED
+    calibration = _report(out)["stages"]["calibration"]
+    assert calibration["status"] == "failed"
+    assert calibration["exit_code"] == 2  # 校准退出码如实保留
+    assert calibration["failure_category"] == "stage-exit-nonzero"
+    assert calibration["failure_detail"] == "exit-code-2"
+    assert calibration["artifacts"] is None  # 零引用
+    assert stale.read_text(encoding="utf-8") == '{"old": true}'  # 旧文件原样保留
+    # 前三步事实不受影响
+    report = _report(out)
+    for step in ("monitor", "history", "insights"):
+        assert report["stages"][step]["status"] == "ok"
+
+
+def test_calibration_timeout_categorized_visible(monkeypatch, tmp_path) -> None:
+    _patch_stage_dirs(monkeypatch, tmp_path)
+    fake = FakeRunner(calibration_exc=mp.RunnerTimeout("secret " + MARK_TOKEN))
+    rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock())
+    assert rc == mp.EXIT_STAGE_FAILED
+    calibration = _report(tmp_path / "out")["stages"]["calibration"]
+    assert calibration["status"] == "timeout"
+    assert calibration["timed_out"] is True
+    assert calibration["exit_code"] is None
+    assert calibration["failure_category"] == "command-timeout"
+    assert calibration["failure_detail"] == "stage-killed-after-timeout"
+    assert not (tmp_path / "out" / mp.CALIBRATION_OUTPUT_NAME).exists()
+
+
+def test_calibration_exec_error_categorized(monkeypatch, tmp_path) -> None:
+    _patch_stage_dirs(monkeypatch, tmp_path)
+    fake = FakeRunner(calibration_exc=mp.RunnerError("boom " + MARK_TOKEN))
+    rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock())
+    assert rc == mp.EXIT_STAGE_FAILED
+    calibration = _report(tmp_path / "out")["stages"]["calibration"]
+    assert calibration["status"] == "error"
+    assert calibration["failure_category"] == "command-exec-error"
+    assert not (tmp_path / "out" / mp.CALIBRATION_OUTPUT_NAME).exists()
+
+
+def test_calibration_artifact_overwritten_atomically_on_success(
+        monkeypatch, tmp_path) -> None:
+    """成功轮覆盖预存旧 calibration.json（原子替换）；落盘字节 = 捕获
+    stdout 原文；报告哈希 = 新落盘字节。"""
+    _patch_stage_dirs(monkeypatch, tmp_path)
+    out = tmp_path / "out"
+    out.mkdir()
+    (out / mp.CALIBRATION_OUTPUT_NAME).write_text('{"old": true}', encoding="utf-8")
+    fresh_stdout = json.dumps(
+        {"schema_version": mtc.CALIBRATION_SCHEMA_VERSION,
+         "tool": mtc.TOOL_NAME, "fresh": True}) + "\n"
+    fake = FakeRunner(calibration_stdout=fresh_stdout)
+    rc = _execute(out, _gated(fake), clock=FakeClock())
+    assert rc == mp.EXIT_OK
+    on_disk = (out / mp.CALIBRATION_OUTPUT_NAME).read_bytes()
+    assert on_disk == fresh_stdout.encode("utf-8")  # stdout 原文逐字节持久化
+    entry = _report(out)["stages"]["calibration"]["artifacts"][0]
+    assert entry["sha256"] == hashlib.sha256(on_disk).hexdigest()
+    assert entry["bytes"] == len(on_disk)
+    assert _no_tmp_residue(out)  # 原子写零残渣
+
+
+def test_calibration_artifact_symlink_refused(monkeypatch, tmp_path) -> None:
+    """预存 calibration.json 为 symlink → 持久化拒绝（可见失败），
+    symlink 目标零写入。"""
+    _patch_stage_dirs(monkeypatch, tmp_path)
+    out = tmp_path / "out"
+    out.mkdir()
+    target = tmp_path / "calib-target.json"
+    target.write_text("sentinel", encoding="utf-8")
+    try:
+        os.symlink(target, out / mp.CALIBRATION_OUTPUT_NAME)
+    except OSError:
+        pytest.skip("symlink unavailable on this host")
+    fake = FakeRunner()
+    rc = _execute(out, _gated(fake), clock=FakeClock())
+    assert rc == mp.EXIT_STAGE_FAILED
+    calibration = _report(out)["stages"]["calibration"]
+    assert calibration["status"] == "failed"
+    assert calibration["failure_category"] == mp.CALIBRATION_ARTIFACT_WRITE_ERROR
+    assert calibration["artifacts"] is None
+    assert target.read_text(encoding="utf-8") == "sentinel"  # 目标零写入
+
+
+def test_calibration_step_never_touches_history_inputs(monkeypatch, tmp_path) -> None:
+    """管道持久化面仅限自身工件目录：history.jsonl 与三步产物目录零写入
+    （校准工具零文件写入 + 管道独占持久化 = 双重结构性证明）。"""
+    monitor_dir, history_dir, insights_dir = _patch_stage_dirs(monkeypatch, tmp_path)
+    (history_dir / "history.jsonl").write_text("rows\n", encoding="utf-8")
+    history_before = (history_dir / "history.jsonl").read_bytes()
+    fake = FakeRunner()
+    rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock())
+    assert rc == mp.EXIT_OK
+    assert (history_dir / "history.jsonl").read_bytes() == history_before
+    assert sorted(p.name for p in history_dir.iterdir()) == ["history.jsonl"]  # 目录零新增
+    assert sorted(p.name for p in monitor_dir.iterdir()) == []
+    assert sorted(p.name for p in insights_dir.iterdir()) == []
+    # calibration.json 是唯一新增文件，且落在管道自身工件目录
+    assert set(os.listdir(tmp_path / "out")) >= {
+        mp.CALIBRATION_OUTPUT_NAME, "pipeline-20260912-000000.json",
+        "pipeline-20260912-000000.md"}
 
 
 # ---------------------------------------------------------------- 超时 / 执行错误
@@ -516,6 +717,7 @@ def test_monitor_timeout_skips_history_and_insights(monkeypatch, tmp_path) -> No
     assert monitor["failure_detail"] == "stage-killed-after-timeout"
     assert report["stages"]["history"]["skipped_reason"] == "monitor-status-timeout"
     assert report["stages"]["insights"]["skipped_reason"] == "history-status-skipped"
+    assert report["stages"]["calibration"]["skipped_reason"] == "insights-status-skipped"
 
 
 def test_runner_exec_error_categorized_not_persisted(monkeypatch, tmp_path) -> None:
@@ -537,10 +739,11 @@ def test_configured_timeouts_passed_to_runner(monkeypatch, tmp_path) -> None:
     rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock(),
                   extra=("--monitor-timeout-seconds", "300",
                          "--history-timeout-seconds", "45",
-                         "--insights-timeout-seconds", "10"))
+                         "--insights-timeout-seconds", "10",
+                         "--calibration-timeout-seconds", "4"))
     assert rc == mp.EXIT_OK
     timeouts = [timeout for _argv, timeout in fake.calls]
-    assert timeouts == [300.0, 45.0, 10.0]
+    assert timeouts == [300.0, 45.0, 10.0, 4.0]
 
 
 # ---------------------------------------------------------------- 重叠锁
@@ -656,9 +859,16 @@ def test_report_contains_no_local_paths_or_child_output(
     class MarkerRunner(FakeRunner):
         def run(self, argv, *, timeout: float = 60.0, encoding=None):
             result = super().run(argv, timeout=timeout, encoding=encoding)
+            if str(argv[1]).endswith("monitoring_threshold_calibration.py"):
+                # calibration stdout 是产物本体：合法 JSON（契约键齐备）内嵌
+                # secret 形态标记值（断言持久化前经终防线脱敏）
+                stdout = json.dumps({"schema_version": mtc.CALIBRATION_SCHEMA_VERSION,
+                                     "tool": mtc.TOOL_NAME,
+                                     "note": f"raw {MARK_TOKEN} http://127.0.0.1:8000/x"})
+            else:
+                stdout = f"raw {MARK_TOKEN} http://127.0.0.1:8000/x"
             return mp.CommandResult(result.argv, result.returncode,
-                                    f"raw {MARK_TOKEN} http://127.0.0.1:8000/x",
-                                    f"err {MARK_TOKEN}")
+                                    stdout, f"err {MARK_TOKEN}")
 
     rc = _execute(tmp_path / "out", _gated(MarkerRunner()), clock=FakeClock())
     assert rc == mp.EXIT_OK
@@ -670,6 +880,13 @@ def test_report_contains_no_local_paths_or_child_output(
         assert "stdout-monitor" not in text
         assert str(tmp_path) not in text       # 绝无绝对本机路径
         assert sys.executable not in text
+    # calibration 产物文件同样脱敏（终防线覆盖 stdout 持久化路径）
+    artifact_text = (tmp_path / "out" / mp.CALIBRATION_OUTPUT_NAME).read_text(encoding="utf-8")
+    assert MARK_TOKEN not in artifact_text
+    assert "[REDACTED:token]" in artifact_text
+    entry = _report(tmp_path / "out")["stages"]["calibration"]["artifacts"][0]
+    assert entry["sha256"] == hashlib.sha256(
+        artifact_text.encode("utf-8")).hexdigest()  # 哈希 = 脱敏后落盘字节
 
 
 def test_report_redacts_secret_shaped_class_name(monkeypatch, tmp_path) -> None:
@@ -692,7 +909,7 @@ def test_report_write_failure_evidence_exit(monkeypatch, tmp_path) -> None:
     fake = FakeRunner()
     rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock(), fs=_WriteFailFs())
     assert rc == mp.EXIT_USAGE  # 证据不可失——按拒绝处理
-    assert len(fake.calls) == 3  # 步骤确实已执行（拒绝仅因报告不可落盘）
+    assert len(fake.calls) == 4  # 步骤确实已执行（拒绝仅因报告不可落盘）
     assert not (tmp_path / "out" / mp.LOCK_NAME).exists()  # 锁在报告前已释放
 
 
@@ -733,9 +950,10 @@ def test_history_artifact_unavailable_when_dir_missing(monkeypatch, tmp_path) ->
             (monitor_dir / "monitor-20260912-000000.json").write_text("{}", encoding="utf-8")
         elif step == "history":
             pass  # history 目录不创建（模拟该步未产出）
-        else:
+        elif step == "insights":
             _insights_dir.mkdir(parents=True)  # insights 仍执行（history rc=0）
             (_insights_dir / "insights.json").write_text("{}", encoding="utf-8")
+        # calibration：产物由管道写（子进程零文件写入），无 on_call 副作用
 
     fake = FakeRunner(on_call=on_call)
     rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock())
@@ -803,12 +1021,43 @@ def test_insights_step_uses_canonical_default_source(monkeypatch, tmp_path) -> N
     insights_argv = fake.calls[2][0]
     assert "--source" not in insights_argv
     assert "--output-dir" not in insights_argv
+    # M14-110：calibration 第四 argv 同样零输入注入面（仅 --format json，
+    # 输入全部经校准工具既有默认值生效）
+    calibration_argv = fake.calls[3][0]
+    assert calibration_argv == (FAKE_PY, str(mp.CALIBRATION_SCRIPT),
+                                "--format", "json")
+    for token in ("--history", "--samples", "--latency-warn-ms",
+                  "--latency-critical-ms", "--log-error-warn",
+                  "--log-error-critical"):
+        assert token not in calibration_argv
+
+
+def test_calibration_default_history_matches_canonical_output() -> None:
+    """M14-110 单一事实源：calibration 步固定形态不带 --history——其输入经
+    校准工具既有默认值生效，且默认输入 == history canonical 输出 == 管道
+    history 步产物发现目录（三方 resolve 全等）。"""
+    assert mtc.DEFAULT_HISTORY_PATH.resolve() == mh.DEFAULT_OUTPUT_DIR.resolve() / mh.HISTORY_OUTPUT_NAME
+    assert mp.HISTORY_OUTPUT_DIR.resolve() == mh.DEFAULT_OUTPUT_DIR.resolve()
+    assert mp.CALIBRATION_SCRIPT.resolve() == CALIBRATION_SCRIPT.resolve()
+
+
+def test_pipeline_cli_exposes_no_calibration_injection_params() -> None:
+    """管道 CLI 结构性零校准注入面：不暴露任何能进入校准 argv 的参数
+    （源/窗口/阈值/format）——仅第四步超时（有界数值）可调。"""
+    parser = mp.build_parser()
+    option_strings = {token
+                      for action in parser._actions
+                      for token in action.option_strings}
+    for token in ("--history", "--samples", "--format",
+                  "--latency-warn-ms", "--latency-critical-ms",
+                  "--log-error-warn", "--log-error-critical"):
+        assert token not in option_strings, f"管道 CLI 不得暴露 {token}"
+    assert "--calibration-timeout-seconds" in option_strings  # 唯一第四步参数
 
 
 def test_three_stage_timeout_budget_below_task_limit() -> None:
-    """三步超时硬顶总和 < 计划任务执行时限 PT12M=720s（与
-    monitoring_pipeline_task.EXECUTION_TIME_LIMIT 交叉 pin；调度器绝不先于
-    内部超时杀整任务，避免击杀留 stale lock）。"""
+    """三步既有超时硬顶 pin 不变（M14-110 前兼容面）：monitor 540 +
+    history 120 + insights 50 = 710s < PT12M=720s。"""
     limit = 12 * 60  # PT12M = 720s
     for name in ("MONITOR", "HISTORY", "INSIGHTS"):
         default = getattr(mp, f"{name}_TIMEOUT_DEFAULT")
@@ -823,6 +1072,70 @@ def test_three_stage_timeout_budget_below_task_limit() -> None:
     assert default_sum < limit
     # 边界同款：monitor 540 + history 120 不变（兼容面），insights 硬顶吃余量
     assert (mp.MONITOR_TIMEOUT_MAX, mp.HISTORY_TIMEOUT_MAX) == (540.0, 120.0)
+
+
+def test_four_stage_timeout_budget_below_task_limit_m14_110() -> None:
+    """M14-110 四步预算（supervisor 边界）：前三步硬顶 540+120+50=710 pin
+    不动，calibration 1–5s（默认 5s——与 insights 同型本地只读
+    history.jsonl 处理，秒级完成）；四步硬顶之和 715 < PT12M=720s 且恒留
+    ≥5s 给管道自身开销（启动、锁、证据报告原子写与调度器余量——调度器
+    绝不先于内部超时+收尾杀整任务，避免击杀留 stale lock/半写报告）；
+    默认总和 590s 同样 < 720s。"""
+    limit = 12 * 60  # PT12M = 720s
+    assert (mp.CALIBRATION_TIMEOUT_MIN, mp.CALIBRATION_TIMEOUT_DEFAULT,
+            mp.CALIBRATION_TIMEOUT_MAX) == (1.0, 5.0, 5.0)
+    assert mp.CALIBRATION_TIMEOUT_MIN < mp.CALIBRATION_TIMEOUT_DEFAULT <= mp.CALIBRATION_TIMEOUT_MAX
+    hard_sum = (mp.MONITOR_TIMEOUT_MAX + mp.HISTORY_TIMEOUT_MAX
+                + mp.INSIGHTS_TIMEOUT_MAX + mp.CALIBRATION_TIMEOUT_MAX)
+    assert hard_sum == 715.0
+    assert hard_sum < limit, f"四步硬顶之和 {hard_sum}s 必须小于 {limit}s"
+    assert limit - hard_sum >= 5  # 恒留 ≥5s 管道自身开销（supervisor 边界）
+    default_sum = (mp.MONITOR_TIMEOUT_DEFAULT + mp.HISTORY_TIMEOUT_DEFAULT
+                   + mp.INSIGHTS_TIMEOUT_DEFAULT + mp.CALIBRATION_TIMEOUT_DEFAULT)
+    assert default_sum == 590.0
+    assert default_sum < limit
+
+
+def test_calibration_artifact_contract_constants_cross_pinned() -> None:
+    """管道侧独立定义的校准产物契约常量与 standalone 工具常量交叉 pin
+    （管道不导入兄弟工具——单一事实源由本测试锁定）：schema_version 与
+    tool 身份精确相等，validate 只接受这一对组合。"""
+    assert mp.CALIBRATION_SCHEMA_VERSION == mtc.CALIBRATION_SCHEMA_VERSION == 1
+    assert mp.CALIBRATION_TOOL_NAME == mtc.TOOL_NAME
+    assert mp.CALIBRATION_TOOL_NAME == "tools/ops/monitoring_threshold_calibration.py"
+    # 既有 fake stdout 形态（standalone json 顶层契约键）通过管道校验
+    assert mp.validate_calibration_stdout(CALIBRATION_FAKE_STDOUT) is True
+
+
+@pytest.mark.parametrize("stdout_text", [
+    "definitely not json {",                                    # 非 JSON
+    "[1, 2, 3]\n",                                              # JSON 但非顶层对象
+    '{"no_schema_version": true}\n',                            # 缺契约键
+    "",                                                         # 空 stdout
+    '{"schema_version": 2, "tool": "tools/ops/monitoring_threshold_calibration.py"}\n',  # 版本不兼容
+    '{"schema_version": 1, "tool": "tools/ops/other_tool.py"}\n',  # 工具身份不符
+])
+def test_calibration_output_contract_mismatch_visible_failure(
+        monkeypatch, tmp_path, stdout_text: str) -> None:
+    """退出 0 但 stdout 不满足校准产物契约（malformed/非对象/缺键/版本或
+    工具身份不匹配）= 可见失败 calibration-output-not-json（退出码 0 如实
+    入档），绝不静默接受、零写入。"""
+    _patch_stage_dirs(monkeypatch, tmp_path)
+    out = tmp_path / "out"
+    out.mkdir()
+    stale = out / mp.CALIBRATION_OUTPUT_NAME
+    stale.write_text('{"old": true}', encoding="utf-8")
+    fake = FakeRunner(calibration_stdout=stdout_text)
+    rc = _execute(out, _gated(fake), clock=FakeClock())
+    assert rc == mp.EXIT_STAGE_FAILED
+    calibration = _report(out)["stages"]["calibration"]
+    assert calibration["status"] == "failed"
+    assert calibration["exit_code"] == 0  # 子进程确实退出 0——事实不遮蔽
+    assert calibration["failure_category"] == mp.CALIBRATION_OUTPUT_NOT_JSON
+    assert calibration["failure_detail"] == "stage-stdout-not-valid-json"
+    assert calibration["artifacts"] is None
+    # 零写入：旧文件原样保留（同轮新鲜度——绝不引用为本轮产物）
+    assert stale.read_text(encoding="utf-8") == '{"old": true}'
 
 
 def test_history_timeout_default_raised_45_to_90_m1479() -> None:
@@ -843,15 +1156,16 @@ def test_history_timeout_default_raised_45_to_90_m1479() -> None:
     assert default_sum < 720  # PT12M 执行时限
 
 
-def test_markdown_renders_all_three_stages(monkeypatch, tmp_path) -> None:
+def test_markdown_renders_all_four_stages(monkeypatch, tmp_path) -> None:
     _patch_stage_dirs(monkeypatch, tmp_path)
     fake = FakeRunner(monitor_rc=0, history_rc=0, insights_rc=2)
     rc = _execute(tmp_path / "out", _gated(fake), clock=FakeClock())
     assert rc == mp.EXIT_STAGE_FAILED
     md_text = (tmp_path / "out" / "pipeline-20260912-000000.md").read_text(encoding="utf-8")
     assert "insights" in md_text
-    assert "monitor → history → insights" in md_text
-    for tool_line in (mp.MONITOR_TOOL_NAME, mp.HISTORY_TOOL_NAME, mp.INSIGHTS_TOOL_NAME):
+    assert "monitor → history → insights → calibration" in md_text
+    for tool_line in (mp.MONITOR_TOOL_NAME, mp.HISTORY_TOOL_NAME,
+                      mp.INSIGHTS_TOOL_NAME, mp.CALIBRATION_TOOL_NAME):
         assert tool_line in md_text
 
 
@@ -899,4 +1213,5 @@ def test_cli_defaults_registered() -> None:
     assert args.monitor_timeout_seconds == mp.MONITOR_TIMEOUT_DEFAULT
     assert args.history_timeout_seconds == mp.HISTORY_TIMEOUT_DEFAULT
     assert args.insights_timeout_seconds == mp.INSIGHTS_TIMEOUT_DEFAULT
+    assert args.calibration_timeout_seconds == mp.CALIBRATION_TIMEOUT_DEFAULT
     assert args.artifact_dir == mp.ARTIFACT_DIR

@@ -576,7 +576,13 @@ def main(argv: list[str] | None = None) -> int:
               flush=True)
         return EXIT_REFUSED
     if args.format == "json":
-        print(json.dumps(result, ensure_ascii=False), flush=True)
+        # M14-110 管道集成保真前提：json 模式输出恒 ASCII-safe（json.dumps
+        # 默认 ensure_ascii=True——非 ASCII 字符经 \uXXXX 转义）。JSON 文档
+        # 语义与 ensure_ascii=False 逐键等值（json.loads 后完全相同），但在
+        # 任意子进程 stdout 编码（Windows ACP=cp936 的计划任务链路等）下
+        # 字节恒定——监控管道（monitoring_pipeline.py 第四步）以 UTF-8 捕获
+        # stdout 持久化为 calibration.json，ASCII-safe 保证捕获零损坏。
+        print(json.dumps(result), flush=True)
     else:
         print(render_summary(result), end="", flush=True)
     return EXIT_OK

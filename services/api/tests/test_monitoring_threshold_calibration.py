@@ -768,3 +768,51 @@ def test_refusal_emits_no_body(tmp_path, capsys) -> None:
     assert rc == mtc.EXIT_REFUSED
     assert '"schema_version"' not in out
     assert "[calibrate] 窗口" not in out  # 摘要正文零输出
+
+
+# ---------------------------------------------------------------- M14-110 管道捕获保真（ASCII-safe json）
+
+
+def test_json_format_ascii_safe_semantics_preserved(tmp_path, capsys) -> None:
+    """M14-110：json 模式 stdout 恒 ASCII-safe（ensure_ascii=True 转义）——
+    在任意子进程 stdout 编码（含 Windows ACP=cp936 的计划任务链路）下字节
+    恒定，监控管道以 UTF-8 捕获后零损坏；JSON 文档语义逐键等值（中文
+    边界注记经 loads 完整还原）。"""
+    history = _write_history(tmp_path, _three_rows())
+    rc = _run_cli(history, "--format", "json")
+    out = capsys.readouterr().out
+    assert rc == mtc.EXIT_OK
+    assert out.isascii()  # 全 ASCII——子进程编码无关的字节确定性
+    payload = json.loads(out)
+    joined = " ".join(payload["boundaries"])
+    assert "不改变生产阈值" in joined  # 语义经 loads 完整还原
+    assert "零文件写入" in joined
+
+
+def test_json_format_deterministic_via_real_subprocess_without_utf8_env(
+        tmp_path) -> None:
+    """Windows 兼容子进程 stdout 路径确定性：剥离 PYTHONUTF8 的真实子进程
+    （默认 ANSI 代码页路径）连跑两次，json stdout 字节逐位相同、全 ASCII、
+    UTF-8 解码后 loads 成功——监控管道第四步捕获保真的端到端实证。
+    summary 模式（人读终端面）行为不受影响。"""
+    import os
+
+    history = _write_history(tmp_path, _three_rows())
+    env = {key: value for key, value in os.environ.items()
+           if key.upper() != "PYTHONUTF8"}
+    outputs = []
+    for _ in range(2):
+        completed = subprocess_module.run(
+            [sys.executable, str(SCRIPT), "--history", str(history),
+             "--format", "json"],
+            capture_output=True, env=env, check=False)
+        assert completed.returncode == mtc.EXIT_OK
+        outputs.append(completed.stdout)
+    first, second = outputs
+    assert first == second  # 零墙钟 + ASCII-safe：跨运行字节逐位相同
+    text = first.decode("utf-8")  # 管道捕获口径：UTF-8 解码零损坏
+    assert text.isascii()
+    payload = json.loads(text)
+    assert payload["schema_version"] == mtc.CALIBRATION_SCHEMA_VERSION
+    assert payload["tool"] == mtc.TOOL_NAME
+    assert payload["window"]["records_used"] == 3

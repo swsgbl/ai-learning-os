@@ -98,10 +98,13 @@ def _monitor_stage(status: str, *, exit_code: int | None,
 def _pipeline_report(*, started: datetime, monitor: dict[str, object],
                      history: dict[str, object],
                      insights: dict[str, object] | None,
+                     calibration: dict[str, object] | None = None,
                      overall: str) -> dict[str, object]:
     stages: dict[str, object] = {"monitor": monitor, "history": history}
     if insights is not None:
         stages["insights"] = insights
+    if calibration is not None:
+        stages["calibration"] = calibration
     return {"schema_version": 1, "tool": "tools/ops/monitoring_pipeline.py",
             "milestone": "M14-14", "mode": "execute",
             "started_at_utc": _iso(started), "ended_at_utc": _iso(started),
@@ -439,6 +442,59 @@ def test_pre_m1421_two_step_report_parses(tmp_path) -> None:
     run = _report(output)["runs"][0]
     assert run["failure_domain"] == "none"
     assert run["execution_failure_kinds"] == []
+
+
+def test_m14_110_four_step_report_ok_parses(tmp_path) -> None:
+    """M14-110 起四步形态（+calibration ok）合法：全 ok 零执行失败。"""
+    source, output = tmp_path / "src", tmp_path / "out"
+    reports_dir = source / "pipeline"
+    reports_dir.mkdir(parents=True)
+    report = _pipeline_report(
+        started=BASE,
+        monitor=_monitor_stage("ok", exit_code=0,
+                               artifact_stem="monitor-20260921-040001"),
+        history=_stage("ok"), insights=_stage("ok"),
+        calibration=_stage("ok"), overall="ok")
+    _write_report(reports_dir, report)
+    history = _write_history(source, [_history_row(BASE)])
+    assert _run_cli(reports_dir, history, output) == pir.EXIT_OK
+    run = _report(output)["runs"][0]
+    assert run["failure_domain"] == "none"
+    assert run["execution_failure_kinds"] == []
+
+
+def test_m14_110_calibration_failures_classified(tmp_path) -> None:
+    """calibration 失败 = 执行域：退出 0 但 stdout 未过 JSON 产物契约按
+    stage failure_category 原词汇引用；非零退出/超时用既有命名模式。"""
+    source, output = tmp_path / "src", tmp_path / "out"
+    reports_dir = source / "pipeline"
+    reports_dir.mkdir(parents=True)
+    calib_not_json = _stage("failed", exit_code=0)
+    calib_not_json["failure_category"] = "calibration-output-not-json"
+    calib_timeout = _stage("timeout", exit_code=None, timed_out=True)
+    calib_nonzero = _stage("failed", exit_code=2)
+    for index, calibration in enumerate(
+            (calib_not_json, calib_timeout, calib_nonzero)):
+        report = _pipeline_report(
+            started=BASE + timedelta(minutes=15 * index),
+            monitor=_monitor_stage("ok", exit_code=0,
+                                   artifact_stem=f"monitor-20260921-04000{index}"),
+            history=_stage("ok"), insights=_stage("ok"),
+            calibration=calibration, overall="failed")
+        _write_report(reports_dir, report)
+    history = _write_history(
+        source, [_history_row(BASE + timedelta(minutes=45))])
+    # 三份报告 overall=failed → 最新运行仍失败 = 开放项（exit 1，可见结论）
+    assert _run_cli(reports_dir, history, output) == pir.EXIT_OPEN
+    runs = _report(output)["runs"]  # 按时间严格递增排列
+    assert len(runs) == 3
+    assert runs[0]["failure_domain"] == "execution"
+    assert runs[0]["execution_failure_kinds"] == [
+        "calibration-output-not-json"]  # 退出 0 失败 → failure_category 原词汇
+    assert runs[1]["failure_domain"] == "execution"
+    assert runs[1]["execution_failure_kinds"] == ["calibration-timeout"]
+    assert runs[2]["failure_domain"] == "execution"
+    assert runs[2]["execution_failure_kinds"] == ["calibration-nonzero"]
 
 
 def test_runs_slice_omits_older_with_count(tmp_path) -> None:
