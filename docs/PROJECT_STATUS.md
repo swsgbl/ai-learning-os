@@ -9,6 +9,64 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-105 current-main 代码绑定门证据刷新 + evidence-cockpit 聚合**：worktree
+`m14-105-current-main-release-evidence`，分支
+`ops/m14-105-current-main-release-evidence`，基于 main
+`e5d5d3a9580d355458a8159e5fa936d30e0b2a73`（PR #192 merge =
+M14-104 合入，精确基点），单 local commit，不 push、不开 PR。
+证据刷新切片（真实重跑 + 文档，零应用代码/配置/工具改动）：
+M14-97 证据 @ b374aa5 对 e5d5d3a 已 stale（9 个 PR merge、32 文件
++5049/−80、services/api 测试集大量真实新增）——本切片对 current
+main 只刷新代码绑定两门（ci-main/release-check）并以 M14-91
+cockpit 重新聚合；绝不复制 M14-97 产物（CI run/隔离环境/
+release-check 运行全部本轮新执行）、绝不手改 gate JSON、绝不搬运
+M14-88/M14-98 旧 provider-smoke JSON 冒充 current。结果：ci-main
+run **35805140338**（run_number 505，push/main 唯一 run，
+conclusion=success，5/5 jobs 精确集合 API/Docker/Release tools/
+Android/Web 无重复——断言全过按 `_eval_ci_main` 契约程序化派生，
+raw gh-runs/gh-jobs 原样归档）；release-check 从零隔离环境
+（uv venv CPython 3.12.14 + api/dev requirements `NO_PROXY='*'`
+直连镜像 + npm ci 411 packages）运行前复核 HEAD==e5d5d3a 且
+porcelain 空，`release-check-isolated --json` **exit 0 /
+all_green=true / 10/10 pass**（generated_at 2026-09-23T01:32:37Z；
+api-test **pytest 4227 passed, 33 skipped, 1 warning in 313.06s**
+——较 M14-97 的 4158 恰 +69 预期对账；migration/backup tables:30
+files:1/voice local 17324 bytes/license/e2e 1446 ms 全过；原始产物
+逐字节复制为 canonical、byte-identical=True）；evidence-cockpit
+在 tracked docs 编辑前、HEAD 干净时重新聚合——6 个生产状态源
+文件 staging 前后两次 sha256 复核与 M14-91 登记值全 MATCH
+（audit-chain-anchor/anchor-companion=M14-87、
+production-preflight/legacy-papers/draft-ownership=M14-83、
+backup-restore=M14-85），**provider-smoke 本轮不 stage**（本基点
+最新真实执行即 M14-104 的 search/llm 失败轮，aggregate 未运行、
+无 provider-smoke.json，required 门未 stage 按收紧语义如实阻断）
+——evaluator **pass=7 / missing=4 / blocked=0 / malformed=0 /
+tampered=0**，**cockpit_blockers = `long-soak:not-staged-required`
++ `provider-smoke:not-staged-required`**（较 M14-97 单 blocker
+多出 provider-smoke——诚实语义从「呈现 M14-88 旧 pass」切换为
+「required 未 stage 阻断」）；ci-main/release-check stale=
+**current**；release_ready=false、production_ready=false、
+cockpit_ready=false、exit 1（诚实预期，不强制 0）；staged 8 文件
+工具内建断言 + 外部独立复核 **8/8 IDENTICAL**。验证：cockpit
+三件套（evidence_cockpit/release_readiness/release_closure_manifest）
+**145 passed**（2.24s）+ release-check 三件套
+（release_readiness/release_check_isolated/release_checklist）
+**137 passed, 1 warning**（3.88s）+ `ruff check services/api` 与
+gitignored 断言派生脚本全绿 + canonical 7 份 JSON `json.load`
+通过 + `git diff --check` 干净（docs-only）。证据
+`docs/evidence/m14-105-current-main-release-evidence/README.md`
+（唯一入库证据文件；gitignored canonical
+`.verify/artifacts/m14-105-current-main-release-evidence/` 13 文件 +
+SHA256SUMS：两 gate JSON、raw gh-runs/gh-jobs、cockpit-report、
+staged-inventory、执行日志）。诚实边界：代码绑定门证据只对执行
+时点的树成立（main 再前移即再 stale）；long-soak 24h 审计未发生、
+provider-smoke 解除（出站网络 + Ollama 在场 + GPU 空闲窗口重跑 +
+aggregate）是后续运维动作留 supervisor 决策；release-approval
+human-only 从未发生；production-state 五门为历史 canonical 快照
+呈现、效力判断留 supervisor；生产仍运行 m14-70 镜像，本切片零
+生产触碰、不授权任何部署。同步更新 CHANGELOG（M14-105 条目）与
+ROADMAP（M14-105 状态更新）。
+
 **M14-104 current-main provider-smoke 门证据刷新**：worktree
 `m14-104-current-main-provider-smoke`，分支
 `ops/m14-104-current-main-provider-smoke`，基于 main
