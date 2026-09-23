@@ -9,6 +9,38 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-108 监控历史时序查询工具（实现/文档切片）**：worktree
+`m14-108-monitoring-history-query`，分支
+`ops/m14-108-monitoring-history-query`，基于 main
+`9729fa5b1b5bddba1331ef599911e9d2c832c15a`（PR #195 merge =
+M14-107 合入，精确基点），单 local commit，不 push、不开 PR。
+目标：把 M14-13 `monitoring_history.py` 已产出的 canonical
+`history.jsonl` 固化为**安全、离线、可测试的只读查询面**——新工具
+`tools/ops/monitoring_history_query.py`（CLI：时间窗/状态过滤 +
+服务/端点维度选择 + limit 记录界，stdout-only 双 format）+ 契约测试
+`services/api/tests/test_monitoring_history_query.py`。单一事实源：
+schema/画像常量复用同仓 `monitoring_history`，canonical 行级校验委托
+`monitoring_insights.parse_history_text` 已测语义（零平行 schema、
+零重复校验实现；两既有工具零行为改动——监控家族回归 300 passed
+实证）。有界参数全 fail-closed 且先于任何读取（参数拒绝路径
+RealStore 零构造结构性证明）：时间窗两端含边界、status/service/
+endpoint 固定词汇、limit 默认 50 界 1–500（保留最新 N +
+truncated_older_count 显式；聚合恒全窗口口径）。只读纪律：零网络/
+零子进程/零 env 读取/零计划任务/零生产容器·DB·对象存储接触/
+**零文件写入**（只读 Store 协议层面即无写面）；symlink/缺失/目录
+拒绝；malformed/乱序/重复/混档/超 5000 一律拒绝且零部分输出；零墙钟
+（同参数两次运行 stdout 逐字节相同）。**诚实边界：这是查询工具
+切片，不是生产查询服务；本切片从未对真实生产 history.jsonl 执行过
+查询（全部验证基于合成 fixture）；不构成 provider-smoke 或任何
+release blocker 的解除；production_ready=false 不变。**验证：聚焦
+契约测试 **57 passed** + 监控家族回归（query/history/insights 三
+套件）**300 passed** + ruff（新脚本+新测试）全绿 + py_compile +
+真实 CLI 端到端 smoke（canonical venv 直跑，producer 函数生成
+fixture，summary/json 双形态正确）+ `git diff --check` 干净。证据
+`docs/evidence/m14-108-monitoring-history-query/README.md`。同步
+更新 CHANGELOG（M14-108 条目）、ROADMAP（M14-108 状态更新）与
+tools/ops/README.md（M14-108 章节）。
+
 **M14-107 current-main 发布证据刷新（ci-main + release-check + 首次
 staged long-soak + cockpit 聚合）**：worktree
 `m14-107-current-main-evidence-refresh`，分支
