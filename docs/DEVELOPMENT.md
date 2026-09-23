@@ -513,6 +513,77 @@ sequence 上的 entry_hash 必然对不上，交叉核对即可发现重算/回�
   runner/stub 与本地文件，不执行任何真实外网冒烟**（唯一真实子进程是
   `python -c` 探针，仅验证 cwd=仓库根与环境继承，零网络）。
 
+## provider 冒烟前置只读预检 provider-smoke-preflight（M14-112）
+
+- **CLI**：`python -m app.ops.cli provider-smoke-preflight
+  [--voice-mode {local,hybrid,cloud}] [--search-endpoint URL]
+  [--asr-endpoint URL] [--tts-endpoint URL] [--llm-endpoint URL]
+  [--llm-model NAME] [--json]`，实现文件
+  `services/api/app/ops/provider_smoke_preflight.py`。
+- **定位**：provider-smoke 门（release-readiness）的**前置只读预检与
+  失败归因面**——M14-104 实证三步冒烟的失败大多先于冒烟脚本即可判定
+  （SearXNG 在线但上游引擎不可达、Ollama 端点进程缺席、注册表代理劫持
+  loopback 探测），本工具在不运行任何冒烟、不启停任何服务的前提下对
+  三个门 provider 做有界只读 HTTP 预检并给出固定词汇归因与外部动作
+  建议，使下一次生产恢复决策可检视。**预检 pass 只代表前置条件可观测
+  且就绪，不代表 provider-smoke 已通过；输出不是 release-readiness
+  证据（不生成 provider-smoke.json）。**
+- **检查面（topology-aware）**：search/SearXNG 只读
+  `GET {base}/search?q=…&format=json`（默认 base
+  `http://127.0.0.1:8878` = compose `--profile search` 宿主绑定）——
+  results 非空 ready / 0 结果且端点自报 `unresponsive_engines` →
+  `upstream_failure`（引擎名+错误类透出）/ 0 结果无自报 →
+  `empty_results`；local 拓扑 ASR/TTS `GET {服务根}/health`（默认
+  8010/8011 `/v1`，冒烟脚本同款）HTTP 200 即 listener ready；
+  cloud/hybrid 拓扑语音槽位**不检凭据**（不读 secret、不探测外部端点）
+  如实 `not_probed/external_credentials_not_inspected`；LLM/Ollama
+  兼容网关只读 `GET {服务根}/api/ps`（默认
+  `http://127.0.0.1:11434/v1`、模型默认 `aios-qwen3.5-9b-4096`）——
+  模型驻留 ready / 在线但无该模型 `model_absent` / 连接被拒
+  `endpoint_absent` / 超时 / HTTP 失败 / 响应畸形五类清晰区分。
+- **代理边界**：loopback URL 探测 client 恒 `trust_env=False`
+  （M14-100/106 同口径：注册表/环境系统代理不得劫持本机探测）；非
+  loopback 保持 httpx 默认；报告 `ambient_proxy` 字段以布尔观测
+  环境/注册表代理压力是否覆盖被探测 loopback host（getproxies +
+  proxy_bypass）——**代理值（可能内嵌凭据）绝不进入输出**。探测恒
+  10s 固定超时、GET-only、不追 redirects。
+- **URL fail-closed（supervisor 修正 Round 1）**：endpoint 含 userinfo
+  （`user@` 与 `user:pass@` 两形态）、query 或 fragment（含尾随裸
+  `?`/`#` 分隔符）一律**先于探测拒绝**（`malformed_url`/
+  `fix_endpoint_config`，endpoint 不回显）——凭据绝不进入探测请求
+  （不从 URL 构造 Basic Auth）、未通过校验的输入绝不进入报告；通过
+  校验的 endpoint 如实呈现（非敏感配置值）。
+- **远端字符串边界（supervisor 修正 Round 2）**：unresponsive 引擎名/
+  错误类与驻留模型名进入报告前逐项剔除 Unicode Cc 控制字符并截断到
+  128 Unicode 码点（全控制条目丢弃；匹配语义走原始名）——叠加既有
+  条数上限（32 引擎/16 模型），任意外形/体量的 provider 响应都有确定
+  的报告体量上界。
+- **固定词汇**：status `ready/not_ready/not_probed`、overall
+  `pass/blocked/partial`、reason 11 种闭集、recommendation 6 种闭集
+  （全部指向**外部**动作：`start_externally_then_rerun` /
+  `repair_upstream_network_externally` / `load_model_externally_then_rerun`
+  / `fix_endpoint_config` /
+  `investigate_endpoint_externally_then_rerun` /
+  `verify_external_preconditions_then_run_smoke`）与确定映射；providers
+  键序与语音拓扑枚举直接 import release-readiness
+  `SMOKE_PROVIDERS`/provider-smoke-evidence `VOICE_MODES` 权威常量
+  （零复制防漂移）。
+- **只读护栏**：stdout-only（`--json` 纯 JSON / 人类摘要）——零子进程、
+  零文件写入、零服务生命周期变更、零 secret 读取（环境访问仅限
+  getproxies/proxy_bypass 布尔判定）；非法 `--voice-mode` exit 2；
+  malformed URL 不崩溃（归因 `malformed_url`/`fix_endpoint_config`）。
+  报告恒携带 `production_ready=false` 与
+  `release_readiness_evidence=false` 自声明；退出码 pass=0 /
+  blocked·partial=1 / 参数问题=2。
+- **测试**：`services/api/tests/test_provider_smoke_preflight.py`
+  （覆盖矩阵：CLI 注册/分发/参数校验、全 ready 确定性、11 种归因 +
+  上游新/旧自报形态、拓扑与 provider-key 无漂移交叉锁定、loopback
+  trust_env/ambient 代理三态与代理值零泄漏、userinfo/query/fragment
+  先于探测拒绝且不回显、远端名单逐项截断+控制字符剔除+体量上界、
+  源级只读 ast 守卫、非门证据（门评估器 MalformedEvidence 拒收）、
+  退出码词汇、默认端点契约）——**全部进程内替身（fake get +
+  MockTransport + socket 拨号禁令），零网络零子进程**。
+
 ## 生产证据缺口清单 production-evidence-gap（M11-18/M14-74）
 
 - **CLI**：`python -m app.ops.cli production-evidence-gap --evidence-dir <path>

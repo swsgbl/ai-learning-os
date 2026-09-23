@@ -9,6 +9,58 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-112 provider-smoke 前置只读预检与失败归因面（实现/测试/文档切片）**：worktree
+`m14-112-provider-smoke-preflight`，分支
+`ops/m14-112-provider-smoke-preflight`，基于 main
+`2b81ec841a9a9f30917961a2058f0f33688cd5b4`（PR #199 merge =
+M14-111 合入，精确基点），单 local commit，不 push、不开 PR。
+目标：把 M14-104 实证的「冒烟失败先于冒烟脚本即可判定」（SearXNG
+在线但上游引擎不可达、Ollama 端点进程缺席、注册表代理劫持 loopback
+探测）固化为可检视的**只读预检面**，使下一次生产恢复决策在零冒烟、
+零服务变更前提下可检视。交付：新模块
+`services/api/app/ops/provider_smoke_preflight.py` + CLI
+`provider-smoke-preflight`（--voice-mode/--search-endpoint/
+--asr-endpoint/--tts-endpoint/--llm-endpoint/--llm-model/--json）。
+检查面：search/SearXNG 只读 `/search?format=json` 形状判定 +
+`unresponsive_engines` 上游归因（新/旧自报形态）；local 拓扑 ASR/TTS
+`/health` listener 就绪（smoke_local_voice 同契约）；cloud/hybrid
+语音槽位不检凭据如实 not_probed；LLM `/api/ps` 模型驻留（端点缺席/
+模型缺席/超时/HTTP 失败/响应畸形五类清晰区分）。固定词汇闭集
+（status/overall/11 reason/6 recommendation 全外部动作、确定映射）；
+provider 键与语音拓扑直接 import SMOKE_PROVIDERS/VOICE_MODES 权威
+常量（零复制防漂移）；loopback 探测恒 trust_env=False（M14-100/106
+同口径）+ ambient 代理压力布尔观测（代理值绝不输出；endpoint 含
+userinfo（user-only/user:password）/query/fragment 一律先于探测
+fail-closed 拒绝不回显——凭据绝不进入探测与报告；远端自报名单
+（unresponsive 引擎名/错误类、驻留模型名）逐项 128 码点截断 +
+控制字符剔除——报告体量确定上界，supervisor 修正 Round 1/2）。
+只读护栏：stdout-only、零子进程/零文件写入/零服务
+生命周期变更/零 secret 读取（ast 守卫测试锁定）；不生成
+provider-smoke.json、不触碰任何 release gate；报告恒
+production_ready=false/release_readiness_evidence=false 且被
+release-readiness 门评估器 MalformedEvidence 拒收（预检 pass 只代表
+前置可观测就绪，不代表 provider-smoke 已通过）。既有 provider-smoke
+行为零改动。真实只读预检（修正前 14:23:59Z / 修正后 14:54:06Z 两轮归因
+一致，默认端点零环境注入）：voice ready（8010/8011 双 200）、search not_ready/
+upstream_failure（SearXNG 200 但 brave/duckduckgo/google cse/
+wikidata/wikipedia 全 HTTP connection error →
+repair_upstream_network_externally）、llm not_ready/endpoint_absent
+（11434 连接被拒 → start_externally_then_rerun）、overall blocked
+exit 1——与 M14-104 blocker 归因一致且先于冒烟即得；cloud 拓扑附加
+运行 voice not_probed 如实。**诚实边界：预检 pass != provider-smoke
+通过；本切片未运行任何冒烟、未生成 provider-smoke.json、不解除任何
+release gate；search/llm 的解除（修出站网络/启动 Ollama/GPU 空闲
+窗口重跑）是外部运维动作留 supervisor 决策；production_ready=false
+不变。**验证：新契约测试 54 passed（零网络零子进程）+ 邻域回归十一
+套件 359 passed + CLI 依赖面六套件 234 passed/2 skipped + ruff（默认
+与 --select F,E9）+ py_compile + git diff --check 全净（worktree 从零
+uv venv 3.12.14，canonical .venv 零触碰）。证据
+`docs/evidence/m14-112-provider-smoke-preflight/README.md`（真实运行
+原始证据 gitignored SHA256SUMS 锚定）。同步更新 CHANGELOG（M14-112
+条目）、ROADMAP（M14-112 状态更新）、DEVELOPMENT（M14-112 章节）与
+PROJECT_STATUS 顶部任务结构（M14-112 接替顶部、M14-111 移为次席，
+实现详情保留）。
+
 **M14-111 监控管道四步序列自然调度验收（docs-only 回填）**：worktree
 `m14-111-monitoring-pipeline-natural-acceptance`，分支
 `ops/m14-111-monitoring-pipeline-natural-acceptance`，基于 main
