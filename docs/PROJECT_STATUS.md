@@ -9,6 +9,23 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-103 CI-only Compose 断言回归修复**：worktree
+`m14-103-ci-smoke-tag-assertion`，分支 `fix/m14-103-ci-smoke-tag-assertion`，
+基于 main `0c750aa9eb6a87c92606867d8bd1b142cbb62976`（PR #189 merge =
+M14-102 合入，精确基点），单 local commit，不 push、不开 PR。test-only：
+GitHub main API job `106986557842` 中
+`test_rc_smoke_rehearsal.py::test_smoke_compose_render_fails_closed_without_tag_env`
+失败——断言硬编码 stderr 必含 `AIOS_RC_SMOKE_API_TAG`，而 CI 的 Docker
+Compose（2.337 时代）首个报错变量为 `AIOS_RC_SMOKE_WEB_TAG`（本机
+v5.5.0 两变量都报且 API 在前，本地恒过——CI-only 回归）。fail-closed
+行为本身正确（非零退出码成立），测试过度耦合报错顺序。窄修复：
+`returncode != 0` 断言原样保留（不弱化），stderr 断言放宽为必点名
+`AIOS_RC_SMOKE_API_TAG` 或 `AIOS_RC_SMOKE_WEB_TAG` 至少其一；零生产/
+compose/runner 改动（M14-96 生产文件 pin 未动）。验证：焦点测试
+1 passed + 全文件 **59 passed**（3.58s）+ ruff（test 文件）全绿 +
+py_compile + `git diff --check` 干净。同步更新 CHANGELOG（M14-103
+条目）与 ROADMAP（M14-103 状态更新）。
+
 **M14-102 监控自然窗口证据回填**：worktree
 `m14-102-monitoring-natural-evidence`，分支
 `docs/m14-102-monitoring-natural-evidence`，基于 main
