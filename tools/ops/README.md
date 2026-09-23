@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -19,7 +19,12 @@ insights 两轮产出/刷新已经 supervisor 验收**，`production_ready=false
 监控历史**洞察/告警摘要**面（只读 M14-13 history.jsonl 或 M14-12 monitor
 工件目录 → 安全 JSON+MD 摘要；仅本地工件洞察，不接外部告警，
 `production_ready=false` 不变；M14-21 起默认输入与 history canonical
-输出一致并被持续管道持续更新——**M14-22 已验收真实调度首轮产出**）。
+输出一致并被持续管道持续更新——**M14-22 已验收真实调度首轮产出**）；
+`monitoring_history_query.py`（M14-108）承担监控历史**时序查询**面
+（只读 M14-13 canonical history.jsonl → stdout 有界查询结果：时间窗/
+状态过滤 + 服务/端点维度选择 + limit 记录界；零网络/零子进程/零 env
+读取/**零文件写入**；**这是查询工具切片，不是生产查询服务**，不构成
+provider-smoke 或任何 release blocker 的解除）。
 
 ## production_recovery.py
 
@@ -1233,3 +1238,50 @@ production_ready 不变，发布审批 human-only；不推镜像仓库、不打 
 `docs/evidence/m14-96-release-candidate-smoke/README.md`（attempt-1
 build-failed:api——本机 daemon 出站 mirror+静态代理不可用且本地无
 python/node 基镜像，按 supervisor 边界诚实停止；机制零改动可复跑）。
+
+## monitoring_history_query.py（M14-108）
+
+监控历史**时序查询**面：把 `monitoring_history.py`（M14-13）已产出的
+canonical `history.jsonl` 变成安全、离线、可测试的只读查询工具。**这是
+查询工具切片，不是生产查询服务**——不构成 provider-smoke 或任何
+release blocker 的解除，不构成 production readiness 宣称。
+
+```
+# 仓库根执行（canonical venv 或任意 Python ≥3.11，纯标准库）
+python tools/ops/monitoring_history_query.py                       # 全量摘要
+python tools/ops/monitoring_history_query.py --status critical \
+    --start 2026-09-11T00:00:00Z --end 2026-09-12T00:00:00Z --limit 20
+python tools/ops/monitoring_history_query.py --format json \
+    --service redis,api --endpoint api-health
+```
+
+- **单一事实源（零平行 schema）**：画像/schema 常量复用同仓
+  `monitoring_history`（六服务/五端点/HISTORY_SCHEMA_VERSION/时间戳解析/
+  nearest-rank percentile/退出码）；canonical 行级校验**委托**
+  `monitoring_insights.parse_history_text`（已测语义：行 schema 严格
+  校验、行序严格递增 (collected_at, source_stem)、单一 project、样本量
+  界 1–5000——固定词汇拒绝原因原样透传）。本工具未改动两个既有工具的
+  任何生产行为。
+- **有界参数（全部先于任何读取校验；超界/非法一律拒绝且零读取）**：
+  `--start`/`--end`（UTC `%Y-%m-%dT%H:%M:%SZ`，时间窗**两端均含边界**，
+  `start > end` 拒绝，可单边）；`--status`（逗号分隔，恒 ∈
+  {ok,warn,critical}，空段/重复/词汇外拒绝）；`--service`/`--endpoint`
+  （**维度选择**——切片聚合与记录投影，不是记录过滤面：canonical 记录
+  是完整栈样本；恒 ∈ 六服务/五端点画像）；`--limit`（记录列表界，默认
+  50、1–500，保留**最新** N 条 + 显式 `truncated_older_count`；**聚合恒
+  为全窗口口径**，limit 绝不扭曲聚合）。
+- **只读纪律**：零网络、零子进程、零 env 读取、零计划任务、零生产
+  容器/DB/对象存储接触、**零文件写入**（Store 协议层面即无写面——只读
+  输入文件、只写 stdout；绝不改动/删除输入工件）。symlink 目标/现存
+  symlink 祖先组件、缺失、目录形态一律拒绝。
+- **输出（stdout only）**：`--format summary`（默认人读摘要）或
+  `--format json`（单文档机器可读：query echo/window 计数/状态计数/逐
+  所选端点延迟 min-p50-p95-max/逐所选服务 restart 与日志 error 总计/
+  有界记录投影——仅从合法历史记录派生，绝无原始日志/密钥/secret/env
+  值；行级未知额外字段被结构性丢弃）。任何拒绝 → 固定词汇拒绝行 +
+  exit 2，JSON/摘要正文**零部分输出**。零墙钟：无生成时间戳，同参数
+  两次运行 stdout 逐字节相同。零命中是合法查询结果（如实输出零计数）。
+- 退出码：0 查询成功 / 2 任何拒绝。契约测试
+  `services/api/tests/test_monitoring_history_query.py` 锁定（57 项：
+  结构契约/参数 fail-closed/路径防御/行校验透传/查询语义/输出卫生）。
+  切片说明见 `docs/evidence/m14-108-monitoring-history-query/README.md`。
