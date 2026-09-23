@@ -19,6 +19,11 @@ cloud-openai / cloud-openai-tts：OpenAI 兼容 /audio/transcriptions 与 /audio
 provider 名与失败文案明确区分——本地引擎不冒充 cloud。
 失败语义 fail-closed 固定脱敏文案（不嵌 endpoint/key/httpx 异常文本），ASR 响应
 形状校验、TTS 音频非空且 RIFF/WAV（response_format=wav 时不冒充，M10-13）。
+
+M14-106 loopback 代理边界：本地 provider 的 httpx client 一律 trust_env=False
+——Windows 注册表/环境系统代理不得劫持 127.0.0.1 本机语音服务请求（同 M14-100
+LLM 边界口径）；云端 provider 保持 httpx 默认 trust_env（部署代理配置照常
+生效，cloud 语义零漂移）。
 """
 from __future__ import annotations
 
@@ -120,6 +125,7 @@ async def _openai_compatible_transcribe(
     label: str,
     transport=None,
     timeout: float = 30.0,
+    trust_env: bool = True,
 ) -> TranscriptionResult:
     """OpenAI 兼容 /audio/transcriptions 请求（云端与本地真实引擎共用实现）。
 
@@ -129,13 +135,20 @@ async def _openai_compatible_transcribe(
     JSON 形状校验——顶层必须是对象、text 字段必须是字符串、confidence 非数值
     即拒绝（不猜测转写结果）。api_key 为空时不发 Authorization 头（本地服务
     默认无鉴权；云端调用方恒传 key）。
+
+    trust_env（M14-106）：loopback 本地端点传 False——Windows 注册表/环境
+    系统代理不得劫持 127.0.0.1 请求；云端调用方不传（httpx 默认 True，部署
+    代理配置照常生效）。transport 注入（测试 MockTransport）时 httpx 本就
+    不挂环境代理 mount，该参数只控制是否消费环境代理配置。
     """
     import httpx
 
     started = time.perf_counter()
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     try:
-        async with httpx.AsyncClient(timeout=timeout, transport=transport, headers=headers) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout, transport=transport, headers=headers, trust_env=trust_env
+        ) as client:
             response = await client.post(
                 f"{endpoint.rstrip('/')}/audio/transcriptions",
                 files={"file": ("audio", audio, content_type)},
@@ -178,6 +191,7 @@ async def _openai_compatible_synthesize(
     transport=None,
     timeout: float = 60.0,
     voice: str | None = None,
+    trust_env: bool = True,
 ) -> SynthesisResult:
     """OpenAI 兼容 /audio/speech 请求（云端与本地真实引擎共用实现）。
 
@@ -189,6 +203,9 @@ async def _openai_compatible_synthesize(
     M14-65 voice：可选音色名（如 BigModel glm-tts 的 tongtong）——非空才写入
     请求体 voice 字段；None/空串不带该键（本地真实引擎与既有端点的请求体
     保持逐字节不变，云端中性默认由调用方以空值表达）。
+
+    trust_env（M14-106）：loopback 本地端点传 False——Windows 注册表/环境
+    系统代理不得劫持 127.0.0.1 请求；云端调用方不传（httpx 默认 True）。
     """
     import httpx
 
@@ -198,7 +215,9 @@ async def _openai_compatible_synthesize(
     if voice:
         payload["voice"] = voice
     try:
-        async with httpx.AsyncClient(timeout=timeout, transport=transport, headers=headers) as client:
+        async with httpx.AsyncClient(
+            timeout=timeout, transport=transport, headers=headers, trust_env=trust_env
+        ) as client:
             response = await client.post(
                 f"{endpoint.rstrip('/')}/audio/speech",
                 json=payload,
@@ -288,6 +307,9 @@ class LocalFunAsrAsrProvider:
     bootstrap_funasr_wsl.sh 部署，127.0.0.1:8010，CPU，默认无鉴权——api_key
     可选留空，留空不发 Authorization 头）。失败语义与云端同口径 fail-closed
     固定脱敏文案（不嵌 endpoint/key/httpx 异常文本），响应形状校验同云端。
+
+    M14-106：endpoint 是 loopback 本机服务——httpx client 强制 trust_env=False
+    （Windows 注册表/环境系统代理不得劫持本机请求；与 M14-100 LLM 边界同口径）。
     """
 
     name = ASR_LOCAL_FUNASR
@@ -317,6 +339,7 @@ class LocalFunAsrAsrProvider:
             label="本地 ASR",
             transport=self._transport,
             timeout=self._timeout,
+            trust_env=False,  # loopback 直连，绕过系统/环境代理（M14-106）
         )
 
 
@@ -328,6 +351,9 @@ class LocalCosyVoiceTtsProvider:
     WAV；bridge 可选鉴权——api_key 留空不发 Authorization 头）。TTS 音频非空
     且 RIFF/WAV 校验与云端同款（response_format=wav 时不冒充）；失败固定
     脱敏文案。
+
+    M14-106：endpoint 是 loopback 本机服务——httpx client 强制 trust_env=False
+    （Windows 注册表/环境系统代理不得劫持本机请求；与 M14-100 LLM 边界同口径）。
     """
 
     name = TTS_LOCAL_COSYVOICE
@@ -356,6 +382,7 @@ class LocalCosyVoiceTtsProvider:
             label="本地 TTS",
             transport=self._transport,
             timeout=self._timeout,
+            trust_env=False,  # loopback 直连，绕过系统/环境代理（M14-106）
         )
 
 
