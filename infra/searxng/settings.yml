@@ -23,3 +23,10 @@ search:
   formats:
     - html
     - json
+
+engines:
+  - name: bing
+    disabled: false
+    base_url: https://cn.bing.com
+    enable_http2: false
+    timeout: 20.0
