@@ -19,6 +19,8 @@ local-funasr / local-cosyvoice 引擎真实可用——走主 API 同款 adapter
 
 输出：每步 latency_ms / bytes / RIFF/WAV / 文本结果与 PASS/FAIL；任一 FAIL
 则 exit 1。输出不包含任何 key；endpoint 为本机 loopback，可打印。
+loopback 健康探测与 provider 调用均绕过系统/环境代理（trust_env=False，
+M14-106——Windows 注册表/环境系统代理不得劫持 127.0.0.1 探测造成假失败）。
 
 用法（Windows/PowerShell，先启动两个 bootstrap 脚本的 WSL 服务）：
   python tools/voice/smoke_local_voice.py
@@ -92,7 +94,10 @@ def _probe_health(endpoint: str, label: str) -> bool:
     import httpx
 
     try:
-        response = httpx.get(_health_url(endpoint), timeout=10.0)
+        # M14-106：loopback 健康探测绕过系统/环境代理——Windows 注册表代理会连
+        # 127.0.0.1 一起劫持，造成引擎在线却探测不可达的假失败；与本地 provider
+        # 的 trust_env=False 同口径，10s 超时契约不变。
+        response = httpx.get(_health_url(endpoint), timeout=10.0, trust_env=False)
     except httpx.HTTPError:
         _say(f"{label} health: 不可达（服务未启动？）")
         return False
