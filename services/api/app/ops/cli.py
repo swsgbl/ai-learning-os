@@ -1541,6 +1541,60 @@ def _run_provider_smoke_aggregate(args) -> int:
     return exit_code
 
 
+def _run_provider_smoke_preflight(args) -> int:
+    """python -m app.ops.cli provider-smoke-preflight
+    [--voice-mode {local,hybrid,cloud}] [--search-endpoint URL]
+    [--asr-endpoint URL] [--tts-endpoint URL] [--llm-endpoint URL]
+    [--llm-model NAME] [--json]
+
+    M14-112 provider 冒烟前置只读预检与失败归因面：对 release-readiness
+    provider-smoke 门的三个 provider（voice/search/llm）做有界只读 HTTP
+    预检——search/SearXNG 的 /search?format=json 形状与上游引擎归因、
+    local 拓扑 ASR/TTS 的 /health listener 就绪、LLM/Ollama 兼容网关的
+    /api/ps 模型驻留——并以固定 status/reason/recommendation 闭集输出
+    机器可读 JSON 与人类摘要（stdout-only，不落盘）。loopback 探测恒
+    trust_env=False（注册表/环境系统代理不得劫持本机探测），并显式观测
+    ambient 代理压力（只输出布尔，绝不输出代理值——可能内嵌凭据）。
+
+    只读边界：零子进程、零文件写入、零服务生命周期变更、零 secret 读取
+    （不检凭据：cloud/hybrid 语音槽位如实 not_probed）；不生成
+    provider-smoke.json、不触碰 release-readiness 证据；预检 pass 只代表
+    前置条件可观测且就绪，不代表 provider-smoke 已通过；
+    production_ready 恒 false。建议动作全部为外部运维动作（启动服务/
+    修网络/载模型/修配置后重跑）。
+
+    退出码：overall pass=0 / blocked 或 partial=1（如实不通过）/
+    参数校验失败=2（argparse choices 或非法 voice_mode，不做任何探测）。
+    --json 时 stdout 纯 JSON、提示走 stderr。
+    """
+    import json as _json
+
+    from app.ops.provider_smoke_preflight import (
+        ProviderSmokePreflightInputError,
+        format_preflight_summary,
+        preflight_exit_code,
+        run_provider_smoke_preflight,
+    )
+
+    try:
+        report = run_provider_smoke_preflight(
+            voice_mode=args.voice_mode,
+            search_endpoint=args.search_endpoint,
+            asr_endpoint=args.asr_endpoint,
+            tts_endpoint=args.tts_endpoint,
+            llm_endpoint=args.llm_endpoint,
+            llm_model=args.llm_model,
+        )
+    except ProviderSmokePreflightInputError as cause:
+        print(f"拒绝执行（参数问题，未做任何探测）: {cause}")
+        return 2
+    if args.as_json:
+        print(_json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(format_preflight_summary(report))
+    return preflight_exit_code(report)
+
+
 def _run_production_evidence_gap(args) -> int:
     """python -m app.ops.cli production-evidence-gap --evidence-dir DIR
     [--output <artifacts/temp路径>] [--json]
@@ -2509,6 +2563,72 @@ def main() -> None:
         action="store_true",
         help="stdout 输出纯 JSON 证据（提示走 stderr；契约兼容 release-readiness）",
     )
+    p_ppf = sub.add_parser(
+        "provider-smoke-preflight",
+        help=(
+            "provider 冒烟前置只读预检（M14-112；search/SearXNG 形状+上游"
+            "归因、local 语音 /health、LLM /api/ps 模型驻留；loopback 探测"
+            "绕过代理；stdout-only 零写入零服务变更，不生成 provider-smoke.json；"
+            "pass=0 / blocked·partial=1 / 参数问题=2）"
+        ),
+    )
+    p_ppf.add_argument(
+        "--voice-mode",
+        default="local",
+        choices=("local", "hybrid", "cloud"),
+        help=(
+            "语音拓扑（与 provider-smoke-aggregate 同枚举）：local=探测 ASR/"
+            "TTS 本地 /health；cloud/hybrid=语音槽位如实 not_probed（云端端点"
+            "+凭据由运维外部供给，本工具不检凭据不探测外部端点）；默认 local"
+            "（当前 provider-smoke 恢复阻塞拓扑）"
+        ),
+    )
+    p_ppf.add_argument(
+        "--search-endpoint",
+        default=None,
+        metavar="URL",
+        help=(
+            "SearXNG-compatible base URL（默认 http://127.0.0.1:8878 = "
+            "infra/docker-compose.yml --profile search 宿主绑定；传值以镜像"
+            "冒烟将用的 SEARCH_CLOUD_ENDPOINT）"
+        ),
+    )
+    p_ppf.add_argument(
+        "--asr-endpoint",
+        default=None,
+        metavar="URL",
+        help="本地 ASR base URL（默认 http://127.0.0.1:8010/v1，冒烟脚本同款）",
+    )
+    p_ppf.add_argument(
+        "--tts-endpoint",
+        default=None,
+        metavar="URL",
+        help="本地 TTS base URL（默认 http://127.0.0.1:8011/v1，冒烟脚本同款）",
+    )
+    p_ppf.add_argument(
+        "--llm-endpoint",
+        default=None,
+        metavar="URL",
+        help=(
+            "LLM/Ollama 兼容 base URL（默认 http://127.0.0.1:11434/v1；"
+            "驻留探测打服务根 /api/ps）"
+        ),
+    )
+    p_ppf.add_argument(
+        "--llm-model",
+        default=None,
+        metavar="NAME",
+        help=(
+            "LLM 模型名（默认 aios-qwen3.5-9b-4096 = "
+            "infra/provision_ollama_model.ps1 别名；模型名非敏感）"
+        ),
+    )
+    p_ppf.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="stdout 输出纯 JSON 报告（提示走 stderr；本输出不是 release 证据）",
+    )
     p_pg = sub.add_parser(
         "production-evidence-gap",
         help=(
@@ -2786,6 +2906,8 @@ def main() -> None:
         raise SystemExit(_run_provider_smoke_export(args))
     if args.command == "provider-smoke-aggregate":
         raise SystemExit(_run_provider_smoke_aggregate(args))
+    if args.command == "provider-smoke-preflight":
+        raise SystemExit(_run_provider_smoke_preflight(args))
     if args.command == "production-evidence-gap":
         raise SystemExit(_run_production_evidence_gap(args))
     if args.command == "release-closure-manifest":
