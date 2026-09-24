@@ -40,6 +40,37 @@ py_compile + `git diff --check` + 秘密扫描全净。诚实边界：**仅本�
 CHANGELOG（M14-121 条目）与 PROJECT_STATUS 顶部任务结构
 （M14-119 移为次席）。
 
+**M14-120 Harmony current-main 模拟器回归（构建 + 真实 auth smoke 全链路）**：worktree
+`m14-120-harmony-current-main-regression`，分支
+`harmony/m14-120-current-main-regression`，基于 main
+`2b1c2dd`（PR #206 merge，精确基点），local commit 不 push（待
+supervisor 复核）。对 current main 真实重跑 Harmony 发布链两步：
+① 模拟器门禁复核（未 stop/restart）：目标恒为 Pura 90 模拟器
+`127.0.0.1:5555`（boot=true、API 24、emulator 6.1.0.117），同刻
+`127.0.0.1:15566` 为 Kaihong BotBook（KaihongOS 5.0.2.57/API 14）
+从未用作目标；② `release_build.py --quiet` 构建通过（exit 0，
+unsigned HAP `entry-default-unsigned.hap` 220008 bytes，SHA256
+`64f344BE0DAFC143EABCCD19B4CD51AF13278939C710268671DC324E4D51C4D1`
+——certutil 独立复核一致，无签名材料参与）；③
+`auth_smoke_launcher.py --execute --confirm-mutation --target 127.0.0.1:5555`
+真实执行通过（exit 0，status=executed）：一次性
+loopback 后端 AuthSmokeServer 127.0.0.1:62849（pid 52360，
+OS 分配端口，隔离 SQLite + 合成用户 aiosstudent，stop_errors=[]），
+主机契约 7/7 matched，UI 12 步 = 11 ok + 1 not_run（唯一
+`auth_off_local`/`auth_phase_skip` 设计性跳过），request_failures=[]
+/ warnings=[]/toolchain_failures=[]，mutation/cleanup=true（收尾
+已卸载还原）。诚实边界：未签名 HAP、模拟器非真机、loopback 后端
+非生产后端，不构成签名/真机/生产就绪声明；零生产容器/DB/MinIO/
+语音/secret 接触；`production_ready=false` 不变。证据
+`docs/evidence/m14-120-harmony-current-main-regression/README.md`
+（前一轮 2026-09-18 部分执行的诚实 not_run 门禁历史原样保留，
+日期已修正为实际执行日 2026-09-24）
+- 验证（实测）：聚焦 pytest `tests/harmony_release` **524 passed, 1 skipped**
+  （canonical 主仓库 .venv Python 3.11.15，专用 basetemp）+ py_compile 通过 + ruff（E4,E7,E9,F：
+  tools 全净，tests 仅 1 处 main 既有 E401）+ `git diff --check` 干净；单一新
+  本地提交，未 push。，同步更新 CHANGELOG（M14-120
+条目）与 ROADMAP（M14-120 状态更新；M14-119 移为次席）。
+
 **M14-119 监控告警外发分发最小闭环（工具/测试/文档切片）**：worktree
 `m14-119-monitor-alert-dispatch`，分支
 `ops/m14-119-monitor-alert-dispatch`，基于 main
