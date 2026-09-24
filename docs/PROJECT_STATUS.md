@@ -9,6 +9,33 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-124 生产切换与发布验收（证据/docs-only 切片）**：worktree
+`m14-124-production-cutover-evidence`，分支
+`ops/m14-124-production-cutover-evidence`，基于 main
+`97bbe3c77cbb83c1532cdedaeb9d952a89b1a531`（PR #212 merge = M14-125
+current-main 证据合入）。用户批准 build base
+`684865d1212ca565182fd04edcb3f6a21c9ef88b`、docs-only main
+`e14be369a4a80267dcaafd41f7475cd44e2166ed`、
+API/Web 镜像 digest 与回滚锚 `m14-117-production` 后，生产仅重建
+API/Web：`aios/api:m14-124-production` 与
+`aios/web:m14-124-production` 均 healthy 且 digest 与审批一致。
+切换后生产栈 7/7 healthy；Postgres、Redis、MinIO、LiveKit、SearXNG
+未重建；FunASR/CosyVoice health 200 且未触碰。后验 7 endpoint 全
+HTTP 200，Playwright desktop/mobile × `/`、`/login` `OVERALL=PASS`，
+监控第二轮 34 ok / 0 warn / 0 critical，recovery dry-run 9/9 pin
+matched、6/6 healthy，API/Web tail 200 无错误样行且
+`leaked_keys=NONE`。官方 `release-readiness` required gates 10/10
+pass、`release_ready=true`；`turn-tls=missing` 为 optional，结论仅覆盖
+本机/LAN 生产形态，不宣称公网语音/TURN/TLS 就绪。既有
+evidence-cockpit 按策略永不接收 release-approval，其
+`production_ready=false` 是策略恒定值；不修改、不绕过，权威发布收口
+以 `release-readiness` 为准。审批原文与机器转录审批均有 SHA256 锚，
+canonical 55 个安全证据入 `SHA256SUMS`，数据库/上传对象/生产 env
+原文不入库。验证（docs-only）：markdown 结构/链接 sanity + 新增文本
+秘密扫描 0 命中 + canonical SHA256SUMS 55/55 OK + `git diff --check`
+干净。证据 `docs/evidence/m14-124-production-cutover/README.md`。
+同步更新 ROADMAP（M14-124 生产切换状态）与 CHANGELOG（M14-124 条目）。
+
 **M14-125 current-main 发布证据刷新（证据/docs-only 切片）**：worktree
 `m14-125-current-main-release-evidence`，分支
 `ops/m14-125-current-main-release-evidence`，基于 main
