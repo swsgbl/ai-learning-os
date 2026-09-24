@@ -9,6 +9,54 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-122 current-main 发布证据刷新（证据/docs-only 切片）**：worktree
+`m14-122-current-main-release-evidence`，分支
+`ops/m14-122-current-main-release-evidence`，基于 main
+`2b1c2dd4783166576f00faf5088e7391ab4cc173`（PR #206 merge = M14-119
+合入，精确基点），单 local commit，不 push，待 supervisor（Codex）
+复核。PR #205/#206 两轮真实代码/测试变更（M14-118 +43、M14-119 +76
+契约测试）使 M14-116 @ 2619ea7 代码绑定证据 stale，本切片真实重执行
+刷新：**ci-main** —— gh api 归档核验 head 2b1c2dd 唯一 push/main run
+35952447109（run_number 533，conclusion success，5/5 job 精确集合
+全绿，每 job head_sha==2b1c2dd），按 `_eval_ci_main` 契约断言驱动
+程序化派生 canonical `ci-main.json`（`e55e57f5…`，1188 bytes，raw
+双响应归档，绝不手改 gate JSON）；**release-check** —— 干净 2b1c2dd
+执行树从零隔离环境（uv venv 3.12.14 / 59 packages / npm ci 411
+packages）full 重跑 all_green=true **10/10**（pytest **4552 passed /
+33 skipped** in 275.77s，+119 对账吻合；一次性 SQLite + 回环动态端口
+53843 临时 API 已收尾）；**provider-smoke 不重跑** —— 只读复用
+M14-117 生产切换后真实三步冒烟聚合（`029ee84f…`，564 bytes，
+generated 2026-09-23T23:29:35Z，m14-117-production 栈——切换后时点
+源取代 M14-115 切换前聚合，哈希与 M14-117 README §10 登记逐字节
+一致）；**long-soak 不重跑** —— 同哈希 `d939c652…` 只读复用（817
+bytes，97 样本全 ok 窗口 2026-09-22→23，如实呈现该窗口早于生产
+切换）；**evidence-cockpit** —— docs 编辑前干净 HEAD 聚合，6 个
+生产状态源 6/6 哈希 MATCH 原样 staging（M14-83/M14-85/M14-87
+canonical 不改写；M14-117 切换后 preflight 5/5 作为语义支撑事实
+引用——其 JSON 缺 `gate` 自声明按契约不能 stage，绝不手改补字段），
+staged 10 文件 10/10 IDENTICAL 外部复核，**cockpit_ready=true、
+cockpit_blockers=[]、evaluator pass=9 / pending=0 / blocked=0 /
+missing=2 / malformed=0 / tampered=0**，两 code-bound 门均 current。
+**诚实边界：release_ready=false / production_ready=false 恒不变
+——release-approval human-only 从未发生，不触碰不代拟；turn-tls
+optional 未 stage；生产仍运行 m14-117-production，本切片零生产
+触碰零部署；代码绑定证据只对 2b1c2dd 时点成立。**验证：聚焦契约
+测试 407 passed + ruff All checks passed + canonical SHA256SUMS
+23/23 OK + JSON 契约断言 22 项全过 + 秘密扫描 0 命中 +
+`git diff --check` 干净。证据
+`docs/evidence/m14-122-current-main-release-evidence/README.md`。
+同步更新 ROADMAP（M14-122 状态更新）、CHANGELOG（M14-122 条目）与
+PROJECT_STATUS 顶部任务结构（M14-119 移为次席）。Supervisor 合并轮
+（2026-09-24）：按指令 fetch 并 merge current origin/main
+`f67cbe27a56d476fec2bdc23d51002b12c01219e`（PR #207/M14-121、
+PR #208/M14-120 已含），三本台账冲突按 M 号降序约定解决、三个切片
+条目全保留；**M14-122 证据不重跑、不迁移——ci-main/release-check 仍
+绑定执行基点 2b1c2dd，不构成 f67cbe2 或合并头上的证据重跑、亦非
+final-current 证据**（合并引入 M14-121 真实测试文件后，代码绑定门
+相对合并头即再 stale，刷新留待后续切片）；gitignored 原始证据原样
+保留；合并树上聚焦契约八套件复跑 **407 passed**（canonical venv、
+专用 basetemp）；分支按 supervisor 指令 push 并向 main 开 PR。
+
 **M14-121 监控告警分发回环运行时闭环（测试/文档切片）**：worktree
 `m14-121-alert-dispatch-loopback-runtime`，分支
 `ops/m14-121-alert-dispatch-loopback-runtime`，基于 main `2b1c2dd4`
