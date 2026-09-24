@@ -9,6 +9,33 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-118 post-cutover evidence watch 只读工具与契约测试（工具/测试/文档切片）**：worktree
+`m14-118-post-cutover-watch`，基于 main `1a89559`（PR #204 merge =
+M14-117 合入，精确基点），单 local commit，不 push。新增
+`tools/ops/post_cutover_watch.py`：把 M14-117 生产切换后 canonical
+证据完整性检查固化为单一 fail-closed 只读工具——默认 plan 零副作用
+（零读零写、stdout 不回显绝对路径/secret），显式 `--execute` 才读取
+证据；SHA256SUMS 严格解析（64 位小写 hex + 两空格 + 相对 POSIX 路径，
+恰一个行尾 `\r` 容忍——实测 canonical 索引即 Windows CRLF 形态；
+空/畸形/重复/自引用/路径逃逸一律固定词汇拒绝）；9 项分组/关键文件
+集合契约（7 分组具名集合精确匹配 + key-files 8 文件 + index-integrity
+总条目恰 25）；逐文件 symlink/缺失/读取/哈希复核；报告 JSON+MD 原子
+落盘全新目录，仅相对路径/字节数/SHA-256/固定词汇，零墙钟（同输入
+两次运行输出逐字节相同）；`release_ready=false` /
+`production_ready=false` 恒不变，通过仅表示 evidence inventory
+verified。零网络/零子进程/零 env 读取/零生产接触（AST import 白名单
++ socket/subprocess 双阻断锁定）。契约测试
+`services/api/tests/test_post_cutover_watch.py` 43 项全过（happy
+path/缺文件/哈希漂移/路径逃逸/symlink/重复行/空与畸形索引/输出目录
+已存在/报告脱敏/只读守卫/零墙钟确定性）。开发中对真实 canonical
+证据树做过一次只读 `--execute` 冒烟：exit 1 verified、25 条目、
+9 检查全过、25 文件哈希一致（时点事实，临时输出未归档）。诚实边界：
+**本切片未执行生产巡检、未验证回滚、未解除 release-approval/
+human-only**；canonical 证据目录 gitignored 不入库。证据
+`docs/evidence/m14-118-post-cutover-watch/README.md`。同步更新
+tools/ops/README.md、ROADMAP（M14-118 状态更新）、CHANGELOG（M14-118
+条目）与 PROJECT_STATUS 顶部任务结构（M14-117 移为次席）。
+
 **M14-117 生产切换与运行验收证据收口（真实生产切换/验收/docs-only 回填）**：worktree
 `m14-117-production-cutover`，分支
 `ops/m14-117-production-cutover-evidence`，文档基点 main

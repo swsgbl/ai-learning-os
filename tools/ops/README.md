@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -38,7 +38,16 @@ overall_status==ok 的代理分歧，不是误报率/真值标注）；既有阈
 复用 production_monitor 常量；
 零网络/零子进程/零 env 读取/**零文件写入**；**这是离线标定/评估工具，
 不改变生产阈值、不接外部告警、不解除任何 release gate**，不授权任何
-部署）。
+部署）；
+`post_cutover_watch.py`（M14-118）承担 M14-117 生产切换后 canonical
+证据**完整性巡检**面（只读 gitignored canonical 证据树 + SHA256SUMS
+索引：严格行格式/路径安全/重复/自引用校验 → 9 项分组/关键文件集合
+契约（25 文件）→ 逐文件 SHA-256 复核 → 全新目录 JSON+MD 安全报告；
+默认 plan 零副作用，`--execute` 才读取证据；零网络/零子进程/零 env
+读取/零墙钟/零生产接触；`release_ready=false` /
+`production_ready=false` 恒不变，**通过仅表示 evidence inventory
+verified**——不表示生产健康、不表示回滚已演练、不解除任何 release
+gate / release-approval human-only 门）。
 
 ## production_recovery.py
 
@@ -1417,3 +1426,55 @@ python tools/ops/monitoring_threshold_calibration.py \
   改动**；唯一调整 = json 模式输出恒 **ASCII-safe**（ensure_ascii 转义，
   JSON 文档语义逐键等值——任意子进程 stdout 编码（含 Windows ACP=cp936
   调度链路）下被管道捕获字节零损坏；summary 人读模式不受影响）。
+
+## post_cutover_watch.py（M14-118）
+
+post-cutover evidence watch：把 M14-117 生产切换后的 canonical 证据
+完整性检查从人工命令拼装固化为单一 fail-closed 只读仓库工具——防止
+后续证据缺失、路径逃逸、哈希漂移或索引篡改被误认为仍可验收/回滚。
+默认 **plan（零副作用）**：零读取、零写入，仅打印计划（stdout 不回显
+任何绝对路径/secret）；显式 `--execute` 才读取证据。校验链：
+（1）SHA256SUMS 严格解析——仅 UTF-8 文本、每行恰为「64 位小写 hex +
+两空格 + 相对 POSIX 路径」，允许恰一个行尾 `\r`（canonical 索引即
+Windows PowerShell 生成的 CRLF 形态；行中间 CR/控制字符仍拒绝），空
+索引/坏 hex/单空格分隔/空行/首尾空白路径（index-line-format、
+index-empty）、`..` 穿越/绝对路径/反斜杠/盘符/`//` 空段
+（index-path-escape）、同路径重复条目（index-duplicate-path）、索引
+自引用（index-self-reference）一律 fail-closed；（2）9 项分组/关键
+文件集合契约（准确来源 = M14-117 证据 README §10 + canonical
+SHA256SUMS）：7 个分组（provider-smoke 8 / monitor 4 / browser 5 /
+rc-smoke 2 / cutover 3 / endpoints 2 / recovery 1）具名文件集合精确
+匹配 + key-files（8 个关键文件）+ index-integrity（总条目恰 25 且
+索引集合 == 7 分组并集）；（3）逐条目文件级校验——目标与现存祖先
+symlink、缺失（file-missing）、读取失败（file-read-error）、哈希
+复核（file-hash-mismatch，报告登记 expected/actual 双指纹）。一切 I/O
+经 `monitoring_history.Store` 注入复用；报告双文件原子落盘（tmp +
+fsync + os.replace）到**全新目录**；报告仅相对路径/字节数/SHA-256/
+固定词汇状态与原因——绝无文件内容/env 值/token/password/完整 DB
+URL/容器日志正文；零墙钟（报告不含时间戳字段，同输入两次运行输出
+逐字节相同）。
+
+```
+# 仓库根执行（canonical venv 或任意 Python ≥3.11，纯标准库）
+python tools/ops/post_cutover_watch.py              # plan（默认，零读取）
+python tools/ops/post_cutover_watch.py --execute    # 真实只读校验 + 报告
+python tools/ops/post_cutover_watch.py --execute \
+    --evidence-root <canonical-dir> --sha256sums <SHA256SUMS> \
+    --output-dir <fresh-dir>
+```
+
+退出码：0 plan 成功（零副作用）/ 1 execute 且 evidence inventory
+verified（9 项契约 + 25 文件哈希全过）/ 2 execute 且可判定失败
+（索引行级/契约/文件级任一失败——诚实 failed 报告已落盘，watch 的
+价值即把漂移固化成证据）/ 3 结构性拒绝（输出目录已存在/symlink/
+索引缺失/根缺失/非 UTF-8/读写失败——零输出）。
+`release_ready=false` / `production_ready=false` 恒不变；**通过仅表示
+evidence inventory verified**——不表示生产健康、不表示 provider/
+browser/monitor 窗口外仍有效、不表示回滚已演练；release-approval
+仍是 human-only 门，本工具永不代拟。默认输入指向 gitignored
+canonical M14-117 证据目录与其 SHA256SUMS；输出 gitignored
+`.verify/artifacts/m14-118-post-cutover-watch/`；契约测试
+`services/api/tests/test_post_cutover_watch.py` 锁定（结构契约含
+AST import 白名单 + socket/subprocess 双阻断、plan 零副作用、
+happy path、缺文件/哈希漂移/路径逃逸/symlink/重复行/空与畸形索引/
+输出目录已存在、报告脱敏、零墙钟确定性）。
