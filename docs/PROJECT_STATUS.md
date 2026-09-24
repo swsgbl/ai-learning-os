@@ -9,6 +9,49 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-123 final-current 发布证据刷新（证据/docs-only 切片）**：worktree
+`m14-123-final-current-release-evidence`，分支
+`ops/m14-123-final-current-release-evidence`，基于 main
+`d7072fdcd97b233a58386693e27bcd8288975cca`（PR #209 merge = M14-122
+合入，精确基点 = 当前 HEAD——final-current 口径：证据基点即切片执行
+基点，无中间合并漂移），单 local commit，push 分支并向 main 开 PR
+（任务书指令）。M14-122 证据绑定执行基点 2b1c2dd，其 supervisor
+合并轮引入 M14-121 真实测试文件（+3 回环运行时测试）后代码绑定门
+相对合并头即 stale，本切片真实重执行收口：**ci-main** —— gh api
+（本地代理 127.0.0.1:7892）归档核验 head d7072fd 唯一 push/main run
+35972347264（run_number 539，conclusion success，5/5 job 精确集合
+全绿，每 job head_sha==d7072fd），按 `_eval_ci_main` 契约断言驱动
+程序化派生 canonical `ci-main.json`（`d2a38c92…`，1202 bytes，raw
+双响应归档，绝不手改 gate JSON）；**release-check** —— 干净 d7072fd
+执行树从零隔离环境（uv venv 3.12.14 / 59 packages / npm ci 411
+packages，运行前 HEAD/porcelain 双核验留痕）full 重跑 all_green=true
+**10/10**（pytest **4555 passed / 33 skipped** in 281.16s，+3 对账
+吻合；一次性 SQLite + 回环动态端口 62936 临时 API 已收尾 terminated；
+e2e 5 步 1093ms）；**provider-smoke 不重跑** —— 只读复用 M14-117
+生产切换后真实三步冒烟聚合（**与 M14-122 同源同哈希** `029ee84f…`，
+564 bytes，generated 2026-09-23T23:29:35Z——生产仍运行
+m14-117-production 栈、无新切换事件打破语义有效性，原始时间边界
+显式保留）；**long-soak 不重跑** —— 同哈希 `d939c652…` 只读复用
+（817 bytes，97 样本全 ok 窗口 2026-09-22→23，如实呈现该窗口早于
+生产切换且在 m14-70 栈，不制造新 24h 窗口）；**evidence-cockpit**
+—— docs 编辑前干净 HEAD 聚合，6 个生产状态源 6/6 哈希 MATCH 原样
+staging（M14-83/M14-85/M14-87 canonical 不改写；M14-117 切换后
+preflight 5/5 作为语义支撑事实引用——其 JSON 缺 `gate` 自声明按
+契约不能 stage，绝不手改补字段），staged 10 文件 10/10 IDENTICAL
+外部复核，**cockpit_ready=true、cockpit_blockers=[]、evaluator
+pass=9 / pending=0 / blocked=0 / missing=2 / malformed=0 /
+tampered=0**，两 code-bound 门均 current。**诚实边界：
+release_ready=false / production_ready=false 恒不变——
+release-approval human-only 从未发生，不触碰不代拟；turn-tls
+optional 未 stage；生产仍运行 m14-117-production，本切片零生产
+触碰零部署；代码绑定证据只对 d7072fd 时点成立。**验证：聚焦契约
+测试 407 passed + ruff All checks passed + canonical SHA256SUMS
+23/23 OK + JSON 契约断言 22 项全过 + 秘密扫描 0 命中 +
+`git diff --check` 干净。证据
+`docs/evidence/m14-123-final-current-release-evidence/README.md`。
+同步更新 ROADMAP（M14-123 状态更新）、CHANGELOG（M14-123 条目）与
+PROJECT_STATUS 顶部任务结构（M14-122 移为次席）。
+
 **M14-122 current-main 发布证据刷新（证据/docs-only 切片）**：worktree
 `m14-122-current-main-release-evidence`，分支
 `ops/m14-122-current-main-release-evidence`，基于 main
