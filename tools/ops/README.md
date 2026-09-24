@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）+ 监控告警外发分发（M14-119）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）+ 监控告警外发分发（M14-119）+ 告警分发回环运行时闭环（M14-121）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -1546,3 +1546,11 @@ python tools/ops/monitoring_alert_dispatch.py --report <monitor-*.json> \
 - 退出码：0 plan / execute 成功（含 skipped-no-alerts）；2 一切拒绝
   （含分发失败）。不解除任何 release blocker；`release_ready=false` /
   `production_ready=false` 恒不变。
+
+M14-121 回环运行时闭环（测试切片，零工具源码改动）：黑盒集成测试
+`services/api/tests/test_monitoring_alert_dispatch_runtime.py` 以
+ephemeral 127.0.0.1 动态端口接收器 + 真实 CLI 子进程实证真实 2xx 交换
+（线上 payload 与 dispatch 报告登记指纹逐字节对账）、sanitized 报告/
+台账、幂等重复拒绝与 `--allow-loopback-http` 豁免门的运行时收紧——
+仅本机回环，零外部端点。证据
+`docs/evidence/m14-121-alert-dispatch-loopback-runtime/README.md`。

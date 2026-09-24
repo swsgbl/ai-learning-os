@@ -9,6 +9,37 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-121 监控告警分发回环运行时闭环（测试/文档切片）**：worktree
+`m14-121-alert-dispatch-loopback-runtime`，分支
+`ops/m14-121-alert-dispatch-loopback-runtime`，基于 main `2b1c2dd4`
+（PR #206 merge = M14-119 合入，精确基点），单 local commit，不 push。
+新增黑盒集成测试
+`services/api/tests/test_monitoring_alert_dispatch_runtime.py`，闭合
+M14-119 契约测试（FakeTransport 注入）留下的「真实 Transport 运行时
+行为未实证」边界：ephemeral 回环接收器（仅绑定 127.0.0.1 动态端口、
+用毕全清理、无法绑定即 skip；头契约仅内存断言，记录面只留布尔/
+哈希/固定词汇，token/URL 绝不落盘）+ 真实 CLI 子进程
+（`--allow-loopback-http --execute --confirm "EXECUTE MONITOR ALERT
+DISPATCH"` + 临时 secret `http://127.0.0.1:<动态端口>/hook`）实证：
+真实 2xx 交换（接收器恰一次 POST＝零重试运行时面；Bearer/
+Content-Type/Accept/User-Agent 头契约在真线上成立；线上 body
+SHA-256/字节数与 dispatch 报告登记的 payload 指纹逐字节对账；报告
+SHA-256 独立重算对账；payload 键集精确）；sanitized 报告/台账（台账
+恰一行 15 键精确；token/完整 URL/127.0.0.1 字面量绝不出现在任何
+落盘工件与子进程输出）；幂等重复拒绝（同报告二次 execute → exit 2
++ duplicate-dispatch + 零重发 + 台账/工件零追加）；fail-closed 豁免门
+运行时收紧（不加旗标 → scheme-not-https、零请求零工件）。零工具
+源码改动（M14-119 fail-closed 语义零触碰）。新测试 3 passed + 既有
+76 项契约测试 + 监控家族 8 套件回归全绿 + ruff（默认+F,E9）+
+py_compile + `git diff --check` + 秘密扫描全净。诚实边界：**仅本机
+回环**（零外部端点/零 DNS/零生产接触）；TLS/远端失败面仍未实证，
+首次真实外发仍留待 supervisor 获准窗口；`release_ready=false` /
+`production_ready=false` 恒不变。证据
+`docs/evidence/m14-121-alert-dispatch-loopback-runtime/README.md`。
+同步更新 tools/ops/README.md、ROADMAP（M14-121 状态更新）、
+CHANGELOG（M14-121 条目）与 PROJECT_STATUS 顶部任务结构
+（M14-119 移为次席）。
+
 **M14-119 监控告警外发分发最小闭环（工具/测试/文档切片）**：worktree
 `m14-119-monitor-alert-dispatch`，分支
 `ops/m14-119-monitor-alert-dispatch`，基于 main
