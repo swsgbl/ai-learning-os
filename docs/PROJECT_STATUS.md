@@ -9,6 +9,40 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-124 预审批生产构建证据回填（证据/docs-only 切片）**：worktree
+`m14-124-preapproval-build-evidence`，分支
+`ops/m14-124-preapproval-build-evidence`，基于 main
+`684865d1212ca565182fd04edcb3f6a21c9ef88b`（PR #210 merge = M14-123
+证据合入，fetch 后 origin/main 全 SHA 复核一致），单 local commit，
+push 分支并向 main 开 PR（任务书指令）。回填对象是 supervisor 在
+干净构建 worktree
+`D:\AI Learning OS\ai-learning-os-worktrees\m14-124-production-build`
+（detached @ `684865d`）完成的**审批前生产镜像构建**：API
+`aios/api:m14-124-production` =
+`sha256:c99e28c905208bffbc1576f0c5c9e042af18fd356881cee967078ee38323781f`、
+Web `aios/web:m14-124-production` =
+`sha256:d596f0c726ab690359b196a3c3911f9842b94218b4361ee452413d420a38194b`，
+Web build arg `NEXT_PUBLIC_API_BASE_URL=http://127.0.0.1:8000`
+（loopback 部署口径先例）；构建全程未触碰运行生产栈、DB、MinIO、
+语音引擎与 secrets，未 push 镜像仓库、未打 git tag。supervisor
+独立对比 `m14-124-production` 与运行中的 `m14-117-production`：
+每服务**运行时 Config/History/RootFS layers 逐项一致**，唯一差异
+为 BuildKit identity/build ref 元数据与 image descriptor——运行时
+等价（git 侧依据：`2619ea7..684865d` 17 文件全部在镜像输入面外，
+11 docs + 3 测试 + 2 主机侧 ops 工具）与全新构建 provenance 锚
+（实测 image Id 不同，非 re-tag）同时成立。本切片只读复核：两枚
+新镜像本地 Id 与登记 digest 逐一一致；生产栈 7 容器全部 healthy
+且仍运行 `m14-117-production`。证据 README 附**切换窗口检查单**
+（8 步，未执行）与**回滚锚 `m14-117-production`**（镜像在库，
+未演练）。**诚实边界：切换未发生、审批未发生——release-approval
+hash-bound human-only 仍是唯一 required 发布门，本切片零审批证据、
+不代拟；`release_ready=false` / `production_ready=false` 恒不变。**
+验证（docs-only）：markdown 结构/链接 sanity + 新增文本秘密扫描
+0 命中 + `git diff --check` 干净（零代码变更，不运行全量测试）。
+证据 `docs/evidence/m14-124-preapproval-production-build/README.md`。
+同步更新 ROADMAP（M14-124 状态更新）、CHANGELOG（M14-124 条目）与
+PROJECT_STATUS 顶部任务结构（M14-123 移为次席）。
+
 **M14-123 final-current 发布证据刷新（证据/docs-only 切片）**：worktree
 `m14-123-final-current-release-evidence`，分支
 `ops/m14-123-final-current-release-evidence`，基于 main
