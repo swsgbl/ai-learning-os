@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）+ 监控告警外发分发（M14-119）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -1478,3 +1478,71 @@ canonical M14-117 证据目录与其 SHA256SUMS；输出 gitignored
 AST import 白名单 + socket/subprocess 双阻断、plan 零副作用、
 happy path、缺文件/哈希漂移/路径逃逸/symlink/重复行/空与畸形索引/
 输出目录已存在、报告脱敏、零墙钟确定性）。
+
+## monitoring_alert_dispatch.py（M14-119）
+
+监控告警外发分发**最小闭环**：既有 M14-12 production_monitor JSON
+报告 → 严格校验 → 分发判定 → **单一通用 HTTPS webhook** 外发 +
+sanitized 分发台账（幂等 + 审计）。复用权威 monitor 报告 schema 与
+既有 alerts（常量经同仓 `monitoring_history` 单一事实源导入），
+**绝不重复阈值、绝不重分类健康**。单文件纯标准库、Store/Transport/
+Clock 全注入——开发回合零真实网络、零真实分发（全部 execute 路径
+验证经注入 FakeTransport；真实 Transport 仅 execute 分支构造）；
+真实外发仅由 supervisor 在获准窗口运行。**本切片未联系任何真实外部
+端点；`production_ready=false` 恒不变。**
+
+```
+python tools/ops/monitoring_alert_dispatch.py --report <monitor-*.json> \
+    [--secret-file <secret.json>]              # plan/validate（默认，零网络零分发）
+python tools/ops/monitoring_alert_dispatch.py --report <monitor-*.json> \
+    --secret-file <secret.json> --execute \
+    --confirm "EXECUTE MONITOR ALERT DISPATCH"  # execute（真实外发，supervisor）
+```
+
+安全性质（契约测试 `services/api/tests/test_monitoring_alert_dispatch.py`
+76 项锁定；细节见脚本头注释与
+`docs/evidence/m14-119-monitor-alert-dispatch/README.md`）：
+
+- **双模式门禁**：默认 plan/validate——零网络、零分发、Transport 绝
+  不构造（计数工厂测试结构性证明）；读取 + 校验既有报告 + 分发判定
+  + secret/URL 校验全本地只读。execute 需 `--execute` + 精确确认短
+  语 + `--secret-file` 三者齐备，缺一即 exit 2 且零 Transport 构造。
+- **分发判定（不重判）**：既有 alerts 含 warn/critical 或
+  `overall_status=incomplete` 才分发；ok 且零告警 →
+  `skipped-no-alerts`（exit 0，零发送零台账）。报告校验只对账身份与
+  自洽（counts ↔ alerts、overall ↔ counts/partial 重算一致），任何
+  矛盾（如谎报 ok）fail-closed 拒绝。
+- **单一 HTTPS webhook sink + secret 纪律**：URL 与可选 Bearer token
+  恒来自操作者 secret 文件（`{"url","token"?}`，允许键集合精确，未知
+  键拒绝；大小硬顶双检；gitignored 由操作者负责），绝不来自代码/git/
+  evidence/日志/测试 fixture；**URL/token 绝不回显、绝不入任何输出**
+  （stdout/报告/台账/payload）。URL fail-closed 校验：生产恒 https；
+  http 仅经显式 `--allow-loopback-http` test-only 旗标放行且**仅限字
+  面回环 IP**；字面私网/RFC1918/链路本地（含 169.254.169.254 元数
+  据面）/未指定/组播/保留 IP 与 `localhost` 名称一律拒绝；userinfo/
+  query/fragment/坏端口拒绝。DNS 主机名不做解析 pin（诚实边界，见
+  evidence README §3）。
+- **payload 版本化 + 固定词汇 + 有界**：仅 summary counts/status/
+  `check_id:subject:severity` 形态 alert codes（≤64 条，超界截断计数
+  显式）+ 报告身份（白名单 stem + SHA-256 + canonical collected_at）；
+  绝无原始日志/env 值/端点/token/容器体/DB URL/绝对本地路径/阈值
+  detail 文本；ASCII-safe 紧凑编码 + 16 KiB 字节硬顶复检。
+- **fail-closed**：malformed 报告/非法 stem、缺失/oversize/invalid
+  JSON secret、unsafe URL、webhook 非 2xx（含 3xx，不跟随重定向）/
+  超时/连接异常、输出目录 symlink（自身+现存祖先，先于任何发送）、
+  报告工件名碰撞（探测+CSPRNG 后缀+递增换名，绝不覆盖既有工件）、
+  台账 malformed 行/字段非法/重复记账——一律固定词汇可见拒绝。**失
+  败的分发恒可见（`dispatch_status=failed`）且绝不入台账、绝不报告
+  为 sent**；成功后台账写失败照实入档 `sent-ledger-unrecorded`
+  （exit 2，绝不谎报完整成功）。零重试（无退避/队列/重试风暴——
+  刻意最小）。
+- **sanitized 台账（幂等 + 审计）**：固定名 `dispatch-ledger.jsonl`
+  （gitignored `.verify/artifacts/m14-119-monitor-alert-dispatch/`）仅
+  在成功分发后原子追加（整读+追加+tmp+fsync+os.replace 重写）；行
+  schema 版本化 + 固定词汇键集；**同报告 SHA-256 已 sent →
+  duplicate-dispatch 拒绝且零 Transport 调用**（幂等门先于发送）。
+  webhook 请求超时 0.5–30s（默认 10s）；`http.client` 直连零代理面、
+  不读响应体。
+- 退出码：0 plan / execute 成功（含 skipped-no-alerts）；2 一切拒绝
+  （含分发失败）。不解除任何 release blocker；`release_ready=false` /
+  `production_ready=false` 恒不变。

@@ -9,6 +9,44 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-119 监控告警外发分发最小闭环（工具/测试/文档切片）**：worktree
+`m14-119-monitor-alert-dispatch`，分支
+`ops/m14-119-monitor-alert-dispatch`，基于 main
+`3d2874b9`（PR #205 merge = M14-118 合入，精确基点），单 local
+commit，不 push。新增 `tools/ops/monitoring_alert_dispatch.py`：
+为既有监控家族（monitor → history → insights → pipeline）补上
+缺失的最小外部告警分发路径——校验既有 production_monitor JSON
+报告（schema/身份常量复用 `monitoring_history` 单一事实源；
+counts ↔ alerts、overall ↔ counts/partial 重算对账——只对账
+不重判）后在既有 alerts 之上判定分发（warn/critical 告警或
+incomplete 才发；ok 零告警 skipped-no-alerts exit 0 零发送）。
+默认 plan/validate 零网络零分发（Transport 绝不构造）；execute 需
+`--execute` + `--confirm "EXECUTE MONITOR ALERT DISPATCH"` +
+操作者 secret 文件三者齐备。单一通用 HTTPS webhook sink：
+URL/token 恒来自操作者 secret JSON、绝不回显绝不入任何输出；
+URL fail-closed 校验（生产恒 https；http 仅经显式 test-only
+旗标放行且仅限字面回环 IP；私网/链路本地/保留 IP 与 localhost
+拒绝）。payload 版本化 + 固定词汇 + 有界（counts/status/
+`check_id:subject:severity` alert codes ≤64 + 报告身份
+stem/SHA-256/collected_at；绝无原始日志/env/端点/token/容器体/
+DB URL/绝对路径/阈值 detail）。失败的分发恒可见
+（dispatch_status=failed）且绝不入台账、绝不报告为 sent；
+sanitized 分发台账仅成功后原子追加、同报告 SHA-256 重复分发
+拒绝（幂等门先于发送）；首片刻意最小：单 sink、单次发送、
+零重试、无 SMTP/Alertmanager/UI/调度。契约测试
+`services/api/tests/test_monitoring_alert_dispatch.py` 76 项全过
+（全部注入 FakeTransport/FakeClock，构造上零网络）+ 监控家族
+回归全绿 + ruff（默认+F,E9）+ py_compile + `git diff --check` +
+秘密扫描全净。诚实边界：**本切片未联系任何真实外部端点**
+（真实 Transport 运行时行为未实证，首次真实外发留待
+supervisor 获准窗口）；DNS 主机名不做解析 pin；
+`release_ready=false` / `production_ready=false` 恒不变，不解除
+任何 release blocker。证据
+`docs/evidence/m14-119-monitor-alert-dispatch/README.md`。同步
+更新 tools/ops/README.md、ROADMAP（M14-119 状态更新）、
+CHANGELOG（M14-119 条目）与 PROJECT_STATUS 顶部任务结构
+（M14-118 移为次席）。
+
 **M14-118 post-cutover evidence watch 只读工具与契约测试（工具/测试/文档切片）**：worktree
 `m14-118-post-cutover-watch`，基于 main `1a89559`（PR #204 merge =
 M14-117 合入，精确基点），单 local commit，不 push。新增
