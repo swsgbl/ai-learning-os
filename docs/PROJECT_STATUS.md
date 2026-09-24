@@ -9,6 +9,50 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-125 current-main 发布证据刷新（证据/docs-only 切片）**：worktree
+`m14-125-current-main-release-evidence`，分支
+`ops/m14-125-current-main-release-evidence`，基于 main
+`e14be369a4a80267dcaafd41f7475cd44e2166ed`（PR #211 merge = M14-124
+证据合入，fetch 后 origin/main 全 SHA 复核一致，精确基点 = 当前
+HEAD），单 local commit，push 分支并向 main 开 PR（任务书指令）。
+M14-123 证据绑定执行基点 d7072fd，其后两轮 docs-only 合并（PR #210
+M14-123 证据入库 → `684865d`、PR #211 M14-124 回填 → `e14be369`）
+使代码绑定门相对合并头呈 docs-only 漂移，本切片按 supervisor 指令
+真实重执行刷新：**ci-main** 归档 head e14be369 唯一 push/main run
+**35992664886**（run_number 543，completed success，jobs 5/5 精确
+集合全绿），按 `_eval_ci_main` 契约断言驱动程序化派生 canonical
+`ci-main.json`（`10849244…`，1203 bytes，raw 双响应归档）；
+**release-check** 干净 e14be369 执行树从零隔离环境（uv venv 3.12.14
++ npm ci 411 packages，运行前 HEAD==e14be369 且 porcelain 空双核验
+留痕）full 重跑 **all_green 10/10**（pytest **4555 passed / 33
+skipped** in 277.38s，与 M14-123 恰 +0——docs-only 区间零测试面
+变更的精确对账；一次性 SQLite + 临时 API 已收尾）；**provider-smoke
+不重跑**，只读复用 M14-117 生产切换后真实三步冒烟聚合（与
+M14-122/M14-123 同源同哈希 `029ee84f…`，生产栈未变、语义有效性
+保持，原始时间边界 2026-09-23T23:29:35Z 显式保留，距本切片聚合
+约 12 小时，窗口外状态不承诺）；**long-soak 不重跑**，同哈希
+`d939c652…` 只读复用（窗口 2026-09-22→23 97 样本全 ok，早于生产
+切换且在 m14-70 栈，如实呈现、不制造新窗口）；**evidence-cockpit**
+6 个生产状态源 6/6 哈希 MATCH 复核后原样 staging（M14-83/M14-85/
+M14-87 canonical 不改写；M14-117 切换后 preflight 5/5 作为语义支撑
+事实引用——其 JSON 缺 `gate` 自声明按契约不能直接 stage，绝不手改
+补字段），staged 10 文件外部逐字节复核 10/10 IDENTICAL，
+**cockpit_ready=true、cockpit_blockers=[]、evaluator
+pass=9/pending=0/blocked=0/missing=2/malformed=0/tampered=0
+（release-approval not-staged human-only + turn-tls optional）**，
+两 code-bound 门均 current（ci-main 内嵌头 / release-check flag
+声明头）。**诚实边界：`release_ready=false` / `production_ready=
+false` 恒不变——release-approval human-only 从未发生，本切片零审批
+证据、不代拟、绝不合成；零生产触碰（零容器/DB/MinIO/语音/secrets
+变更、零部署、零 provider/soak 重跑）。**验证：聚焦契约测试
+**407 passed**（cockpit/release/provider 八套件，预建 basetemp 父
+目录）+ ruff All checks passed + canonical SHA256SUMS **24/24 OK**
++ JSON 契约断言 **22 项全过** + 秘密扫描 **0 命中** +
+`git diff --check` 干净。证据
+`docs/evidence/m14-125-current-main-release-evidence/README.md`。
+同步更新 ROADMAP（M14-125 状态更新）、CHANGELOG（M14-125 条目）与
+PROJECT_STATUS 顶部任务结构（M14-124 移为次席）。
+
 **M14-124 预审批生产构建证据回填（证据/docs-only 切片）**：worktree
 `m14-124-preapproval-build-evidence`，分支
 `ops/m14-124-preapproval-build-evidence`，基于 main
