@@ -5,6 +5,14 @@
   `2b1c2dd4783166576f00faf5088e7391ab4cc173`（PR #206 merge = M14-119
   合入，精确基点），单 local commit，不 push——交付以 supervisor（Codex）
   复核为准）。
+- Supervisor 合并轮（2026-09-24，merge `f67cbe27a56d476fec2bdc23d51002b12c01219e`）：按指令
+  fetch 并 merge current origin/main（PR #207/M14-121、PR #208/M14-120 已含），三本台账
+  冲突按 M 号降序约定解决、三个切片条目全保留。**本切片证据不重跑、不迁移——
+  ci-main/release-check 仍绑定执行基点 2b1c2dd，本 README 与 canonical 工件不构成
+  f67cbe2 或合并头上的证据重跑，亦非 final-current 证据**（合并引入 M14-121 真实测试
+  文件后，代码绑定门相对合并头即再 stale，刷新留待后续切片）；gitignored 原始证据
+  目录原样保留；合并树上聚焦契约八套件复跑 **407 passed**（canonical venv、专用
+  basetemp）+ `git diff --check` 干净；分支按 supervisor 指令 push 并向 main 开 PR。
 - 目标：基于 M14-91/M14-116 既有契约刷新 current main 的发布证据链。
   ci-main 与 release-check 两门**本轮真实重执行**（远端 CI 事实核验 +
   干净 2b1c2dd 执行树上的隔离 full 跑）；**provider-smoke 只读复用

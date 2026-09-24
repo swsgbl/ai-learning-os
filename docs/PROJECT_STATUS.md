@@ -46,7 +46,78 @@ optional 未 stage；生产仍运行 m14-117-production，本切片零生产
 `git diff --check` 干净。证据
 `docs/evidence/m14-122-current-main-release-evidence/README.md`。
 同步更新 ROADMAP（M14-122 状态更新）、CHANGELOG（M14-122 条目）与
-PROJECT_STATUS 顶部任务结构（M14-119 移为次席）。
+PROJECT_STATUS 顶部任务结构（M14-119 移为次席）。Supervisor 合并轮
+（2026-09-24）：按指令 fetch 并 merge current origin/main
+`f67cbe27a56d476fec2bdc23d51002b12c01219e`（PR #207/M14-121、
+PR #208/M14-120 已含），三本台账冲突按 M 号降序约定解决、三个切片
+条目全保留；**M14-122 证据不重跑、不迁移——ci-main/release-check 仍
+绑定执行基点 2b1c2dd，不构成 f67cbe2 或合并头上的证据重跑、亦非
+final-current 证据**（合并引入 M14-121 真实测试文件后，代码绑定门
+相对合并头即再 stale，刷新留待后续切片）；gitignored 原始证据原样
+保留；合并树上聚焦契约八套件复跑 **407 passed**（canonical venv、
+专用 basetemp）；分支按 supervisor 指令 push 并向 main 开 PR。
+
+**M14-121 监控告警分发回环运行时闭环（测试/文档切片）**：worktree
+`m14-121-alert-dispatch-loopback-runtime`，分支
+`ops/m14-121-alert-dispatch-loopback-runtime`，基于 main `2b1c2dd4`
+（PR #206 merge = M14-119 合入，精确基点），单 local commit，不 push。
+新增黑盒集成测试
+`services/api/tests/test_monitoring_alert_dispatch_runtime.py`，闭合
+M14-119 契约测试（FakeTransport 注入）留下的「真实 Transport 运行时
+行为未实证」边界：ephemeral 回环接收器（仅绑定 127.0.0.1 动态端口、
+用毕全清理、无法绑定即 skip；头契约仅内存断言，记录面只留布尔/
+哈希/固定词汇，token/URL 绝不落盘）+ 真实 CLI 子进程
+（`--allow-loopback-http --execute --confirm "EXECUTE MONITOR ALERT
+DISPATCH"` + 临时 secret `http://127.0.0.1:<动态端口>/hook`）实证：
+真实 2xx 交换（接收器恰一次 POST＝零重试运行时面；Bearer/
+Content-Type/Accept/User-Agent 头契约在真线上成立；线上 body
+SHA-256/字节数与 dispatch 报告登记的 payload 指纹逐字节对账；报告
+SHA-256 独立重算对账；payload 键集精确）；sanitized 报告/台账（台账
+恰一行 15 键精确；token/完整 URL/127.0.0.1 字面量绝不出现在任何
+落盘工件与子进程输出）；幂等重复拒绝（同报告二次 execute → exit 2
++ duplicate-dispatch + 零重发 + 台账/工件零追加）；fail-closed 豁免门
+运行时收紧（不加旗标 → scheme-not-https、零请求零工件）。零工具
+源码改动（M14-119 fail-closed 语义零触碰）。新测试 3 passed + 既有
+76 项契约测试 + 监控家族 8 套件回归全绿 + ruff（默认+F,E9）+
+py_compile + `git diff --check` + 秘密扫描全净。诚实边界：**仅本机
+回环**（零外部端点/零 DNS/零生产接触）；TLS/远端失败面仍未实证，
+首次真实外发仍留待 supervisor 获准窗口；`release_ready=false` /
+`production_ready=false` 恒不变。证据
+`docs/evidence/m14-121-alert-dispatch-loopback-runtime/README.md`。
+同步更新 tools/ops/README.md、ROADMAP（M14-121 状态更新）、
+CHANGELOG（M14-121 条目）与 PROJECT_STATUS 顶部任务结构
+（M14-119 移为次席）。
+
+**M14-120 Harmony current-main 模拟器回归（构建 + 真实 auth smoke 全链路）**：worktree
+`m14-120-harmony-current-main-regression`，分支
+`harmony/m14-120-current-main-regression`，基于 main
+`2b1c2dd`（PR #206 merge，精确基点），local commit 不 push（待
+supervisor 复核）。对 current main 真实重跑 Harmony 发布链两步：
+① 模拟器门禁复核（未 stop/restart）：目标恒为 Pura 90 模拟器
+`127.0.0.1:5555`（boot=true、API 24、emulator 6.1.0.117），同刻
+`127.0.0.1:15566` 为 Kaihong BotBook（KaihongOS 5.0.2.57/API 14）
+从未用作目标；② `release_build.py --quiet` 构建通过（exit 0，
+unsigned HAP `entry-default-unsigned.hap` 220008 bytes，SHA256
+`64f344BE0DAFC143EABCCD19B4CD51AF13278939C710268671DC324E4D51C4D1`
+——certutil 独立复核一致，无签名材料参与）；③
+`auth_smoke_launcher.py --execute --confirm-mutation --target 127.0.0.1:5555`
+真实执行通过（exit 0，status=executed）：一次性
+loopback 后端 AuthSmokeServer 127.0.0.1:62849（pid 52360，
+OS 分配端口，隔离 SQLite + 合成用户 aiosstudent，stop_errors=[]），
+主机契约 7/7 matched，UI 12 步 = 11 ok + 1 not_run（唯一
+`auth_off_local`/`auth_phase_skip` 设计性跳过），request_failures=[]
+/ warnings=[]/toolchain_failures=[]，mutation/cleanup=true（收尾
+已卸载还原）。诚实边界：未签名 HAP、模拟器非真机、loopback 后端
+非生产后端，不构成签名/真机/生产就绪声明；零生产容器/DB/MinIO/
+语音/secret 接触；`production_ready=false` 不变。证据
+`docs/evidence/m14-120-harmony-current-main-regression/README.md`
+（前一轮 2026-09-18 部分执行的诚实 not_run 门禁历史原样保留，
+日期已修正为实际执行日 2026-09-24）
+- 验证（实测）：聚焦 pytest `tests/harmony_release` **524 passed, 1 skipped**
+  （canonical 主仓库 .venv Python 3.11.15，专用 basetemp）+ py_compile 通过 + ruff（E4,E7,E9,F：
+  tools 全净，tests 仅 1 处 main 既有 E401）+ `git diff --check` 干净；单一新
+  本地提交，未 push。，同步更新 CHANGELOG（M14-120
+条目）与 ROADMAP（M14-120 状态更新；M14-119 移为次席）。
 
 **M14-119 监控告警外发分发最小闭环（工具/测试/文档切片）**：worktree
 `m14-119-monitor-alert-dispatch`，分支
