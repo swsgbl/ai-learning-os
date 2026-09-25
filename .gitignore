@@ -42,3 +42,8 @@ apps/harmony/entry/build/
 # M14-06 生产恢复编排 env 文件（含部署 secret，仅本机存在；模板见
 # infra/env.production-recovery.example，恢复编排 pin check 强制其存在与一致）
 infra/env.production-recovery
+
+# M14-141 production drift watch 告警分发 webhook secret JSON（操作者按
+# M14-135 secret 文件语义创建于固定路径；scheduler/wrapper 仅存在性检查，
+# 绝不读取内容——内容校验全部由 M14-135 承担）
+infra/env.production-drift-watch-alert-secret.json

@@ -9,6 +9,61 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-141 Production Drift Watch 告警周期任务 readiness（工具/测试/文档切片）**：worktree
+`m14-141-drift-watch-alert-scheduler`，分支
+`ops/m14-141-drift-watch-alert-scheduler`，基于 supervisor 本地
+sync-base `c2f0a27e5e84235e748b2c470c41fbe3aa7b73ca`（其 tree 与
+merged remote main `220acd5485b01398b0b0cd0eb86b26e6d4a9ad77` 完全
+一致——任务书给定），实现者执行、Codex supervisor 监督；本地
+commit 后 supervisor 审查与 remote 发布（push/PR/合并）在其后进行。
+交付 `tools/ops/production_drift_watch_alert_scheduler.py`（plan/
+generate/status/install/uninstall）+ `tools/ops/run_production_drift_watch_alert_silent.vbs`
++ 契约测试 `services/api/tests/test_production_drift_watch_alert_scheduler.py`
+（106 项）：把 M14-137 告警任务桥挂到隐藏周期计划任务 readiness 面
+的**readiness-only 管理器**（**本切片零 schtasks 执行、零注册、零自然
+调度、零生产执行、零真实 webhook、零 secret 值读取；M14-127/129/135/137
+工具与 VBS/既有计划任务语义零触碰**）。独立任务
+`AIOS-Production-Drift-Watch-Alert` /
+`urn:aios:m14-141:production-drift-watch-alert`；非重叠 PT15M 周期
+（StartBoundary 2026-01-01T00:05:00——与 M14-129 watcher 恒差恰 300s，
+watcher 槽位 :00/:15/:30/:45 先产出报告、告警桥 :05/:20/:35/:50 对已
+完整落盘最新报告做分发判定；病态全超时下评估上一份完整报告，
+M14-137 fail-closed 选择语义不变）；预算交叉 pin 间隔 900s > 时限
+600s > M14-137 子进程预算 300s（常量模块加载单一事实源）；IgnoreNew/
+StartWhenAvailable=false（R1 supervisor 合并前修正：固定过去
+StartBoundary + true 会在注册后立即产生不可控补跑——错失槽位绝不
+补跑，下一个固定 PT15M 节点运行；false 恰为 Windows 默认值，注册后
+归一化省略形态仅在其余字段全部精确时条件认可，显式 true 恒
+malformed，专项测试锁定）/电池双 false/Hidden/InteractiveToken+LeastPrivilege；
+GatedSchtasks 结构性白名单（任何其它任务名——含 watcher——查询/建/
+删一律拒绝）；install/uninstall 需精确短语
+`EXECUTE PRODUCTION DRIFT WATCH ALERT SCHEDULER CHANGE`（与
+M14-127/129/135/137 四短语互不通用，五短语交叉 pin）；wrapper 只调用
+M14-137 execute 形态（--secret-file 固定路径 + --execute + M14-137
+自有短语经模块常量交叉 pin），预检退出码 2/3/4/5；wrapper 内容校验
+fail-closed（盘符/网络/解释器/文件读写面 token 与 secret 形态值拒绝，
+plan/generate/install 恒跑，不过零调度器调用/零写入）；secret 纪律：
+操作者 secret JSON 固定仓库相对路径
+`infra/env.production-drift-watch-alert-secret.json`（.gitignore 追加
+防护）——scheduler/wrapper 仅存在性检查绝不读值，XML/wrapper/日志只
+出现路径绝不出现值（sentinel 注入测试锁定）；generate 产物 UTF-16
+with BOM 原子写回读复核；fail-fast 预检（venv/secret/wrapper/symlink
+身份缺失零调度器调用）。验证：新测试 106 passed；邻居回归六套合跑
+351 passed（M14-129 82 + M14-135 127 + M14-136 4 + M14-137 29 +
+M14-140 3 + 新 106，canonical venv）；ruff（默认 + F,E9）/py_compile/
+`git diff --check` 全过；新增行秘密与本地路径扫描 0 命中（唯一 secret
+形态 token 为测试内合成 sentinel）。开发期披露：一次冒烟误用默认
+RealRunner 执行过**一次真实只读** `schtasks /Query /FO CSV /NH` 列表
+查询（零写路径、任务名不在列、无后续明细查询；详见证据 README §6）；
+该次冒烟暴露 preflight 真值缺陷（`not Preflight` 恒假）——已修复为
+`.ok` 判定 + fail-fast 并由测试锁定。R1 supervisor 合并前修正：
+StartWhenAvailable true→false（错失槽位绝不补跑——固定过去
+StartBoundary + true 注册后立即不可控补跑），XML/严格校验/defaultable
+条件认可/专项测试/文档全量同步并重跑全部验证。诚实边界：readiness ≠ 任务已
+安装 ≠ 告警自动触发已上线；实际注册 supervisor-only，
+`production_ready=false` 不变，release-approval 仍是 human-only 门。
+证据 `docs/evidence/m14-141-drift-watch-alert-scheduler/README.md`。
+
 **M14-140 Production Drift Watch 告警任务桥真实子进程运行时闭环（测试/docs-only 切片）**：worktree
 `m14-140-drift-watch-alert-task-runtime`，分支
 `ops/m14-140-drift-watch-alert-task-runtime`，基于 supervisor 本地
