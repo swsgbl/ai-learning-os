@@ -1,5 +1,50 @@
 # Changelog
 
+## M14-148 — provider readiness recovery Round 1（SearXNG 直连出网恢复默认 + 出站恢复 helper）
+
+- 把「SearXNG 直连出网 = 可恢复的生产默认」落为三层仓库事实（M14-147
+  实证 search blocked 于容器出站被部署 env 代理槽位固定在坏 SOCKS
+  路径，宿主直连正常）：`infra/env.production-recovery.example` 新增
+  代理三槽位注释形态文档（非 PIN_KEYS，缺省/空/注释 = 直连）；
+  `infra/docker-compose.yml` searxng 服务注释补恢复口径（纯注释，
+  与模板双载防漂移）。
+- 新增 `tools/ops/searxng_egress_recovery.py`：幂等、fail-closed、
+  零子进程（AST 源码契约）的出站恢复 helper——键名 only 验证
+  （importlib 复用 production_recovery.PIN_KEYS 单一事实源，九键
+  exactly preserved）、激活非空代理槽位行转固定标记注释形态（值
+  保留 gitignored 文件内绝不回显，NO_PROXY 刻意不动，其余行逐字节
+  不变，写后重验）、`--dry-run` 只读计划；**修正轮补三个写纪律
+  契约**：严格 UTF-8 fail-closed（非 UTF-8 字节在任何写入之前
+  exit 1 拒绝，不回显解码内容，两路径文件字节逐字节不变）、
+  原子替换写（`_atomic_write_text`：同目录 mkstemp → 严格 UTF-8
+  写 + flush + fsync → 权限位复制（平台支持时）→ `os.replace`，
+  成功路径零 `.tmp` 残留）、失败保真（任一步失败 → 临时文件清理、
+  原文件逐字节不变、可见 exit 1——secret 文件绝不承受半写状态）；
+  Round 1 无任何服务生命周期能力（容器 recreate 是 Round 2 获准
+  动作）。
+- 测试：新增离线契约套件 `test_searxng_egress_recovery.py`
+  （Round 1 23 项 + 修正轮 5 项 = 28 项：PIN_KEYS 单一事实源/
+  fail-closed 键名验证/幂等/dry-run 零写入/值零回显探针/
+  **非 UTF-8 两路径 fail-closed（字节不变 + 零 U+FFFD 回显）/
+  诱导 os.replace 失败保真（原文件不动 + 零 .tmp 残留）/
+  成功路径零残留 + 权限位保留**/行分类矩阵/源码 AST 契约/
+  模板契约）；`test_compose_profiles.py` 扩展 env-file 通道两回归
+  （禁用/空 = 渲染恒空直连 + 九键插值照常；激活 = 透传对照）。
+- 验证（修正轮全部重跑）：聚焦 28 passed + 渲染 16 passed/1
+  skipped + 相关 7 套件回归 165 passed/2 skipped（六套件口径
+  对账 Round 1 144/1 + 5 = 149/1）+ ruff + py_compile +
+  `git diff --check` + 新增行扫描真实凭据/本地路径 0 命中（secret
+  赋值形态 3 行命中均为测试离线伪标记 fixture；U+FFFD
+  仅测试源码 2 行有意探针字面量）；真实 env 只读 dry-run 留档
+  （九键齐全、两代理槽位非空待禁用；**worktree 缺 env 场景实测
+  exit 1——修正轮更正 Round 1 证据误记的 exit 0**，存档补记
+  exit-code 行）。
+- 诚实边界：live 生产 Round 1 零修改（零容器/env 写入/模型加载/
+  进程触碰）；provider 门仍 blocked（search upstream_failure、
+  llm model_absent）；`release_ready=false` /
+  `production_ready=false` 恒不变。证据
+  `docs/evidence/m14-148-provider-readiness-recovery/README.md`。
+
 ## M14-146 — current-main 发布证据刷新（PR #233 后）
 
 - 在当前 main `239b881`（PR #233 merge）上真实重执行两 code-bound 门

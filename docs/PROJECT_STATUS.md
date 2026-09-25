@@ -9,6 +9,53 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-148 provider readiness recovery Round 1（实现切片）**：worktree
+`m14-148-provider-readiness-recovery`，分支
+`ops/m14-148-provider-readiness-recovery`，基于 main
+`306f72a471aec2492a10140e5808c292d3363c5e`（树等价当前远端 main
+`a9b414bd`，精确基点），单 local commit、不 push、不开 PR。M14-147
+preflight 实证：voice ready、search not_ready（upstream_failure——
+SearXNG 容器 healthy 但六上游引擎全数失联，容器出站被部署 env 代理
+槽位固定在当前已坏的 SOCKS 路径，宿主直连 example.com/api.github.com/
+bing 正常）、llm not_ready（model_absent，`aios-qwen3.5-9b-4096`
+未驻留 /api/ps）。Round 1 交付「可恢复的生产默认」的仓库事实与工具
+路径，不执行恢复本身：模板 `infra/env.production-recovery.example`
+新增 SearXNG 代理三槽位注释文档（非 PIN_KEYS、缺省/空/注释 = 直连）；
+compose searxng 注释补恢复口径（纯注释）；新增
+`tools/ops/searxng_egress_recovery.py`——幂等、fail-closed、零子进程
+（AST 源码契约）：键名 only 验证（importlib 复用
+production_recovery.PIN_KEYS 单一事实源，九键 exactly preserved）、
+激活非空 `AIOS_SEARXNG_HTTP(S)_PROXY` 行转固定标记注释（值保留
+gitignored 文件内绝不回显，NO_PROXY 不动，其余行逐字节不变，写后
+重验）、`--dry-run` 只读计划、Round 1 无服务生命周期能力；**修正轮
+（amend 同一 commit）补三个写纪律契约**：严格 UTF-8 fail-closed
+（非 UTF-8 在任何写入之前 exit 1，文件字节不变、零回显）、原子替换
+写（同目录临时文件 + fsync + `os.replace`，成功零 `.tmp` 残留）、
+失败保真（任一步失败 → 临时文件清理、原文件逐字节不变、可见
+exit 1——secret 文件绝不承受半写状态）。真实只读
+dry-run：主 checkout 真实 env 九键齐全、两代理槽位非空（第 12/13 行）
+与诊断一致（修正轮重跑 exit 0；worktree 缺 env 场景实测 **exit 1**，
+更正 Round 1 证据误记的 exit 0，存档补记 exit-code 行）；
+**enforce 未执行——live 生产 Round 1 零修改，provider 门
+仍 blocked（search upstream_failure、llm model_absent），
+release_ready/production_ready 恒 false**。验证（修正轮全部重跑）：
+离线新套件
+**28 passed**（Round 1 23 + 修正轮 5：非 UTF-8 两路径 fail-closed/
+诱导 os.replace 失败保真/成功零残留/权限位保留）+ 渲染面
+**16 passed/1 skipped**（env-file 通道两新回归：
+禁用/空 = 渲染恒空直连 + 九键插值照常；激活 = 透传对照）+ 相关
+7 套件回归 **165 passed/2 skipped**（六套件口径对账 Round 1
+144/1 + 5 = 149/1）+ ruff + py_compile + `git diff --check` +
+新增行扫描真实凭据/本地路径 0 命中（secret 赋值形态 3 行命中均为
+测试离线伪标记 fixture；U+FFFD 仅测试源码 2 行有意探针字面量）
+（basetemp 父目录按任务书指定路径预建）。Round 2 建议（待 supervisor 获准）：helper enforce 真实 env →
+获准窗口 recreate searxng 容器 → 宿主 /search 复核 → preflight 复跑
+→ 三槽位 provider-smoke export/aggregate。证据
+`docs/evidence/m14-148-provider-readiness-recovery/README.md`。
+同步更新 ROADMAP（M14-148 状态更新）、CHANGELOG（M14-148 条目）、
+DEVELOPMENT（M14-148 节，含写纪律契约段）与本台账顶部任务结构
+（M14-146 移为次席）。
+
 **M14-146 current-main 发布证据刷新（证据/docs-only 切片）**：worktree
 `m14-146-current-main-release-evidence`，分支
 `ops/m14-146-current-main-release-evidence`，基于 main

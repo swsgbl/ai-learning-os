@@ -293,7 +293,11 @@ services:
       # / AIOS_SEARXNG_NO_PROXY——compose 不硬编码任何代理地址/端口（静态
       # 与渲染测试双锁），默认恒空 = 直连出站（空值被 urllib getproxies 忽略
       # ，不产生代理行为）。刻意不设通用 HTTP_PROXY 回落链：代理启用恒为
-      # 部署显式行为，绝不隐式继承宿主 shell 的通用代理 env。仅大写单形：
+      # 部署显式行为，绝不隐式继承宿主 shell 的通用代理 env。M14-148
+      # 恢复口径：三槽位缺省/空 = 直连出网是**可恢复的生产默认**——代理
+      # 路径损坏时经 tools/ops/searxng_egress_recovery.py 幂等禁用部署 env
+      # 槽位（键名验证、值不回显、PIN_KEYS 九键原样），获准 recreate 后
+      # 即回直连。仅大写单形：
       # SearXNG 出站栈 httpx 经 urllib getproxies 大小写不敏感读取，单形即
       # 全量生效；不镜像小写双形（徒增漂移面，且只读小写的客户端会把容器
       # 内回环健康检查送进代理）。NO_PROXY 同链显式透传（不经代理的目标）
