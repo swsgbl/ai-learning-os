@@ -26,6 +26,20 @@
   阻塞于操作者 secret；零 Task Scheduler/Docker/服务/生产状态改动；
   `production_ready=false` 不变，release approval 仍 human-only。
 
+## M14-142 — Harmony 后端冒烟预热加固（Settings 收敛 + 结构化输入选择）
+
+- `backend_smoke.py`：Settings 收敛加固——捕获布局无 TextInput（仍在
+  首页）时，每个有界尝试内重试「设置」tab 点击并重抓布局，不再假设首
+  次点击已生效；非收敛尝试记为 retry note（`convergence_retries`），
+  仅当全部尝试耗尽才判 failure。
+- 输入节点选择改为纯结构化：仅接受布局契约中的 `TextInput` 节点；
+  Home 的「服务地址: http://…」Text 标签与 Settings 说明文字在任何情
+  况下都不会被选为输入（删除按 URL 文本猜测的旧逻辑）。
+- 聚焦假布局升级为真实结构形态（每节点带 `type`）；新增回归：尝试 1
+  仍停留首页、尝试 2 重试后成功；服务地址标签永不被选中；无
+  TextInput 的布局保持失败；非收敛尝试内 tab 必被重试。
+- 边界：本切片不启动/不停止任何模拟器、后端或用户进程，不声明任何
+  真机 Stage 2 运行；全部验证为注入式 fake 单元测试与静态检查。
 
 ## M14-142 — Harmony 后端冒烟重复周期包装器 Stage 1
 

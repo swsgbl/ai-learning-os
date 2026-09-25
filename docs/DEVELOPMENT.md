@@ -2720,6 +2720,15 @@ AGC 材料缺位（当前仓库常态）时各阶段的**预期状态**：
   用例在 Windows 宿主的既有 `pytest.skip` 幂等跳过）。证据：
   `docs/evidence/m14-68-production-closure-manifest/README.md`。
 
+## HarmonyOS 后端冒烟预热加固（M14-142 R4：Settings 收敛 + 结构化输入选择）
+
+- **CLI**：不变（`python -m tools.harmony_release.backend_smoke`，契约、退出码、清理语义全部保持）。
+- **缺陷**：Stage 2 首跑冷启动竞态——首次「设置」tab 点击后仍在首页，而旧 `configure_settings_ui` 只在尝试 1 点击 tab，后续尝试把首页「服务地址: http://…」标签当输入，产出 `settings_input_mismatch` / `settings_input_not_found`。
+- **收敛**：`_drive_settings_url` 捕获布局无 TextInput 时，在当前有界尝试内重试「设置」tab 点击并重抓布局；非收敛尝试记 retry note（结果新增 `convergence_retries`），全部尝试耗尽才 failure。
+- **输入选择**：纯结构化——仅接受布局契约的 `TextInput` 节点（`layout_typed_nodes` / `find_input_node` / `is_settings_layout`），删除按 URL 文本猜测的旧 `find_input_field`；Text 标签（首页服务地址行、Settings 说明文字）任何文本内容都不会被选为输入。
+- **测试**：聚焦假布局升级为真实结构形态（每节点带 `type`）；回归锁定：尝试 1 停留首页→尝试 2 重试成功且两次 tab 点击都发生；服务地址标签永不被选中；无 TextInput 布局保持 failure 且每个尝试重试 tab。
+- **边界**：本切片零模拟器/后端/用户进程启停，不声明任何真机 Stage 2 运行。证据 `docs/evidence/m14-142-harmony-smoke-warmup/README.md`。
+
 ## HarmonyOS 后端冒烟重复周期包装器（M14-142）
 
 - **CLI**：`python -m tools.harmony_release.backend_smoke_repeat
