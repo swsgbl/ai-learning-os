@@ -9,6 +9,22 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-142 Harmony 后端冒烟重复周期包装器（Stage 1 实现/测试/文档切片）**：worktree
+`m14-142-harmony-backend-smoke-repeat`，分支
+`harmony/m14-142-backend-smoke-repeat`，基于 `c2f0a27e`，单 local
+commit、不 push、不开 PR。交付
+`tools/harmony_release/backend_smoke_repeat.py`（既有 backend_smoke CLI
+的 fail-closed 重复周期包装器：子进程复用、cycles 1..5、计划模式零子
+进程、fail-stop、周期证据子目录、聚合报告原子写、结构性白名单、脱敏
+argv/路径、malformed 子结果记 failure）+ 聚焦契约测试 38 项（fake
+runner + 临时仓库，零真实子进程/零设备/零网络）。验证：聚焦 37
+passed；全量 `tests/harmony_release` 562 passed, 1 skipped；ruff
+F,E9,W605 / py_compile / `git diff --check` / 新增行秘密与本地路径扫
+描 0 命中。诚实边界：真实三周期模拟器执行属 Stage 2——本切片未启动
+模拟器/后端/构建，不构成任何运行时声明；`production_ready=false`
+不变。证据
+`docs/evidence/m14-142-harmony-backend-smoke-repeat/README.md`。
+
 **M14-141 Production Drift Watch 告警周期任务 readiness（工具/测试/文档切片）**：worktree
 `m14-141-drift-watch-alert-scheduler`，分支
 `ops/m14-141-drift-watch-alert-scheduler`，基于 supervisor 本地
