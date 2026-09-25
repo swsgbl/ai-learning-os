@@ -2729,6 +2729,10 @@ AGC 材料缺位（当前仓库常态）时各阶段的**预期状态**：
 - **测试**：聚焦假布局升级为真实结构形态（每节点带 `type`）；回归锁定：尝试 1 停留首页→尝试 2 重试成功且两次 tab 点击都发生；服务地址标签永不被选中；无 TextInput 布局保持 failure 且每个尝试重试 tab。
 - **边界**：本切片零模拟器/后端/用户进程启停，不声明任何真机 Stage 2 运行。证据 `docs/evidence/m14-142-harmony-smoke-warmup/README.md`。
 
+### M14-142 Stage 2 收口（docs-only 台账/README 修正，2026-09-18）
+
+三周期 Pura 90（HarmonyOS 6.1.1(24) Beta1）模拟器真实执行证据（复用 Stage 1 已合并的 `backend_smoke_repeat.py`，零代码改动）收口：证据 README 按聚合 JSON 实际保留字段如实改写——每周期仅 `child_status`/`child_exit_code`/`child_mutation_performed`/`child_failures`/`seconds`/`evidence_dir`，顶层 `status`/`exit_code`/`cycles_executed`/`subprocesses_spawned`/`failures`/`fail_stopped_at`；**聚合 JSON 不保留 `convergence_retries`、子进程逐步明细（preflight/install/start/settings_ui/home_view/background/uninstall）与 cleanup 细节**，逐链路结论改标注为「运行时控制台日志口径」；ROADMAP/PROJECT_STATUS/CHANGELOG 各追加 Stage 2 条目。本收口回合未重跑模拟器/构建/后端/hdc/容器/设备命令，原始证据在 gitignored `.verify/m14-142-harmony-backend-smoke-stage2/`（本切片验证门槛全量 `pytest tests\harmony_release -q`）。
+
 ## HarmonyOS 后端冒烟重复周期包装器（M14-142）
 
 - **CLI**：`python -m tools.harmony_release.backend_smoke_repeat
