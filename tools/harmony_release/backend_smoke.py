@@ -205,7 +205,10 @@ HOME_EXPECT_TEXTS: Tuple[Tuple[str, int], ...] = (
 # Settings UI drive constants. The app launches on the 首页 tab, so the
 # settings pane is reached by tapping the 设置 tab first.
 SETTINGS_TAB_TEXT = "设置"
-SETTINGS_INPUT_NEEDLES: Tuple[str, ...] = ("http://", "https://")
+# The Settings base-URL field is identified structurally: it is the
+# layout's TextInput node. Text labels (Home's 服务地址 line, Settings
+# captions) are type Text and must never be selected as the input.
+SETTINGS_INPUT_TYPE = "TextInput"
 SETTINGS_SAVE_TEXT = "保存"
 SETTINGS_SAVED_PREFIX = "已保存: "
 # Home is reached by cold restart (aa force-stop + aa start), never by
@@ -345,6 +348,61 @@ def layout_texts(parsed: object) -> List[Tuple[str, str]]:
     return texts
 
 
+def _walk_typed_nodes(node: object, acc: List[Tuple[str, str, str]]) -> None:
+    """Collect (type, text, bounds) triples - one entry per layout node."""
+    if isinstance(node, dict):
+        attrs = node.get("attributes")
+        if isinstance(attrs, dict):
+            ntype = attrs.get("type")
+            text = attrs.get("text")
+            bounds = attrs.get("bounds")
+            if (isinstance(ntype, str) and ntype
+                    and isinstance(bounds, str)):
+                acc.append((
+                    ntype,
+                    text if isinstance(text, str) else "",
+                    bounds,
+                ))
+        for value in node.values():
+            _walk_typed_nodes(value, acc)
+    elif isinstance(node, list):
+        for value in node:
+            _walk_typed_nodes(value, acc)
+
+
+def layout_typed_nodes(parsed: object) -> List[Tuple[str, str, str]]:
+    typed: List[Tuple[str, str, str]] = []
+    _walk_typed_nodes(parsed, typed)
+    return typed
+
+
+def find_input_node(
+    typed: Sequence[Tuple[str, str, str]]
+) -> Optional[Tuple[int, int, str]]:
+    """The Settings base-URL input: the first node whose type is exactly
+    TextInput (M14-84 real dumps: the URL field is the pane's only
+    TextInput). Text labels such as Home's 服务地址: http://... are type
+    Text and can never be selected, whatever their text contains."""
+    for ntype, text, bounds in typed:
+        if ntype != SETTINGS_INPUT_TYPE:
+            continue
+        center = _bounds_center(bounds)
+        if center is None:
+            continue
+        return center[0], center[1], text
+    return None
+
+
+def is_settings_layout(typed: Sequence[Tuple[str, str, str]]) -> bool:
+    """True only when the layout exposes an editable TextInput node.
+
+    This is the "we are on the Settings pane" predicate: presence of the
+    structural input node, not any caption text (the bottom tab bar shows
+    设置 on every page, so text matching cannot distinguish pages).
+    """
+    return find_input_node(typed) is not None
+
+
 def find_text(texts: Sequence[Tuple[str, str]], needle: str) -> Optional[Tuple[int, int]]:
     for text, bounds in texts:
         if needle in text:
@@ -370,23 +428,6 @@ def find_text_exact(
             if center is not None:
                 return center
     return find_text(texts, needle)
-
-
-def find_input_field(
-    texts: Sequence[Tuple[str, str]]
-) -> Optional[Tuple[int, int, str]]:
-    """The Settings base-URL TextInput: longest text that looks like a URL."""
-    best: Optional[Tuple[str, str]] = None
-    for text, bounds in texts:
-        if any(n in text for n in SETTINGS_INPUT_NEEDLES):
-            if best is None or len(text) > len(best[0]):
-                best = (text, bounds)
-    if best is None:
-        return None
-    center = _bounds_center(best[1])
-    if center is None:
-        return None
-    return center[0], center[1], best[0]
 
 
 # ------------------------------------------------------------- ui driver ----
@@ -456,11 +497,14 @@ class UiDriver:
             return None, [{"code": "layout_pull_failed"}]
         try:
             data = self.local_layout.read_bytes()
-            parsed = json.loads(data.decode("utf-8", errors="replace"))
-        except (OSError, ValueError, UnicodeError):
+        except OSError:
             return None, [{"code": "layout_invalid_json"}]
         if not data:
             return None, [{"code": "layout_file_empty"}]
+        try:
+            parsed = json.loads(data.decode("utf-8", errors="replace"))
+        except (ValueError, UnicodeError):
+            return None, [{"code": "layout_invalid_json"}]
         return parsed, failures
 
     def digest(self) -> Optional[dict]:
@@ -478,18 +522,40 @@ class UiDriver:
         }
 
 
-def _drive_settings_url(driver: UiDriver) -> Tuple[bool, List[dict]]:
-    """Type the fixed device URL into Settings and save. Honest verification."""
+def _drive_settings_url(
+    driver: UiDriver,
+) -> Tuple[bool, List[dict], List[dict]]:
+    """Type the fixed device URL into Settings and save. Honest verification.
+
+    Returns (saved, failures, retry_notes). A captured layout counts as
+    "on Settings" only when it exposes an editable TextInput node; any other
+    layout (typically the cold-start race still showing 首页, whose 服务地址
+    URL line is a Text label) gets a fresh 设置 tab click on every bounded
+    attempt - attempt 1's click is never assumed to have landed. Non-
+    convergence notes on attempts that a later attempt survives are retries,
+    not step failures; they only become failures when every bounded attempt
+    is exhausted.
+    """
     failures: List[dict] = []
+    notes: List[dict] = []
     for attempt in range(1, SETTINGS_MAX_ATTEMPTS + 1):
         parsed, dump_failures = driver.dump()
         if parsed is None:
             failures += dump_failures or [{"code": "settings_layout_unreadable"}]
             continue
         texts = layout_texts(parsed)
-        # First attempt: switch to the 设置 tab (the app launches on 首页).
-        tab = find_text(texts, SETTINGS_TAB_TEXT)
-        if tab is not None and attempt == 1:
+        typed = layout_typed_nodes(parsed)
+        if not is_settings_layout(typed):
+            # Not on the Settings pane: click the 设置 tab again on THIS
+            # attempt and re-capture before looking for the input.
+            tab = find_text(texts, SETTINGS_TAB_TEXT)
+            if tab is None:
+                failures.append({
+                    "code": "settings_tab_not_found",
+                    "detail": {"attempt": attempt},
+                })
+                time.sleep(UI_SETTLE_SECONDS)
+                continue
             driver.click(*tab)
             time.sleep(UI_SETTLE_SECONDS)
             parsed, dump_failures = driver.dump()
@@ -497,9 +563,10 @@ def _drive_settings_url(driver: UiDriver) -> Tuple[bool, List[dict]]:
                 failures += dump_failures or [{"code": "settings_layout_unreadable"}]
                 continue
             texts = layout_texts(parsed)
-        field = find_input_field(texts)
+            typed = layout_typed_nodes(parsed)
+        field = find_input_node(typed)
         if field is None:
-            failures.append({
+            notes.append({
                 "code": "settings_input_not_found",
                 "detail": {"attempt": attempt},
             })
@@ -520,7 +587,7 @@ def _drive_settings_url(driver: UiDriver) -> Tuple[bool, List[dict]]:
             failures += verify_failures or [
                 {"code": "settings_verify_layout_unreadable"}]
             continue
-        vfield = find_input_field(layout_texts(verify))
+        vfield = find_input_node(layout_typed_nodes(verify))
         if vfield is None or DEVICE_API_BASE_URL not in vfield[2]:
             failures.append({
                 "code": "settings_input_mismatch",
@@ -542,12 +609,12 @@ def _drive_settings_url(driver: UiDriver) -> Tuple[bool, List[dict]]:
             continue
         joined = "\n".join(t for t, _b in layout_texts(final))
         if SETTINGS_SAVED_PREFIX + DEVICE_API_BASE_URL in joined:
-            return True, failures
+            return True, [], notes
         failures.append({
             "code": "settings_save_not_confirmed",
             "detail": {"attempt": attempt},
         })
-    return False, failures
+    return False, failures + notes, []
 
 
 def _assert_home(driver: UiDriver) -> Tuple[Optional[dict], List[dict]]:
@@ -851,7 +918,8 @@ def run_backend_smoke(
                         local_layout=local, log=[],
                     )
                     if name == STEP_SETTINGS_UI:
-                        ok, ui_failures = _drive_settings_url(driver)
+                        ok, ui_failures, retry_notes = (
+                            _drive_settings_url(driver))
                         step_failures += ui_failures
                         digest = driver.digest() if ok else None
                         settings_record = {
@@ -860,6 +928,7 @@ def run_backend_smoke(
                             "saved_confirmed": ok,
                             "layout": digest,
                             "ui_actions": len(driver.log),
+                            "convergence_retries": len(retry_notes),
                         }
                     else:
                         record, ui_failures = _assert_home(driver)

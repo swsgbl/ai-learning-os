@@ -19,24 +19,75 @@ from tools.harmony_release.backend_smoke import (
     EXIT_BLOCKED,
     EXIT_FAILURE,
     EXIT_OK,
+    SETTINGS_MAX_ATTEMPTS,
+    find_input_node,
+    is_settings_layout,
+    layout_typed_nodes,
     run_backend_smoke,
     validate_api_base,
 )
 
 # ------------------------------------------------------------------ fakes ---
 
-FAKE_LAYOUT_TABS = {
-    "attributes": {"bounds": "[0,0][100,100]"},
-    "children": [
-        {"attributes": {"text": "首页", "bounds": "[10,2700][110,2760]"}},
-        {"attributes": {"text": "设置", "bounds": "[110,2700][210,2760]"}},
+# ---------------------------------------------------- structural fakes --
+# M14-142: fakes carry the REAL uitest dumpLayout shape - every node has a
+# "type". Home's 服务地址 URL line and Settings captions are type Text;
+# the only editable node on Settings is type TextInput. Selection logic
+# must be structural, so the fakes must be structural too.
+
+TAB_BAR = [
+    {"attributes": {"type": "Text", "text": "首页",
+                    "bounds": "[10,2700][110,2760]"}},
+    {"attributes": {"type": "Text", "text": "设置",
+                    "bounds": "[110,2700][210,2760]"}},
+]
+SETTINGS_TAB_CENTER = ("160", "2730")   # 设置 tab
+INPUT_CENTER = ("660", "469")           # TextInput [56,399][1264,539]
+HOME_URL_LABEL_CENTER = ("370", "330")  # 服务地址 Text [40,300][700,360]
+
+
+def home_layout(service_url="http://127.0.0.1:8000/"):
+    """Structural Home: every URL-ish line is a Text label (the trap)."""
+    return {
+        "attributes": {"type": "Page", "bounds": "[0,0][100,100]"},
+        "children": [
+            *TAB_BAR,
+            {"attributes": {"type": "Text",
+                            "text": f"服务地址: {service_url}",
+                            "bounds": "[40,300][700,360]"}},
+            {"attributes": {"type": "Text", "text": "请求失败 (HTTP 401)",
+                            "bounds": "[40,400][700,460]"}},
+            {"attributes": {"type": "Text", "text": "请求失败 (HTTP 401)",
+                            "bounds": "[40,500][700,560]"}},
+            {"attributes": {"type": "Text", "text": "请求失败 (HTTP 401)",
+                            "bounds": "[40,600][700,660]"}},
+            {"attributes": {"type": "Text", "text": "0.1.0",
+                            "bounds": "[40,700][700,760]"}},
+        ],
+    }
+
+
+def settings_layout(input_url="http://127.0.0.1:8000/", saved=None):
+    """Structural Settings: one TextInput (the base-URL field) + Texts."""
+    children = [
+        *TAB_BAR,
         {"attributes": {
-            "text": "http://127.0.0.1:8000/", "bounds": "[40,300][700,360]"}},
-        {"attributes": {"text": "保存", "bounds": "[500,500][640,560]"}},
-        {"attributes": {"text": "已保存: http://10.0.2.2:8000/",
-                         "bounds": "[40,620][700,680]"}},
-    ],
-}
+            "type": "Text",
+            "text": "仅保存服务基地址(URL);不保存任何账号、令牌或密码。",
+            "bounds": "[56,308][1102,357]"}},
+        {"attributes": {"type": "TextInput", "text": input_url,
+                        "bounds": "[56,399][1264,539]"}},
+        {"attributes": {"type": "Text", "text": "保存",
+                        "bounds": "[56,581][280,721]"}},
+        {"attributes": {"type": "Text", "text": "测试连接",
+                        "bounds": "[322,581][658,721]"}},
+    ]
+    if saved:
+        children.append({"attributes": {
+            "type": "Text", "text": f"已保存: {saved}",
+            "bounds": "[56,763][642,816]"}})
+    return {"attributes": {"type": "Page", "bounds": "[0,0][100,100]"},
+            "children": children}
 
 
 def make_fake_hdc(
@@ -338,35 +389,13 @@ class TestDeviceSteps:
         # Speed: no real sleeps in unit tests.
         monkeypatch.setattr("tools.harmony_release.backend_smoke.time.sleep",
                             lambda _s: None)
-        saved_layout = {
-            "attributes": {"bounds": "[0,0][100,100]"},
-            "children": [
-                {"attributes": {"text": "首页", "bounds": "[10,2700][110,2760]"}},
-                {"attributes": {"text": "设置", "bounds": "[110,2700][210,2760]"}},
-                {"attributes": {"text": "http://10.0.2.2:8000/",
-                                "bounds": "[40,300][700,360]"}},
-                {"attributes": {"text": "保存", "bounds": "[500,500][640,560]"}},
-                {"attributes": {"text": "已保存: http://10.0.2.2:8000/",
-                                "bounds": "[40,620][700,680]"}},
-            ],
-        }
-        home_layout = {
-            "attributes": {"bounds": "[0,0][100,100]"},
-            "children": [
-                {"attributes": {"text": "首页", "bounds": "[10,2700][110,2760]"}},
-                {"attributes": {"text": "设置", "bounds": "[110,2700][210,2760]"}},
-                {"attributes": {"text": "请求失败 (HTTP 401)",
-                                "bounds": "[40,300][700,360]"}},
-                {"attributes": {"text": "请求失败 (HTTP 401)",
-                                "bounds": "[40,400][700,460]"}},
-                {"attributes": {"text": "请求失败 (HTTP 401)",
-                                "bounds": "[40,500][700,560]"}},
-                {"attributes": {"text": "0.1.0",
-                                "bounds": "[40,600][700,660]"}},
-            ],
-        }
+        saved_layout = settings_layout(
+            input_url="http://10.0.2.2:8000/", saved="http://10.0.2.2:8000/")
+        home = home_layout("http://10.0.2.2:8000/")
+        # First dump already shows Settings (TextInput present): no tab
+        # click needed; three settings dumps + one Home dump.
         _hap, tr, to, br, runner, getter, calls = self._make(
-            tmp_path, [saved_layout] * 4 + [home_layout] * 4)
+            tmp_path, [saved_layout] * 3 + [home])
         result, code = run_backend_smoke(
             tmp_path, target="127.0.0.1:5555", hap=str(_hap),
             confirm_mutation=True,
@@ -376,6 +405,7 @@ class TestDeviceSteps:
         assert code == EXIT_OK, json.dumps(result["failures"], ensure_ascii=False)
         assert result["status"] == "ok"
         assert result["settings"]["saved_confirmed"] is True
+        assert result["settings"]["convergence_retries"] == 0
         assert result["home"]["counts"]["请求失败 (HTTP 401)"] == 3
         assert result["home"]["counts"]["0.1.0"] == 1
         # cleanup happened
@@ -396,50 +426,17 @@ class TestDeviceSteps:
         # "仅保存服务基地址(URL);不保存任何账号、令牌或密码。" contains
         # 保存 and appears BEFORE the real 保存 button. A substring-only
         # lookup clicks the caption and never saves; exact-first matching
-        # must find the button.
+        # must find the button. Structural fakes: the app starts on Home,
+        # Settings exposes one TextInput + the caption + two buttons.
         monkeypatch.setattr("tools.harmony_release.backend_smoke.time.sleep",
                             lambda _s: None)
-        caption = "仅保存服务基地址(URL);不保存任何账号、令牌或密码。"
-        saved_layout = {
-            "attributes": {"bounds": "[0,0][100,100]"},
-            "children": [
-                {"attributes": {"text": "首页", "bounds": "[10,2700][110,2760]"}},
-                {"attributes": {"text": "设置", "bounds": "[110,2700][210,2760]"}},
-                {"attributes": {"text": caption,
-                                "bounds": "[56,308][1102,357]"}},
-                {"attributes": {"text": "http://127.0.0.1:8000/",
-                                "bounds": "[56,399][1264,539]"}},
-                {"attributes": {"text": "保存", "bounds": "[56,581][280,721]"}},
-                {"attributes": {"text": "测试连接", "bounds": "[322,581][658,721]"}},
-            ],
-        }
-        typed = json.loads(json.dumps(saved_layout))
-        typed["children"] = [c for c in typed["children"]
-                             if c["attributes"]["text"] != "http://127.0.0.1:8000/"]
-        typed["children"].append({"attributes": {
-            "text": "http://10.0.2.2:8000/", "bounds": "[56,399][1264,539]"}})
-        confirmed = json.loads(json.dumps(typed))
-        confirmed["children"].append({"attributes": {
-            "text": "已保存: http://10.0.2.2:8000/",
-            "bounds": "[56,763][642,816]"}})
-        home_layout = {
-            "attributes": {"bounds": "[0,0][100,100]"},
-            "children": [
-                {"attributes": {"text": "首页", "bounds": "[10,2700][110,2760]"}},
-                {"attributes": {"text": "设置", "bounds": "[110,2700][210,2760]"}},
-                {"attributes": {"text": "请求失败 (HTTP 401)",
-                                "bounds": "[40,300][700,360]"}},
-                {"attributes": {"text": "请求失败 (HTTP 401)",
-                                "bounds": "[40,400][700,460]"}},
-                {"attributes": {"text": "请求失败 (HTTP 401)",
-                                "bounds": "[40,500][700,560]"}},
-                {"attributes": {"text": "0.1.0",
-                                "bounds": "[40,600][700,660]"}},
-            ],
-        }
+        saved = settings_layout(input_url="http://127.0.0.1:8000/")
+        typed = settings_layout(input_url="http://10.0.2.2:8000/")
+        confirmed = settings_layout(input_url="http://10.0.2.2:8000/",
+                                    saved="http://10.0.2.2:8000/")
+        home = home_layout()
         _hap, tr, to, br, runner, getter, calls = self._make(
-            tmp_path,
-            [saved_layout, typed, typed, confirmed] + [home_layout] * 2)
+            tmp_path, [home, saved, typed, confirmed, home])
         result, code = run_backend_smoke(
             tmp_path, target="127.0.0.1:5555", hap=str(_hap),
             confirm_mutation=True,
@@ -453,43 +450,26 @@ class TestDeviceSteps:
         clicks = [c for c in calls if "click" in c]
         # clicks in order: settings tab, input field, save button
         # (no Home tab click anywhere: Home is a cold restart)
-        assert len(clicks) >= 3, calls
+        assert len(clicks) == 3, calls
         save_click = clicks[2]
         assert save_click[-2:] == ("168", "651"), save_click
 
     def test_home_assertion_missed_fails_closed(self, tmp_path, monkeypatch):
         monkeypatch.setattr("tools.harmony_release.backend_smoke.time.sleep",
                             lambda _s: None)
-        saved_layout = {
-            "attributes": {"bounds": "[0,0][100,100]"},
-            "children": [
-                {"attributes": {"text": "首页", "bounds": "[10,2700][110,2760]"}},
-                {"attributes": {"text": "设置", "bounds": "[110,2700][210,2760]"}},
-                {"imported": 1},
-            ],
-        }
-        # First dump: the URL field is found with the old value; after
-        # clearing + typing + saving the confirmation appears.
-        step1 = json.loads(json.dumps(saved_layout))
-        step1["children"].append({"attributes": {
-            "text": "http://127.0.0.1:8000/", "bounds": "[40,300][700,360]"}})
-        step1["children"].append({"attributes": {
-            "text": "保存", "bounds": "[500,500][640,560]"}})
-        step2 = json.loads(json.dumps(step1))
-        step2["children"].append({"attributes": {
-            "text": "已保存: http://10.0.2.2:8000/",
-            "bounds": "[40,620][700,680]"}})
-        # Home: no 401 texts at all -> assertion must fail.
-        home = {
-            "attributes": {"bounds": "[0,0][100,100]"},
-            "children": [
-                {"attributes": {"text": "首页", "bounds": "[10,2700][110,2760]"}},
-                {"attributes": {"text": "设置", "bounds": "[110,2700][210,2760]"}},
-                {"attributes": {"text": "连接超时", "bounds": "[40,300][700,360]"}},
-            ],
-        }
+        saved = settings_layout(input_url="http://127.0.0.1:8000/")
+        typed = settings_layout(input_url="http://10.0.2.2:8000/")
+        confirmed = settings_layout(input_url="http://10.0.2.2:8000/",
+                                    saved="http://10.0.2.2:8000/")
+        # Home without any expected text -> the assertion must fail.
+        broken = json.loads(json.dumps(home_layout()))
+        broken["children"] = [
+            c for c in broken["children"]
+            if "请求失败" not in c["attributes"]["text"]
+            and c["attributes"]["text"] != "0.1.0"
+        ]
         _hap, tr, to, br, runner, getter, calls = self._make(
-            tmp_path, [step1, step1, step2, step2, home, home])
+            tmp_path, [saved, typed, confirmed, broken, broken])
         result, code = run_backend_smoke(
             tmp_path, target="127.0.0.1:5556", hap=str(_hap),
             confirm_mutation=True,
@@ -534,3 +514,116 @@ def _failing_install_runner():
 
 
 dump_exit_failure = EXIT_FAILURE
+
+# ----------------------------------------- M14-142 convergence regressions --
+
+class TestSettingsConvergence:
+    """The cold-start race: attempt 1 still sees Home; the Settings tab
+    click must be retried on every bounded non-converged attempt, the
+    Home 服务地址 label must never be selected as the input, and a
+    layout without an editable TextInput must stay a failure."""
+
+    def _run(self, tmp_path, monkeypatch, layouts):
+        monkeypatch.setattr("tools.harmony_release.backend_smoke.time.sleep",
+                            lambda _s: None)
+        hap = make_hap(tmp_path)
+        tr, to, br = fake_resolvers()
+        runner, calls = make_fake_hdc(layouts)
+        getter, _ = make_fake_getter()
+        result, code = run_backend_smoke(
+            tmp_path, target="127.0.0.1:5555", hap=str(hap),
+            confirm_mutation=True,
+            runner=runner, http_get=getter,
+            target_resolver=tr, tool_resolver=to, bundle_resolver=br,
+        )
+        return result, code, calls
+
+    def test_attempt1_home_attempt2_settings_succeeds(
+            self, tmp_path, monkeypatch):
+        saved = settings_layout(input_url="http://127.0.0.1:8000/")
+        typed = settings_layout(input_url="http://10.0.2.2:8000/")
+        confirmed = settings_layout(input_url="http://10.0.2.2:8000/",
+                                    saved="http://10.0.2.2:8000/")
+        home = home_layout()
+        # dumps: home (attempt1), home (after tab click), home (attempt2
+        # start - the cold-start race), settings (after retry click),
+        # typed, confirmed, then Home for the home_view step.
+        result, code, calls = self._run(
+            tmp_path, monkeypatch,
+            [home, home, home, saved, typed, confirmed, home])
+        assert code == EXIT_OK, json.dumps(result["failures"],
+                                           ensure_ascii=False)
+        assert result["settings"]["saved_confirmed"] is True
+        # attempt 1's non-convergence is recorded as a retry, not a lie
+        assert result["settings"]["convergence_retries"] == 1
+        clicks = [c for c in calls if "click" in c]
+        tab_clicks = [c for c in clicks
+                      if tuple(c[-2:]) == SETTINGS_TAB_CENTER]
+        assert len(tab_clicks) == 2, clicks  # attempt 1 AND attempt 2
+        # the input click hit the TextInput center ...
+        assert sum(1 for c in clicks
+                   if tuple(c[-2:]) == INPUT_CENTER) == 1
+        # ... and never Home's 服务地址 label center
+        assert all(tuple(c[-2:]) != HOME_URL_LABEL_CENTER
+                   for c in clicks)
+        # no click ever landed on the 首页 tab (Home = cold restart)
+        assert all(tuple(c[-2:]) != ("60", "2730") for c in clicks)
+
+    def test_never_converges_fails_closed_and_retries_every_attempt(
+            self, tmp_path, monkeypatch):
+        home = home_layout()
+        result, code, calls = self._run(tmp_path, monkeypatch, [home, home])
+        assert code == EXIT_FAILURE
+        settings = next(s for s in result["steps"]
+                        if s["name"] == "settings_ui")
+        assert settings["status"] == "failure"
+        assert result["settings"]["saved_confirmed"] is False
+        codes = {f["code"] for f in result["failures"]}
+        assert "settings_input_not_found" in codes
+        # every bounded attempt retried the 设置 tab click
+        clicks = [c for c in calls if "click" in c]
+        tab_clicks = [c for c in clicks
+                      if tuple(c[-2:]) == SETTINGS_TAB_CENTER]
+        assert len(tab_clicks) == SETTINGS_MAX_ATTEMPTS, clicks
+        # nothing was ever typed: no input click anywhere, and never on
+        # the 服务地址 label either
+        assert all(tuple(c[-2:]) != INPUT_CENTER for c in clicks)
+        assert all(tuple(c[-2:]) != HOME_URL_LABEL_CENTER
+                   for c in clicks)
+        # install succeeded, so cleanup still ran
+        assert result["cleanup"]["attempted"] is True
+        assert calls[-1][3] == "uninstall"
+
+
+class TestStructuralInputSelection:
+    """The input node is chosen structurally (type TextInput), never by
+    URL-ish text - Home's 服务地址 label must be unselectable."""
+
+    def test_home_service_label_is_never_the_input(self):
+        typed = layout_typed_nodes(home_layout())
+        assert find_input_node(typed) is None
+        assert is_settings_layout(typed) is False
+
+    def test_url_text_node_is_not_an_input(self):
+        typed = [("Text", "服务地址: http://127.0.0.1:8000/",
+                  "[40,300][700,360]")]
+        assert find_input_node(typed) is None
+        assert is_settings_layout(typed) is False
+
+    def test_settings_layout_is_structurally_detected(self):
+        typed = layout_typed_nodes(settings_layout())
+        assert is_settings_layout(typed) is True
+        assert find_input_node(typed) == (
+            660, 469, "http://127.0.0.1:8000/")
+
+    def test_textinput_with_unparsable_bounds_fails_closed(self):
+        assert find_input_node([("TextInput", "x", "garbage")]) is None
+        assert is_settings_layout([("TextInput", "x", "garbage")]) is False
+
+    def test_first_structural_input_wins_over_labels(self):
+        typed = [
+            ("Text", "服务地址: http://127.0.0.1:8000/", "[40,300][700,360]"),
+            ("TextInput", "http://127.0.0.1:8000/", "[0,0][10,10]"),
+            ("TextInput", "other", "[0,0][20,20]"),
+        ]
+        assert find_input_node(typed) == (5, 5, "http://127.0.0.1:8000/")
