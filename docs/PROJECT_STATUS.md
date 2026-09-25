@@ -8,6 +8,50 @@
 M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/11）→ M3 Student Model（✅ 7/7）
 
 ## 当前任务
+**M14-137 Production Drift Watch 告警分发调度桥 readiness（工具/测试/文档切片）**：worktree
+`m14-137-drift-watch-alert-readiness`，分支
+`ops/m14-137-drift-watch-alert-readiness`，基于 main
+`f530ac385ca04d515bd40e903afa4814776a67a7`（PR #225 merge =
+M14-138 合入；R1 返工 rebase 同步基座，原实现基点 `5eba63bc`
+（PR #224 merge），fetch 后逐字核对），实现者执行、Codex supervisor
+监督；本地 commit 后 supervisor 审查与 remote 发布（push/PR/合并）
+在其后进行。交付 `tools/ops/production_drift_watch_alert_task.py`：
+既有 M14-127 drift-watch 报告目录与 M14-135 告警分发 CLI 之间的
+fail-closed 调度桥（**零计划任务安装/改动、零生产执行、零真实
+webhook；M14-127/129/135 工具与 VBS/计划任务语义零触碰**）。默认
+plan 只读零网络零子进程零写入：从工件目录（默认 = M14-133 单一事
+实源常量；`--report` 精确单份覆盖、与 `--artifacts-dir` 显式同给
+拒绝）fail-closed 选中唯一最新合法 execute 模式报告——校验**同一
+实现对象复用** M14-135 `load_drift_report`/`validate_drift_report`
+（`is` 锁定）、路径安全复用 M14-133 `reject_path_problems`；候选
+stamp 非真实日历时刻拒绝；**最新候选 malformed/plan/schema 破损 →
+拒绝且绝不回退更旧报告**（过期 drift=true 结论绝不冒充最新证据分
+发）；目录缺失/非目录/零候选/`..`/symlink 拒绝。drift 判定只依据
+报告布尔：drift=false → exit 0 + skipped-no-alerts（plan/execute
+双路零网络零台账、execute 不构造子进程）；plan 且 drift=true →
+exit 3 + stdout 精确 SHA-256 + dispatch-would-be-required（socket+
+subprocess 双阻断下照常）。execute 三重门禁（`--execute` + 精确
+短语 `EXECUTE PRODUCTION DRIFT WATCH ALERT TASK`（四工具短语互不
+通用交叉 pin）+ `--secret-file` 存在性预检；plan 带 secret 拒绝）
+先于一切读取与构造；移交经结构性白名单门（GatedDispatchRunner
+逐 token 校验、M14-135 自有确认短语收尾）到既有 M14-135 CLI，退出
+码原样透传（duplicate-dispatch/分发失败透传 2；幂等与 sanitized
+台账全由 M14-135 承担），墙钟 300s 超时 fail-closed；stdout
+`redact_secrets` 终防线 + 子进程回显逐行预脱敏，绝无 URL/token/
+绝对本地路径。同步交付聚焦契约测试 `services/api/tests/
+test_production_drift_watch_alert_task.py`（29 项，纯合成 fixtures
++ 注入 FakeRunner——零真实子进程零网络）+ 证据
+`docs/evidence/m14-137-drift-watch-alert-readiness/README.md` +
+`tools/ops/README.md` M14-137 段与三台账条目。验证：新测试 29
+passed；邻居回归六套合跑 385 passed（M14-127 96 + M14-129 82 +
+M14-133 47 + M14-135 127 + M14-136 4 + 新 29，canonical venv）；
+ruff（默认 + F,E9）/py_compile/`git diff --check` 全过；新增行秘
+密扫描 0 命中。诚实边界：零调度集成（drift=true 自动触发分发属后
+续 supervisor 获准切片）、真实 M14-135 子进程与真实 webhook（TLS
+面）未在本切片实证、不证明 alert delivery 生产就绪或真实送达；
+`production_ready=false` 不变，release-approval 仍是 human-only 门。
+R1 返工：基座同步 rebase 至 PR #225 merge（f530ac38），并补 scandir OSError/PermissionError → 固定 reason artifacts-dir-unreadable 的 fail-closed 收敛与回归测试（异常文本/本地路径零外泄；新套件 29 项）。
+
 **M14-138 Harmony current-main 模拟器恢复与 auth/login 回归收口（verification/docs-only 切片，PASS）**：worktree `m14-138-harmony-current-main-regression`，分支 `harmony/m14-138-current-main-regression`，基于 main `5eba63bcb3fb1056a6c12764373ab197a21487e2`（PR #224 merge）。闭合 M14-126 两项遗留（模拟器目标消失 + focus_window_unreadable）：Pura 90 实例受支持启动器恢复（boot completed=true，API 24）；release build 通过（unsigned HAP 220,008 bytes，SHA256 `8F5797869F1E3275B885E0B8C439A2483362850A6CD309A401235C900CF08A31`）；auth smoke attempt 1 一次性通过（12 stage = 11 ok / 0 failure / 1 预期 auth_phase_skip not_run，7/7 契约，0 warnings/request/toolchain failures，cleanup + uninstall 完成，attempt 2 未消耗）；pytest 524 passed / 1 skipped + mock 契约 81/81。边界：unsigned/模拟器/loopback 口径不变，不构成签名/真机/生产就绪，`production_ready=false` 不变。详见 `docs/evidence/m14-138-harmony-current-main-regression/README.md`。
 
 

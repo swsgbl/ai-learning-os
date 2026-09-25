@@ -1,5 +1,5 @@
 # tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）+ 监控告警外发分发（M14-119）+ 告警分发回环运行时闭环（M14-121）+ production drift watch（M14-127）+ production drift watch 独立周期任务 readiness（M14-129） + production drift watch 历史审计（M14-133）+ production drift watch 告警分发（M14-135）
-+ production drift watch 告警分发回环运行时闭环（M14-136，测试切片）
++ production drift watch 告警分发回环运行时闭环（M14-136，测试切片）+ production drift watch 告警分发调度桥 readiness（M14-137）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -1855,3 +1855,43 @@ duplicate-dispatch、零重发、零追加）；fail-closed 回环门（不加
 的环境整套 skip 而非假通过。诚实边界：回环 ≠ 生产 webhook，TLS 面
 仍未实证、调度集成仍缺位；`production_ready=false` 不变。细节见
 `docs/evidence/m14-136-drift-watch-alert-runtime/README.md`。
+
+## production_drift_watch_alert_task.py（M14-137）
+
+M14-137 交付 production drift-watch 报告 → M14-135 告警分发的
+**fail-closed 调度桥 readiness 工具**（单文件、纯标准库 + 两兄弟模块
+复用；本切片零计划任务安装/改动、零生产执行、零真实 webhook）。默认
+**plan 只读零网络零子进程零写入**：从 drift-watch 工件目录（默认
+`.verify/artifacts/m14-127-production-drift-watch`，M14-133 单一事实源
+常量；或 `--report` 精确指定单份报告，与 `--artifacts-dir` 显式同给
+拒绝）**fail-closed 选中唯一最新**合法 execute 模式报告——校验单一
+事实源复用 M14-135 `load_drift_report`/`validate_drift_report`（契约
+测试 `is` 锁定），目录路径安全复用 M14-133 `reject_path_problems`；
+候选文件名 stamp 非真实日历时刻（无法定序）拒绝；**最新候选
+malformed/plan 模式/schema 破损 → 拒绝且绝不回退更旧报告**（过期
+drift=true 结论绝不冒充最新证据分发）；目录缺失/非目录/零候选/`..`
+组件/symlink 组件拒绝；目录枚举 OSError/权限 → 固定 reason
+artifacts-dir-unreadable 拒绝（R1 修正——异常文本/本地路径零外泄）。
+drift 判定只依据报告自身布尔（绝不重判
+Docker 状态）：drift=false → exit 0 + skipped-no-alerts（plan 与
+execute 均零网络、零台账变更，execute 亦不构造 dispatch 子进程）；
+plan 且 drift=true → **exit 3** + stdout 报告选中报告**精确 SHA-256**
+与 dispatch-would-be-required（socket+subprocess 双阻断下照常）。
+execute 三重门禁（先于一切读取与构造）：`--execute` +
+`--confirm "EXECUTE PRODUCTION DRIFT WATCH ALERT TASK"`（与
+M14-127/129/135 既有短语互不通用）+ `--secret-file`（本地仅查存在
+性，内容校验全留给 M14-135；plan 带 secret 拒绝）。移交 = **既有
+M14-135 CLI + 其既有门禁**（零削弱、零复制、零旁路）：唯一放行的
+子进程形态经结构性白名单门（GatedDispatchRunner，9/11 token 逐项
+校验，确认短语为 M14-135 自有常量），退出码原样透传（0 成功 / 2
+一切拒绝，含 duplicate-dispatch 与分发失败——幂等与 sanitized 台账
+全部由 M14-135 既有语义承担）；子进程墙钟预算 300s 超时
+fail-closed。stdout 恒经 `redact_secrets`（M14-119 同一实现）终
+防线 + 子进程回显逐行预脱敏；日志只含 stem/SHA-256/计数/固定词汇，
+绝无 URL/token/绝对本地路径。契约测试
+`services/api/tests/test_production_drift_watch_alert_task.py`（29 项，
+纯合成 fixtures + 注入 FakeRunner——零真实子进程零网络）。诚实边界：
+零调度集成（挂入计划任务属后续 supervisor 获准切片）、真实 M14-135
+子进程与真实 webhook 未在本切片实证、不证明 alert delivery 生产就绪；
+`production_ready=false` 不变，release-approval 仍是 human-only 门。
+细节见 `docs/evidence/m14-137-drift-watch-alert-readiness/README.md`。
