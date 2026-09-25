@@ -1725,7 +1725,11 @@ python tools/ops/production_drift_watch_history.py --input-dir <dir> --output-di
 
 - **只读消费既有报告文件**：绝不运行 M14-127 watcher、绝不触碰计划
   任务/调度器、绝不接触生产栈/容器/DB/MinIO/语音/secret/env；本工具
-  的真实历史执行属 supervisor review 后的显式步骤。
+  的真实历史执行属 supervisor review 后的显式步骤——supervisor 已于
+  2026-09-25 完成（7 JSON 全 valid、6 个连续 PT15M slot 0 缺失
+  0 重复 0 drift 全 clean、digest 锚定 M14-124 批准值、两次运行
+  JSON SHA256 一致；结果见
+  `docs/evidence/m14-133-drift-watch-history/README.md` §7）。
 - **零子进程、零网络、零 env 读取、零墙钟**（AST/token 契约锁定）：
   输出确定性——同输入两次运行逐字节相同。
 - **文件名严格白名单**：仅接受 `drift-watch-YYYYMMDD-HHMMSS.json`

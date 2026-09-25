@@ -9,20 +9,75 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-134 M14-133 Production Drift Watch 历史审计 supervisor 真实执行结果回填（docs-only 切片）**：worktree
+`m14-134-drift-watch-history-evidence`，分支
+`docs/m14-134-drift-watch-history-evidence`，基于 M14-133 本地分支末
+commit `e21b373f555ed071e015f309a9f0e866af8779a1`（tree
+`57de1a598917de75afe7efdd00aaa93034979545`，本地 `git rev-parse`
+复核，与远端 main PR #221 merge
+`f0cf6f379e25b6a93d6d46fe97786a559f58c27e` 内容一致——本地 parent
+为 `a58e808`（PR #220 merge），不是 f0cf），实现者执行、Codex
+supervisor 监督；本地 commit 后 supervisor 审查与 remote 发布
+（push/PR/合并）在其后进行。零代码、零测试语义、零生产/零调度器/
+零 Docker/零 DB/MinIO/零语音/零 secret/零设备接触；不触网（远端与
+审计事实由 supervisor 提供、按事实引用）。仅修正 M14-133 evidence
+与台账中「真实历史执行待 supervisor 完成 / 预估 4 on-slot + 1
+manual」等过时表述（开发期事实不改写：实现者仅运行过 `--help`、
+未执行真实审计本体），以证据 README §7 dated addendum（Supervisor
+audit result）回填 supervisor 只读审计实测：7 份 drift-watch JSON
+全部 valid（7 valid / 0 invalid）；1 份 03:57 UTC manual/off-slot
+报告显式 excluded（reason=`manual-off-slot`，绝不静默丢弃）；入选
+6 个连续自然 PT15M slot（2026-09-25 04:30/04:45/05:00/05:15/05:30/
+05:45 UTC）0 missing slot、0 duplicate、0 drift、全部 clean；API/Web
+digest 全部锚定 M14-124 批准值（API
+`sha256:c99e28c905208bffbc1576f0c5c9e042af18fd356881cee967078ee38323781f`、
+Web
+`sha256:d596f0c726ab690359b196a3c3911f9842b94218b4361ee452413d420a38194b`）；
+两次独立运行审计 JSON SHA256 完全一致
+（`C64CFE2C4697E21666B8B9CBA321ED72D2E735D84C6C592E3CB1E0B0ECCC2263`）。
+PR #221 合并事实一并回填：merge
+`f0cf6f379e25b6a93d6d46fe97786a559f58c27e`（merged_at
+2026-09-25T06:13:11Z）、PR head
+`670e5b5dd84bd3fdcb222176c3e34a6fde7becc4`、PR CI run `36101621067`
+5/5 success、合并后 main CI run `36101886265` 5/5 success（总时长
+4m53s）。修改文件（5）：证据
+`docs/evidence/m14-133-drift-watch-history/README.md`（§7 addendum
++ 过时表述修正）、`docs/PROJECT_STATUS.md`、`docs/ROADMAP.md`、
+`docs/CHANGELOG.md`（各 M14-134 条目 + M14-133 过时表述修正）、
+`tools/ops/README.md`（M14-133 段单句最小更新）。诚实边界不变：
+历史审计不证明 production readiness、长期稳定性、跨重启存活、
+无人值守可靠性或 drift=true 告警送达；`production_ready=false`
+不变，release-approval 仍是 human-only 门；Harmony M14-126
+attempt 2 继续 BLOCKED（hdc targets 空、127.0.0.1:5555 不可达），
+不得虚构通过。验证（docs-only）：pytest
+`test_r1_docs_commit_wording_sweep` +
+`test_workflow_actions_runtime.py` 14 passed（canonical venv）；
+`git diff --check` 干净；新增/修改行秘密扫描 0 命中。
+
+## 前一任务（M14-133 Production Drift Watch 历史审计器——已随 PR #221 合并 main `f0cf6f379e25b6a93d6d46fe97786a559f58c27e`（本地末 commit `e21b373`，tree `57de1a598917de75afe7efdd00aaa93034979545` 与 merge 内容一致）；supervisor 真实历史审计结果由 M14-134 回填）
+
 **M14-133 Production Drift Watch 历史审计器（工具/测试/文档切片）**：worktree
 `m14-133-drift-watch-history`，分支 `ops/m14-133-drift-watch-history`，基于
 main `a58e8086eb415de200cbfe2a2cb7cd8b410fdc54`（PR #220 merge = M14-132
 三次自然轮证据合入；本地 `git rev-parse origin/main` 同 SHA 复核一致），
 实现者执行、Codex supervisor 监督；本地 commit 后 supervisor 审查与
 remote 发布（push/PR/合并）在其后进行（review/push/PR/CI/merge 全部
-supervisor-only；PR #221 已由 supervisor 创建，其 CI R1 触发本
-docs-wording 修复 commit——实现 commit 之后的第二个本地 commit）。零生产/零调度器/
+supervisor-only；PR #221 已由 supervisor 合并 main
+`f0cf6f379e25b6a93d6d46fe97786a559f58c27e`，merged_at
+2026-09-25T06:13:11Z，PR head
+`670e5b5dd84bd3fdcb222176c3e34a6fde7becc4`，PR CI run `36101621067`
+与合并后 main CI run `36101886265` 均 5/5 success（后者总时长
+4m53s）；其 CI R1 曾触发本 docs-wording 修复 commit——实现
+commit 之后的第二个本地 commit）。零生产/零调度器/
 零设备 mutation：零 Docker、零 compose、零 Task Scheduler 接触（连只读
 查询也未执行）、零服务进程启停、零 DB/MinIO/语音/secret/env 访问；对
 canonical gitignored 真实 drift-watch 工件仅开发早期只读 schema 理解
 （1 份 JSON 结构阅读，内容未复制进 tracked 文件）；对真实工件的审计
-本体执行仅 `--help` plan 级调用，真实历史审计为 supervisor review 后的
-显式步骤。交付：① `tools/ops/production_drift_watch_history.py`——
+本体执行仅 `--help` plan 级调用（开发期事实，不改写），真实历史审计
+为 supervisor review 后的显式步骤——已执行完毕，结果由 M14-134
+回填（证据 README §7：7 JSON 全 valid、6 个连续 PT15M slot 0 缺失
+0 重复 0 drift 全 clean、digest 锚定 M14-124 批准值、两次运行
+JSON SHA256 一致）。交付：① `tools/ops/production_drift_watch_history.py`——
 M14-127 单轮报告 → 确定性历史审计（单文件、纯标准库、零子进程/零网络/
 零 env 读取/零墙钟）：文件名严格白名单 `drift-watch-YYYYMMDD-HHMMSS.json`
 （伴生 .md/plan-*.json 只计数，traversal 与 symlink 组件 fail-closed
@@ -56,7 +111,8 @@ checks passed；py_compile 通过；`git diff --check` 干净；新增行秘密
 扫描 0 命中；post-commit worktree clean。诚实边界：历史审计不证明
 production readiness、长期稳定性、跨重启存活或 drift 告警送达；
 `production_ready=false` 不变，release-approval 仍是 human-only 门；
-真实历史执行未做（supervisor-only），Harmony M14-126 attempt 2 继续
+真实历史执行由 supervisor 完成（结果由 M14-134 回填，见证据
+README §7），Harmony M14-126 attempt 2 继续
 BLOCKED（hdc targets 空、127.0.0.1:5555 不可达），不得虚构通过。
 
 ## 前一任务（M14-132 M14-129 drift watch 三次连续自然调度轮证据回填——已随 PR #220 合并 main `a58e8086eb415de200cbfe2a2cb7cd8b410fdc54`；production drift watch 历史审计由 M14-133 接续）
