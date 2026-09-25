@@ -8,10 +8,16 @@
   `git rev-parse origin/main` 复核一致）
 - 本地 commit 后 supervisor 审查与 remote 发布（push/PR/合并）在其后
   进行——review/push/PR/CI/merge 全部由 Codex supervisor 独立执行；
-  PR #221 已由 supervisor 创建，其 CI R1（docs wording sweep）触发
-  实现 commit 之后的第二个本地 commit（本 R1 docs-wording 修复）。
+  PR #221 已由 supervisor 合并 main（merge
+  `f0cf6f379e25b6a93d6d46fe97786a559f58c27e`，merged_at
+  2026-09-25T06:13:11Z，完整 CI 记录见 §7）；其 CI R1（docs wording
+  sweep）曾触发实现 commit 之后的第二个本地 commit（本 R1
+  docs-wording 修复，即基线 `e21b373`）。
 - 本切片 commit SHA 与逐字节 diff 由实现者在完成报告中给出，供
   supervisor 独立复核（README 无法自引用其所属 commit 的最终 SHA）。
+- supervisor 已对 canonical gitignored 真实历史工件完成只读审计，
+  结果以 §7 dated addendum 回填（M14-134，2026-09-25）；开发期
+  「真实历史执行待 supervisor 完成」的表述以 §7 实测为准。
 
 ## 1. 交付物
 
@@ -77,8 +83,10 @@
 
 真实历史执行（默认输入目录指向 canonical gitignored 真实报告）为
 **supervisor-only**：本切片实现者未对真实工件运行过审计本体（仅
-`--help`），真实历史结论（如当前 4 份 on-slot + 1 份 manual 报告的
-审计输出）由 supervisor 在 review 后自行执行与宣判。
+`--help`）——此开发期边界事实保持不变、不改写。supervisor 已在
+PR #221 合并后对 canonical 真实工件完成只读审计：开发期对报告份数
+的预估（4 份 on-slot + 1 份 manual）已被实测修正为 7 份 JSON、
+6 份入选 on-slot，真实结论见 §7（以 §7 为准）。
 
 ## 4. 合成-only 验证（实际执行结果）
 
@@ -105,8 +113,10 @@ traversal、输入缺失、输入是文件、symlink 输入目录/报告文件/�
 - 历史审计**不证明 production readiness**、不证明长期稳定性、不证明
   跨重启（机器/Docker/仓库重建）存活、不证明 drift=true 告警送达；
   `production_ready=false` 不变，release-approval 仍是 human-only 门。
-- 本切片**未对真实工件执行审计本体**：工具正确性仅由合成 fixtures
-  锁定；真实历史结论属 supervisor 后续显式执行。
+- 本切片**未对真实工件执行审计本体**：工具正确性在开发期仅由合成
+  fixtures 锁定；真实历史结论属 supervisor 后续显式执行——supervisor
+  已执行完毕，结果以 §7 dated addendum 回填（M14-134），本节其余
+  边界描述为开发期历史原文、语义不变。
 - slot 完整性语义受限于入选报告的首末边界：范围之外的槽位（例如
   任务安装前的历史、审计时刻之后的未来）不在完整性宣称范围内。
 - `+2s` 文件名容差匹配 M14-127 当前实现序（stamp 先取、started_at
@@ -137,3 +147,44 @@ traversal、输入缺失、输入是文件、symlink 输入目录/报告文件/�
   DB/MinIO/语音/secret/env 访问；对 canonical gitignored 真实
   drift-watch 工件仅开发早期的只读 schema 理解（1 份 JSON 结构
   阅读），其内容未复制进任何 tracked 文件。
+
+## 7. Supervisor audit result（dated addendum，M14-134 于 2026-09-25 回填）
+
+本节为 M14-134 docs-only 回填：记录 supervisor 在 PR #221 合并后对
+canonical gitignored 真实历史工件
+（`.verify/artifacts/m14-127-production-drift-watch/`）完成的只读
+审计结果。§1–§6 为开发期历史原文；其中原先「真实历史执行待
+supervisor 完成 / 预估 4 on-slot + 1 份 manual」等过时表述已在原文
+位置修正为指向本节，开发期事实（实现者仅运行过 `--help`、未执行
+真实审计本体）保持不改写。以下为 supervisor 审计的权威结论：
+
+- 基线记录（supervisor 提供）：PR #221 已合并 main——merge
+  `f0cf6f379e25b6a93d6d46fe97786a559f58c27e`（merged_at
+  2026-09-25T06:13:11Z），PR head
+  `670e5b5dd84bd3fdcb222176c3e34a6fde7becc4`；PR CI run
+  `36101621067` 5/5 success，合并后 main CI run `36101886265`
+  5/5 success（总时长 4m53s）。本地基线 commit `e21b373`（tree
+  `57de1a598917de75afe7efdd00aaa93034979545`，本地
+  `git rev-parse` 复核一致）与该 merge tree 内容一致；本地 parent
+  为 `a58e808`（PR #220 merge），**不是** f0cf。
+- 审计输入匹配：7 份 drift-watch JSON；7 valid / 0 invalid。
+- 1 份 03:57（UTC）manual/off-slot 报告被**显式 excluded**（reason=
+  `manual-off-slot`，计入索引与计数）——绝非静默丢弃。
+- 入选 6 个连续自然 PT15M slot：2026-09-25 04:30、04:45、05:00、
+  05:15、05:30、05:45（UTC）；0 missing slot、0 duplicate、0 drift。
+- 6 个入选报告全部 clean；API/Web digest 全部锚定 M14-124 批准值：
+  API
+  `sha256:c99e28c905208bffbc1576f0c5c9e042af18fd356881cee967078ee38323781f`、
+  Web
+  `sha256:d596f0c726ab690359b196a3c3911f9842b94218b4361ee452413d420a38194b`。
+- 确定性实证：两次独立运行生成的审计 JSON SHA256 完全一致：
+  `C64CFE2C4697E21666B8B9CBA321ED72D2E735D84C6C592E3CB1E0B0ECCC2263`。
+- 诚实边界（不变）：该历史审计不证明 production readiness、长期
+  稳定性、跨重启存活、无人值守可靠性或 drift=true 告警送达；
+  `production_ready=false` 不变，release-approval 仍是 human-only
+  门；Harmony M14-126 attempt 2 继续 BLOCKED（hdc targets 空、
+  127.0.0.1:5555 不可达），不得虚构通过。
+- M14-134 回填边界：本回填为 docs-only（evidence + 三本台账 +
+  `tools/ops/README.md` 单句最小更新），零代码、零测试语义、零
+  生产/调度器/Docker/DB/MinIO/语音/secret/设备接触，不触网
+  （远端与审计事实由 supervisor 提供、按事实引用）。
