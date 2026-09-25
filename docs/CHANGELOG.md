@@ -1,5 +1,20 @@
 # Changelog
 
+## M14-142 — Harmony 后端冒烟重复周期包装器 Stage 1
+
+- 新增 `tools/harmony_release/backend_smoke_repeat.py`：既有
+  `backend_smoke.py`（M14-84）的 fail-closed 重复周期包装器（子进程复
+  用、cycles 1..5、计划模式零子进程、fail-stop、周期证据子目录、聚合
+  报告原子写、结构性白名单、脱敏 argv/路径、malformed 子结果记
+  failure；退出码 0/1/2）。
+- 新增 `tests/harmony_release/test_backend_smoke_repeat.py`：38 项聚焦
+  契约测试（fake runner + 临时仓库，零真实子进程/零设备/零网络）。
+- 验证：聚焦 38 passed；全量 `tests/harmony_release` 562 passed,
+  1 skipped；ruff F,E9,W605 / py_compile / `git diff --check` 干净。
+- 诚实边界：真实三周期模拟器执行属 Stage 2（本切片零运行时声明）；
+  证据 `docs/evidence/m14-142-harmony-backend-smoke-repeat/README.md`。
+
+
 All notable changes to the AI Learning OS project are documented here.
 Format based on [Keep a Changelog](https://keepachangelog.com/), versions follow semver.
 

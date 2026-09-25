@@ -2719,3 +2719,33 @@ AGC 材料缺位（当前仓库常态）时各阶段的**预期状态**：
 - **验证**：Harmony 套件 417 passed / 1 skipped（skip 为 symlink/mkfifo
   用例在 Windows 宿主的既有 `pytest.skip` 幂等跳过）。证据：
   `docs/evidence/m14-68-production-closure-manifest/README.md`。
+
+## HarmonyOS 后端冒烟重复周期包装器（M14-142）
+
+- **CLI**：`python -m tools.harmony_release.backend_smoke_repeat
+  --target <t> [--cycles 1..5] [--confirm-mutation] ...`，实现文件
+  `tools/harmony_release/backend_smoke_repeat.py`。
+- **定位**：既有 `backend_smoke.py`（M14-84）的重复周期 fail-closed 包装
+  器——以**子进程**复用该 CLI（不复制其 UI 驱动逻辑），顺序执行 1..5 个
+  周期（默认 1），聚合为一份 JSON + 一份 Markdown 报告。
+- **计划模式**：默认（无 `--confirm-mutation`）**零子进程**——纯计划聚合，
+  每个周期记录为 `planned`。突变模式顺序执行并在首个非零结果 fail-stop：
+  后续周期记为 `planned`（不运行）；部分运行绝不报告为成功。
+- **结构性白名单**：唯一可 spawn 的程序是仓库内
+  `tools/harmony_release/backend_smoke.py`（repo-root 相对常量解析 +
+  严格 resolve + 仓内归属校验），argv 列表构造、无 shell、无任意路径。
+- **证据**：每周期独立 `cycle_<n>` 子目录；聚合 JSON/Markdown **原子写**
+  （同目录临时文件 + `os.replace`），写失败 → 整体 failure（fail-closed）。
+- **记录面**：周期序号、脱敏 argv（仅选项名，值一律丢弃/未知 token 归一
+  为 `<value>`）、return code、墙钟秒数、相对证据引用；子进程 stdout JSON
+  无法解析 → 周期记 failure（`child_result_malformed`），绝不静默丢弃。
+  绝不记录 secret、环境值或宿主绝对路径（repo root 仅以 `<repo-root>`
+  占位符出现）。
+- **退出码**：`0`=全部执行周期 ok（或计划）、`1`=任一周期失败或报告写
+  失败、`2`=blocked（cycles 越界/白名单拒绝/证据目录不可用——零 spawn）。
+- **验证**：聚焦 `test_backend_smoke_repeat.py` **37 passed**（全部 fake
+  runner + 临时仓库，零真实子进程/零设备/零网络）；全量
+  `tests/harmony_release` **561 passed, 1 skipped**；ruff F,E9,W605 与
+  py_compile 干净。诚实边界：真实三周期模拟器执行属 Stage 2，本切片未启动
+  模拟器/后端/构建。证据：
+  `docs/evidence/m14-142-harmony-backend-smoke-repeat/README.md`。
