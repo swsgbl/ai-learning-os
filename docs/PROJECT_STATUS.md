@@ -9,6 +9,62 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-135 Production Drift Watch 告警分发第一片（工具/测试/文档切片）**：worktree
+`m14-135-drift-watch-alert-dispatch`，分支
+`ops/m14-135-drift-watch-alert-dispatch`，基于 main
+`c55f915ffce8baf830f75d40ae9a83062bcc4917`（PR #222 merge = M14-134
+证据合入），实现者执行、Codex supervisor 监督；本地 commit 后
+supervisor 审查与 remote 发布（push/PR/合并）在其后进行。交付
+`tools/ops/production_drift_watch_alert_dispatch.py`（单文件、纯标准
+库、零第三方依赖、零子进程、零 Docker 采集、零 env 读取）+ 契约测试
+`services/api/tests/test_production_drift_watch_alert_dispatch.py`
+（127 项，全部合成临时 fixtures + 注入 FakeTransport/FakeClock——零
+真实网络、零真实端点接触）+ `tools/ops/README.md` M14-135 段 + 证据
+`docs/evidence/m14-135-drift-watch-alert-dispatch/README.md` + 三台账
+条目。功能：关闭「drift=true 告警送达未实证」缺口的第一个有界部分
+（**工具就绪 only，零调度集成，不宣称 alert delivery 生产实证**）——
+恰一份既有 M14-127 execute 模式 drift-watch JSON 报告 → 严格校验
+（文件名白名单 drift-watch-YYYYMMDD-HHMMSS.json、身份/schema 精确
+匹配、**plan 源报告恒拒绝绝不猜测**、UTC 时间戳形态 + ended>=started、
+文件名时间戳交叉校验 [stamp, stamp+2s] 与 M14-133 容差同值、config
+project/锚点形态、counts↔checks、drift↔(fail>0)、drift_reasons 固定
+词汇封闭集合（M14-127 evaluate_drift 全部 11 前缀 × 服务域逐项枚举，
+越域一律拒绝）+ 非空⟺drift + 条数硬顶 64）→ **分发判定唯一依据报告
+自身 drift 布尔（绝不重判 Docker 状态或漂移）**：drift=true 才经单一
+通用 HTTPS webhook 分发；drift=false → skipped-no-alerts（exit 0、
+零网络、零台账）。安全面**同一实现对象复用 M14-119**
+（validate_webhook_url/load_webhook_secret/RealTransport/RealStore/
+RealClock/write_report_files/ensure_output_dir_safe 直接 import，契约
+测试逐一 `is` 锁定——绝不平行第二策略）：execute 三重门禁
+（--execute + 精确短语 "EXECUTE PRODUCTION DRIFT WATCH ALERT
+DISPATCH" + --secret-file，缺一/近似即 exit 2 且零 Transport 构造）、
+secret 仅操作者 gitignored JSON 且 URL/token 绝不回显/入档、SSRF
+fail-closed（生产恒 https；http 仅显式 test-only 回环旗标）、payload
+版本化固定词汇有界（仅报告身份/project/drift/counts/reason codes +
+截断计数；绝无日志/env/URL/token/容器体/DB URL/绝对路径/detail 文本；
+16384 字节硬顶复检）、独立幂等台账 drift-dispatch-ledger.jsonl（成功
+后原子追加；行 schema **全字段严格校验**（16 键精确 + 类型/值域/
+固定词汇——双 sha256 指纹、stem/dispatch_id 闭式、严格 UTC 真实
+时刻、counts/drift/reasons 计数/http 200..299/payload 界逐字段，
+bool 绝不冒充 int；supervisor R1 修正）；同报告 SHA-256 重复在发送
+之前拒绝；他工具台账行拒绝；
+失败恒 failed 绝不入台账绝不报 sent；成功后台账写失败 →
+sent-ledger-unrecorded 可见 + exit 2 绝不谎报）、报告工件防碰撞 +
+symlink 拒绝 + redact 终防线。本切片开发期零 Docker/零调度器/零生产
+接触、零真实 secret、零外部端点（含回环接收器——全部 execute 路径经
+注入 FakeTransport 锁定；真实分发 supervisor-only）。验证：新契约测试
+127 passed（含 supervisor R1 修正的台账行全字段严格 schema 44 项
+聚焦测试）+ 邻居回归（M14-119 双套 + M14-127 双套 + M14-133）304
+passed（六套合跑 431，canonical venv）；ruff All checks passed（含
+ISC/FURB 规则集）；py_compile 通过；`git diff --check` 干净；新增/
+修改行秘密扫描 0 命中。诚实边界：本切片只是 alert delivery 工具就绪
+第一片——不证明 alert delivery 已生产实证、不证明调度集成、不证明
+端到端告警闭环；`production_ready=false` 不变，release-approval 仍是
+human-only 门；Harmony M14-126 attempt 2 继续 BLOCKED（hdc targets
+空、127.0.0.1:5555 不可达），不得虚构通过。
+
+## 前一任务（M14-134 M14-133 Production Drift Watch 历史审计 supervisor 真实执行结果回填——已随 PR #222 合并 main `c55f915ffce8baf830f75d40ae9a83062bcc4917`）
+
 **M14-134 M14-133 Production Drift Watch 历史审计 supervisor 真实执行结果回填（docs-only 切片）**：worktree
 `m14-134-drift-watch-history-evidence`，分支
 `docs/m14-134-drift-watch-history-evidence`，基于 M14-133 本地分支末
