@@ -1,5 +1,28 @@
 # Changelog
 
+## M14-146 — current-main 发布证据刷新（PR #233 后）
+
+- 在当前 main `239b881`（PR #233 merge）上真实重执行两 code-bound 门
+  并刷新发布证据链（docs-only 入库；canonical 原始证据 gitignored）：
+  **ci-main** run **36168686272**（run_number 588，push/main 唯一、
+  completed success、5/5 jobs 精确集合全绿）断言驱动程序化派生；
+  **release-check** 干净 239b881 隔离环境 full 重跑 all_green 10/10
+  （pytest **5054 passed / 33 skipped**，较 M14-125 +499 = 区间
+  drift-watch 族等真实测试面增长对账）。
+- provider-smoke/long-soak 按 M14-125 契约只读哈希锁定复用
+  （`029ee84f…` / `d939c652…` 同源同哈希，不重跑 provider/soak，
+  原始时间边界显式保留）；production-state 六源 6/6 哈希 MATCH 后
+  原样 staging，evidence-cockpit 聚合 **cockpit_ready=true、
+  blockers=[]、pass=9/missing=2**，两 code-bound 门 current。
+- 验证：聚焦契约测试 407 passed；ruff All checks passed；
+  SHA256SUMS 25/25 OK；JSON 契约断言 22 项全过；秘密扫描 0 命中；
+  新增行秘密/本地绝对路径/U+FFFD 扫描 0 命中；`git diff --check`
+  干净。
+- 诚实边界：`release_ready=false` / `production_ready=false` 恒不变
+  （release-approval human-only 从未发生）；零生产触碰、零部署、
+  零 provider/soak 重跑；证据
+  `docs/evidence/m14-146-current-main-release-evidence/README.md`。
+
 ## M14-144 — alert secret 模板 + 生产 pin 文档同步
 
 - 新增 `infra/env.production-drift-watch-alert-secret.example.json`：操作者
