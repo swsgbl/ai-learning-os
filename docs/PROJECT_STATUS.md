@@ -9,6 +9,63 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-131 M14-129 真实安装与首轮自然调度证据回填（docs-only 切片）**：worktree
+`m14-131-m129-production-install-evidence`，分支
+`docs/m14-131-m129-production-install-evidence`，基于 main
+`a12b2acb69d8c8cb5cc91a3fc1a730f846f9516f`（PR #218 merge = M14-130
+台账回填合入；canonical 与 origin/main 同 SHA 复核一致，未跟踪
+canonical `.claude/` 未触碰），单 local commit，不 push、不开 PR、
+不合并（supervisor 只监督验收）。零代码、零测试、零配置、零 CI、
+零调度器、零 Docker、零生产服务/DB/MinIO/语音/secret/设备变更；
+不运行 drift watcher 或 scheduler，对 gitignored 工件只读核验。
+回填的 supervisor 已验证事实：① 前置——M14-130 docs-only feature
+commit `f6e8c265cdbf0189ccc1090d312db0b48bec1492` 已随 PR #218 合并
+为 `a12b2acb69d8c8cb5cc91a3fc1a730f846f9516f`（本地 git parents
+复核一致），PR CI run `36093021969` 与合并后 main CI run
+`36093610080` 五项 job 全部 success；② 真实安装——2026-09-25，
+supervisor 在 canonical 以非提升 shell（PowerShell 角色检查
+`ElevatedAdministrator=False`）执行
+`.venv\Scripts\python.exe tools/ops/production_drift_watch_task.py
+install --confirm "EXECUTE PRODUCTION DRIFT WATCH SCHEDULER CHANGE"`
+exit 0，安装后 manager status=installed/exact-owned（Action/
+Arguments/cwd/Hidden/触发器/PT15M 间隔/PT10M 时限逐项匹配，
+M14-129 未实证的 TimeTrigger/Repetition/StartBoundary 注册后归一化
+随之获得真实安装实证）；③ 首轮自然调度——安装后基线 LastRunTime
+1999-11-30、LastTaskResult 267011（0x41303 从未运行）、NextRunTime
+2026-09-25 12:30:00 +08:00、NumberOfMissedRuns 0；零 `schtasks
+/Run`、`/Change`、`/End`、零 Docker mutation、零容器/生产服务重启、
+零手动 execute，任务于 2026-09-25 12:30:01 +08:00 自然执行：
+LastTaskResult=0、NextRunTime 12:45:00 +08:00、
+NumberOfMissedRuns=0，事后只读 status 仍 installed/exact-owned；
+④ 自然轮报告（canonical gitignored
+`.verify/artifacts/m14-127-production-drift-watch/`）——JSON 11023
+bytes / SHA-256
+`5A6FA1BAC85772BA6B793BA3792E92FBF0D508C9A220FCF7623F853DEB53A80E`、
+MD 5762 bytes / SHA-256
+`8405AA9391AE9F2788FC54794C679ED8885A2E869F733BF90CE4168ACA244AED`；
+started_at_utc=2026-09-25T04:30:01Z、ended_at_utc=2026-09-25T04:30:02Z、
+drift=false、28 pass / 0 fail（1 collector + 七服务×3 + 两锚点×3）、
+七服务 healthy，API/Web 运行 tag、运行 image ID、锚点 tag 本地解析
+三重一致，digest 恰为 M14-124 批准值
+`sha256:c99e28c905208bffbc1576f0c5c9e042af18fd356881cee967078ee38323781f` /
+`sha256:d596f0c726ab690359b196a3c3911f9842b94218b4361ee452413d420a38194b`。
+本切片独立复核：`wc -c` + `sha256sum` 重算与监督者给定值逐字节一致、
+30 项 JSON 事实断言全过。修正：M14-129/M14-130「安装需提升令牌」的
+早期推论由 2026-09-25 本机非提升实测作为后观测事实修正（仅陈述本机
+实测、不宣称普遍 Windows 行为；M14-06 LogonTrigger 任务需提升的实证
+不受影响）——`tools/ops/README.md` install 注释与段末状态已更新，
+M14-129 证据 README 以 §7 dated addendum 区分历史与后观测（§1–§6
+原文不动），M14-130 既有台账条目保持历史原样。诚实边界：**一轮自然
+成功仅证明任务已安装 + 首轮自然调度端到端 ok**——不证明长期稳定性、
+持续调度可靠性、机器/Docker 重启或仓库重建后仍生效，不构成
+production readiness 宣称、不解除任何 release gate；
+`production_ready=false` 不变；uninstall/回滚路径仍只有契约测试覆盖。
+Harmony M14-126 attempt 2 继续 BLOCKED（hdc targets 空、
+127.0.0.1:5555 不可达），本切片零移动端动作，不得虚构通过。验证
+（docs-only）：工件只读复核 + JSON 事实断言 30 项全过 + markdown
+结构 sanity + 新增文本秘密扫描 0 命中 + `git diff --check` 干净，
+不运行 pytest。
+
 **M14-130 M14-129 进度台账回填（docs-only 切片）**：worktree
 `m14-130-m129-ledger-backfill`，分支
 `docs/m14-130-m129-ledger-backfill`，基于 main
