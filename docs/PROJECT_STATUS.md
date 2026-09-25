@@ -13,8 +13,10 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 `m14-133-drift-watch-history`，分支 `ops/m14-133-drift-watch-history`，基于
 main `a58e8086eb415de200cbfe2a2cb7cd8b410fdc54`（PR #220 merge = M14-132
 三次自然轮证据合入；本地 `git rev-parse origin/main` 同 SHA 复核一致），
-实现者执行、Codex supervisor 监督；单 local commit，不 push、不开 PR、
-不合并（review/push/PR/CI/merge 全部 supervisor-only）。零生产/零调度器/
+实现者执行、Codex supervisor 监督；本地 commit 后 supervisor 审查与
+remote 发布（push/PR/合并）在其后进行（review/push/PR/CI/merge 全部
+supervisor-only；PR #221 已由 supervisor 创建，其 CI R1 触发本
+docs-wording 修复 commit——实现 commit 之后的第二个本地 commit）。零生产/零调度器/
 零设备 mutation：零 Docker、零 compose、零 Task Scheduler 接触（连只读
 查询也未执行）、零服务进程启停、零 DB/MinIO/语音/secret/env 访问；对
 canonical gitignored 真实 drift-watch 工件仅开发早期只读 schema 理解

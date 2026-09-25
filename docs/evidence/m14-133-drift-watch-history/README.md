@@ -6,8 +6,10 @@
 - 基点（parent）：main `a58e8086eb415de200cbfe2a2cb7cd8b410fdc54`
   （PR #220 merge = M14-132 三次自然轮证据回填合入；本地
   `git rev-parse origin/main` 复核一致）
-- 单 local commit，不 push、不开 PR、不合并——review/push/PR/CI/merge
-  全部由 Codex supervisor 独立执行。
+- 本地 commit 后 supervisor 审查与 remote 发布（push/PR/合并）在其后
+  进行——review/push/PR/CI/merge 全部由 Codex supervisor 独立执行；
+  PR #221 已由 supervisor 创建，其 CI R1（docs wording sweep）触发
+  实现 commit 之后的第二个本地 commit（本 R1 docs-wording 修复）。
 - 本切片 commit SHA 与逐字节 diff 由实现者在完成报告中给出，供
   supervisor 独立复核（README 无法自引用其所属 commit 的最终 SHA）。
 
@@ -125,6 +127,11 @@ traversal、输入缺失、输入是文件、symlink 输入目录/报告文件/�
 - 验证：pytest 47 + 178 全过（canonical venv）；ruff All checks
   passed；py_compile 通过；`git diff --check` 干净；新增行秘密扫描
   0 命中；post-commit worktree clean（单 commit）。
+- R1 修复（PR #221 CI 第 1 轮 review，docs-only）：将 M14-133 在
+  ROADMAP/PROJECT_STATUS/CHANGELOG/本 README 中的本地-only 发布表述
+  统一为「supervisor 审查与 remote 发布（push/PR/合并）在其后进行」，
+  移除绝对化承诺措辞（`test_r1_docs_commit_wording_sweep` 回绿）；
+  零生产代码、零测试语义、零工具本体改动。
 - 零生产/零调度器/零设备 mutation：零 Docker、零 compose、零 Task
   Scheduler 任何接触（连只读查询也未执行）、零服务进程启停、零
   DB/MinIO/语音/secret/env 访问；对 canonical gitignored 真实
