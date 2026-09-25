@@ -9,6 +9,28 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-145 语音生产恢复证据切片（docs-only）**：worktree
+`m14-145-voice-recovery-evidence`，分支 `docs/m14-145-voice-recovery-evidence`，
+基于 `15bfab9`，单 local commit、不 push、不开 PR。只新增
+`docs/evidence/m14-145-voice-recovery-evidence/README.md` 并最小同步
+ROADMAP/本账本，转录已发生验证回合的判定事实（原始证据均在主
+checkout gitignored 区，不入仓）：enforce 恢复
+（`recovery-20260926-002818.log`，2026-09-26 00:28 +08）core compose
+**6/6 healthy/running、健康栈无需 up（未 recreate）**、pin 9/9（值
+不回显），FunASR/CosyVoice 由 `stopped` **仅经受控语音工具 start
+（rc=0）**恢复；follow-up dry-run（`recovery-20260926-003322.log`，
+00:33）OK——双引擎 `managed-running` /health **200**；API `/health` 与
+Web `/` 200、sidecar watchdog `running-healthy`（18010/18011 health
+端点 200）为任务书给定执行摘要（本切片未重放）；本地真实语音冒烟
+`local-voice-smoke.json` **pass/exit 0、17853ms**（ASR 1473ms、TTS
+15921ms/241964 bytes RIFF WAV，算术自洽），SHA-256 实测
+`11c8d9d3ca7cc0e16c32401d51ff955328d7d0d18ee07fe9cdfb4d4291e6f9dc`。
+验证：`git diff --check` 干净；新增行秘密扫描（9 类）与本地绝对
+路径扫描均 0 命中；仓内相对引用路径存在性核对通过。诚实边界：
+不声称长期稳定性、公网就绪、provider 完整性、release approval、
+M14-141 alert scheduler 安装；本切片零运行时触碰、零含密钥 env
+读取；`production_ready=false` 不变，release approval 仍 human-only。
+
 **M14-144 alert secret 模板 + 生产 pin 文档同步（模板/守卫测试/文档/账本切片）**：worktree
 `m14-144-alert-secret-template`，分支 `ops/m14-144-alert-secret-template`，
 基于 `e8a6285`，单 local commit、不 push、不开 PR。交付
