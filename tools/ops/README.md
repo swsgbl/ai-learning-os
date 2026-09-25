@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）+ 监控告警外发分发（M14-119）+ 告警分发回环运行时闭环（M14-121）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）+ 监控告警外发分发（M14-119）+ 告警分发回环运行时闭环（M14-121）+ production drift watch（M14-127）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -1554,3 +1554,66 @@ ephemeral 127.0.0.1 动态端口接收器 + 真实 CLI 子进程实证真实 2xx
 台账、幂等重复拒绝与 `--allow-loopback-http` 豁免门的运行时收紧——
 仅本机回环，零外部端点。证据
 `docs/evidence/m14-121-alert-dispatch-loopback-runtime/README.md`。
+
+## production_drift_watch.py（M14-127）
+
+production drift watch：只读校验生产栈是否仍锚定 M14-124 已批准发布镜像
+（补 M14-124 生产切换后「健康监控不校验发布镜像锚点」的运维缺口）。
+M14-12 production_monitor 只证明容器健康，不证明容器跑的镜像没漂移——
+本工具把「七服务健康 + API/Web 运行 tag/运行镜像 ID/锚点 tag 本地解析
+三重 digest 比对」固化为单一 fail-closed 只读工具。开发回合零真实
+Docker（全部经 FakeRunner 注入测试锁定）；真实采集仅由 supervisor 在
+获准窗口运行。
+
+```
+# 仓库根执行（canonical venv 或任意 Python ≥3.11，纯标准库）
+python tools/ops/production_drift_watch.py                # plan（默认，零 subprocess/零 Docker/零网络/零 env 读取）
+python tools/ops/production_drift_watch.py --execute \
+    --confirm "EXECUTE READ-ONLY PRODUCTION DRIFT WATCH"  # execute（只读校验）
+```
+
+安全性质（契约测试 `services/api/tests/test_production_drift_watch.py`
+锁定；细节见脚本头注释与
+`docs/evidence/m14-127-production-drift-watch/README.md`）：
+
+- **双模式门禁**：默认 plan 零副作用（socket+subprocess 双阻断下照常出
+  计划；plan 报告零状态宣称——无 drift/checks/counts）；execute 需
+  `--execute` 旗标 + 精确确认短语 `EXECUTE READ-ONLY PRODUCTION DRIFT
+  WATCH`（一字不差），缺一/近似即 EXIT 2 且零采集（Runner 零构造）；
+  `--project` 严格白名单（与 production_monitor 同款；被拒值不回显）。
+- **固定画像 + 常量锚点**：compose project
+  `aios-m14-03-production-rehearsal`（--profile local + --profile search
+  覆盖七服务：postgres/redis/minio/api/web/livekit/searxng）；API/Web
+  镜像锚点为 M14-124 已批准值（`aios/api:m14-124-production` =
+  `sha256:c99e28c905208bffbc1576f0c5c9e042af18fd356881cee967078ee38323781f`、
+  `aios/web:m14-124-production` =
+  `sha256:d596f0c726ab690359b196a3c3911f9842b94218b4361ee452413d420a38194b`）
+  烘烤为常量——绝不取自请求/env/文件，不可经 CLI 注入。
+- **只读采集面**：① `docker compose ps --format json`（七服务存在性 +
+  Health/State；原始 Labels/Ports 绝不保留）；② 逐容器
+  `docker inspect --format`（state/health/Config.Image 运行 tag/.Image
+  运行镜像 ID 四事实）；③ API/Web 锚点镜像
+  `docker image inspect --format {{.Id}}`（本地 tag→ID 解析，抓「tag
+  被移到新镜像」漂移）。
+- **子进程白名单门（结构性）**：仅上述三只读形态放行（ps 后必须恰为
+  `--format json`；inspect 格式串必须逐字等于常量、恰一对象）；
+  stop/start/restart/rm/kill/down/exec/up/build/pull/logs/裸 ps/错格式
+  串/多对象一律在任何执行之前拒绝；无 shell=True（AST 锁定）；
+  Windows 侧恒 CREATE_NO_WINDOW。
+- **digest fail-closed**：运行镜像 ID 与 tag 解析 ID 都必须是
+  `sha256:<64 位小写 hex>` 精确形态且逐字符等于锚点——**tag 相同绝不
+  冒充 digest 通过**；digest 无法取得/不可解析 → 恒判 drift（不可证明
+  无漂移即视为有漂移）。
+- **数据边界**：绝不读取/打印容器 env、secret、日志正文、DB/MinIO/
+  voice 数据；报告仅服务名/健康词/tag/digest/固定词汇状态与原因，写盘
+  前经 redact_secrets 终防线；零网络/零 env 读取（源码 AST 契约锁定）。
+- **判定与退出码**：全部成立才 `drift=false`（exit 0）；任一失败/
+  缺失/采集失败 → `drift=true` + 固定词汇 drift_reasons（exit 2，诚实
+  失败证据照常落盘，绝不修复/伪装生产状态）；报告写入失败 = 证据不可
+  失 → EXIT 2。报告 JSON+MD 原子写（tmp+fsync+os.replace；symlink
+  组件/越界 stem 拒绝）落 gitignored
+  `.verify/artifacts/m14-127-production-drift-watch/`
+  （`--artifact-dir` 为操作者显式自选，其位置与入库与否由操作者负责）。
+- `drift=false` 仅表示本轮采集范围内锚点全部吻合——不是生产健康/就绪
+  宣称，不解除任何 release gate；release-approval 仍 human-only；
+  `production_ready=false` 不变。
