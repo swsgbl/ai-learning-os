@@ -49,6 +49,10 @@
   阻塞于操作者 secret；零 Task Scheduler/Docker/服务/生产状态改动；
   `production_ready=false` 不变，release approval 仍 human-only。
 
+## M14-142 Stage 2 — Harmony 后端冒烟三周期真实执行证据收口（docs-only）
+
+- 2026-09-18：三周期 Pura 90（HarmonyOS 6.1.1(24) Beta1）模拟器真实执行证据（复用 M14-142 Stage 1 已合并的 `tools/harmony_release/backend_smoke_repeat.py`，零代码改动）——unsigned HAP（220008 bytes，SHA256 `0335E5BE…`，release_build exit 0）；`backend_smoke_repeat.py --cycles 3`：计划模式 exit 0（零子进程）；执行模式 exit 0，`status=ok`/`cycles_executed=3`/`subprocesses_spawned=3`/`fail_stopped_at=null`；三周期 `child_status=ok`/`child_exit_code=0`/`child_mutation_performed=true`/`child_failures=[]`，耗时 26.062/25.031/24.922s，每周期布局证据立即复制入 `cycle_<n>/` 子目录隔离归属。本收口回合为 docs-only 台账/README 修正：证据 README 按聚合 JSON 实际保留字段如实改写（不保留 `convergence_retries`/逐步明细/cleanup 细节，改声明为运行时控制台日志口径），ROADMAP/PROJECT_STATUS/CHANGELOG/DEVELOPMENT 各追加一条 Stage 2 条目；原始证据在 gitignored `.verify/m14-142-harmony-backend-smoke-stage2/`，不入仓。验证：全量 `pytest tests\harmony_release -q` + `git diff --check` + 新增行秘密/本地绝对路径/U+FFFD 扫描。本收口回合未重跑任何模拟器/后端/构建/hdc/容器/设备命令；unsigned HAP、模拟器非真机、loopback 后端非生产语义，`production_ready=false` 不变。
+
 ## M14-142 — Harmony 后端冒烟预热加固（Settings 收敛 + 结构化输入选择）
 
 - `backend_smoke.py`：Settings 收敛加固——捕获布局无 TextInput（仍在

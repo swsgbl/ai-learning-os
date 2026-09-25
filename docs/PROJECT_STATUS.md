@@ -103,6 +103,9 @@ F,E9）/py_compile/`git diff --check` 干净；新增行秘密与本地绝对路
 Docker/服务/代理/后端/生产状态改动）；`production_ready=false` 不变，
 release approval 仍 human-only。
 
+**M14-142 Harmony 后端冒烟重复周期包装器 Stage 2 收口（docs-only 台账/README 修正，三周期 Pura 90 真实执行证据）**：worktree
+`m14-142-harmony-backend-smoke-stage2`、分支 `harmony/m14-142-backend-smoke-stage2`、基于 `239b881`（origin/main），单 local commit，不 push、不开 PR。对已完成的三周期 Pura 90（HarmonyOS 6.1.1(24) Beta1）模拟器真实执行证据做台账修正与补全：证据 README 修正为仅陈述聚合 JSON 实际保留的字段（每周期 `child_status`/`child_exit_code`/`child_mutation_performed`/`child_failures`/`seconds`/`evidence_dir`；顶层 `status`/`exit_code`/`cycles_executed`/`subprocesses_spawned`/`failures`/`fail_stopped_at`），如实声明聚合 JSON **不保留 `convergence_retries`、子进程逐步明细（preflight/install/start/settings_ui/home_view/background/uninstall）与 cleanup 细节**（原 README 将逐步链路/cleanup 结论误标为聚合 JSON 可核验值，已修正为「运行时控制台日志口径」）；三周期数值复核：cycle_1/2/3 = 26.062s/25.031s/24.922s、`child_status=ok`/`child_exit_code=0`/`child_mutation_performed=true`/`child_failures=[]`，unsigned HAP 220008 bytes SHA256 `0335E5BE…`，release_build exit 0，执行模式 `status=ok`/`cycles_executed=3`/`subprocesses_spawned=3`/`fail_stopped_at=null`。本切片仅修改 5 个文件（证据 README + ROADMAP/PROJECT_STATUS/CHANGELOG/DEVELOPMENT 各追加一条 Stage 2 条目），零 Python/工具/测试代码改动、零模拟器/后端/构建/hdc/容器/设备命令重跑（原始三周期执行证据早已存在于 gitignored `.verify/m14-142-harmony-backend-smoke-stage2/`）。验证：全量 `pytest tests\harmony_release -q` + `git diff --check` + 新增行秘密/本地绝对路径/U+FFFD 扫描。诚实边界：unsigned HAP、模拟器非真机、loopback 后端非生产语义——不构成签名/真机/生产就绪声明；`production_ready=false` 不变；本收口回合未重跑任何设备/后端/生产命令。证据 `docs/evidence/m14-142-harmony-backend-smoke-stage2/README.md`。
+
 **M14-142 Harmony 冒烟预热加固（Settings 收敛 + 结构化输入选择；R4 收尾切片）**：worktree
 `m14-142-harmony-smoke-warmup`，分支 `harmony/m14-142-smoke-warmup`，基
 `6508619ebbb75487e0854bb7fd884b7a29c752bf`（origin/main，M14-145 合入后 R6 rebase
