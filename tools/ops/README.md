@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）+ 监控告警外发分发（M14-119）+ 告警分发回环运行时闭环（M14-121）+ production drift watch（M14-127）+ production drift watch 独立周期任务 readiness（M14-129） + production drift watch 历史审计（M14-133）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）+ 监控告警外发分发（M14-119）+ 告警分发回环运行时闭环（M14-121）+ production drift watch（M14-127）+ production drift watch 独立周期任务 readiness（M14-129） + production drift watch 历史审计（M14-133）+ production drift watch 告警分发（M14-135）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -1765,3 +1765,71 @@ python tools/ops/production_drift_watch_history.py --input-dir <dir> --output-di
   截断并标记）。
 - **诚实边界**：历史审计不证明 production readiness、长期稳定性、
   跨重启存活或 drift 告警送达；release-approval 仍是 human-only 门。
+
+## production_drift_watch_alert_dispatch.py（M14-135）
+
+production drift watch **告警分发第一片**：既有 M14-127 execute 模式
+drift-watch JSON 报告（恰好一份）→ 严格校验（**绝不重判 Docker 状态或
+漂移**——drift 判定唯一依据是报告自身布尔）→ drift=true 才经单一通用
+HTTPS webhook 分发 + sanitized 独立分发台账。补「drift=true 告警送达
+未实证」缺口的第一有界部分：**工具就绪 only**，零调度集成（后续切片）。
+
+```
+# 仓库根执行（canonical venv 或任意 Python ≥3.11，纯标准库）
+python tools/ops/production_drift_watch_alert_dispatch.py \
+    --report <drift-watch-*.json> [--secret-file <secret.json>]    # plan（默认，零网络零分发）
+python tools/ops/production_drift_watch_alert_dispatch.py \
+    --report <drift-watch-*.json> --secret-file <secret.json> \
+    --execute --confirm "EXECUTE PRODUCTION DRIFT WATCH ALERT DISPATCH"
+```
+
+安全性质（契约测试 `services/api/tests/test_production_drift_watch_alert_dispatch.py`
+锁定；细节见脚本头注释与
+`docs/evidence/m14-135-drift-watch-alert-dispatch/README.md`）：
+
+- **只消费权威报告**：文件名严格 `drift-watch-YYYYMMDD-HHMMSS.json`
+  白名单 + 身份/schema 精确匹配（schema_version=1、tool、milestone、
+  **mode=execute**——plan 模式报告无权威 drift 结论恒拒绝，绝不猜测）
+  + UTC 时间戳严格形态且 ended>=started + 文件名时间戳交叉校验
+  （started ∈ [stamp, stamp+2s]）+ config（project 白名单形态 +
+  api/web 锚点 tag+digest 形态）+ counts↔checks / drift↔(fail>0) /
+  reasons 非空⟺drift 自洽 + drift_reasons 固定词汇封闭集合
+  （M14-127 evaluate_drift 全部可产出形态逐项枚举，越域前缀/服务一律
+  拒绝）。任何 malformed/自洽性破损报告 exit 2 且零分发。
+- **分发判定只依据报告**：mode=execute 且 drift=true 才分发；合法
+  execute 报告 drift=false → skipped-no-alerts（exit 0、零网络、零
+  台账写入）。
+- **M14-119 安全面同一实现对象复用**（`validate_webhook_url` /
+  `load_webhook_secret` / `RealTransport` / `RealStore` / `RealClock` /
+  `write_report_files` / `ensure_output_dir_safe` 直接 import，契约测试
+  逐一 `is` 锁定——绝不平行第二策略）：单一通用 HTTPS webhook sink；
+  URL/token 恒来自操作者 gitignored secret JSON 且绝不回显/入档；
+  SSRF 收紧（生产恒 https；http 仅经显式 test-only 旗标且仅限字面
+  回环 IP；私网/链路本地/未指定/组播/保留/localhost 恒拒）；execute
+  门禁 = `--execute` + 精确短语 + `--secret-file` 三者缺一/近似即
+  exit 2 且零 Transport 构造。
+- **payload 版本化 + 固定词汇 + 有界**：仅报告身份（stem/SHA-256/
+  起止 UTC/project）+ 状态摘要（drift 布尔、pass/fail 计数、固定词汇
+  drift_reasons ≤32 条 + 截断计数）+ 分发元数据；绝无原始日志/env 值/
+  URL/token/容器体/DB URL/绝对路径/threshold detail 文本；编码后字节
+  数硬顶复检。
+- **sanitized 独立台账（幂等 + 审计）**：`drift-dispatch-ledger.jsonl`
+  （默认 gitignored `.verify/artifacts/m14-135-drift-watch-alert-dispatch/`）
+  仅在成功分发后原子追加；行 schema **全字段严格校验**（16 键与写入行
+  精确一致 + 逐字段类型/值域/固定词汇：tool/milestone/
+  dispatch_status/sink 精确匹配、双 sha256 指纹恰 64 位小写 hex、
+  report_stem/dispatch_id 闭式形态 + 可解析 stamp、严格 UTC 真实日历
+  时刻、counts 恰 pass/fail 非负 int、drift_reasons_count 有界、
+  http_status ∈ 200..299、payload_bytes ∈ [1, 硬顶]；bool 绝不冒充
+  int；多余/缺失键与任何越界值一律 `ledger-row-schema` fail-closed，
+  M14-119 台账行混入即拒）；同报告 SHA-256 重复分发在**发送之前**拒绝
+  （duplicate-dispatch，零 Transport 调用）。
+- **失败与半失败恒可见**：失败分发 dispatch_status=failed、绝不入台账、
+  绝不报告为 sent；成功分发后台账写入失败 → sent-ledger-unrecorded
+  可见 + exit 2（幂等面破损绝不谎报）。
+- **单 sink、单次发送、零重试、零调度集成**：真实外发仅由 supervisor
+  在获准窗口运行；开发回合零真实端点接触（全部 FakeTransport 注入
+  测试）。
+- **诚实边界**：本工具只是 alert delivery 的工具就绪第一片，不构成
+  production readiness、不宣称 alert delivery 已在生产实证；
+  `production_ready=false` 不变，release-approval 仍是 human-only 门。
