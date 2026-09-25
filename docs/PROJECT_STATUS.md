@@ -9,6 +9,79 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-128 M14-126/M14-127 进度台账回填（docs-only 切片）**：worktree
+`m14-128-m126-m127-ledger-backfill`，分支
+`docs/m14-128-m126-m127-ledger-backfill`，基于 main
+`cb0f683ee8bad6bc7b48a2e239c03a961ceb2ba6`（PR #215 merge = M14-126
+证据合入，本地 git 全 SHA 复核一致，精确基点 = 当前 HEAD），单 local
+commit，不 push、不开 PR、不合并（supervisor 只监督验收）。M14-127
+（PR #214）与 M14-126（PR #215）的功能/证据切片在原任务书边界下刻意
+禁改三本台账，两轮合并后 main CI 均五项全绿；本切片单独补账，恢复
+PROJECT_STATUS 唯一进度真相源地位：零代码、零测试变更、零生产/设备
+执行，仅把两切片已验收事实（commit/PR/CI run、交付物、验证数字、
+真实执行结论、诚实边界）回填进本文件、ROADMAP 与 CHANGELOG，并登记
+下一步——M14-129 需先设计/评估将 production drift watch 从单轮快照
+接入周期只读监控的调度与预算边界；Harmony 设备链路继续等待模拟器
+目标恢复后重跑 attempt 2，不得虚构通过。验证（docs-only）：markdown
+结构 sanity + 新增文本秘密扫描 0 命中 + `git diff --check` 干净，
+不运行 pytest。
+
+**M14-127 Production Drift Watch 只读工具与契约测试（工具/测试/文档
+切片，合并收口回填 2026-09-25）**：交付
+`tools/ops/production_drift_watch.py`（只读校验生产栈是否仍锚定
+M14-124 已批准发布镜像：七 compose 服务存在/健康 + 七容器
+state/health + API/Web 运行 tag、运行 image ID、锚点 tag 本地解析
+三重比对；digest 取不到恒判 drift；fail-closed——`--execute` +
+精确确认短语 `EXECUTE READ-ONLY PRODUCTION DRIFT WATCH` 门禁、
+子进程三只读形态白名单、无 shell=True、零网络、零 env 读取，AST
+契约锁定；报告 JSON+MD 原子写 gitignored 目录、写盘前
+redact_secrets 终防线）+ 契约测试
+`services/api/tests/test_production_drift_watch.py` +
+`tools/ops/README.md` M14-127 段 + 证据
+`docs/evidence/m14-127-production-drift-watch/README.md`。真实只读
+execute（2026-09-25T02:40:25Z）：**drift=false，检查 28 pass /
+0 fail**；7/7 服务 healthy；API `aios/api:m14-124-production`
+运行 tag、运行 image ID、tag 本地解析三重匹配 M14-124 锚点（digest
+`sha256:c99e28c905208bffbc1576f0c5c9e042af18fd356881cee967078ee38323781f`），
+Web `aios/web:m14-124-production` 同样三重匹配（digest
+`sha256:d596f0c726ab690359b196a3c3911f9842b94218b4361ee452413d420a38194b`）。
+验证：新增契约测试 96 passed；聚焦回归 382 passed；ruff /
+py_compile / `git diff --check` 全过。**合并收口：feature commit
+`27d284d4b0a006d6dd2cf129e96eb505df3d4185` 已随 PR #214 合并 main
+（merge commit
+`30f703ea50c50a9a4c9b459d4198cbff98442d43`，本地 git 可验证）；PR
+CI run `36087928019` 五项 job 全部 success，merge 后 main CI run
+`36088193876` 五项 job 全部 success。**诚实边界：单轮快照（无持续
+调度、未接入 M14-14 监控管道）、只读检测器（发现漂移只产 exit 2 +
+drift_reasons，绝不修复/重启容器）、不解除任何 release gate、零生产
+容器 mutation，`production_ready=false` 不变。
+
+**M14-126 Harmony current-main 回归证据（verification/docs-only 切片，
+合并收口回填 2026-09-25；设备链路 BLOCKED）**：基于 main
+`308b2bc`（PR #213 merge = M14-124 生产切换证据合入）对 current
+main 真实重跑 Harmony 发布链，tracked 改动仅
+`docs/evidence/m14-126-harmony-current-main-regression/README.md`。
+结果：① release build 通过（exit 0，unsigned HAP 220,008 bytes，
+SHA256
+`9EFC6F06CEBCD46374538DD5B7CD155CF21A53FFB5415AB78B457B0DAEF94172`，
+certutil 独立复核一致，无签名材料参与）；② 聚焦 pytest
+`tests/harmony_release` 524 passed / 1 skipped；③ auth smoke
+attempt 1（真实 execute/mutation）：主机侧 auth 契约 7/7 matched、
+install/uninstall ok，但 `start` 两次 `focus_window_unreadable` 失败，
+12 stage = 3 ok / 1 failed / 8 not_run（后续 stage 按设计
+previous_step_failed，收尾卸载清理成功）；attempt 2 未消耗——复核
+确认 `127.0.0.1:5555` 已不可达（hdc tconn Connect failed），按
+"目标不可达即 blocked"规则停止。**最终口径：release build + 离线
+契约测试 PASS；设备 auth/login UI 链路 BLOCKED（外部模拟器目标
+离线），不构成设备回归通过；模拟器目标恢复后可重跑 attempt 2。**
+未触碰生产 API/DB/MinIO/语音/容器/secrets；一次性 loopback 后端由
+launcher finally 停止并确认结束。**合并收口：feature commit
+`f8812934cd849648a44f834753776b62eb45de2f` 已随 PR #215 合并 main
+（merge commit
+`cb0f683ee8bad6bc7b48a2e239c03a961ceb2ba6`，本地 git 可验证）；PR
+CI run `36087999829` 五项 job 全部 success，merge 后 main CI run
+`36088372059` 五项 job 全部 success。**
+
 **M14-124 生产切换与发布验收（证据/docs-only 切片）**：worktree
 `m14-124-production-cutover-evidence`，分支
 `ops/m14-124-production-cutover-evidence`，基于 main
