@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）+ 监控告警外发分发（M14-119）+ 告警分发回环运行时闭环（M14-121）+ production drift watch（M14-127）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）+ 监控告警外发分发（M14-119）+ 告警分发回环运行时闭环（M14-121）+ production drift watch（M14-127）+ production drift watch 独立周期任务 readiness（M14-129）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -1617,3 +1617,62 @@ python tools/ops/production_drift_watch.py --execute \
 - `drift=false` 仅表示本轮采集范围内锚点全部吻合——不是生产健康/就绪
   宣称，不解除任何 release gate；release-approval 仍 human-only；
   `production_ready=false` 不变。
+
+## production_drift_watch_task.py（M14-129）
+
+production drift watch **独立**周期计划任务 readiness 管理器：把 M14-127
+`production_drift_watch.py`（只读镜像锚点校验）经静默 VBS wrapper
+（`run_production_drift_watch_silent.vbs`）挂到隐藏 Task Scheduler 周期
+任务的 readiness 面，为后续 supervisor 显式 install 做准备。与 M14-14
+AIOS-Monitoring-Pipeline 互不接入/互不改动（不同任务名/URI/wrapper，
+同机并存）；本工具只管理任务注册面，从不运行 drift watch 本体。
+
+```
+# 仓库根执行（canonical venv 或任意 Python ≥3.11，纯标准库；本开发回合禁止人工执行 install/uninstall）
+python tools/ops/production_drift_watch_task.py plan      # 只读预检 + 注册计划（零写操作、零调度器改动）
+python tools/ops/production_drift_watch_task.py generate  # 导出任务 XML（UTF-16 with BOM，gitignored .verify/artifacts/m14-129-production-drift-watch-task/）
+python tools/ops/production_drift_watch_task.py status    # 只读状态（installed 0/unknown 1/missing 2/foreign 3/malformed 4）
+python tools/ops/production_drift_watch_task.py install --confirm "EXECUTE PRODUCTION DRIFT WATCH SCHEDULER CHANGE"      # supervisor-only（提升令牌 + 获准窗口）
+python tools/ops/production_drift_watch_task.py uninstall --confirm "EXECUTE PRODUCTION DRIFT WATCH SCHEDULER CHANGE"    # 仅删本工具精确拥有的任务
+```
+
+安全性质（契约测试 `services/api/tests/test_production_drift_watch_task.py`
+锁定；细节见脚本头注释与
+`docs/evidence/m14-129-production-drift-watch-task/README.md`）：
+
+- **固定任务身份**：`AIOS-Production-Drift-Watch` /
+  `urn:aios:m14-129:production-drift-watch`；Description 持久归属标记含
+  `managed by tools/ops/production_drift_watch_task.py`。Hidden=true、
+  MultipleInstancesPolicy=IgnoreNew、StartWhenAvailable=true、电池不禁启
+  不停、InteractiveToken + LeastPrivilege；Action=`wscript.exe //B
+  //Nologo` 指向仓库内 wrapper、WorkingDirectory=repo。
+- **预算交叉 pin**：drift watch 单轮最坏只读子进程硬顶 = compose ps
+  60s + 7 容器 inspect×30s + 2 image inspect×30s = 330s（M14-127 常量）；
+  Repetition Interval **PT15M**（900s）> ExecutionTimeLimit **PT10M**
+  （600s）> 330s——调度器绝不先于内部超时杀整任务，测试逐项断言
+  （常量漂移即测试失败）。
+- **GatedSchtasks 结构性白名单**：只读查询固定两形态；mutation 仅
+  install 的精确 `/Create /TN <固定名> /XML <单 .xml 路径>`（绝不 /F）
+  与 uninstall 的 `/Delete /TN <固定名> /F`（仅 exact-owned 分支）；绝不
+  /Run、/Change、/End；非白名单形态在任何执行之前拒绝；无 shell=True。
+- **install/uninstall 短语门禁**：各需
+  `--confirm "EXECUTE PRODUCTION DRIFT WATCH SCHEDULER CHANGE"`（一字
+  不差；与 drift watch 自身 execute 短语及 M14-14 scheduler 短语绝不
+  互通），缺失/近似 → exit 1 且零 schtasks 调用。
+- **绝不覆盖、绝不误删**：install 前只读 query + 二次全量列表复核都确认
+  missing 才 /Create；同名任务存在（无论归属）一律拒绝。uninstall 仅
+  exact-owned（URI + Description 持久标记 + 全部关键字段精确）才
+  /Delete /F；foreign/missing（幂等）/malformed/unknown 绝不 force。
+- **verify_task_xml 四态**（installed/missing/foreign/malformed）：适配
+  Task Scheduler 注册后归一化（URI 重写、默认值元素省略按 M14-06 先例
+  条件认可）；XML 解析前拒绝 DOCTYPE/ENTITY（XXE 防护）；归属判不明 =
+  foreign；字段缺失/漂移逐项报告字段名。generate 产物 UTF-16 with BOM
+  （与声明及 install 临时字节一致）、原子写、回读复核、零 schtasks。
+- **VBS wrapper 纪律**：repo 自脚本位置推导（无盘符硬编码）、隐藏窗口
+  `Run(...,0,True)`、退出码原样透传、固定 canonical
+  `<repo>/.venv/Scripts/python.exe` 调用 `production_drift_watch.py
+  --execute --confirm "EXECUTE READ-ONLY PRODUCTION DRIFT WATCH"`；预检
+  缺失专用退出码（2=venv python 缺失、3=脚本缺失、4=repo 缺失）；零
+  secret、零网络、零 env 读取。
+- readiness ≠ 任务已安装 ≠ 生产监控已上线：本切片零 schtasks 执行、零
+  注册、零自然调度、零 drift 结论；实际注册 supervisor-only。
