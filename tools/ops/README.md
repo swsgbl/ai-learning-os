@@ -1,4 +1,4 @@
-# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）+ 监控告警外发分发（M14-119）+ 告警分发回环运行时闭环（M14-121）+ production drift watch（M14-127）+ production drift watch 独立周期任务 readiness（M14-129）
+# tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）+ 监控告警外发分发（M14-119）+ 告警分发回环运行时闭环（M14-121）+ production drift watch（M14-127）+ production drift watch 独立周期任务 readiness（M14-129） + production drift watch 历史审计（M14-133）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -1702,3 +1702,62 @@ python tools/ops/production_drift_watch_task.py uninstall --confirm "EXECUTE PRO
   PT15M 槽位自然调度 ok——不证明长期稳定性/夜间无人值守/跨重启
   持续调度/drift 告警路径，`production_ready=false` 不变。证据
   `docs/evidence/m14-132-m129-drift-watch-natural-runs/README.md`。
+
+## production_drift_watch_history.py（M14-133）
+
+production drift watch **历史审计器**：只读扫描 M14-127 单轮 drift-watch
+报告目录，产出确定性的历史完整性/连续性/锚点稳定性审计报告（JSON+MD，
+原子写、零墙钟、同输入逐字节可复现），补齐「有单轮报告、没有可测试的
+历史审计器」的缺口。默认输入 canonical gitignored
+`.verify/artifacts/m14-127-production-drift-watch/`，默认输出 gitignored
+`.verify/artifacts/m14-133-drift-watch-history/`（固定文件名
+`drift-watch-history.json` / `drift-watch-history.md`）。
+
+```
+# 仓库根执行（canonical venv 或任意 Python ≥3.11，纯标准库）
+python tools/ops/production_drift_watch_history.py                              # 默认输入/输出
+python tools/ops/production_drift_watch_history.py --input-dir <dir> --output-dir <dir>
+```
+
+安全性质（契约测试 `services/api/tests/test_production_drift_watch_history.py`
+锁定；细节见脚本头注释与
+`docs/evidence/m14-133-drift-watch-history/README.md`）：
+
+- **只读消费既有报告文件**：绝不运行 M14-127 watcher、绝不触碰计划
+  任务/调度器、绝不接触生产栈/容器/DB/MinIO/语音/secret/env；本工具
+  的真实历史执行属 supervisor review 后的显式步骤。
+- **零子进程、零网络、零 env 读取、零墙钟**（AST/token 契约锁定）：
+  输出确定性——同输入两次运行逐字节相同。
+- **文件名严格白名单**：仅接受 `drift-watch-YYYYMMDD-HHMMSS.json`
+  普通文件；伴生 `.md`、`plan-*.json` 与其它条目只计数绝不解析；
+  输入路径含 `..` 组件或任何现存 symlink 组件 → fail-closed 零输出
+  拒绝；symlink 报告文件计 invalid（`symlink-target`）并按发现处理。
+- **严格 schema 校验**（对齐 M14-127 execute 报告实际字段）：
+  schema_version=1、tool/milestone/mode 精确匹配、started/ended 严格
+  UTC 形态且 ended>=started、config.anchors（api/web tag+sha256
+  digest）、collectors/checks/counts/drift 在场、counts 与 checks
+  实际计数一致、drift 与失败检查数一致；文件名 UTC 时间戳对
+  started_at_utc 交叉校验（容差 +2s，匹配 M14-127 先取 stamp 后取
+  started_at 的实现序）。
+- **scheduled-run 选择契约**：`started_at_utc` minute ∈ {00,15,30,45}
+  且 second ∈ [00,30] 才入选；manual/off-slot 报告保持**可见的
+  excluded**（reason=`manual-off-slot`，计入索引与计数），绝不静默
+  删除。
+- **PT15M slot 审计**：仅对入选报告首末 slot 闭区间枚举期望 slot、
+  显式列出缺失；**绝不向首末报告之外外推完整性**；slot 期望数超硬顶
+  10000 → `slot-range-too-large` fail-closed。
+- **重复与 digest 检测**：入选报告间 started_at 重复、同 slot 双跑、
+  drift=true、failed checks、API/Web expected/running digest 跨报告
+  不一致或未锚定（双通道：容器 inspect + tag 解析）均按固定词汇发现
+  处理；最长连续 clean streak 仅在相邻入选 clean 报告 slot 恰差一个
+  PT15M 时延续（missing/drift/duplicate 一律断链）。
+- **exit 0 严格条件**：入选报告全部 valid 且 clean + 无 duplicate +
+  无缺失 slot + digest 锚点三重稳定；零 valid / 零 selected 恒为发现
+  （`no-valid-reports` / `no-selected-reports`——无证据绝不冒充全绿）。
+  任何审计发现 → 诚实写出失败报告后 exit 2；参数/路径/写失败 →
+  exit 2 且零报告写出。
+- **输出边界**：报告绝不包含绝对路径或 secret 形态值（写盘前经
+  redact_secrets 终防线）；逐报告索引 `runs` 有界（硬顶 5000，超出
+  截断并标记）。
+- **诚实边界**：历史审计不证明 production readiness、长期稳定性、
+  跨重启存活或 drift 告警送达；release-approval 仍是 human-only 门。

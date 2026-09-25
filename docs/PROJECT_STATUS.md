@@ -9,6 +9,58 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-133 Production Drift Watch 历史审计器（工具/测试/文档切片）**：worktree
+`m14-133-drift-watch-history`，分支 `ops/m14-133-drift-watch-history`，基于
+main `a58e8086eb415de200cbfe2a2cb7cd8b410fdc54`（PR #220 merge = M14-132
+三次自然轮证据合入；本地 `git rev-parse origin/main` 同 SHA 复核一致），
+实现者执行、Codex supervisor 监督；本地 commit 后 supervisor 审查与
+remote 发布（push/PR/合并）在其后进行（review/push/PR/CI/merge 全部
+supervisor-only；PR #221 已由 supervisor 创建，其 CI R1 触发本
+docs-wording 修复 commit——实现 commit 之后的第二个本地 commit）。零生产/零调度器/
+零设备 mutation：零 Docker、零 compose、零 Task Scheduler 接触（连只读
+查询也未执行）、零服务进程启停、零 DB/MinIO/语音/secret/env 访问；对
+canonical gitignored 真实 drift-watch 工件仅开发早期只读 schema 理解
+（1 份 JSON 结构阅读，内容未复制进 tracked 文件）；对真实工件的审计
+本体执行仅 `--help` plan 级调用，真实历史审计为 supervisor review 后的
+显式步骤。交付：① `tools/ops/production_drift_watch_history.py`——
+M14-127 单轮报告 → 确定性历史审计（单文件、纯标准库、零子进程/零网络/
+零 env 读取/零墙钟）：文件名严格白名单 `drift-watch-YYYYMMDD-HHMMSS.json`
+（伴生 .md/plan-*.json 只计数，traversal 与 symlink 组件 fail-closed
+拒绝，symlink 报告计 invalid）；严格 schema 校验（tool/milestone/mode/
+schema_version 精确匹配、UTC 时间戳形态、config.anchors api/web tag+
+sha256 digest、counts 与 checks 实际计数一致、drift 与失败检查数一致）
++ 文件名 UTC 时间戳对 started_at_utc 交叉校验（[stamp, stamp+2s] 容差，
+匹配 M14-127 先取 stamp 后取 started_at 的实现序）；scheduled-run 选择
+（minute 00/15/30/45 且 second 00-30 入选，manual/off-slot 可见 excluded
+绝不静默删除）；PT15M slot 审计（仅首末入选 slot 闭区间、缺失显式列出、
+绝不外推、期望数超 10000 硬顶 fail-closed）；重复 started_at/同 slot
+双跑/drift=true/API/Web expected+running digest 双通道跨报告一致性与
+锚定检测；最长连续 clean streak（相邻入选 clean 报告 slot 恰差一个
+PT15M 才延续）；确定性 JSON+MD 审计报告（固定文件名
+drift-watch-history.json/.md，同输入逐字节可复现，原子写 tmp+fsync+
+os.replace，redact_secrets 终防线，逐报告 runs 索引 5000 硬顶有界，
+绝不含绝对路径）；exit 0 仅当选中报告全部 valid 且 clean、无重复、无
+缺失 slot、digest 锚点三重稳定，零 valid/零 selected 恒为发现，审计
+发现诚实落盘后 exit 2，参数/路径/写失败 exit 2 零输出。② 契约测试
+`services/api/tests/test_production_drift_watch_history.py`（47 项，全部
+合成临时 fixtures）：结构契约（AST import 白名单+源码 forbidden
+tokens）、快乐路径、scheduled 选择边界（second 30/31）、13 类 schema
+拒绝参数化、文件名时间戳容差边界、重复/drift/digest 不一致、路径与
+symlink 拒绝（真实文件面）、确定性逐字节复现、无绝对路径、redact
+单元契约、报告 schema 键契约。③ 文档：`tools/ops/README.md` M14-133
+段（含精确安全边界）、证据 `docs/evidence/m14-133-drift-watch-history/
+README.md`（实现/命令/合成-only 验证/诚实边界/变更清单）。验证：新
+契约测试 47 passed + 邻居回归 test_production_drift_watch.py 96 +
+test_production_drift_watch_task.py 82（合计 178 passed）；ruff All
+checks passed；py_compile 通过；`git diff --check` 干净；新增行秘密
+扫描 0 命中；post-commit worktree clean。诚实边界：历史审计不证明
+production readiness、长期稳定性、跨重启存活或 drift 告警送达；
+`production_ready=false` 不变，release-approval 仍是 human-only 门；
+真实历史执行未做（supervisor-only），Harmony M14-126 attempt 2 继续
+BLOCKED（hdc targets 空、127.0.0.1:5555 不可达），不得虚构通过。
+
+## 前一任务（M14-132 M14-129 drift watch 三次连续自然调度轮证据回填——已随 PR #220 合并 main `a58e8086eb415de200cbfe2a2cb7cd8b410fdc54`；production drift watch 历史审计由 M14-133 接续）
+
 **M14-132 M14-129 drift watch 三次连续自然调度轮证据回填（docs-only 切片）**：worktree
 `m14-132-m129-drift-watch-natural-runs`，分支
 `docs/m14-132-m129-drift-watch-natural-runs`，基于 main
