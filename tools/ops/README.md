@@ -1691,3 +1691,14 @@ python tools/ops/production_drift_watch_task.py uninstall --confirm "EXECUTE PRO
   影响）。一轮自然成功仅证明 installed + 首轮自然运行，不证明长期
   稳定性/持续调度/重启重建覆盖；`production_ready=false` 不变。证据
   `docs/evidence/m14-131-m129-production-install-natural-run/README.md`。
+  **三轮后记（2026-09-25 观测事实，M14-132 回填）**：任务于本地
+  12:30/12:45/13:00（+08:00）完成**三次连续自然调度轮**（各 +1 秒
+  启动、历时约 1 秒），事后只读查询 State=Ready、LastTaskResult=0、
+  NumberOfMissedRuns=0、NextRunTime=13:15:00；零 /Run、/Change、
+  /End、零重装、零 Docker/容器/生产服务重启、零生产部署、零手动
+  execute。三轮报告均 drift=false、28 pass / 0 fail、七服务
+  healthy、API/Web digest 三轮恒为 M14-124 批准值（三重一致）。
+  三轮连续自然成功仅证明 installed + 45 分钟观测窗口内三个连续
+  PT15M 槽位自然调度 ok——不证明长期稳定性/夜间无人值守/跨重启
+  持续调度/drift 告警路径，`production_ready=false` 不变。证据
+  `docs/evidence/m14-132-m129-drift-watch-natural-runs/README.md`。
