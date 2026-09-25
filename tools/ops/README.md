@@ -1,5 +1,5 @@
 # tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）+ 监控告警外发分发（M14-119）+ 告警分发回环运行时闭环（M14-121）+ production drift watch（M14-127）+ production drift watch 独立周期任务 readiness（M14-129） + production drift watch 历史审计（M14-133）+ production drift watch 告警分发（M14-135）
-+ production drift watch 告警分发回环运行时闭环（M14-136，测试切片）+ production drift watch 告警分发调度桥 readiness（M14-137）+ production drift watch 告警任务桥真实子进程运行时闭环（M14-140，测试切片）
++ production drift watch 告警分发回环运行时闭环（M14-136，测试切片）+ production drift watch 告警分发调度桥 readiness（M14-137）+ production drift watch 告警任务桥真实子进程运行时闭环（M14-140，测试切片）+ production drift watch 告警周期任务 readiness（M14-141）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -1925,3 +1925,92 @@ SHA-256 + 接收器零请求 + 临时目录树快照不变（plan 零写入运�
 上不可达，此为实证的 fail-closed 面而非缺口）、不证明调度集成或
 告警端到端送达；`production_ready=false` 不变。细节见
 `docs/evidence/m14-140-drift-watch-alert-task-runtime/README.md`。
+
+## production_drift_watch_alert_scheduler.py（M14-141）
+
+production drift watch **告警分发周期计划任务 readiness 管理器**：把
+M14-137 告警任务桥 `production_drift_watch_alert_task.py` 经静默 VBS
+wrapper（`run_production_drift_watch_alert_silent.vbs`）挂到隐藏 Task
+Scheduler 周期任务的 readiness 面，为 supervisor 显式 install 做准备。
+**独立任务**：`AIOS-Production-Drift-Watch-Alert` /
+`urn:aios:m14-141:production-drift-watch-alert`——与 M14-129 watcher
+（`AIOS-Production-Drift-Watch`）、M14-06/M14-14/M14-77 任务互不接入、
+互不改动；结构性白名单门对**任何其它任务名（含 watcher）的查询/建/删
+一律拒绝**。本工具只管理任务注册面，从不运行任务桥本体（execute 移交
+与真实 webhook 全部由 M14-137→M14-135 既有门禁承担）。
+
+```
+# 仓库根执行（canonical venv 或任意 Python ≥3.11，纯标准库；本开发回合禁止人工执行 install/uninstall）
+python tools/ops/production_drift_watch_alert_scheduler.py plan      # 只读预检（fail-fast，预检不过零调度器调用）
+python tools/ops/production_drift_watch_alert_scheduler.py generate  # 导出任务 XML（UTF-16 with BOM，gitignored .verify/artifacts/m14-141-drift-watch-alert-scheduler/；预检不过零写入）
+python tools/ops/production_drift_watch_alert_scheduler.py status    # 只读状态（installed 0/unknown 1/missing 2/foreign 3/malformed 4）
+python tools/ops/production_drift_watch_alert_scheduler.py install --confirm "EXECUTE PRODUCTION DRIFT WATCH ALERT SCHEDULER CHANGE"      # supervisor-only（获准窗口）
+python tools/ops/production_drift_watch_alert_scheduler.py uninstall --confirm "EXECUTE PRODUCTION DRIFT WATCH ALERT SCHEDULER CHANGE"    # 仅删本工具精确拥有的任务
+```
+
+安全性质（契约测试 `services/api/tests/test_production_drift_watch_alert_scheduler.py`
+锁定；细节见脚本头注释与
+`docs/evidence/m14-141-drift-watch-alert-scheduler/README.md`）：
+
+- **非重叠 PT15M 周期**：与 M14-129 watcher 同为 PT15M，但固定
+  StartBoundary `2026-01-01T00:05:00`（watcher 为 00:00:00）——恒差恰
+  5 分钟：watcher 槽位 :00/:15/:30/:45 先跑并产出报告（原子写），告警
+  桥在 :05/:20/:35/:50 对已完整落盘的最新报告做分发判定；病态全超时
+  情形（watcher 单轮硬顶 330s > 300s 偏移）下告警桥评估上一份**完整**
+  报告——M14-137「最新合法 execute 报告」fail-closed 语义不受影响。
+  IgnoreNew + **StartWhenAvailable=false（R1 supervisor 修正：固定过去
+  StartBoundary + true 会在注册后立即产生不可控补跑——错失槽位绝不
+  补跑，下一个固定 PT15M 节点运行；false 恰为 Windows 默认值，注册后
+  归一化省略形态仅在其余字段全部精确时条件认可，显式 true 恒
+  malformed）** + 电池双 false + Hidden=true +
+  InteractiveToken/LeastPrivilege，Action=`wscript.exe //B //Nologo`
+  指向仓库内 wrapper、WorkingDirectory=repo。
+- **预算交叉 pin**：间隔 PT15M（900s）> 执行时限 PT10M（600s）>
+  M14-137 任务桥唯一 dispatch 子进程预算 `CHILD_TIMEOUT_SECONDS` 300s
+  （常量经模块加载单一事实源交叉取值）——调度器绝不先于内部超时杀整
+  任务，恒留 ≥300s 收尾余量；测试逐项断言（常量漂移即测试失败）。
+- **GatedSchtasks 结构性白名单**：只读查询固定两形态（单任务明细仅限
+  本任务名）；mutation 仅 install 的精确 `/Create /TN <固定名> /XML
+  <单 .xml 路径>`（绝不 /F）与 uninstall 的 `/Delete /TN <固定名> /F`
+  （仅 exact-owned 分支）；绝不 /Run、/Change、/End；watcher/兄弟任务
+  名的任何形态在任何执行之前拒绝；无 shell=True。
+- **install/uninstall 短语门禁**：各需 `--confirm "EXECUTE PRODUCTION
+  DRIFT WATCH ALERT SCHEDULER CHANGE"`（一字不差；与 M14-127/129/135/137
+  四个既有短语绝不互通——五短语交叉 pin），缺失/近似 → exit 1 且零
+  schtasks 调用。
+- **绝不覆盖、绝不误删**：install 前只读 query + 二次全量列表复核都
+  确认 missing 才 /Create；同名任务存在（无论归属）一律拒绝。uninstall
+  仅 exact-owned（URI + Description 持久标记 + 全部关键字段精确）才
+  /Delete /F；foreign/missing（幂等）/malformed/unknown 绝不 force。
+- **wrapper 内容校验（fail-closed，plan/generate/install 恒跑）**：
+  仓库内 wrapper 的结构性标记逐项在场（仓库根推导/隐藏窗口/退出码
+  透传/固定 venv python + M14-137 任务桥目标/--secret-file + 固定
+  secret 相对路径/--execute 与 M14-137 自有确认短语——经模块常量交叉
+  pin）；盘符硬编码/网络面/解释器面/文件读写面（CreateTextFile/
+  OpenTextFile）token 与 secret 形态值 → 预检不过且零调度器调用
+  （fail-fast）、generate 零写入。必需文件身份（任务桥脚本/wrapper/
+  secret 文件）为 symlink → 拒绝。
+- **secret 纪律（零值接触）**：操作者 webhook secret JSON 固定仓库相对
+  路径 `infra/env.production-drift-watch-alert-secret.json`（gitignored；
+  M14-06 `infra/env.production-recovery` 同款「固定路径 + 仅存在性检查」
+  先例）——scheduler 与 wrapper 都只查存在性，**绝不读取/绝不回显/绝不
+  落盘其内容**（内容校验全部由 M14-135 承担）；任何输出面（XML/wrapper/
+  日志）只允许出现该路径本身，绝不出现 secret 值（sentinel 注入契约
+  测试锁定）。
+- **VBS wrapper 纪律**：repo 自脚本位置推导（无盘符硬编码）、隐藏窗口
+  `Run(...,0,True)`、退出码原样透传、固定 canonical
+  `<repo>/.venv/Scripts/python.exe` 只调用 M14-137 任务桥
+  `--secret-file <固定路径> --execute --confirm "EXECUTE PRODUCTION
+  DRIFT WATCH ALERT TASK"`（M14-137 自有短语；任务桥再按其白名单移交
+  M14-135——wrapper 绝不直接调用 M14-135，绝不绕过任何门禁）；预检
+  缺失专用退出码（2=venv python 缺失、3=脚本缺失、4=repo 缺失、
+  5=secret 文件缺失）；零文件读写面、零网络、零 env 读取。
+- **verify_task_xml 四态**（installed/missing/foreign/malformed）：适配
+  Task Scheduler 注册后归一化（URI 重写、默认值元素省略按 M14-06/M14-131
+  先例条件认可）；XML 解析前拒绝 DOCTYPE/ENTITY（XXE 防护）；归属判
+  不明 = foreign；字段缺失/漂移逐项报告字段名。generate 产物 UTF-16
+  with BOM（与声明及 install 临时字节一致）、原子写（tmp+fsync+
+  replace）、回读复核、零 schtasks；输出路径/祖先 symlink 拒绝零写入。
+- readiness ≠ 任务已安装 ≠ 告警自动触发已上线：本切片零 schtasks 执行、
+  零注册、零自然调度、零真实 webhook；实际注册 supervisor-only。
+  `production_ready=false` 不变，release-approval 仍是 human-only 门。
