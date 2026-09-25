@@ -1,5 +1,5 @@
 # tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）+ 监控告警外发分发（M14-119）+ 告警分发回环运行时闭环（M14-121）+ production drift watch（M14-127）+ production drift watch 独立周期任务 readiness（M14-129） + production drift watch 历史审计（M14-133）+ production drift watch 告警分发（M14-135）
-+ production drift watch 告警分发回环运行时闭环（M14-136，测试切片）+ production drift watch 告警分发调度桥 readiness（M14-137）
++ production drift watch 告警分发回环运行时闭环（M14-136，测试切片）+ production drift watch 告警分发调度桥 readiness（M14-137）+ production drift watch 告警任务桥真实子进程运行时闭环（M14-140，测试切片）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -1895,3 +1895,33 @@ fail-closed。stdout 恒经 `redact_secrets`（M14-119 同一实现）终
 子进程与真实 webhook 未在本切片实证、不证明 alert delivery 生产就绪；
 `production_ready=false` 不变，release-approval 仍是 human-only 门。
 细节见 `docs/evidence/m14-137-drift-watch-alert-readiness/README.md`。
+
+## production_drift_watch_alert_task 真实子进程运行时闭环（M14-140，测试切片）
+
+M14-140（测试/docs-only，零工具源码改动）为 M14-137 闭合「真实
+M14-135 dispatch 子进程移交未实证」边界：黑盒集成测试
+`services/api/tests/test_production_drift_watch_alert_task_runtime.py`
+（模板对齐 M14-136）以**真实任务桥 CLI 子进程**驱动，在本机
+ephemeral 回环接收器（127.0.0.1 动态端口、用毕即关——三条路径期望
+结局全部零出站，接收器仅是「零请求」断言的可观测面）上实证 3 项
+运行时行为：① drift=true execute → 移交真实落到 M14-135 子进程
+（`scheme-not-https` 为 M14-135 族自有词汇经桥回显——真实子进程
+运行的运行时证据；FakeRunner 打不出来），白名单刻意不转发
+`--allow-loopback-http` → 子进程 fail-closed、接收器零请求、退出码
+2 原样透传、dispatch 工件目录零创建（拒绝先于 M14-135 任何目录/
+工件写入）；真实目录扫描 newest stem + 独立重算精确 SHA-256 + 候选
+计数如实上 stdout；token/完整 URL/127.0.0.1 字面量/接收器路径/
+绝对本地路径（正反斜杠双形态）/投毒 detail 绝不入 stdout/stderr。
+② drift=true plan → exit 3 + dispatch-would-be-required + 精确
+SHA-256 + 接收器零请求 + 临时目录树快照不变（plan 零写入运行时面）。
+③ drift=false execute → exit 0 + skipped-no-alerts + 「零 dispatch
+子进程」+ older drift=true 报告零痕迹（drift 判定只依据最新报告
+布尔）+ 接收器零请求 + dispatch 工件目录不存在（M14-135 即便 skip
+路径也会写 dispatch-*.json/.md——目录不存在即零子进程副作用的运行时
+证明）。全程零外部端点/DNS 主机名/生产服务接触、不安装/修改任何
+计划任务；无法绑定回环的环境整套 skip 而非假通过。诚实边界：本切片
+不存在任何成功外发——「任务桥→M14-135 子进程→真实 webhook 2xx 送达」
+完整闭环未实证（白名单不转发回环豁免旗标，回环放行路径在任务桥形态
+上不可达，此为实证的 fail-closed 面而非缺口）、不证明调度集成或
+告警端到端送达；`production_ready=false` 不变。细节见
+`docs/evidence/m14-140-drift-watch-alert-task-runtime/README.md`。
