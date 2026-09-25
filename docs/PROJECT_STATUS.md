@@ -9,6 +9,41 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-136 Production Drift Watch 告警分发回环运行时闭环（测试/docs-only 切片）**：worktree
+`m14-136-drift-watch-alert-runtime`，分支
+`ops/m14-136-drift-watch-alert-runtime`，基于 main
+`606d8239ad4ff1bdd48d447cbce700dd54b468db`（PR #223 merge =
+M14-135 合入），实现者执行、Codex supervisor 监督；本地 commit 后
+supervisor 审查与 remote 发布（push/PR/合并）在其后进行。**零工具
+源码改动**（M14-135 fail-closed 语义零触碰），新增黑盒运行时集成
+测试 `services/api/tests/test_production_drift_watch_alert_dispatch_runtime.py`（4 项，模板
+对齐 M14-121）闭合 M14-135「真实 HTTP 交换未实证」边界：真实 CLI
+子进程（`--allow-loopback-http --execute --confirm "EXECUTE
+PRODUCTION DRIFT WATCH ALERT DISPATCH"`）+ 本机 ephemeral 回环接收
+器（127.0.0.1 动态端口、用毕即关）+ 合成 drift=true/false M14-127
+execute 模式报告 + 临时 secret JSON，实证真实 2xx 交换（恰一次
+POST、零重试、头契约内存逐项核对、线上 body SHA-256/字节数与
+dispatch 报告登记值逐字节对账、源报告 SHA-256 独立重算对账、payload
+固定词汇、投毒 report detail 绝不上线/入档）、sanitized 工件
+（drift-dispatch-ledger.jsonl 恰一行 16 键、dispatch-*.json/.md 恰
+各一份；token/完整 URL/127.0.0.1 字面量/接收器路径/绝对本地路径/
+投毒 detail 绝不入任何落盘工件与子进程 stdout/stderr）、幂等重复
+拒绝（exit 2 + duplicate-dispatch + 零重发 + 零追加）、fail-closed
+回环门（不加旗标 → exit 2 + scheme-not-https + 零请求 + 零工件）
+与 drift=false 无告警路径（exit 0 + skipped-no-alerts + 接收器零
+请求 + 台账零触碰）。全程零外部端点/DNS 主机名/生产服务/Docker/
+调度器/DB/MinIO/语音/设备/真实 secret 接触；无法绑定回环的环境整套
+skip 而非假通过。同步交付证据
+`docs/evidence/m14-136-drift-watch-alert-runtime/README.md` +
+`tools/ops/README.md` M14-136 段 + 三台账条目。验证：新测试
+4 passed；邻居回归 M14-135 契约 127 + M14-119/121（76+3）+
+M14-127/129/133（96+82+47），七套合跑 435 passed（canonical
+venv）；ruff（默认 + F,E9）/py_compile/`git diff --check` 全过；
+新增行秘密扫描 0 命中。诚实边界：回环 ≠ 生产 webhook——TLS 面仍未
+实证、首次真实外发仍留待 supervisor 获准窗口、drift=true 调度集成
+仍缺位；`production_ready=false` 不变，release-approval 仍是
+human-only 门。
+
 **M14-135 Production Drift Watch 告警分发第一片（工具/测试/文档切片）**：worktree
 `m14-135-drift-watch-alert-dispatch`，分支
 `ops/m14-135-drift-watch-alert-dispatch`，基于 main

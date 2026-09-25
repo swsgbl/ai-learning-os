@@ -1,4 +1,5 @@
 # tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）+ 监控告警外发分发（M14-119）+ 告警分发回环运行时闭环（M14-121）+ production drift watch（M14-127）+ production drift watch 独立周期任务 readiness（M14-129） + production drift watch 历史审计（M14-133）+ production drift watch 告警分发（M14-135）
++ production drift watch 告警分发回环运行时闭环（M14-136，测试切片）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -1833,3 +1834,24 @@ python tools/ops/production_drift_watch_alert_dispatch.py \
 - **诚实边界**：本工具只是 alert delivery 的工具就绪第一片，不构成
   production readiness、不宣称 alert delivery 已在生产实证；
   `production_ready=false` 不变，release-approval 仍是 human-only 门。
+
+## production_drift_watch_alert_dispatch 回环运行时闭环（M14-136，测试切片）
+
+M14-136（测试/docs-only，零工具源码改动）为 M14-135 闭合「真实 HTTP
+交换未实证」边界：黑盒集成测试
+`services/api/tests/test_production_drift_watch_alert_dispatch_runtime.py`
+（模板对齐 M14-121）以**真实 CLI 子进程 + 本机 ephemeral 回环接收器**
+（127.0.0.1 动态端口、用毕即关）实证 4 项运行时行为：真实 2xx 交换
+（恰一次 POST、零重试、头契约在内存逐项核对、线上 body SHA-256/字节
+数与 dispatch 报告登记值逐字节对账、源报告 SHA-256 独立重算对账、
+payload 固定词汇键集精确、投毒 report detail 绝不上线）；sanitized
+工件（台账恰一行 16 键、dispatch-*.json/.md 恰各一份；token/完整
+URL/127.0.0.1 字面量/接收器路径/绝对本地路径/投毒 detail 绝不入任何
+工件与子进程 stdout/stderr）；幂等重复拒绝（二次 execute exit 2 +
+duplicate-dispatch、零重发、零追加）；fail-closed 回环门（不加
+`--allow-loopback-http` → exit 2 + scheme-not-https、零请求、零工件）
+与 drift=false 无告警路径（exit 0 + skipped-no-alerts、接收器零请求、
+台账零触碰）。全程零外部端点/DNS 主机名/生产服务接触；无法绑定回环
+的环境整套 skip 而非假通过。诚实边界：回环 ≠ 生产 webhook，TLS 面
+仍未实证、调度集成仍缺位；`production_ready=false` 不变。细节见
+`docs/evidence/m14-136-drift-watch-alert-runtime/README.md`。
