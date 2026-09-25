@@ -9,6 +9,44 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-132 M14-129 drift watch 三次连续自然调度轮证据回填（docs-only 切片）**：worktree
+`m14-132-m129-drift-watch-natural-runs`，分支
+`docs/m14-132-m129-drift-watch-natural-runs`，基于 main
+`7f2a52863cea627a9e80c2dc9eabc41bfa40e63c`（PR #219 merge = M14-131
+证据合入；canonical 与 origin/main 同 SHA 复核一致，未跟踪 canonical
+`.claude/` 未触碰），实现者执行、Codex supervisor 监督。零代码、零
+测试、零配置、零 CI、零调度器、零 Docker、零生产服务/DB/MinIO/语音/
+secret/设备变更；不运行 drift watcher 或 scheduler、不触发任务，对
+计划任务仅 PowerShell 只读查询，对 gitignored 工件只读核验。回填
+事实：① 计划任务 `AIOS-Production-Drift-Watch` 只读查询：State=Ready、
+LastRunTime=2026-09-25 13:00:01 +08:00（= 第三轮 started_at）、
+LastTaskResult=0、NumberOfMissedRuns=0、NextRunTime=13:15:00 +08:00
+——三个已过槽位无缺失、末轮成功。② 三轮自然性：零 `schtasks /Run`、
+`/Change`、`/End`，零任务重装/卸载，零 Docker mutation、零容器/生产
+服务重启，零生产部署，零手动 execute；三份报告 `started_at_utc` 恰为
+三个 PT15M 槽位各 +1 秒（04:30:01Z/04:45:01Z/05:00:01Z = 本地
+12:30:01/12:45:01/13:00:01 +08:00），单轮历时约 1 秒。③ 三份自然轮
+报告（canonical gitignored `.verify/artifacts/m14-127-production-drift-watch/`，
+`stat`+`sha256sum` 独立重算）：JSON 各 11023 bytes——043001 SHA-256
+`5A6FA1BA…A80E`（12:30 轮，与 M14-131 回填值逐字节一致）、044501
+`36EE9147…0934`（12:45 轮）、050001 `543E091F…3BD7B`（13:00 轮），
+伴生 MD 各 5762 bytes；三轮均 `drift=false`、`drift_reasons=[]`、
+28 pass / 0 fail、七服务 healthy/running。④ API/Web 镜像锚点三轮
+恒定且三重一致（运行 image_id、tag 本地解析 digest、expected_digest），
+digest 恰为 M14-124 已批准发布值（API
+`sha256:c99e28c905208bffbc1576f0c5c9e042af18fd356881cee967078ee38323781f`、
+Web
+`sha256:d596f0c726ab690359b196a3c3911f9842b94218b4361ee452413d420a38194b`）。
+诚实边界：三轮连续自然成功仅证明任务已安装 + 45 分钟观测窗口内三
+个连续 PT15M 槽位自然调度端到端 ok——不证明长期稳定性、不证明夜间
+无人值守可靠性、不证明跨日/跨重启持续调度可靠性、不证明 drift=true
+告警路径，不构成 `production_ready` 宣称，不解除任何 release gate，
+`production_ready=false` 不变；Harmony M14-126 attempt 2 继续
+BLOCKED（hdc targets 空、127.0.0.1:5555 不可达），不得虚构通过。
+验证（docs-only）：markdown 结构 sanity + 秘密扫描 0 命中 +
+`git diff --check` 干净，不运行 pytest。证据
+`docs/evidence/m14-132-m129-drift-watch-natural-runs/README.md`。
+
 **M14-131 M14-129 真实安装与首轮自然调度证据回填（docs-only 切片）**：worktree
 `m14-131-m129-production-install-evidence`，分支
 `docs/m14-131-m129-production-install-evidence`，基于 main
