@@ -9,6 +9,32 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-144 alert secret 模板 + 生产 pin 文档同步（模板/守卫测试/文档/账本切片）**：worktree
+`m14-144-alert-secret-template`，分支 `ops/m14-144-alert-secret-template`，
+基于 `e8a6285`，单 local commit、不 push、不开 PR。交付
+`infra/env.production-drift-watch-alert-secret.example.json`（占位模板
+`{"url": "https://<webhook-endpoint>", "token": "<optional>"}`——键集恰
+url/token，token 真实文件可选）+ M14-144 守卫测试 5 项
+（`test_production_drift_watch_alert_dispatch.py`：照抄模板原文与占位
+形态矩阵一律 `load_webhook_secret` 固定类别 `secret-placeholder-value`
+拒绝、值不回显——驱动 M14-119 共享实现 `monitoring_alert_dispatch.py`
+增强：整体或 URL host 段 `<...>` 包裹的占位值恒拒，与 M14-06
+production_recovery 模板占位语义同口径）+ `tools/ops/README.md` 三处
+同步（M14-06 pin check 六键→九键：九键全集点名且与
+`production_recovery.py` `PIN_KEYS` 精确一致，保留 M14-09 web tag 独立
+成键与 M14-38 三拓扑键溯源；M14-135/M14-141 secret 段补真实文件名/
+JSON 键集/url 必填 + token 可选语义/模板指向与占位拒绝——读者无需读
+源码）。验证：邻居回归 dispatch+scheduler 合跑 238 passed（基线 233 +
+新 5，exit 0）；共享实现下游（M14-119/121 dispatch+runtime、M14-135
+runtime、M14-137 task+task-runtime）115 passed（exit 0）；ruff（默认 +
+F,E9）/py_compile/`git diff --check` 干净；新增行秘密与本地绝对路径
+扫描 0 命中；example 路径不被 .gitignore 忽略（真实 secret 路径规则
+不变仍忽略）。诚实边界：真实 secret 文件
+`infra/env.production-drift-watch-alert-secret.json` 仍未创建——M14-141
+安装与 webhook 送达仍阻塞于该操作者 secret（本切片零 Task Scheduler/
+Docker/服务/代理/后端/生产状态改动）；`production_ready=false` 不变，
+release approval 仍 human-only。
+
 **M14-142 Harmony 后端冒烟重复周期包装器（Stage 1 实现/测试/文档切片）**：worktree
 `m14-142-harmony-backend-smoke-repeat`，分支
 `harmony/m14-142-backend-smoke-repeat`，基于 `c2f0a27e`，单 local

@@ -243,13 +243,26 @@ def validate_webhook_url(url: str, *, allow_loopback_http: bool = False) -> str 
 # ---------------------------------------------------------------- secret 文件（操作者提供）
 
 
+def _placeholder_secret_value(value: str) -> bool:
+    """模板占位形态（M14-144）：整体 ``<...>`` 包裹，或 URL 的 host 段为
+    ``<...>`` 包裹（``https://<webhook-endpoint>``）——与 M14-06
+    production_recovery 模板占位语义同口径（``<...>`` 包裹恒拒）。"""
+    if value.startswith("<") and value.endswith(">") and len(value) > 2:
+        return True
+    host = urlsplit(value).hostname
+    return (host is not None and host.startswith("<") and host.endswith(">")
+            and len(host) > 2)
+
+
 def load_webhook_secret(store: Store, path: Path) -> tuple[dict[str, str] | None, str | None]:
     """读取并严格校验操作者 secret 文件（{"url": str, "token"?: str}）。
 
     成功 → ({"url", "token"|None}, None)；任何失败 → (None, 固定安全
     类别)——**URL/token 值绝不回显**。symlink（自身+现存祖先）、缺失、
     非常规文件、大小硬顶双检（stat 预检 + 读后复检）、invalid JSON、
-    非对象、缺 url、空 url、未知键、token 空串/超长一律拒绝。"""
+    非对象、缺 url、空 url、未知键、token 空串/超长、模板占位值
+    （整体或 URL host 段 ``<...>`` 包裹——照抄 infra example 模板未填
+    真实值即拒）一律拒绝。"""
     try:
         reject_symlinked_path(store, path)
     except _history.HistoryError as cause:
@@ -282,6 +295,10 @@ def load_webhook_secret(store: Store, path: Path) -> tuple[dict[str, str] | None
             return None, "secret-token-invalid"
         if len(token) > MAX_SECRET_TOKEN_LENGTH:
             return None, "secret-token-invalid"
+    if _placeholder_secret_value(url):
+        return None, "secret-placeholder-value"
+    if token is not None and _placeholder_secret_value(token):
+        return None, "secret-placeholder-value"
     return {"url": url, "token": token}, None
 
 

@@ -678,6 +678,49 @@ def test_secret_file_invalid_refused(tmp_path, monkeypatch) -> None:
     assert counter["n"] == 0
 
 
+# ------------------------------------------------- M14-144 example 模板守卫
+
+
+EXAMPLE_SECRET = REPO_ROOT / "infra" / "env.production-drift-watch-alert-secret.example.json"
+
+
+def test_secret_example_placeholder_content_refused(tmp_path) -> None:
+    """M14-144 守卫：照抄 example 模板（占位值未填）的 secret 文件必须被
+    load_webhook_secret 以固定类别拒绝——占位 secret 绝不进入分发链；
+    错误类别为固定词汇，绝不含占位值本身（值不回显）。"""
+    m119 = pdwad._dispatch
+    assert EXAMPLE_SECRET.is_file(), "example 模板必须随仓（缺失即守卫失效）"
+    example_text = EXAMPLE_SECRET.read_text(encoding="utf-8")
+    payload = json.loads(example_text)
+    assert set(payload) == {"url", "token"}, "模板键集必须恰为 url/token"
+    secret = tmp_path / "sec.json"
+    secret.write_text(example_text, encoding="utf-8")
+    loaded, error = m119.load_webhook_secret(m119.RealStore(), secret)
+    assert loaded is None
+    assert error == "secret-placeholder-value"
+    # 值不回显：固定类别串与任一占位值零交集
+    assert "<webhook-endpoint>" not in error
+    assert "<optional>" not in error
+
+
+@pytest.mark.parametrize("payload", [
+    {"url": "https://<webhook-endpoint>"},                       # 仅 url host 段占位
+    {"url": "https://<webhook-endpoint>", "token": "tk-real-0123456789"},
+    {"url": "https://ok.example/hook", "token": "<optional>"},   # 仅 token 占位
+    {"url": "<https://hook.example/whole-value-wrapped>"},       # url 整体 <...> 包裹
+])
+def test_secret_placeholder_value_forms_refused(tmp_path, payload) -> None:
+    """M14-144 守卫形态矩阵：整体 ``<...>`` 包裹与 URL host 段 ``<...>``
+    包裹（example 模板两种占位形态）一律固定类别拒绝——真实值不受影响。"""
+    m119 = pdwad._dispatch
+    secret = write_secret(tmp_path, payload)
+    loaded, error = m119.load_webhook_secret(m119.RealStore(), secret)
+    assert loaded is None, payload
+    assert error == "secret-placeholder-value", payload
+    for value in payload.values():
+        assert value not in error
+
+
 # ---------------------------------------------------------------- 成功路径
 
 

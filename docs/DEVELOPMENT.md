@@ -2749,3 +2749,40 @@ AGC 材料缺位（当前仓库常态）时各阶段的**预期状态**：
   py_compile 干净。诚实边界：真实三周期模拟器执行属 Stage 2，本切片未启动
   模拟器/后端/构建。证据：
   `docs/evidence/m14-142-harmony-backend-smoke-repeat/README.md`。
+
+## Alert secret 模板与生产 pin 文档同步（M14-144）
+
+- **交付**：`infra/env.production-drift-watch-alert-secret.example.json`
+  ——操作者 webhook secret 占位模板，内容
+  `{"url": "https://<webhook-endpoint>", "token": "<optional>"}`。
+- **secret 文件契约（无需读源码）**：真实文件为仓库相对路径
+  `infra/env.production-drift-watch-alert-secret.json`（gitignored，
+  绝不提交/回显）；JSON 对象键集恰 `{"url": str, "token"?: str}`——
+  `url` 必填（生产恒 https 的 webhook 端点），`token` 可选（无 token
+  鉴权的 sink 可整键省略）；自模板复制后：`url` 占位值必须换成真实
+  https webhook 端点；`token` 占位值换成真实 token，或 sink 无需
+  token 鉴权时整键删除。
+- **占位守卫**：`tools/ops/monitoring_alert_dispatch.py`（M14-119 共享
+  实现，M14-135 dispatcher 直接复用）的 `load_webhook_secret` 对值
+  整体或 URL host 段为 `<...>` 包裹的模板占位形态恒拒——固定类别
+  `secret-placeholder-value`、值绝不回显（与 M14-06
+  production_recovery 模板占位语义同口径）；守卫测试 5 项锁定
+  （`services/api/tests/test_production_drift_watch_alert_dispatch.py`：
+  照抄模板原文被拒 + 占位形态矩阵逐项被拒 + 值不回显断言）。
+- **文档同步**：`tools/ops/README.md` 三处——M14-06 pin check 六键措辞
+  改为九键全集（与 `production_recovery.py` `PIN_KEYS` 精确一致：
+  `AIOS_IMAGE_TAG/AIOS_WEB_IMAGE_TAG/AIOS_APP_ENV/AIOS_WEB_PORT/
+  AIOS_AUTH_SECRET/AIOS_LIVEKIT_API_SECRET/AIOS_BIND_IP/
+  AIOS_LIVEKIT_BIND_IP/AIOS_PUBLIC_LIVEKIT_URL`；保留 M14-09 web tag
+  独立成键与 M14-38 三拓扑键溯源）；M14-135/M14-141 secret 段补真实
+  文件名/JSON 键集/token 可选语义/模板指向与占位拒绝。
+- **验证**：邻居回归 dispatch+scheduler 合跑 **238 passed**（基线 233 +
+  新 5，exit 0）；共享实现下游（M14-119/121 dispatch+runtime、M14-135
+  runtime、M14-137 task+task-runtime）合跑 **115 passed**（exit 0）；
+  ruff（默认 + `--select F,E9`）/py_compile/`git diff --check` 干净；
+  新增行秘密与本地绝对路径扫描 0 命中；example 路径不被 .gitignore
+  忽略（真实 secret 路径规则不变仍忽略）。
+- **诚实边界**：真实 secret 文件未创建，M14-141 安装与 webhook 送达仍
+  阻塞于操作者 secret；本切片零 Task Scheduler/Docker/服务/代理/后端/
+  生产状态改动；`production_ready=false` 不变，release approval 仍
+  human-only。

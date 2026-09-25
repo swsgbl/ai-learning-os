@@ -1,5 +1,5 @@
 # tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）+ 监控告警外发分发（M14-119）+ 告警分发回环运行时闭环（M14-121）+ production drift watch（M14-127）+ production drift watch 独立周期任务 readiness（M14-129） + production drift watch 历史审计（M14-133）+ production drift watch 告警分发（M14-135）
-+ production drift watch 告警分发回环运行时闭环（M14-136，测试切片）+ production drift watch 告警分发调度桥 readiness（M14-137）+ production drift watch 告警任务桥真实子进程运行时闭环（M14-140，测试切片）+ production drift watch 告警周期任务 readiness（M14-141）
++ production drift watch 告警分发回环运行时闭环（M14-136，测试切片）+ production drift watch 告警分发调度桥 readiness（M14-137）+ production drift watch 告警任务桥真实子进程运行时闭环（M14-140，测试切片）+ production drift watch 告警周期任务 readiness（M14-141）+ 告警 secret 模板与占位守卫/九键 pin 文档同步（M14-144）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -65,13 +65,19 @@ python tools/ops/production_recovery.py               # enforce（需 pin env �
    可调）——登录自愈场景给 Docker Desktop 留启动时间。
 2. **compose 静态校验**：`docker compose config --quiet`（零容器改动）。
 3. **pin check（fail-closed）**：`infra/env.production-recovery`（gitignored，
-   模板 `infra/env.production-recovery.example`）必须存在、六键齐全
+   模板 `infra/env.production-recovery.example`）必须存在、九键齐全
    （`AIOS_IMAGE_TAG/AIOS_WEB_IMAGE_TAG/AIOS_APP_ENV/AIOS_WEB_PORT/
-   AIOS_AUTH_SECRET/AIOS_LIVEKIT_API_SECRET`——M14-09 起 web 镜像 tag 独立
-   成键：Web-only 升级只改 `AIOS_WEB_IMAGE_TAG`，同 tag 发布两键显式同值）、
+   AIOS_AUTH_SECRET/AIOS_LIVEKIT_API_SECRET` + M14-38 三拓扑键
+   `AIOS_BIND_IP/AIOS_LIVEKIT_BIND_IP/AIOS_PUBLIC_LIVEKIT_URL`——
+   M14-09 起 web 镜像 tag 独立成键：Web-only 升级只改
+   `AIOS_WEB_IMAGE_TAG`，同 tag 发布两键显式同值；M14-38 拓扑键 =
+   api/livekit 容器宿主绑定与浏览器可达 LiveKit URL 事实
+   （HOST_BIND_IP / `docker port` 7880 宿主绑定段 / PUBLIC_LIVEKIT_URL
+   三种在线口径），缺省不填会把恢复路径静默拉回 loopback——必须显式
+   填；loopback 部署同口径填 `127.0.0.1` / `ws://127.0.0.1:7880`）、
    不含模板占位值（`<...>` 包裹或模板原文）；
-   在线容器存在时**六键在线事实必须齐全且逐键相等**（api/web 镜像分别
-   inspect，缺事实 ≠ 跳过——
+   在线容器存在时**九键在线事实必须齐全且逐键相等**（api/web 镜像分别
+   inspect + 拓扑键在线探测，缺事实 ≠ 跳过——
    inspect/port 探测不完整同样拒绝）。仅报键名，值绝不回显（子进程输出写
    日志前经防御性 redact）。任一不满足 → enforce 在 `up` 之前可见拒绝——
    防止恢复路径用默认值/漂移值/占位值静默重建容器（tag/端口/密钥轮换）。
@@ -1804,7 +1810,14 @@ python tools/ops/production_drift_watch_alert_dispatch.py \
   `load_webhook_secret` / `RealTransport` / `RealStore` / `RealClock` /
   `write_report_files` / `ensure_output_dir_safe` 直接 import，契约测试
   逐一 `is` 锁定——绝不平行第二策略）：单一通用 HTTPS webhook sink；
-  URL/token 恒来自操作者 gitignored secret JSON 且绝不回显/入档；
+  URL/token 恒来自操作者 secret 文件（真实文件
+  `infra/env.production-drift-watch-alert-secret.json`，gitignored；
+  JSON 对象键集恰 `{"url": str, "token"?: str}`——`url` 必填，生产恒
+  https 的 webhook 端点；`token` 可选，无 token 鉴权的 sink 可整键
+  省略；模板见 `infra/env.production-drift-watch-alert-secret.example.json`
+  （M14-144），照抄占位值 `<webhook-endpoint>`/`<optional>` 未换真实值
+  → `load_webhook_secret` 固定类别 `secret-placeholder-value` 拒绝，
+  守卫测试锁定）且绝不回显/入档；
   SSRF 收紧（生产恒 https；http 仅经显式 test-only 旗标且仅限字面
   回环 IP；私网/链路本地/未指定/组播/保留/localhost 恒拒）；execute
   门禁 = `--execute` + 精确短语 + `--secret-file` 三者缺一/近似即
@@ -1993,10 +2006,18 @@ python tools/ops/production_drift_watch_alert_scheduler.py uninstall --confirm "
 - **secret 纪律（零值接触）**：操作者 webhook secret JSON 固定仓库相对
   路径 `infra/env.production-drift-watch-alert-secret.json`（gitignored；
   M14-06 `infra/env.production-recovery` 同款「固定路径 + 仅存在性检查」
-  先例）——scheduler 与 wrapper 都只查存在性，**绝不读取/绝不回显/绝不
-  落盘其内容**（内容校验全部由 M14-135 承担）；任何输出面（XML/wrapper/
-  日志）只允许出现该路径本身，绝不出现 secret 值（sentinel 注入契约
-  测试锁定）。
+  先例）；其内容契约（由 M14-135 `load_webhook_secret` 强制，无需读
+  源码）：JSON 对象键集恰 `{"url": str, "token"?: str}`——`url` 必填
+  （生产恒 https 的 webhook 端点），`token` 可选（无 token 鉴权的
+  sink 可整键省略）；模板 `infra/env.production-drift-watch-alert-secret.example.json`
+  （M14-144）复制为真实文件后：`url` 占位值必须换成真实 https
+  webhook 端点；`token` 占位值换成真实 token，或 sink 无需 token
+  鉴权时整键删除——照抄占位内容（`<webhook-endpoint>`/`<optional>`）
+  会在 M14-135 处以固定类别 `secret-placeholder-value` 拒绝（M14-144
+  守卫测试锁定）。scheduler
+  与 wrapper 都只查存在性，**绝不读取/绝不回显/绝不落盘其内容**（内容
+  校验全部由 M14-135 承担）；任何输出面（XML/wrapper/日志）只允许出现
+  该路径本身，绝不出现 secret 值（sentinel 注入契约测试锁定）。
 - **VBS wrapper 纪律**：repo 自脚本位置推导（无盘符硬编码）、隐藏窗口
   `Run(...,0,True)`、退出码原样透传、固定 canonical
   `<repo>/.venv/Scripts/python.exe` 只调用 M14-137 任务桥
