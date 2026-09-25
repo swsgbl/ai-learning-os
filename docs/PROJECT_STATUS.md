@@ -8,6 +8,8 @@
 M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/11）→ M3 Student Model（✅ 7/7）
 
 ## 当前任务
+**M14-138 Harmony current-main 模拟器恢复与 auth/login 回归收口（verification/docs-only 切片，PASS）**：worktree `m14-138-harmony-current-main-regression`，分支 `harmony/m14-138-current-main-regression`，基于 main `5eba63bcb3fb1056a6c12764373ab197a21487e2`（PR #224 merge）。闭合 M14-126 两项遗留（模拟器目标消失 + focus_window_unreadable）：Pura 90 实例受支持启动器恢复（boot completed=true，API 24）；release build 通过（unsigned HAP 220,008 bytes，SHA256 `8F5797869F1E3275B885E0B8C439A2483362850A6CD309A401235C900CF08A31`）；auth smoke attempt 1 一次性通过（12 stage = 11 ok / 0 failure / 1 预期 auth_phase_skip not_run，7/7 契约，0 warnings/request/toolchain failures，cleanup + uninstall 完成，attempt 2 未消耗）；pytest 524 passed / 1 skipped + mock 契约 81/81。边界：unsigned/模拟器/loopback 口径不变，不构成签名/真机/生产就绪，`production_ready=false` 不变。详见 `docs/evidence/m14-138-harmony-current-main-regression/README.md`。
+
 
 **M14-136 Production Drift Watch 告警分发回环运行时闭环（测试/docs-only 切片）**：worktree
 `m14-136-drift-watch-alert-runtime`，分支
