@@ -9,6 +9,52 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-146 current-main 发布证据刷新（证据/docs-only 切片）**：worktree
+`m14-146-current-main-release-evidence`，分支
+`ops/m14-146-current-main-release-evidence`，基于 main
+`239b881b02514f50d8ad6177b61bcb84fb908ac5`（PR #233 merge = M14-142
+冒烟预热 R4 合入，精确基点 = 当前 HEAD），单 local commit、**不 push、
+不开 PR（任务书指令）**。M14-125 证据绑定 e14be369，其后
+`e14be369..239b881` 47 提交含真实代码/测试面变更（drift-watch 全
+家族 + M14-142/M14-144 工具与守卫测试，`services/api/tests/` 新增
+8 个测试文件），本切片按 supervisor 指令真实重执行刷新：
+**ci-main** 归档 head 239b881 唯一 push/main run **36168686272**
+（run_number 588，completed success，jobs 5/5 精确集合全绿），按
+`_eval_ci_main` 契约断言驱动程序化派生 canonical `ci-main.json`
+（`2883e0d6…`，1201 bytes，raw 双响应归档）；**release-check** 干净
+239b881 执行树从零隔离环境（uv venv 3.12.14 + npm ci 411 packages，
+运行前 HEAD==239b881 且 porcelain 空双核验留痕）full 重跑
+**all_green 10/10**（pytest **5054 passed / 33 skipped** in 296.14s，
+较 M14-125 恰 +499——真实测试面增长精确对账；e2e 5 步 1073ms；
+alembic head 仍 0027_audit_chain；一次性 SQLite + 临时 API 已收尾）；
+**provider-smoke 不重跑**，只读复用 M14-117 生产切换后真实三步冒烟
+聚合（与 M14-122/M14-123/M14-125 同源同哈希 `029ee84f…`，生产栈
+未变、语义有效性保持，原始时间边界 2026-09-23T23:29:35Z 显式保留，
+距本切片聚合约 45 小时，窗口外状态不承诺）；**long-soak 不重跑**，
+同哈希 `d939c652…` 只读复用（窗口 2026-09-22→23 97 样本全 ok，早于
+生产切换且在 m14-70 栈，如实呈现、不制造新窗口）；**evidence-cockpit**
+6 个生产状态源 6/6 哈希 MATCH 复核后原样 staging（M14-83/M14-85/
+M14-87 canonical 不改写；M14-117 切换后 preflight 5/5 作为语义支撑
+事实引用——其 JSON 缺 `gate` 自声明按契约不能直接 stage，绝不手改
+补字段），staged 10 文件外部逐字节复核 10/10 IDENTICAL，
+**cockpit_ready=true、cockpit_blockers=[]、evaluator
+pass=9/pending=0/blocked=0/missing=2/malformed=0/tampered=0
+（release-approval not-staged human-only + turn-tls optional）**，
+两 code-bound 门均 current（ci-main 内嵌头 / release-check flag
+声明头，current-head 与声明头均 239b881）。**诚实边界：
+`release_ready=false` / `production_ready=false` 恒不变——
+release-approval human-only 从未发生，本切片零审批证据、不代拟、
+绝不合成；零生产触碰（零容器/DB/MinIO/语音/secrets 变更、零部署、
+零 provider/soak 重跑、零代理/CC Switch 生命周期变更，GitHub 只读
+访问）。**验证：聚焦契约测试 **407 passed**（cockpit/release/provider
+八套件，预建 basetemp 父目录）+ ruff All checks passed + canonical
+SHA256SUMS **25/25 OK** + JSON 契约断言 **22 项全过** + 秘密扫描
+**0 命中**（canonical 25 文件）+ 新增行秘密/本地绝对路径/U+FFFD
+扫描 0 命中 + `git diff --check` 干净。证据
+`docs/evidence/m14-146-current-main-release-evidence/README.md`。
+同步更新 ROADMAP（M14-146 状态更新）、CHANGELOG（M14-146 条目）、
+DEVELOPMENT（M14-146 节）与本台账顶部任务结构（M14-145 移为次席）。
+
 **M14-145 语音生产恢复证据切片（docs-only）**：worktree
 `m14-145-voice-recovery-evidence`，分支 `docs/m14-145-voice-recovery-evidence`，
 基于 `15bfab9`，单 local commit、不 push、不开 PR。只新增

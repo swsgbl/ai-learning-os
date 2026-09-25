@@ -2795,3 +2795,46 @@ AGC 材料缺位（当前仓库常态）时各阶段的**预期状态**：
   阻塞于操作者 secret；本切片零 Task Scheduler/Docker/服务/代理/后端/
   生产状态改动；`production_ready=false` 不变，release approval 仍
   human-only。
+
+## Current-main 发布证据刷新流程（M14-146，沿 M14-125 契约）
+
+- **适用场景**：current main 前移后（无论 docs-only 还是真实代码
+  变更），代码绑定门（ci-main / release-check）相对新 HEAD 呈 stale，
+  需真实重推导刷新证据链。
+- **ci-main（远端 CI 事实核验，非本地重跑）**：`gh api
+  repos/swsgbl/ai-learning-os/actions/runs?head_sha=<HEAD>` 断言唯一
+  push/main run 且 completed/success，再 `…/runs/<run_id>/jobs` 断言
+  5/5 jobs 精确集合全绿（API / Docker / Release tools / Android /
+  Web）；raw 双响应归档后按 `_eval_ci_main` 契约断言驱动程序化派生
+  canonical `evidence/ci-main.json`——绝不手改 JSON、绝不复用前驱
+  切片的 run 产物或计数。
+- **release-check（隔离本地 full 重跑）**：worktree 从零构建
+  `.venv`（uv venv 3.12 + requirements/dev）与 `node_modules`
+  （npm ci）；运行前 `git rev-parse HEAD` == 目标基点且
+  `git status --porcelain` 为空（declared-head 诚实性前提，留痕）；
+  `python -m app.ops.cli release-check-isolated --workdir <新工作区>
+  --json` 全 10 门（一次性 SQLite + 临时 API，不连生产面）；
+  `release-check-isolated.json` 逐字节复制为 canonical
+  `evidence/release-check.json`（filecmp 复核 IDENTICAL）。
+- **provider-smoke / long-soak（只读哈希锁定复用，不重跑）**：源
+  哈希与登记值（`029ee84f…` / `d939c652…`）一致且语义仍有效（生产
+  栈未再切换）才可复用；逐字节复制 + 重哈希 + JSON 契约断言；原始
+  时间窗口边界（2026-09-23T23:29:35Z / 2026-09-22→23）在 README
+  显式保留，距聚合时距如实陈述。
+- **evidence-cockpit 聚合**：六个生产状态源（M14-83 三门 / M14-85
+  backup / M14-87 anchor + companion）就地 sha256 复核 6/6 MATCH 后
+  原样 staging；`--gate-declared-head release-check=<HEAD>` 与
+  `--current-head <HEAD>` 显式声明；期望 cockpit_ready=true、
+  blockers=[]、pass=9/missing=2（release-approval not-staged
+  human-only + turn-tls optional）、release_ready/production_ready
+  恒 false。staged 10 文件外部逐字节复核 10/10 IDENTICAL 并产出
+  staged-inventory。
+- **收尾验证**：聚焦契约测试八套件（cockpit/release/provider 面，
+  Windows 需先 mkdir -p 预建 `--basetemp` 父目录）+ `ruff check
+  services/api` + canonical SHA256SUMS（文本模式 LF）+ JSON 契约
+  断言脚本 + canonical 秘密扫描 + tracked 新增行秘密/本地绝对路径/
+  U+FFFD 扫描 + `git diff --check`。
+- **诚实边界**：cockpit_ready=true ≠ 可发布（release-approval
+  human-only 缺席即不可放行）；provider-smoke/long-soak 是时点证据
+  不承诺窗口外状态；production-state 门是呈现不是重执行；代码绑定
+  门证据只对执行时点的树成立，main 再前移即再 stale。
