@@ -8,6 +8,50 @@
 M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/11）→ M3 Student Model（✅ 7/7）
 
 ## 当前任务
+
+**M14-140 Production Drift Watch 告警任务桥真实子进程运行时闭环（测试/docs-only 切片）**：worktree
+`m14-140-drift-watch-alert-task-runtime`，分支
+`ops/m14-140-drift-watch-alert-task-runtime`，基于 supervisor 本地
+sync-base `49b67eaa95913da32a5509830e5096b4670fb40e`（其 tree 与
+canonical remote main `98feae3006ec94bb8ecab21c90fbc9f03eb3c8fd` 完全
+一致——任务书给定；sync-base 为 supervisor 运维基座，本切片在其上
+恰好一笔任务 commit），实现者执行、Codex supervisor 监督；本地
+commit 后 supervisor 审查与 remote 发布（push/PR/合并）在其后进行。
+**零工具源码改动**（M14-137 任务桥 / M14-135 dispatcher 语义零触碰），
+新增黑盒运行时集成测试
+`services/api/tests/test_production_drift_watch_alert_task_runtime.py`
+（3 项，模板对齐 M14-136）闭合 M14-137「真实 M14-135 dispatch 子进程
+移交未实证」边界：真实任务桥 CLI 子进程 + 本机 ephemeral 回环接收器
+（127.0.0.1 动态端口、用毕即关；三条路径期望结局全部零出站，接收器
+仅是「零请求」断言的可观测面）+ 合成 older/newest execute 模式报告 +
+临时 secret JSON，实证：① drift=true execute → 移交真实落到 M14-135
+子进程（`scheme-not-https` 为 M14-135 族自有词汇经桥回显——真实
+子进程运行的运行时证据），白名单刻意不转发 `--allow-loopback-http`
+→ 子进程 fail-closed、接收器零请求、退出码 2 原样透传、dispatch
+工件目录零创建（拒绝先于 M14-135 任何目录/工件写入）；newest stem +
+独立重算精确 SHA-256 + 候选计数上 stdout；token/完整 URL/127.0.0.1
+字面量/接收器路径/绝对本地路径（正反斜杠双形态）/投毒 detail 绝不
+入 stdout/stderr。② drift=true plan → exit 3 +
+dispatch-would-be-required + 精确 SHA-256 + 接收器零请求 + 临时
+目录树快照不变（plan 零写入运行时面）。③ drift=false execute →
+exit 0 + skipped-no-alerts + 「零 dispatch 子进程」+ older drift=true
+报告零痕迹（drift 判定只依据最新报告布尔）+ 接收器零请求 + dispatch
+工件目录不存在（M14-135 即便 skip 路径也会写工件——目录不存在即零
+子进程副作用的运行时证明）。全程零外部端点/DNS 主机名/生产服务/
+Docker/调度器/DB/MinIO/语音/设备/真实 secret 接触、不安装/修改任何
+计划任务；无法绑定回环的环境整套 skip 而非假通过。同步交付证据
+`docs/evidence/m14-140-drift-watch-alert-task-runtime/README.md` +
+`tools/ops/README.md` M14-140 段 + 三台账条目。验证：新测试
+3 passed；四套聚焦合跑 163 passed（M14-137 契约 29 + M14-136 运行时
+4 + M14-135 契约 127 + 新 3，canonical venv）；ruff（默认 +
+F,E9）/py_compile/`git diff --check` 全过；新增行秘密扫描 0 命中
+（仅测试源码内合成 sentinel 常量）。诚实边界：本切片不存在任何成功
+外发——「任务桥→M14-135 子进程→真实 webhook 2xx 送达」完整闭环
+未实证（白名单不转发回环豁免旗标，回环放行路径在任务桥形态上不可
+达，此为实证的 fail-closed 面而非缺口）、不证明调度集成或告警端到
+端送达；`production_ready=false` 不变，release-approval 仍是
+human-only 门。
+
 **M14-137 Production Drift Watch 告警分发调度桥 readiness（工具/测试/文档切片）**：worktree
 `m14-137-drift-watch-alert-readiness`，分支
 `ops/m14-137-drift-watch-alert-readiness`，基于 main
