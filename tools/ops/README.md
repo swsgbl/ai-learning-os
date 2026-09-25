@@ -1632,7 +1632,7 @@ AIOS-Monitoring-Pipeline 互不接入/互不改动（不同任务名/URI/wrapper
 python tools/ops/production_drift_watch_task.py plan      # 只读预检 + 注册计划（零写操作、零调度器改动）
 python tools/ops/production_drift_watch_task.py generate  # 导出任务 XML（UTF-16 with BOM，gitignored .verify/artifacts/m14-129-production-drift-watch-task/）
 python tools/ops/production_drift_watch_task.py status    # 只读状态（installed 0/unknown 1/missing 2/foreign 3/malformed 4）
-python tools/ops/production_drift_watch_task.py install --confirm "EXECUTE PRODUCTION DRIFT WATCH SCHEDULER CHANGE"      # supervisor-only（提升令牌 + 获准窗口）
+python tools/ops/production_drift_watch_task.py install --confirm "EXECUTE PRODUCTION DRIFT WATCH SCHEDULER CHANGE"      # supervisor-only（获准窗口；提升要求随主机策略而异——2026-09-25 本机非提升 shell 实测安装成功，见 M14-131）
 python tools/ops/production_drift_watch_task.py uninstall --confirm "EXECUTE PRODUCTION DRIFT WATCH SCHEDULER CHANGE"    # 仅删本工具精确拥有的任务
 ```
 
@@ -1675,4 +1675,19 @@ python tools/ops/production_drift_watch_task.py uninstall --confirm "EXECUTE PRO
   缺失专用退出码（2=venv python 缺失、3=脚本缺失、4=repo 缺失）；零
   secret、零网络、零 env 读取。
 - readiness ≠ 任务已安装 ≠ 生产监控已上线：本切片零 schtasks 执行、零
-  注册、零自然调度、零 drift 结论；实际注册 supervisor-only。
+  注册、零自然调度、零 drift 结论；实际注册 supervisor-only。**生产
+  后记（2026-09-25 观测事实，M14-131 回填）**：supervisor 已在
+  canonical main `a12b2acb` 以**非提升** shell（PowerShell 角色检查
+  `ElevatedAdministrator=False`）真实 install 成功（exit 0；安装后
+  status=installed/exact-owned，Action/Arguments/cwd/Hidden/触发器/
+  PT15M 间隔/PT10M 时限逐项匹配），任务于 2026-09-25 12:30:01
+  （+08:00）完成**首轮自然调度**（LastTaskResult=0、
+  NumberOfMissedRuns=0、下一轮 12:45:00；零 /Run、/Change、/End，
+  零 Docker/容器/生产服务重启，零手动 execute；自然轮报告
+  drift=false、28 pass / 0 fail、七服务 healthy、API/Web digest 恰为
+  M14-124 批准值）。早期「install 需提升令牌」的推论按本机实测修正
+  为后观测事实——提升要求随主机 UAC/任务策略而异，**不作普遍
+  Windows 行为宣称**（M14-06 LogonTrigger 任务需提升的生产实证不受
+  影响）。一轮自然成功仅证明 installed + 首轮自然运行，不证明长期
+  稳定性/持续调度/重启重建覆盖；`production_ready=false` 不变。证据
+  `docs/evidence/m14-131-m129-production-install-natural-run/README.md`。

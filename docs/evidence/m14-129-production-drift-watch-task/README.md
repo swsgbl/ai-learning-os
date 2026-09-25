@@ -159,3 +159,48 @@ xoxb_/-----BEGIN）0 命中。
 | `tools/ops/README.md` | 修改（新增 M14-129 段落） |
 
 未修改 PROJECT_STATUS.md、ROADMAP.md、CHANGELOG.md（supervisor 边界）。
+
+## 7. 生产后记（2026-09-25 观测事实，M14-131 回填）
+
+上文 §1–§6 是 M14-129 开发回合（readiness-only）的历史记录，原文
+保持不变；以下为**后来发生**的生产观测事实，由 M14-131 docs-only
+切片回填（证据
+`docs/evidence/m14-131-m129-production-install-natural-run/README.md`）：
+
+- **真实安装（2026-09-25，supervisor）**：在 canonical main
+  `a12b2acb69d8c8cb5cc91a3fc1a730f846f9516f`（canonical 与
+  origin/main 同 SHA 复核一致）的当前非提升 supervisor shell
+  （PowerShell 角色检查 `ElevatedAdministrator=False`）执行
+  `.venv\Scripts\python.exe tools/ops/production_drift_watch_task.py
+  install --confirm "EXECUTE PRODUCTION DRIFT WATCH SCHEDULER CHANGE"`
+  exit 0；安装后 manager 只读 status 报告 **installed / exact-owned**
+  （Action、Arguments、WorkingDirectory、Hidden、触发器、PT15M 间隔、
+  PT10M 时限逐项匹配）——§4 未实证的 TimeTrigger/Repetition/
+  StartBoundary 注册后归一化行为随之获得真实安装实证。
+- **首轮自然调度（2026-09-25）**：安装后零 `schtasks /Run`、
+  `/Change`、`/End`、零 Docker/容器/生产服务重启、零手动 drift-watch
+  execute；调度器基线 LastRunTime 1999-11-30、LastTaskResult 267011
+  （0x41303，从未运行）、NextRunTime 2026-09-25 12:30:00 +08:00、
+  NumberOfMissedRuns 0。任务于 **2026-09-25 12:30:01 +08:00 自然
+  执行**：LastTaskResult=0、NextRunTime 12:45:00 +08:00、
+  NumberOfMissedRuns 0；事后只读 status 仍 installed / exact-owned。
+  自然轮报告（canonical gitignored
+  `.verify/artifacts/m14-127-production-drift-watch/drift-watch-20260925-043001.json`
+  11023 bytes / SHA-256
+  `5A6FA1BAC85772BA6B793BA3792E92FBF0D508C9A220FCF7623F853DEB53A80E`）：
+  started_at_utc 2026-09-25T04:30:01Z、drift=false、28 pass / 0 fail、
+  七服务 healthy、API/Web digest 恰为 M14-124 批准值
+  （`sha256:c99e28c905208bffbc1576f0c5c9e042af18fd356881cee967078ee38323781f` /
+  `sha256:d596f0c726ab690359b196a3c3911f9842b94218b4361ee452413d420a38194b`）。
+- **对 §4 提升推论的修正（后观测事实，不改写上文历史）**：§4
+  「`schtasks /Create` 需提升令牌（M14-06 生产实证）」是开发期从
+  M14-06 LogonTrigger 任务外推的推论；本任务的 TimeTrigger +
+  InteractiveToken/LeastPrivilege 形态已于 2026-09-25 在同机**非提升**
+  shell 一次 `/Create` 成功（与 M14-54 审计归档任务非提权安装成功同
+  形态）。该修正仅陈述本机实测，不宣称普遍 Windows 行为——提升要求
+  随主机 UAC 策略、任务 principal/触发器形态与组策略而异，安装前应
+  以只读角色检查确认；M14-06 的生产实证不受影响。
+- **边界保持**：一轮自然成功仅证明任务已安装 + 首轮自然调度端到端
+  ok——不证明长期稳定性、持续调度可靠性、机器/Docker 重启或仓库重建
+  后仍生效，不构成 production readiness 宣称；`production_ready=false`
+  不变；不解除任何 release gate。
