@@ -9,6 +9,52 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-130 M14-129 进度台账回填（docs-only 切片）**：worktree
+`m14-130-m129-ledger-backfill`，分支
+`docs/m14-130-m129-ledger-backfill`，基于 main
+`44a5a69ff59acf28cd68531943b8ec45fe8ea88e`（PR #217 merge =
+M14-129 合入，本地 git 全 SHA 复核一致，精确基点 = 当前 HEAD），
+单 local commit，不 push、不开 PR、不合并（supervisor 只监督验收）。
+M14-129（PR #217）功能切片在原任务书边界下刻意禁改三本台账，合并
+前后两轮 CI 五项全绿；本切片单独补账：零代码、零测试变更、零生产/
+调度器/设备执行，仅把已验收事实回填本文件、ROADMAP 与 CHANGELOG。
+**回填的 M14-129 事实——Production Drift Watch 计划任务 readiness
+管理器**（feature commit
+`0e596cea2e67ffac1be285fb84b0cc458ae77b21` 已随 PR #217 合并
+main，merge commit
+`44a5a69ff59acf28cd68531943b8ec45fe8ea88e`，本地 git 可验证；PR
+CI run `36091600466` 五项 job 全部 success，merge 后 main CI run
+`36091865061` 五项 job 全部 success）：交付
+`tools/ops/production_drift_watch_task.py`、
+`tools/ops/run_production_drift_watch_silent.vbs`、契约测试
+`services/api/tests/test_production_drift_watch_task.py`、证据
+`docs/evidence/m14-129-production-drift-watch-task/README.md` 与
+`tools/ops/README.md` M14-129 段。任务身份
+`AIOS-Production-Drift-Watch`（URI
+`urn:aios:m14-129:production-drift-watch`）；就绪契约 PT15M 重复
+间隔 > PT10M 执行时限 > 330s 最坏情形只读 drift-watch 子进程预算、
+Hidden、StartWhenAvailable、IgnoreNew、电池启/不禁、
+InteractiveToken + LeastPrivilege；VBS 从自身位置解析 repo 路径并以
+canonical .venv Python 调用 production_drift_watch.py --execute
+--confirm "EXECUTE READ-ONLY PRODUCTION DRIFT WATCH"；manager
+mutation 短语 `EXECUTE PRODUCTION DRIFT WATCH SCHEDULER CHANGE`；
+结构性 schtasks 白名单——仅全量列表查询、固定名 XML 查询、精确
+/Create /TN 固定名 /XML 单临时文件、精确 /Delete /TN 固定名 /F，
+绝不 /Run、/Change、/End 或 force-create。验证（实现者与
+supervisor 独立双复核）：五个相关套件合计 387 passed / 0 skipped
+（新任务 82、drift watch 96、监控管道任务 79、审计归档任务 53、
+语音 sidecar 看护 77）；ruff / py_compile / `git diff --check`
+全过、秘密扫描零真实命中、post-commit worktree clean。诚实边界：
+M14-129 是 readiness only——未执行真实 schtasks、未安装/卸载/注册
+任务、未自然调度、未运行 drift watch、未接触生产、未证明持续监控；
+readiness 未安装、生产监控未在线；TimeTrigger/Repetition/
+StartBoundary 注册后规范化在真实安装前仍未验证。下一步：supervisor
+应先运行 M14-129 canonical 只读 status/plan acceptance；真实 Task
+Scheduler 安装需提升令牌，仍是单独的显式受限步骤。Harmony M14-126
+attempt 2 继续 BLOCKED（hdc targets 空、127.0.0.1:5555 不可达），
+不得虚构通过。本切片验证（docs-only）：markdown 结构 sanity +
+新增文本秘密扫描 0 命中 + `git diff --check` 干净，不运行 pytest。
+
 **M14-128 M14-126/M14-127 进度台账回填（docs-only 切片）**：worktree
 `m14-128-m126-m127-ledger-backfill`，分支
 `docs/m14-128-m126-m127-ledger-backfill`，基于 main
