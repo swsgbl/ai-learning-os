@@ -26,10 +26,20 @@
   即中止），渲染产物只落仓库外目录（遏制测试锁仓库工作树零变化）。
 - 新增格式样板 `tools/ops/public_edge_prepare.example.json`（全占位值，
   本身必被校验拒绝——诚实边界：占位值不得进入渲染）与聚焦测试
-  `services/api/tests/test_public_edge_prepare.py`（73 项：装载/校验矩阵/
-  脱敏/secret 文件处理/渲染确定性/输出遏制/无 secret 持久化/CLI 行为/
-  DNS 打桩）；runbook 新增 §3A（manifest → check-only → render → 部署 →
-  preflight → 回滚 全流程）。验证：三套件 174 passed + ruff 全净 +
+  `services/api/tests/test_public_edge_prepare.py`；runbook 新增 §3A
+  （manifest → check-only → render → 部署 → preflight → 回滚 全流程）。
+  **Round 2 四缺口加固**：(1) 内联 secret 拒绝作用域感知化——secret 形态
+  键名只允许出现在 local_secret_files 内部（顶层 frps_token="低熵值"
+  这类并存形态被拒且不回显值），并按 schema 白名单拒绝未知顶层键
+  （仅可选 notes 豁免）；(2) 渲染目标预检 validate_render_target——拒绝
+  文件系统根/仓库根/符号链接目录与符号链接产物、已存在目录必须只含恰好
+  五个预期产物名（多余条目拒绝，同名幂等覆写保留），symlink 判定先于
+  resolve；(3) 路径注入防线——本地 secret 路径（盘符冒号/斜杠/字母数字/
+  空格/._-）与 VPS POSIX 路径（字母数字/._-/）分别限定字符集并拒 `..`
+  段，渲染后 frpc TOML 强制 tomllib 自解析；(4) 渲染自审计高熵策略与
+  manifest 对齐（40+ base64 形态兜住精确匹配漏网；含 `/`/`\` 的路径形态
+  token 豁免并文档化，hex 类不豁免）+ secret 文件超 4096 字节显式拒绝
+  （不再静默截断）。验证：三套件 189 passed + ruff 全净 +
   `git diff --check` exit 0 + 新增行扫描 0 命中。零部署、零服务启停、
   不触碰 M14-153 交付物语义。
 

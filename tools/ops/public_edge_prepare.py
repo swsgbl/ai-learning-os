@@ -39,6 +39,8 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+import tomllib
+
 try:  # 包导入（pytest）与脚本直跑两种形态
     from tools.ops import public_edge_preflight as preflight
 except ImportError:  # python tools/ops/public_edge_prepare.py
@@ -60,6 +62,7 @@ REQUIRED_TOP_KEYS = (
 )
 MANIFEST_MAX_BYTES = 64 * 1024
 SECRET_MIN_LEN = 32
+SECRET_MAX_BYTES = 4096  # 超上限显式拒绝（Round 2：不做静默截断）
 HOME_PORT_MIN, HOME_PORT_MAX = 1024, 65535
 EMAIL_RE = re.compile(r"^[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)+$")
 # 键名策略：含这些词且不以 _file 结尾的 manifest 键一律视为内联 secret
@@ -114,23 +117,48 @@ def load_manifest(path: str) -> dict[str, Any]:
 # ---------------------------------------------------------------- 校验矩阵
 
 
+def _is_secret_like_key(key: str) -> bool:
+    return any(word in key.lower() for word in SECRET_KEY_WORDS) and not key.endswith("_file")
+
+
 def reject_inline_secrets(manifest: dict[str, Any]) -> None:
-    """内联 secret 双防线：键名策略 + 高熵值扫描（manifest 只许 *_file 引用）。"""
-    for key in manifest:
-        if (
-            any(word in key.lower() for word in SECRET_KEY_WORDS)
-            and not key.endswith("_file")
-            and key not in LOCAL_SECRET_KEYS
-            and key != "local_secret_files"
-            and key != "vps_secrets_dir"
-        ):
-            raise PrepareError(
-                f"manifest 键 {key} 疑似内联 secret——只允许 local_secret_files.* 文件引用"
-            )
-    for key, value in _iter_strings(manifest):
+    """内联 secret 双防线（Round 2 作用域感知版）。
+
+    1. 键名策略：secret 形态键名（token/secret/password/... 且非 *_file 结尾）
+       只允许出现在 local_secret_files **内部**（那是文档化的四个文件引用名）；
+       顶层或任意其他嵌套位置出现（包括与 LOCAL_SECRET_KEYS 同名的顶层键，
+       如顶层 frps_token="低熵值"）一律拒绝——secret 值唯一合法形态就是
+       local_secret_files.* 的文件路径引用。拒绝消息只含键路径不含值。
+    2. 高熵值扫描：与渲染审计同一策略（≥32 hex 或 40+ base64 形态全匹配）；
+       local_secret_files.* 的值是路径（由 validate_secret_file 另行校验）跳过。
+    """
+    documented_non_value_keys = {"local_secret_files", "vps_secrets_dir"}
+
+    def _walk(node: Any, path: tuple[str, ...]) -> None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                if path == () and key in documented_non_value_keys:
+                    _walk(value, (key,))
+                    continue
+                inside_refs = bool(path) and path[0] == "local_secret_files"
+                if not inside_refs and _is_secret_like_key(key):
+                    dotted = ".".join((*path, key))
+                    raise PrepareError(
+                        f"manifest 键 {dotted} 疑似内联 secret——secret 值只允许"
+                        f" local_secret_files.* 文件引用"
+                    )
+                _walk(value, (*path, key))
+        elif isinstance(node, list):
+            for index, value in enumerate(node):
+                _walk(value, path)
+
+    _walk(manifest, ())
+    for key_path, value in _iter_strings(manifest):
+        if key_path.split(".")[0].split("[")[0] == "local_secret_files":
+            continue
         if re.search(r"[0-9a-fA-F]{32,}", value) or re.fullmatch(r"[A-Za-z0-9+/_=-]{40,}", value):
             raise PrepareError(
-                f"manifest 值（键 {key}）呈高熵 secret 形态——真实凭据只进 secret 文件"
+                f"manifest 值（键 {key_path}）呈高熵 secret 形态——真实凭据只进 secret 文件"
             )
 
 
@@ -252,10 +280,12 @@ def validate_home_ports(home: Any) -> tuple[int, int]:
 
 
 def validate_output_dir(value: Any) -> Path:
-    """显式输出目录：拒绝仓库内路径（渲染产物绝不污染仓库）。"""
+    """显式输出目录：拒绝仓库内路径与文件系统根（渲染产物绝不污染仓库/根）。"""
     if not isinstance(value, str) or not value.strip():
         raise PrepareError("output_dir 必须显式提供（渲染产物目录）")
     resolved = Path(value.strip()).expanduser().resolve()
+    if resolved == Path(resolved.anchor):
+        raise PrepareError("output_dir 不得是文件系统根目录")
     try:
         resolved.relative_to(REPO_ROOT)
     except ValueError:
@@ -263,18 +293,48 @@ def validate_output_dir(value: Any) -> Path:
     raise PrepareError("output_dir 不得位于仓库内（渲染产物必须落在仓库外）")
 
 
+# Round 2 路径注入防线：本地（Windows 家机）与 VPS（POSIX）路径分别限定字符集
+# ——引号/$/#/反引号/控制字符等会破坏 TOML 字符串、注入 .env 行或注释掉指令；
+# `..` 段一律拒绝。盘符冒号只允许出现在本地路径首位。
+_LOCAL_PATH_CHARS = re.compile(r"^[A-Za-z]:[\\/][A-Za-z0-9 ._:\\/-]*$")
+_POSIX_PATH_CHARS = re.compile(r"^/[A-Za-z0-9._/-]*$")
+
+
+def _reject_dotdot(segments: list[str], label: str) -> None:
+    if any(segment == ".." for segment in segments):
+        raise PrepareError(f"{label} 路径不得含 .. 段")
+
+
 def validate_vps_secrets_dir(value: Any) -> str:
     if not isinstance(value, str) or not value.startswith("/") or any(ch.isspace() for ch in value):
         raise PrepareError("vps_secrets_dir 必须是 VPS 侧绝对路径（无空白），如 /opt/aios-edge/secrets")
+    if not _POSIX_PATH_CHARS.fullmatch(value):
+        raise PrepareError(
+            "vps_secrets_dir 含不安全字符（只允许字母数字 . _ - /；"
+            "引号/$/#/反引号/控制字符拒绝——防 .env/文档注入）"
+        )
+    _reject_dotdot(value.split("/"), "vps_secrets_dir")
     return value.rstrip("/")
 
 
 def validate_secret_file(reference: Any, name: str) -> str:
-    """secret 文件引用：存在/常规文件/UTF-8/长度/占位形态；错误绝不回显路径与字节。"""
+    """secret 文件引用：路径形态/存在/常规文件/UTF-8/长度上下限/占位形态。
+
+    Round 2：本地路径限定安全字符集（引号/$/#/反引号/控制字符/.. 段拒绝
+    ——该值会被替换进 frpc TOML 引号字符串）；文件超过支持上限（4096 字节）
+    显式拒绝而非静默截断。错误绝不回显路径与字节。
+    """
     if not isinstance(reference, str) or not reference.strip() or any(ch.isspace() for ch in reference):
         raise PrepareError(f"local_secret_files.{name} 必须是无空白文件路径")
     if "://" in reference:
         raise PrepareError(f"local_secret_files.{name} 必须是本地文件路径（拒绝 URL）")
+    if not _LOCAL_PATH_CHARS.fullmatch(reference):
+        raise PrepareError(
+            f"local_secret_files.{name} 路径含不安全字符（只允许盘符冒号、斜杠、"
+            f"字母数字、空格、. _ -；引号/$/#/反引号/控制字符拒绝）"
+        )
+    without_drive = reference[2:] if re.match(r"^[A-Za-z]:", reference) else reference
+    _reject_dotdot(re.split(r"[\\/]+", without_drive), f"local_secret_files.{name}")
     try:
         path = Path(reference).expanduser().resolve()
         if path.is_symlink() or not path.is_file():
@@ -286,7 +346,12 @@ def validate_secret_file(reference: Any, name: str) -> str:
                     f"local_secret_files.{name} 权限过宽（others/group 可读；要求 600 语义）"
                 )
         with open(path, "rb") as handle:
-            raw = handle.read(4096)
+            raw = handle.read(SECRET_MAX_BYTES + 1)
+        if len(raw) > SECRET_MAX_BYTES:
+            raise PrepareError(
+                f"local_secret_files.{name} 超过 {SECRET_MAX_BYTES} 字节支持上限"
+                f"（拒绝静默截断；请核对是否指向了正确文件）"
+            )
     except OSError as cause:
         raise PrepareError(f"local_secret_files.{name} 不可读: {type(cause).__name__}") from cause
     try:
@@ -313,6 +378,12 @@ def validate_manifest(manifest: dict[str, Any]) -> dict[str, Any]:
     missing = [key for key in REQUIRED_TOP_KEYS if key not in manifest]
     if missing:
         raise PrepareError(f"manifest 缺必填键: {missing}")
+    unknown = sorted(set(manifest) - set(REQUIRED_TOP_KEYS) - {"notes"})
+    if unknown:
+        raise PrepareError(
+            f"未知顶层键 {unknown}（schema 只允许文档化字段与可选 notes；"
+            f"内联 secret 一律拒绝）"
+        )
     if manifest["schema"] != SCHEMA:
         raise PrepareError(f"schema 必须是 {SCHEMA}")
     if manifest.get("acknowledge_real_inputs") is not True:
@@ -416,6 +487,9 @@ def render_artifacts(view: dict[str, Any]) -> dict[str, tuple[str, int]]:
     checklist_items = "\n".join(
         f"- [ ] {item['id']}: {item['title']}——{item['detail']}" for item in preflight.MANUAL_CHECKLIST
     )
+    # Round 2 自保障：frpc 替换后的 TOML 必须仍可解析（路径字符集防线之上的
+    # 最后一道——任何残留注入形态在此中止渲染）
+    tomllib.loads(frpc)
     preflight_doc = (
         f"# 公网验收 preflight（由 {TOOL_NAME} 渲染；命令不含 secret）\n\n"
         f"```bash\n"
@@ -458,23 +532,97 @@ def _atomic_write(directory: Path, name: str, content: str, mode: int) -> None:
             raise
 
 
-def audit_rendered(artifacts: dict[str, tuple[str, int]], secret_values: dict[str, str]) -> None:
-    """渲染自审计（fail-closed）：产物不得含任一 secret 内容或 32+ hex 高熵串。"""
+# 渲染自审计的高熵豁免（文档化）：静态豁免当前为空（五个模板均无 ≥32 hex
+# 或 40+ base64 形态的合法长串需求）。动态豁免 = 本视图合法替换进产物的
+# 长 token（secret 文件路径、VPS secret 目录）——render_to_directory 传入；
+# 它们是操作者声明的部署路径，不是 secret 材料。未来模板确需静态豁免时
+# 在 AUDIT_ENTROPY_ALLOWLIST 登记并注明理由。
+AUDIT_ENTROPY_ALLOWLIST: tuple[str, ...] = ()
+
+
+def _iter_entropy_tokens(text: str):
+    """与 manifest 高熵策略同款：≥32 hex 或 40+ base64 形态串。
+
+    base64 类的路径形态豁免：token 含 `/` 或 `\\` 视为路径（.env 的
+    `VAR=/opt/.../name` 行、frpc 的 token 文件路径都是合法长串）——
+    hex 类不豁免（hex secret 从不含斜杠，路径也不会含 32+ 连续 hex）；
+    真正泄漏的 secret 内容另由 audit_rendered 的精确匹配兜底。
+    """
+    for token in re.findall(r"[0-9a-fA-F]{32,}|[A-Za-z0-9+/_=-]{40,}", text):
+        if token in AUDIT_ENTROPY_ALLOWLIST:
+            continue
+        if "/" in token or "\\" in token:
+            continue  # 路径形态（见 docstring）
+        yield token
+
+
+def audit_rendered(
+    artifacts: dict[str, tuple[str, int]],
+    secret_values: dict[str, str],
+    permitted_long_tokens: tuple[str, ...] = (),
+) -> None:
+    """渲染自审计（fail-closed）：
+
+    1. 精确匹配：产物不得含任一 secret 文件内容；
+    2. 高熵策略（Round 2 对齐 manifest）：产物不得含 ≥32 hex 或 40+ base64
+       形态串（精确匹配漏掉的 base64 长 secret 由这条兜住）。豁免仅两类：
+       静态 AUDIT_ENTROPY_ALLOWLIST（模板合法长串，登记+理由）与本视图
+       合法替换的长 token（secret 路径/VPS 目录——permitted_long_tokens）。
+    """
     for name, (content, _mode) in artifacts.items():
         for secret_name, value in secret_values.items():
             if value and value in content:
                 raise PrepareError(f"渲染产物 {name} 泄漏 secret 内容（{secret_name}）——中止写出")
-        for hit in re.findall(r"[0-9a-fA-F]{32,}", content):
-            raise PrepareError(f"渲染产物 {name} 含高熵串（疑似 secret）: {hit[:8]}...")
+        for token in _iter_entropy_tokens(content):
+            if any(token in permitted for permitted in permitted_long_tokens):
+                continue
+            raise PrepareError(f"渲染产物 {name} 含高熵串（疑似 secret）: {token[:8]}...")
+
+
+EXPECTED_ARTIFACT_NAMES = frozenset({"Caddyfile", "frps.toml", "frpc.windows.toml", ".env", "PREFLIGHT.md"})
+
+
+def validate_render_target(directory: Path) -> None:
+    """Round 2 渲染目标防线（mkdir/写入之前执行）：
+
+    拒绝文件系统根与仓库根；目录若已存在：必须是真目录（非符号链接）、
+    只含恰好预期的五个产物名（常规文件、非符号链接）——多余条目拒绝，
+    防止盲写污染无关目录；对同名产物保持幂等覆写。
+    """
+    resolved = directory.resolve()
+    if directory.is_symlink():  # 先于 resolve 检查原路径（resolve 会跟随链接）
+        raise PrepareError("输出目录不得是符号链接")
+    if resolved == Path(resolved.anchor):
+        raise PrepareError("输出目录不得是文件系统根目录")
+    if resolved == REPO_ROOT or str(resolved).startswith(str(REPO_ROOT) + os.sep):
+        raise PrepareError("输出目录不得位于仓库内")
+    if not resolved.exists():
+        return  # 不存在——由渲染创建（父目录链由操作者显式给出）
+    if not resolved.is_dir():
+        raise PrepareError("输出路径存在但不是目录")
+    unexpected = sorted(p.name for p in resolved.iterdir() if p.name not in EXPECTED_ARTIFACT_NAMES)
+    if unexpected:
+        raise PrepareError(
+            f"输出目录含非渲染产物条目 {unexpected}（拒绝写入无关目录；"
+            f"只允许恰好的五个产物名幂等覆写）"
+        )
+    for entry in resolved.iterdir():
+        if entry.is_symlink() or not entry.is_file():
+            raise PrepareError(f"渲染产物 {entry.name} 必须是常规文件（拒绝符号链接）")
 
 
 def render_to_directory(view: dict[str, Any]) -> list[str]:
-    """渲染并原子写出到 output_dir（存在则必须为空或仅含历次渲染同名产物）。"""
+    """渲染并原子写出到 output_dir（目标先过 validate_render_target 防线）。"""
     directory: Path = view["output_dir"]
+    validate_render_target(directory)
     directory.mkdir(parents=True, exist_ok=True)
     os.chmod(directory, 0o700)
     artifacts = render_artifacts(view)
-    audit_rendered(artifacts, view["secret_values"])
+    # 本视图合法替换的长 token（家机 secret 路径/VPS secret 目录的两种斜杠
+    # 形态）作为高熵审计的动态豁免——它们是路径不是 secret 材料
+    frpc_path = view["local_secret_paths"]["frpc_token"]
+    permitted = (frpc_path, frpc_path.replace("\\", "/"), view["vps_secrets_dir"])
+    audit_rendered(artifacts, view["secret_values"], permitted_long_tokens=permitted)
     written: list[str] = []
     for name, (content, mode) in artifacts.items():
         _atomic_write(directory, name, content, mode)

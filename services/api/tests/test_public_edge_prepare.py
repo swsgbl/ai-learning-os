@@ -472,3 +472,159 @@ def test_dns_check_pass_and_fail(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     monkeypatch.setattr(prepare.socket, "getaddrinfo", _fake_mismatch)
     results = prepare.check_dns(view)
     assert results and all(item["status"] == "fail" for item in results)
+
+
+# ---------------------------------------------------------------- Round 2 缺口回归
+
+
+def test_top_level_low_entropy_inline_secret_rejected(tmp_path: Path) -> None:
+    """Round 2 缺口 1：顶层 frps_token="低熵值"（与合法文件引用并存）必须被拒，
+    消息含键名但绝不回显值。"""
+    manifest = _valid_manifest(tmp_path)
+    manifest["frps_token"] = "short-low-entropy-inline"
+    with pytest.raises(prepare.PrepareError) as excinfo:
+        prepare.validate_manifest(manifest)
+    message = str(excinfo.value)
+    assert "frps_token" in message and "内联 secret" in message
+    assert "short-low-entropy-inline" not in message, "拒绝消息不得回显被拒值"
+
+
+def test_nested_secret_like_key_rejected(tmp_path: Path) -> None:
+    """作用域感知：local_secret_files 之外的嵌套 secret 形态键同样拒绝。"""
+    manifest = _valid_manifest(tmp_path)
+    manifest["deploy"] = {"api_key": "whatever"}
+    with pytest.raises(prepare.PrepareError, match="deploy.api_key"):
+        prepare.reject_inline_secrets(manifest)
+    nested_home = _valid_manifest(tmp_path)
+    nested_home["home"] = {**nested_home["home"], "api_key": "x"}
+    with pytest.raises(prepare.PrepareError, match="home.api_key"):
+        prepare.validate_manifest(nested_home)
+
+
+def test_unknown_top_level_key_rejected(tmp_path: Path) -> None:
+    """schema 白名单：未知顶层键拒绝；文档化可选 notes 放行。"""
+    manifest = _valid_manifest(tmp_path)
+    manifest["extra_field"] = 1
+    with pytest.raises(prepare.PrepareError, match="未知顶层键"):
+        prepare.validate_manifest(manifest)
+    manifest = _valid_manifest(tmp_path)
+    manifest["notes"] = "计划周四上线"
+    prepare.validate_manifest(manifest)  # notes 是唯一可选白名单键——通过
+
+
+def test_render_target_rejects_unexpected_entries(tmp_path: Path) -> None:
+    view = _validated(tmp_path)
+    out = tmp_path / "render-out"
+    out.mkdir()
+    (out / "operator-notes.txt").write_text("unrelated", encoding="utf-8")
+    with pytest.raises(prepare.PrepareError, match="非渲染产物条目"):
+        prepare.render_to_directory(view)
+
+
+def _symlink_available(target: Path, link: Path) -> bool:
+    try:
+        link.symlink_to(target)
+    except (OSError, NotImplementedError):
+        return False
+    return True
+
+
+def test_render_target_rejects_symlinked_directory(tmp_path: Path) -> None:
+    view = _validated(tmp_path)
+    real = tmp_path / "real-out"
+    real.mkdir()
+    link = tmp_path / "link-out"
+    if not _symlink_available(real, link):
+        pytest.skip("本机无法创建符号链接（权限）")
+    symlinked_view = dict(view)
+    symlinked_view["output_dir"] = link
+    with pytest.raises(prepare.PrepareError, match="符号链接"):
+        prepare.render_to_directory(symlinked_view)
+
+
+def test_render_target_rejects_symlinked_artifact(tmp_path: Path) -> None:
+    view = _validated(tmp_path)
+    out = tmp_path / "render-out"
+    out.mkdir()
+    victim = tmp_path / "elsewhere.txt"
+    victim.write_text("x", encoding="utf-8")
+    link = out / ".env"
+    if not _symlink_available(victim, link):
+        pytest.skip("本机无法创建符号链接（权限）")
+    with pytest.raises(prepare.PrepareError, match="符号链接"):
+        prepare.render_to_directory(view)
+
+
+def test_output_dir_rejects_filesystem_root(tmp_path: Path) -> None:
+    root = str(Path(tmp_path.anchor))  # 例如 C:\
+    with pytest.raises(prepare.PrepareError, match="文件系统根"):
+        prepare.validate_output_dir(root)
+    with pytest.raises(prepare.PrepareError, match="文件系统根"):
+        prepare.validate_render_target(Path(root))
+    with pytest.raises(prepare.PrepareError, match="仓库"):
+        prepare.validate_render_target(prepare.REPO_ROOT)
+
+
+def test_local_secret_path_injection_rejected(tmp_path: Path) -> None:
+    """Round 2 缺口 3：引号/$/#/反引号/控制字符/.. 的本地 secret 路径全部拒绝。
+
+    字符集检查先于文件存在性——直接传字符串即可（Windows 也不允许建含
+    引号的文件名）。合法路径仍通过。
+    """
+    for bad in (
+        'D:/secrets/bad"quote.txt',
+        "D:/secrets/bad$dollar.txt",
+        "D:/secrets/bad#hash.txt",
+        "D:/secrets/bad`tick.txt",
+        "D:/secrets/bad%percent.txt",
+        "D:/secrets/bad;semi.txt",
+    ):
+        with pytest.raises(prepare.PrepareError, match="不安全字符"):
+            prepare.validate_secret_file(bad, "frps_token")
+    with pytest.raises(prepare.PrepareError, match=r"\.\."):
+        prepare.validate_secret_file("D:/secrets/../good.txt", "frps_token")
+    good = _write_secret(tmp_path, "good.txt")
+    assert prepare.validate_secret_file(str(good), "frps_token") == SECRET_CONTENT
+
+
+@pytest.mark.parametrize("bad_dir", ["/opt/x#y", "/opt/$HOME/x", "/opt/../etc", "/opt/a b"])
+def test_vps_secrets_dir_injection_rejected(bad_dir: str) -> None:
+    with pytest.raises(prepare.PrepareError):
+        prepare.validate_vps_secrets_dir(bad_dir)
+
+
+def test_valid_render_produces_parseable_toml(tmp_path: Path) -> None:
+    """合法路径渲染后 frpc.windows.toml 必须可被 tomllib 解析（自保障路径）。"""
+    import tomllib
+
+    artifacts = prepare.render_artifacts(_validated(tmp_path))
+    model = tomllib.loads(artifacts["frpc.windows.toml"][0])
+    assert model["serverAddr"] == VALID_VPS_IP
+    assert model["auth"]["tokenSource"]["file"]["path"].endswith("frpc_token.txt")
+    assert [p["customDomains"] for p in model["proxies"]] == [
+        ["app.acme-public.org"], ["api.acme-public.org"],
+    ]
+
+
+def test_audit_rendered_catches_base64_like_leak() -> None:
+    """Round 2 缺口 4：40+ base64 形态泄漏（精确匹配兜不住）必须被高熵策略拦下。
+
+    夹具刻意含 g-z 字母：不构成 32+ hex 连跑（hex 规则测不到），只能由
+    base64 形态规则兜住——正是本缺口要证明的路径。
+    """
+    base64_like = "Zg9Zh4Jk6lM8nOpQrStUv1Wx3Yy5Za7bc9de0fg2hi4"  # 42 字符 base64 形态
+    assert not re.search(r"[0-9a-fA-F]{32,}", base64_like)  # 自证：非 hex 形态
+    artifacts = {"Caddyfile": (f"header X-Leak {base64_like}", 0o644)}
+    with pytest.raises(prepare.PrepareError, match="高熵"):
+        prepare.audit_rendered(artifacts, {"frps_token": "completely-different-value"})
+
+
+def test_secret_file_upper_size_boundary(tmp_path: Path) -> None:
+    """Round 2 紧固：恰好 SECRET_MAX_BYTES 通过；超 1 字节显式拒绝（无静默截断）。"""
+    exact = tmp_path / "exact.txt"
+    exact.write_text("a" * prepare.SECRET_MAX_BYTES, encoding="utf-8")
+    assert prepare.validate_secret_file(str(exact), "turn_secret") == "a" * prepare.SECRET_MAX_BYTES
+    over = tmp_path / "over.txt"
+    over.write_text("a" * (prepare.SECRET_MAX_BYTES + 1), encoding="utf-8")
+    with pytest.raises(prepare.PrepareError, match="上限"):
+        prepare.validate_secret_file(str(over), "turn_secret")
