@@ -1,5 +1,40 @@
 # Changelog
 
+## M14-155 — 边缘部署操作包与 frpc 控制器（可交接、不部署）
+
+- 新增 `tools/ops/public_edge_package.py`（零第三方依赖；零网络零服务）：
+  对 M14-154 渲染产物做 **inspect / seal / verify**。inspect/seal 复检全部
+  内容不变量（Caddyfile 四站点为真实域名不回落 example.com、frpc
+  serverAddr 公网 IPv4、frps vhost 仅 loopback + TLS force + token-from-file、
+  家机侧只回连 127.0.0.1 且无 inline token、.env 的 TURN secret 仍是显式
+  回填标记、PREFLIGHT 人工清单完整）+ 同款高熵审计（许可 token 从产物
+  自身路径值精确推导）；seal 原子生成 **SHA256SUMS**（五产物全覆盖）与
+  **DEPLOYMENT_PACKAGE.md**（交接说明：诚实边界 + VPS 侧/家机侧清单，
+  明确真实命令由 supervisor 在取得真实资源后执行；字节确定——同一渲染
+  恒产同文）；verify fail-closed（哈希漂移/条目漂移/未知名或重复 SUMS
+  条目/交接文档漂移全部拒绝）。目录防线：仓库外、非符号链接、条目恰为
+  预期集（五件/七件）、非常规文件拒绝。
+- 新增 `tools/ops/frpc_windows_controller.py`（对齐 M14-06
+  windows_startup_task 纪律）：家机 frpc 计划任务 `AIOS-Edge-FRPC` 的
+  **preflight / plan / status / install / uninstall**。preflight 校验显式
+  frpc.exe（命名/常规文件）与渲染配置（公网 serverAddr/TLS/loopback
+  后端/token 仅文件引用且复用 prepare 的 token 文件校验——0600/UTF-8/
+  长度/非占位，内容绝不读取）；plan 打印 `frpc.exe verify -c` 等计划命令
+  不代跑；install 前必只读查询、同名任务（无论归属）一律拒绝、经显式
+  XML（LeastPrivilege + 归属标记 Description）创建；uninstall 只删
+  Description 精确等于 `urn:aios:m14-155:edge-frpc-controller` 的自有任务
+  （XML 命名空间感知归属判定 + DOCTYPE/ENTITY XXE 防护）；install/uninstall
+  需精确确认短语 `INSTALL-AIOS-EDGE-FRPC` 且 `--execute`（缺一即 dry-run
+  零写入）；绝不枚举/触碰任何其他计划任务。平台命令经注入 Runner——
+  测试全部 FakeRunner，绝不触碰真实 schtasks。
+- 测试：`services/api/tests/test_public_edge_package.py`（19 项：inspect
+  边界/不变量矩阵、seal 确定性、verify 漂移矩阵、交接文档诚实边界语句、
+  CLI）+ `test_frpc_windows_controller.py`（23 项：preflight 失败矩阵、
+  plan 零执行、install/uninstall 确认短语与归属纪律、status 分类含
+  DOCTYPE 防护、命名空间包双模块类同一性修正）。runbook 新增 §3B。
+- 边界：零部署零网络探测零服务启停；不读任何真实 env/secret 文件；
+  没有真实域名/VPS/DNS/4G 验收前仍不宣称公网生产上线。
+
 ## M14-154 — 边缘部署准备与渲染（public_edge_prepare，fail-closed 不部署）
 
 - 新增 `tools/ops/public_edge_prepare.py`：显式 JSON manifest 驱动的部署
