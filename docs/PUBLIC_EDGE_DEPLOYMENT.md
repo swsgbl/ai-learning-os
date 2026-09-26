@@ -123,6 +123,45 @@ preflight（§9）→ 回滚预案（§10）**。渲染 ≠ 部署——工具�
 6. **回滚**：预案见 §10；渲染产物本身可随时重出（确定性），回滚不依赖
    渲染目录存活。
 
+## 3B. 部署操作包与 frpc 控制器（M14-155，可交接）
+
+渲染之后、真实部署之前，用两个零依赖工具把配置推进到"可交接操作包"：
+
+```bash
+# ① 封包：校验五产物 + 生成 SHA256SUMS 与交接说明 DEPLOYMENT_PACKAGE.md
+python tools/ops/public_edge_package.py inspect --dir <渲染目录>
+python tools/ops/public_edge_package.py seal    --dir <渲染目录>
+# ② 交接后复核（fail-closed：哈希漂移/占位回落/安全不变量破坏即非零）
+python tools/ops/public_edge_package.py verify  --dir <包目录>
+
+# ③ 家机 frpc 常驻：预检 + 计划（零写入零网络；frpc.exe verify 只计划不代跑）
+python tools/ops/frpc_windows_controller.py preflight --frpc-exe <exe> --config <渲染 frpc.windows.toml>
+python tools/ops/frpc_windows_controller.py plan      --frpc-exe <exe> --config <渲染 frpc.windows.toml>
+# ④ 真实安装/卸载（supervisor 审查计划后；需精确短语 + --execute，缺一即 dry-run）
+python tools/ops/frpc_windows_controller.py install   --frpc-exe <exe> --config <cfg> \
+    --confirm-phrase INSTALL-AIOS-EDGE-FRPC [--execute]
+python tools/ops/frpc_windows_controller.py uninstall --confirm-phrase INSTALL-AIOS-EDGE-FRPC [--execute]
+```
+
+纪律（与 M14-06 windows_startup_task 同源）：
+
+- 包工具：目录必须在仓库外；条目恰为预期集（渲染后五件/封包后七件）；
+  拒绝符号链接/多余条目/占位回落（*.example.com、私网/文档段 IP、
+  TURN secret 落值）；seal 字节确定（同一渲染恒产同一封包文件）；
+- frpc 控制器：install 前必先只读查询，任务名 `AIOS-Edge-FRPC` 已存在
+  （无论归属）一律拒绝；uninstall 只删 Description 精确等于
+  `urn:aios:m14-155:edge-frpc-controller` 的自有任务；绝不枚举/触碰任何
+  其他计划任务；token 文件只做存在性/结构校验（0600/UTF-8/长度），内容
+  绝不读取或展示；
+- 两个工具都不 SSH、不上传、不启停任何服务——真实命令（上传产物、
+  secrets 就位、compose up、DNS 变更、schtasks 执行）全部由 supervisor
+  在取得真实资源后按 DEPLOYMENT_PACKAGE.md 清单执行。
+
+退出码：包工具 `inspect/seal/verify` —— 0 成功 / 1 检查失败（fail-closed）/
+2 用法错误；frpc 控制器 —— 0 成功（含 dry-run 计划输出）/ 1 预检失败或
+拒绝执行 / 2 用法错误，`status` 专用 0=installed / 1=unknown / 2=missing /
+3=foreign / 4=malformed。
+
 ## 4. DNS 与 Caddy ACME
 
 1. DNS 控制台添加五条 A 记录 → VPS 公网 IP（TTL 先 300 便于调试，稳定后调大）；

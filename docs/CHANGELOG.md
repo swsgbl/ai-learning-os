@@ -1,5 +1,56 @@
 # Changelog
 
+## M14-155 — 边缘部署操作包与 frpc 控制器（可交接、不部署）
+
+- 新增 `tools/ops/public_edge_package.py`（零第三方依赖；零网络零服务）：
+  对 M14-154 渲染产物做 **inspect / seal / verify**。inspect/seal 复检全部
+  内容不变量（Caddyfile 四站点为真实域名不回落 example.com、frpc
+  serverAddr 公网 IPv4、frps vhost 仅 loopback + TLS force + token-from-file、
+  家机侧只回连 127.0.0.1 且无 inline token、.env 的 TURN secret 仍是显式
+  回填标记、PREFLIGHT 人工清单完整）+ 同款高熵审计（许可 token 从产物
+  自身路径值精确推导）；seal 原子生成 **SHA256SUMS**（五产物全覆盖）与
+  **DEPLOYMENT_PACKAGE.md**（交接说明：诚实边界 + VPS 侧/家机侧清单，
+  明确真实命令由 supervisor 在取得真实资源后执行；字节确定——同一渲染
+  恒产同文）；verify fail-closed（哈希漂移/条目漂移/未知名或重复 SUMS
+  条目/交接文档漂移全部拒绝）。目录防线：仓库外、非符号链接、条目恰为
+  预期集（五件/七件）、非常规文件拒绝。
+- 新增 `tools/ops/frpc_windows_controller.py`（对齐 M14-06
+  windows_startup_task 纪律）：家机 frpc 计划任务 `AIOS-Edge-FRPC` 的
+  **preflight / plan / status / install / uninstall**。preflight 校验显式
+  frpc.exe（命名/常规文件）与渲染配置（公网 serverAddr/TLS/loopback
+  后端/token 仅文件引用且复用 prepare 的 token 文件校验——0600/UTF-8/
+  长度/非占位，内容绝不读取）；plan 打印 `frpc.exe verify -c` 等计划命令
+  不代跑；install 前必只读查询、同名任务（无论归属）一律拒绝、经显式
+  XML（LeastPrivilege + 归属标记 Description）创建；uninstall 只删
+  Description 精确等于 `urn:aios:m14-155:edge-frpc-controller` 的自有任务
+  （XML 命名空间感知归属判定 + DOCTYPE/ENTITY XXE 防护）；install/uninstall
+  需精确确认短语 `INSTALL-AIOS-EDGE-FRPC` 且 `--execute`（缺一即 dry-run
+  零写入）；绝不枚举/触碰任何其他计划任务。平台命令经注入 Runner——
+  测试全部 FakeRunner，绝不触碰真实 schtasks。
+- 测试：`services/api/tests/test_public_edge_package.py`（19 项：inspect
+  边界/不变量矩阵、seal 确定性、verify 漂移矩阵、交接文档诚实边界语句、
+  CLI）+ `test_frpc_windows_controller.py`（23 项：preflight 失败矩阵、
+  plan 零执行、install/uninstall 确认短语与归属纪律、status 分类含
+  DOCTYPE 防护、命名空间包双模块类同一性修正）。runbook 新增 §3B。
+- 边界：零部署零网络探测零服务启停；不读任何真实 env/secret 文件；
+  没有真实域名/VPS/DNS/4G 验收前仍不宣称公网生产上线。
+- **Round 1（supervisor 六项修正）**：(1) token 引用改为**仅元数据**校验
+  （`_validate_token_reference`：路径形态/逐组件+末段非符号链接/常规文件
+  存在/POSIX 0600；**绝不 open/read 内容**——弱值/UTF-8 由 prepare 渲染时
+  担保 + plan 的 `frpc.exe verify -c` 运行期复核），补非 UTF-8/极短 token
+  仍通过 + 缺失/symlink 拒绝回归；(2) 计划任务 XML 改为 **BootTrigger
+  （+PT30S 延迟）/ RestartOnFailure×3 / S4U / LeastPrivilege**（原
+  LogonTrigger + planned_commands 展示不执行的 `/SC ONSTART` 不一致已修），
+  planned install 说明与 XML 方式一致，测试锁定全部五项 XML 不变量 +
+  绝对路径入 Command/Arguments；(3) install 装后**只读验证**——Create
+  returncode 0 后必再 query 一次并校验 Description 归属 + Exec Command/
+  Arguments 精确匹配（被篡改/缺失 → 验证失败报告差异，不做自动删除）；
+  (4) `--frpc-exe`/`--config` 必须**绝对路径**（相对路径使计划任务动作
+  不可解析）；(5) `.env` 解析**拒绝重复键**（不同 dotenv 覆盖语义不一致）；
+  (6) 零网络/零真实 schtasks/零 secret 读取不变。验证：新工具两套件
+  **51 passed** + 邻域三套件 **195 passed + 3 skipped** + ruff/py_compile/
+  `git diff --check` 全净 + 新增行扫描 334 行 **0 hits**。
+
 ## M14-154 — 边缘部署准备与渲染（public_edge_prepare，fail-closed 不部署）
 
 - 新增 `tools/ops/public_edge_prepare.py`：显式 JSON manifest 驱动的部署
