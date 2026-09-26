@@ -658,8 +658,9 @@ def _read_secret_file(path: str, what: str) -> str:
     try:
         with open(path, encoding="utf-8") as handle:
             return handle.read().strip()
-    except OSError as cause:
-        # Round 4：OSError 文本内嵌文件路径——只透出错误类别，绝不回显路径/内容
+    except (OSError, UnicodeError) as cause:
+        # Round 4/5：OSError 文本内嵌文件路径；UnicodeDecodeError 文本内嵌
+        # 原始字节片段——两者都只透出错误类别，绝不回显路径/字节/内容
         raise PreflightError(f"无法读取{what}文件: {type(cause).__name__}") from cause
 
 
@@ -668,8 +669,8 @@ def _read_credentials_file(path: str) -> dict[str, str]:
     try:
         with open(path, encoding="utf-8") as handle:
             payload = json.load(handle)
-    except OSError as cause:
-        # Round 4：同上——OSError 文本含路径，只透出错误类别
+    except (OSError, UnicodeError) as cause:
+        # Round 4/5：同 _read_secret_file——路径/字节片段都不进异常文本
         raise PreflightError(f"登录凭据文件不可读: {type(cause).__name__}") from cause
     except json.JSONDecodeError as cause:
         # JSONDecodeError 文本只含行/列位置，不含路径——可安全透出

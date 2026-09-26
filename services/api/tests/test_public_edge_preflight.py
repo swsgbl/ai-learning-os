@@ -223,6 +223,57 @@ def test_secret_file_read_error_reports_class_only(tmp_path: Path) -> None:
     assert "FileNotFoundError" in message or "无法读取" in message
 
 
+# ---------------------------------------------------------------- Round 5 非 UTF-8 文件泄漏回归
+
+
+def _write_binary_marker_file(directory: Path, name: str) -> Path:
+    """写一个含可见标记字节的非 UTF-8 文件（标记用于断言"绝不出现"）。"""
+    binary_path = directory / name
+    binary_path.write_bytes(b"\xff\xfeRAW-BYTES-MARKER\x80\xff")
+    return binary_path
+
+
+def test_binary_secret_file_error_leaks_no_path_or_bytes(tmp_path: Path) -> None:
+    """Round 5：非 UTF-8 secret 文件——异常只含错误类别，无路径/无字节片段。"""
+    binary_path = _write_binary_marker_file(tmp_path, "binary-token.bin")
+    with pytest.raises(preflight.PreflightError) as excinfo:
+        preflight._read_secret_file(str(binary_path), "LiveKit token")
+    message = str(excinfo.value)
+    assert "UnicodeDecodeError" in message
+    assert str(binary_path) not in message and str(tmp_path) not in message
+    assert "RAW-BYTES-MARKER" not in message, "异常文本不得含原始字节片段"
+
+
+def test_binary_credentials_file_error_leaks_no_path_or_bytes(tmp_path: Path) -> None:
+    """Round 5：非 UTF-8 凭据文件——同款只透出错误类别的语义。"""
+    binary_path = _write_binary_marker_file(tmp_path, "binary-credentials.bin")
+    with pytest.raises(preflight.PreflightError) as excinfo:
+        preflight._read_credentials_file(str(binary_path))
+    message = str(excinfo.value)
+    assert "UnicodeDecodeError" in message
+    assert str(binary_path) not in message and str(tmp_path) not in message
+    assert "RAW-BYTES-MARKER" not in message
+
+
+def test_main_binary_secret_file_fails_without_report_or_leak(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Round 5：main 消费非 UTF-8 secret 文件——exit 1、无报告、stderr 无路径/字节。"""
+    binary_path = _write_binary_marker_file(tmp_path, "token.bin")
+    report_path = tmp_path / "report.json"
+    code = preflight.main([
+        "--app-url", "https://edge.acme-public.org",
+        "--livekit-token-file", str(binary_path),
+        "--output", str(report_path),
+    ])
+    assert code == preflight.EXIT_FAILURE
+    captured = capsys.readouterr()
+    assert "RAW-BYTES-MARKER" not in captured.err + captured.out
+    assert str(binary_path) not in captured.err + captured.out
+    assert str(tmp_path) not in captured.err + captured.out
+    assert not report_path.exists(), "secret 文件非法时不得产出报告"
+
+
 def test_run_checks_without_endpoints_makes_no_requests() -> None:
     """零端点 → 零检查零网络（run_checks 直接返回空清单）。"""
     assert preflight.run_checks(None, None, None, None, 5349, None, None, 5.0) == []
