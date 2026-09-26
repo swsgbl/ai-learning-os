@@ -46,8 +46,21 @@
   "含斜杠即豁免"类别放宽（标准 base64 secret 常含 `/`），合法渲染长
   路径改为**精确整串净化**（许可 token 先替换后扫描，静态豁免仍需
   逐串登记）。验证：三套件 196 passed（--basetemp 本身含空格，端到端
-  实证空格路径）+ ruff 全净 + `git diff --check` exit 0。零部署、
-  零服务启停、不触碰 M14-153 交付物语义、本轮零推送（本地提交）。
+  实证空格路径）+ ruff 全净 + `git diff --check` exit 0。**Round 4
+  （CI run 36250441740 修复）**：(1) 本地 secret 路径校验**平台感知**——
+  Windows 保持绝对盘符契约，POSIX（CI/Linux 开发）放行绝对 `/` 路径；
+  symlink 检查移到 expanduser 后原路径、**先于 resolve()**（先 resolve 会
+  跟随末段符号链接把 symlink 藏掉）；注入字符/首尾空白/`..`/URL/非常规
+  文件拒绝面两平台不变，路径中部空格两平台均放行。(2) 熵值扫描把文档化
+  非_secret 路径字段（local_secret_files/output_dir/vps_secrets_dir——
+  Linux CI 的长绝对路径会构成 40+ 连跑）按**精确根键**排除，notes 与其余
+  值仍全量扫描，不引入斜杠类别豁免。(3) 回归：长 POSIX output_dir、
+  POSIX secret 全链路进可解析 TOML、末段 symlink 拒绝（可建 symlink 时）、
+  越平台形态拒绝；Windows 空格路径回归保留。验证：三套件 198 passed +
+  2 skipped（POSIX 专属用例在 Linux CI 执行）+ 全量 services/api 于本机
+  默认临时目录全绿（带空格 basetemp 全量在本机病态缓慢——8%/3.3 分钟、
+  投影 ~41 分钟，沿用 M14-153 R3 已认定不可行口径）+ ruff 全净 +
+  `git diff --check` exit 0。零部署、零服务启停、本轮零推送（本地提交）。
 
 ## M14-153 — 公网边缘部署基础（VPS + frp + Caddy + LiveKit/coturn 模板与验收）
 

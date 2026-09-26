@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import socket
 import subprocess
@@ -584,7 +585,7 @@ def test_local_secret_path_injection_rejected(tmp_path: Path) -> None:
         "D:/secrets/bad%percent.txt",
         "D:/secrets/bad;semi.txt",
     ):
-        with pytest.raises(prepare.PrepareError, match="不安全字符"):
+        with pytest.raises(prepare.PrepareError, match="不安全"):
             prepare.validate_secret_file(bad, "frps_token")
     with pytest.raises(prepare.PrepareError, match=r"\.\."):
         prepare.validate_secret_file("D:/secrets/../good.txt", "frps_token")
@@ -703,3 +704,62 @@ def test_audit_permitted_path_still_renders_without_class_exemption(tmp_path: Pa
     with pytest.raises(prepare.PrepareError, match="高熵"):
         prepare.audit_rendered({"frpc.windows.toml": (smuggled, 0o600)},
                                view["secret_values"], permitted)
+
+
+# ---------------------------------------------------------------- Round 4 回归（CI Linux 实证缺口）
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX 专属：Linux CI 的绝对路径形态")
+def test_long_posix_output_dir_and_paths_validate(tmp_path: Path) -> None:
+    """Linux CI 形态：长 /home/runner/... 风格 output_dir 校验通过且不被
+    熵值扫描误报（路径字段按文档化根键精确排除，非斜杠类别豁免）。"""
+    long_out = "/tmp/aios-edge-render-output-directory-with-a-long-name-no-dots"
+    assert str(prepare.validate_output_dir(long_out)).startswith("/tmp/")
+    manifest = _valid_manifest(tmp_path)
+    manifest["output_dir"] = long_out
+    prepare.reject_inline_secrets(manifest)  # 不抛即通过
+    # notes 仍受熵扫描（对照：路径字段豁免不是类别放宽）
+    flagged = _valid_manifest(tmp_path)
+    flagged["notes"] = "Zg9Zh4Jk6lM8nOpQrStUv1Wx3Yy5Za7bc9de0fgZhi4"
+    with pytest.raises(prepare.PrepareError, match="高熵"):
+        prepare.reject_inline_secrets(flagged)
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX 专属：绝对 / secret 路径")
+def test_posix_secret_file_roundtrip_into_parseable_toml(tmp_path: Path) -> None:
+    import tomllib
+
+    deep = tmp_path / "home-runner-style-long-secret-subdirectory-name"
+    deep.mkdir()
+    secret = deep / "frpc_token.txt"
+    secret.write_text(SECRET_CONTENT, encoding="utf-8")
+    assert str(secret).startswith("/")  # 自证：POSIX 绝对形态
+    assert prepare.validate_secret_file(str(secret), "frpc_token") == SECRET_CONTENT
+    manifest = _valid_manifest(tmp_path)
+    manifest["local_secret_files"]["frpc_token"] = str(secret)
+    view = prepare.validate_manifest(manifest)
+    artifacts = prepare.render_artifacts(view)
+    model = tomllib.loads(artifacts["frpc.windows.toml"][0])
+    assert model["auth"]["tokenSource"]["file"]["path"] == str(secret.resolve())
+
+
+def test_cross_platform_path_shape_rejection() -> None:
+    """越平台形态拒绝：Windows 上拒 POSIX 形态、POSIX 上拒盘符形态。"""
+    if os.name == "nt":
+        with pytest.raises(prepare.PrepareError, match="不安全"):
+            prepare.validate_secret_file("/tmp/runner/secrets/frps_token.txt", "frps_token")
+    else:
+        with pytest.raises(prepare.PrepareError, match="不安全"):
+            prepare.validate_secret_file("D:/AI Learning OS/secrets/frps_token.txt", "frps_token")
+
+
+def test_symlinked_secret_file_rejected_before_resolve(tmp_path: Path) -> None:
+    """Round 4 关键回归：末段符号链接必须在原展开路径上被拒——先 resolve()
+    会跟随链接把 symlink 藏掉（这正是本轮修复的缺陷）。"""
+    real_secret = tmp_path / "real-secret.txt"
+    real_secret.write_text(SECRET_CONTENT, encoding="utf-8")
+    link = tmp_path / "linked-secret.txt"
+    if not _symlink_available(real_secret, link):
+        pytest.skip("本机无法创建符号链接（权限）")
+    with pytest.raises(prepare.PrepareError, match="不可读"):
+        prepare.validate_secret_file(str(link), "frps_token")

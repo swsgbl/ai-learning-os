@@ -129,10 +129,14 @@ def reject_inline_secrets(manifest: dict[str, Any]) -> None:
        顶层或任意其他嵌套位置出现（包括与 LOCAL_SECRET_KEYS 同名的顶层键，
        如顶层 frps_token="低熵值"）一律拒绝——secret 值唯一合法形态就是
        local_secret_files.* 的文件路径引用。拒绝消息只含键路径不含值。
-    2. 高熵值扫描：与渲染审计同一策略（≥32 hex 或 40+ base64 形态全匹配）；
-       local_secret_files.* 的值是路径（由 validate_secret_file 另行校验）跳过。
+    2. 高熵值扫描：与渲染审计同一策略（≥32 hex 或 40+ base64 形态全匹配）。
+       Round 4：文档化的非 secret **路径字段**（local_secret_files / output_dir /
+       vps_secrets_dir——Linux CI 的长绝对路径如 /home/runner/work/... 会构成
+       40+ 连跑）只做精确根键排除，不引入斜杠类别豁免；这些字段各自受专属
+       校验器约束。notes 与其余一切值仍全量扫描。
     """
     documented_non_value_keys = {"local_secret_files", "vps_secrets_dir"}
+    entropy_exempt_roots = {"local_secret_files", "output_dir", "vps_secrets_dir"}
 
     def _walk(node: Any, path: tuple[str, ...]) -> None:
         if isinstance(node, dict):
@@ -154,8 +158,9 @@ def reject_inline_secrets(manifest: dict[str, Any]) -> None:
 
     _walk(manifest, ())
     for key_path, value in _iter_strings(manifest):
-        if key_path.split(".")[0].split("[")[0] == "local_secret_files":
-            continue
+        root_key = key_path.split(".")[0].split("[")[0]
+        if root_key in entropy_exempt_roots:
+            continue  # 文档化路径字段（专属校验器约束）——不是 secret 材料
         if re.search(r"[0-9a-fA-F]{32,}", value) or re.fullmatch(r"[A-Za-z0-9+/_=-]{40,}", value):
             raise PrepareError(
                 f"manifest 值（键 {key_path}）呈高熵 secret 形态——真实凭据只进 secret 文件"
@@ -293,16 +298,36 @@ def validate_output_dir(value: Any) -> Path:
     raise PrepareError("output_dir 不得位于仓库内（渲染产物必须落在仓库外）")
 
 
-# Round 2 路径注入防线：本地（Windows 家机）与 VPS（POSIX）路径分别限定字符集
-# ——引号/$/#/反引号/控制字符等会破坏 TOML 字符串、注入 .env 行或注释掉指令；
-# `..` 段一律拒绝。盘符冒号只允许出现在本地路径首位。
-_LOCAL_PATH_CHARS = re.compile(r"^[A-Za-z]:[\\/][A-Za-z0-9 ._:\\/-]*$")
-_POSIX_PATH_CHARS = re.compile(r"^/[A-Za-z0-9._/-]*$")
+# Round 2 路径注入防线：路径字符集按平台分别限定——引号/$/#/反引号/%/;/
+# 控制字符会破坏 TOML 字符串、注入 .env 行或注释掉指令；`..` 段一律拒绝。
+# Round 4 平台感知：Windows 生产契约 = 绝对**盘符**路径；POSIX（CI/Linux
+# 开发）= 绝对 `/` 路径。两平台路径中部均放行普通空格（Round 3）。
+_LOCAL_WINDOWS_PATH_CHARS = re.compile(r"^[A-Za-z]:[\\/][A-Za-z0-9 ._:\\/-]*$")
+_LOCAL_POSIX_PATH_CHARS = re.compile(r"^/[A-Za-z0-9 ._/ -]*$")
+_POSIX_PATH_CHARS = re.compile(r"^/[A-Za-z0-9._/-]*$")  # VPS 侧路径（无空格契约不变）
 
 
 def _reject_dotdot(segments: list[str], label: str) -> None:
     if any(segment == ".." for segment in segments):
         raise PrepareError(f"{label} 路径不得含 .. 段")
+
+
+def _validate_local_secret_path_shape(reference: str, name: str) -> None:
+    """本地 secret 路径形态（平台感知）：Windows 要求盘符绝对路径；POSIX
+    要求 `/` 绝对路径；统一拒绝越平台形态与全部注入字符。"""
+    if os.name == "nt":
+        pattern = _LOCAL_WINDOWS_PATH_CHARS
+        shape = "Windows 绝对盘符路径（如 D:/AI Learning OS/secrets/x.txt）"
+    else:
+        pattern = _LOCAL_POSIX_PATH_CHARS
+        shape = "POSIX 绝对路径（如 /home/user/secrets/x.txt）"
+    if not pattern.fullmatch(reference):
+        raise PrepareError(
+            f"local_secret_files.{name} 路径形态/字符不安全（本平台要求{shape}；"
+            f"引号/$/#/反引号/%/;/制表符/换行/控制字符拒绝）"
+        )
+    without_drive = reference[2:] if re.match(r"^[A-Za-z]:", reference) else reference
+    _reject_dotdot(re.split(r"[\\/]+", without_drive), f"local_secret_files.{name}")
 
 
 def validate_vps_secrets_dir(value: Any) -> str:
@@ -323,9 +348,10 @@ def validate_secret_file(reference: Any, name: str) -> str:
     Round 2：本地路径限定安全字符集（引号/$/#/反引号/控制字符/.. 段拒绝
     ——该值会被替换进 frpc TOML 引号字符串）；文件超过支持上限（4096 字节）
     显式拒绝而非静默截断。Round 3：路径中的**普通空格**放行（真实项目根
-    `D:/AI Learning OS/...` 必须可用）；首尾空白拒绝（Windows 会剥离尾随
-    空格造成路径歧义），制表符/换行/其他控制字符由字符集正则拒绝。
-    错误绝不回显路径与字节。
+    `D:/AI Learning OS/...` 必须可用）。Round 4：**平台感知**——Windows
+    要求绝对盘符路径、POSIX（CI/Linux 开发）允许绝对 `/` 路径；symlink
+    检查在 expanduser 后的**原路径**上先于 resolve() 执行（resolve 会跟随
+    末段符号链接，先 resolve 会把末段 symlink 藏掉）。错误绝不回显路径与字节。
     """
     if not isinstance(reference, str) or not reference.strip():
         raise PrepareError(f"local_secret_files.{name} 必须是非空文件路径")
@@ -333,17 +359,13 @@ def validate_secret_file(reference: Any, name: str) -> str:
         raise PrepareError(f"local_secret_files.{name} 路径不得以空白开头/结尾")
     if "://" in reference:
         raise PrepareError(f"local_secret_files.{name} 必须是本地文件路径（拒绝 URL）")
-    if not _LOCAL_PATH_CHARS.fullmatch(reference):
-        raise PrepareError(
-            f"local_secret_files.{name} 路径含不安全字符（只允许盘符冒号、斜杠、"
-            f"字母数字、普通空格、. _ -；引号/制表符/换行/控制字符拒绝）"
-        )
-    without_drive = reference[2:] if re.match(r"^[A-Za-z]:", reference) else reference
-    _reject_dotdot(re.split(r"[\\/]+", without_drive), f"local_secret_files.{name}")
+    _validate_local_secret_path_shape(reference, name)
     try:
-        path = Path(reference).expanduser().resolve()
-        if path.is_symlink() or not path.is_file():
+        expanded = Path(reference).expanduser()
+        # Round 4：先在原展开路径上判 symlink/常规文件，再 resolve（渲染用解析值）
+        if expanded.is_symlink() or not expanded.is_file():
             raise OSError("not a regular file")
+        path = expanded.resolve()
         if os.name == "posix":  # POSIX 权限语义（Windows ACL 不等价，跳过该项）
             mode = stat.S_IMODE(path.stat().st_mode)
             if mode & 0o077:
