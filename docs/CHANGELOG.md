@@ -32,6 +32,14 @@
   （release-approval human-only 从未发生）；零生产触碰、零部署、
   零 provider/soak 重跑、不安装 M14-141 scheduler；证据
   `docs/evidence/m14-149-current-main-release-evidence/README.md`。
+- 交付状态（M14-150 回填）：已随 **PR #237** 合并 main——head
+  `440bc2b9b1329bebed1b7cca8b255b019f058e56`、merge/current main
+  `f0647b3460957553e167c262aa66f494947b1ed5`，PR CI run `36215485023`
+  5/5 jobs success，post-merge main CI run `36215740760` 5/5 jobs
+  success。证据边界：本条目全部 code/test/hash 证据仍绑定任务基点
+  c948931b 与 head 440bc2b；f0647b3 相对 c948931b 仅引入 docs merge
+  （5 文件全在 docs/），docs-only 合并与状态回填不触发证据重跑、
+  不开启无限 docs-only 刷新循环。
 
 ## M14-148 — provider readiness recovery Round 1（SearXNG 直连出网恢复默认 + 出站恢复 helper）
 

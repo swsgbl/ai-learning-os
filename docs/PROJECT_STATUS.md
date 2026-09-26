@@ -13,9 +13,17 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 `m14-149-current-main-release-evidence`，分支
 `ops/m14-149-current-main-release-evidence`，基于 main
 `c948931b890fd562dac4f53bd7b5d9add4b0f020`（PR #236 merge = M14-148
-provider readiness recovery Round 1 合入，精确基点 = 当前 origin/main，
-起点即 tracked-clean 核验通过），单 local commit、不 push、不开 PR
-（任务书指令）。M14-146 证据绑定 239b881，其后 7 提交
+provider readiness recovery Round 1 合入，精确基点 = 任务执行时的
+origin/main，起点即 tracked-clean 核验通过），任务执行期单 local
+commit（已随 **PR #237** 合并 main：head
+`440bc2b9b1329bebed1b7cca8b255b019f058e56`，merge/current main
+`f0647b3460957553e167c262aa66f494947b1ed5`，PR CI run **36215485023**
+5/5 jobs success，post-merge main CI run **36215740760** 5/5 jobs
+success）。**证据边界（M14-150 状态回填写入）：M14-149 全部
+code/test/hash 证据仍绑定任务基点 c948931b 与 head 440bc2b；
+f0647b3 相对 c948931b 仅引入 docs merge（5 文件全在 docs/、
++548/−5），docs-only 合并与状态回填不触发证据重跑、不开启无限
+docs-only 刷新循环。**M14-146 证据绑定 239b881，其后 7 提交
 （PR #234/#235/#236）含真实代码/测试面变更（M14-148 恢复 helper
 `tools/ops/searxng_egress_recovery.py` +336 行 + searxng egress 28 项
 离线契约测试 + compose profiles +2 渲染回归），本切片按 supervisor
