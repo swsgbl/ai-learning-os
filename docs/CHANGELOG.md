@@ -1,5 +1,38 @@
 # Changelog
 
+## M14-154 — 边缘部署准备与渲染（public_edge_prepare，fail-closed 不部署）
+
+- 新增 `tools/ops/public_edge_prepare.py`：显式 JSON manifest 驱动的部署
+  准备/渲染路径（`--check-only` 零写入 / `--render` 原子写出 / 可选
+  `--dns-check` 只读核对），复用 M14-153 preflight 的 origin-only 解析与
+  TURN host-only 校验。**只允许 secret 文件引用**：内联 secret 键名策略
+  （token/secret/password/passphrase/private_key/api_key 且非 *_file）+
+  高熵值扫描（≥32 hex / 40+ base64 形态）双防线；manifest 结构校验
+  （schema/环境枚举 cn-production|hk-beta/acknowledge_real_inputs===true/
+  重复键拒绝/64KB 上限/非 UTF-8 拒绝且错误只含类别）。
+- 校验矩阵：VPS 公网 IPv4（全局可路由，拒私网/回环/链路本地/CGNAT/
+  RFC 5737/IPv6）、四个公网 HTTPS origin（443 端口强制、origin-only 无
+  path/query/userinfo、DNS 域名形态拒 IP 字面量、五主机去重）、TURN 主机
+  （host-only + 域名形态）、ACME 邮箱、家机 Web/API loopback 端口对
+  （1024-65535 且互异）、输出目录（显式且必须在仓库外）、VPS secret 目录
+  （绝对路径）、四个本地 secret 文件（存在/常规文件/非符号链接/UTF-8/
+  长度 ≥32/非占位形态；POSIX 下另要求 group/others 无权限；错误绝不回显
+  路径或字节——承接 M14-153 Round 4/5 脱敏契约）。
+- 渲染：Caddyfile（域名/邮箱替换）/ `.env`（TURN secret 为显式回填标记，
+  **绝不落值**）/ `frps.toml`（即模板最终态）/ `frpc.windows.toml`
+  （VPS IP + 家机 token 路径替换）/ `PREFLIGHT.md`（真实端点验收命令 +
+  7 项人工清单）——同目录 temp+`os.replace` 原子写、0600/0644 安全模式、
+  同一 manifest 渲染字节确定；写前自审计（任一产物含 secret 内容或高熵串
+  即中止），渲染产物只落仓库外目录（遏制测试锁仓库工作树零变化）。
+- 新增格式样板 `tools/ops/public_edge_prepare.example.json`（全占位值，
+  本身必被校验拒绝——诚实边界：占位值不得进入渲染）与聚焦测试
+  `services/api/tests/test_public_edge_prepare.py`（73 项：装载/校验矩阵/
+  脱敏/secret 文件处理/渲染确定性/输出遏制/无 secret 持久化/CLI 行为/
+  DNS 打桩）；runbook 新增 §3A（manifest → check-only → render → 部署 →
+  preflight → 回滚 全流程）。验证：三套件 174 passed + ruff 全净 +
+  `git diff --check` exit 0 + 新增行扫描 0 命中。零部署、零服务启停、
+  不触碰 M14-153 交付物语义。
+
 ## M14-153 — 公网边缘部署基础（VPS + frp + Caddy + LiveKit/coturn 模板与验收）
 
 - 新增 `infra/edge/` 边缘栈模板全套（VPS-only，家机永不出网入站）：
