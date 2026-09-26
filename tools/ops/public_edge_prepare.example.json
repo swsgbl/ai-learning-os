@@ -1,0 +1,27 @@
+{
+  "schema": "aios-public-edge-prepare/1",
+  "environment": "hk-beta",
+  "acknowledge_real_inputs": true,
+  "vps_public_ip": "203.0.113.10",
+  "origins": {
+    "app": "https://app.example.com",
+    "api": "https://api.example.com",
+    "livekit": "https://livekit.example.com",
+    "download": "https://download.example.com"
+  },
+  "turn_host": "turn.example.com",
+  "contact_email": "admin@example.com",
+  "home": {
+    "web_port": 3011,
+    "api_port": 8000
+  },
+  "output_dir": "D:/aios-edge-out/render-001",
+  "vps_secrets_dir": "/opt/aios-edge/secrets",
+  "local_secret_files": {
+    "frps_token": "D:/AI Learning OS/secrets/frps_token.txt",
+    "turn_secret": "D:/AI Learning OS/secrets/turn.secret",
+    "livekit_keys": "D:/AI Learning OS/secrets/livekit_keys",
+    "frpc_token": "D:/AI Learning OS/secrets/frpc_token.txt"
+  },
+  "notes": "格式示例（M14-154）：全部为占位值。占位域 example.com/RFC5737 IP 会被 public_edge_prepare.py 的校验拒绝——真实清单必须填真实域名/VPS 公网 IPv4/真实 secret 文件，并把 acknowledge_real_inputs 置 true 表示确认。本文件不含任何真实域名/IP/token/密码。"
+}

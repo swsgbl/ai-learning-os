@@ -1,5 +1,76 @@
 # Changelog
 
+## M14-154 — 边缘部署准备与渲染（public_edge_prepare，fail-closed 不部署）
+
+- 新增 `tools/ops/public_edge_prepare.py`：显式 JSON manifest 驱动的部署
+  准备/渲染路径（`--check-only` 零写入 / `--render` 原子写出 / 可选
+  `--dns-check` 只读核对），复用 M14-153 preflight 的 origin-only 解析与
+  TURN host-only 校验。**只允许 secret 文件引用**：内联 secret 键名策略
+  （token/secret/password/passphrase/private_key/api_key 且非 *_file）+
+  高熵值扫描（≥32 hex / 40+ base64 形态）双防线；manifest 结构校验
+  （schema/环境枚举 cn-production|hk-beta/acknowledge_real_inputs===true/
+  重复键拒绝/64KB 上限/非 UTF-8 拒绝且错误只含类别）。
+- 校验矩阵：VPS 公网 IPv4（全局可路由，拒私网/回环/链路本地/CGNAT/
+  RFC 5737/IPv6）、四个公网 HTTPS origin（443 端口强制、origin-only 无
+  path/query/userinfo、DNS 域名形态拒 IP 字面量、五主机去重）、TURN 主机
+  （host-only + 域名形态）、ACME 邮箱、家机 Web/API loopback 端口对
+  （1024-65535 且互异）、输出目录（显式且必须在仓库外）、VPS secret 目录
+  （绝对路径）、四个本地 secret 文件（存在/常规文件/非符号链接/UTF-8/
+  长度 ≥32/非占位形态；POSIX 下另要求 group/others 无权限；错误绝不回显
+  路径或字节——承接 M14-153 Round 4/5 脱敏契约）。
+- 渲染：Caddyfile（域名/邮箱替换）/ `.env`（TURN secret 为显式回填标记，
+  **绝不落值**）/ `frps.toml`（即模板最终态）/ `frpc.windows.toml`
+  （VPS IP + 家机 token 路径替换）/ `PREFLIGHT.md`（真实端点验收命令 +
+  7 项人工清单）——同目录 temp+`os.replace` 原子写、0600/0644 安全模式、
+  同一 manifest 渲染字节确定；写前自审计（任一产物含 secret 内容或高熵串
+  即中止），渲染产物只落仓库外目录（遏制测试锁仓库工作树零变化）。
+- 新增格式样板 `tools/ops/public_edge_prepare.example.json`（全占位值，
+  本身必被校验拒绝——诚实边界：占位值不得进入渲染）与聚焦测试
+  `services/api/tests/test_public_edge_prepare.py`；runbook 新增 §3A
+  （manifest → check-only → render → 部署 → preflight → 回滚 全流程）。
+  **Round 2 四缺口加固**：(1) 内联 secret 拒绝作用域感知化——secret 形态
+  键名只允许出现在 local_secret_files 内部（顶层 frps_token="低熵值"
+  这类并存形态被拒且不回显值），并按 schema 白名单拒绝未知顶层键
+  （仅可选 notes 豁免）；(2) 渲染目标预检 validate_render_target——拒绝
+  文件系统根/仓库根/符号链接目录与符号链接产物、已存在目录必须只含恰好
+  五个预期产物名（多余条目拒绝，同名幂等覆写保留），symlink 判定先于
+  resolve；(3) 路径注入防线——本地 secret 路径（盘符冒号/斜杠/字母数字/
+  空格/._-）与 VPS POSIX 路径（字母数字/._-/）分别限定字符集并拒 `..`
+  段，渲染后 frpc TOML 强制 tomllib 自解析；(4) 渲染自审计高熵策略与
+  manifest 对齐（40+ base64 形态兜住精确匹配漏网；含 `/`/`\` 的路径形态
+  token 豁免并文档化，hex 类不豁免）+ secret 文件超 4096 字节显式拒绝
+  （不再静默截断）。**Round 3**：(1) 本地 secret 路径放行**普通空格**
+  （真实项目根 `D:/AI Learning OS/...` 可用；首尾空白/制表符/换行/控制
+  字符仍拒，引号/$/#/反引号/../URL/symlink/非常规文件拒绝面不变；
+  渲染含精确解析路径且 TOML 可解析）；(2) 熵审计 fail-closure——移除
+  "含斜杠即豁免"类别放宽（标准 base64 secret 常含 `/`），合法渲染长
+  路径改为**精确整串净化**（许可 token 先替换后扫描，静态豁免仍需
+  逐串登记）。验证：三套件 196 passed（--basetemp 本身含空格，端到端
+  实证空格路径）+ ruff 全净 + `git diff --check` exit 0。**Round 4
+  （CI run 36250441740 修复）**：(1) 本地 secret 路径校验**平台感知**——
+  Windows 保持绝对盘符契约，POSIX（CI/Linux 开发）放行绝对 `/` 路径；
+  symlink 检查移到 expanduser 后原路径、**先于 resolve()**（先 resolve 会
+  跟随末段符号链接把 symlink 藏掉）；注入字符/首尾空白/`..`/URL/非常规
+  文件拒绝面两平台不变，路径中部空格两平台均放行。(2) 熵值扫描把文档化
+  非_secret 路径字段（local_secret_files/output_dir/vps_secrets_dir——
+  Linux CI 的长绝对路径会构成 40+ 连跑）按**精确根键**排除，notes 与其余
+  值仍全量扫描，不引入斜杠类别豁免。(3) 回归：长 POSIX output_dir、
+  POSIX secret 全链路进可解析 TOML、末段 symlink 拒绝（可建 symlink 时）、
+  越平台形态拒绝；Windows 空格路径回归保留。验证：三套件 198 passed +
+  2 skipped（POSIX 专属用例在 Linux CI 执行）+ 全量 services/api 于本机
+  默认临时目录全绿（带空格 basetemp 全量在本机病态缓慢——8%/3.3 分钟、
+  投影 ~41 分钟，沿用 M14-153 R3 已认定不可行口径）+ ruff 全净 +
+  `git diff --check` exit 0。**Round 5（CI run 36252337283 修复，仅测试
+  夹具）**：secret 夹具统一经 `_write_secret` chmod 0600（POSIX CI 默认
+  0644 会被生产权限门拒绝——夹具满足契约而非削弱校验；二进制/越界体积/
+  POSIX 往返/symlink 真身等 7 处直写夹具全部收编）；注入/空白边界夹具
+  平台正确化（Windows 盘符 / POSIX 绝对基底，命中的是注入字符/.. 判定
+  而非越平台形态判定）；新增 POSIX 权限门显式回归（0644 拒 / 0600 过，
+  Windows 跳过）。生产校验零改动。验证：三套件 195 passed + 3 skipped
+  （空格 basetemp；3 skip = POSIX 专属，Linux CI 执行）+ 全量
+  services/api 默认临时目录全绿 + ruff 全净 + `git diff --check` exit 0。
+  零部署、零服务启停、本轮零推送（本地提交）。
+
 ## M14-153 — 公网边缘部署基础（VPS + frp + Caddy + LiveKit/coturn 模板与验收）
 
 - 新增 `infra/edge/` 边缘栈模板全套（VPS-only，家机永不出网入站）：

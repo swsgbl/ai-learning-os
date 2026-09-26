@@ -94,6 +94,35 @@ docker compose up -d
 镜像 digest pin（`docker-compose.edge.example.yml` 顶部注释有 tag 对应关系）；
 升级 = 显式改 digest 并记录，绝不回退 `:latest`。
 
+## 3A. 部署准备与渲染（public_edge_prepare，M14-154）
+
+推荐路径：用显式 JSON manifest 驱动**校验 + 模板渲染**，再人工部署与验收。
+流程恒为：**manifest → `--check-only` → `--render` → 部署（§3-§7）→
+preflight（§9）→ 回滚预案（§10）**。渲染 ≠ 部署——工具零服务操作。
+
+1. **manifest**：以 `tools/ops/public_edge_prepare.example.json` 为格式样板
+   写真实清单（真实域名/VPS 公网 IPv4/ACME 邮箱/家机端口/仓库外输出目录/
+   四个本地 secret 文件路径），并把 `acknowledge_real_inputs` 置 `true`
+   确认输入为真。manifest **只允许 secret 文件引用**——内联 secret 值、
+   高熵串、占位域（example.com）/RFC 5737 IP/私网地址一律被拒；
+   `output_dir` 必须在仓库外（渲染产物绝不落进仓库）。
+2. **`--check-only`**（零写入）：校验全部字段 + 四个 secret 文件
+   （存在/UTF-8/长度 ≥32/非占位/非符号链接；错误只报类别，不回显路径）。
+   附 `--dns-check` 可做只读 DNS 核对（五主机解析必须等于 VPS 公网 IP；
+   与部署解耦的显式检查）。
+3. **`--render`**：把 Caddyfile / `.env`（compose 变量；TURN secret 是显式
+   回填标记，**绝不落值**）/ `frps.toml` / `frpc.windows.toml` /
+   `PREFLIGHT.md`（含真实端点的验收命令 + 人工清单）原子写进 `output_dir`
+   （同目录 temp+replace，0600/0644）。渲染自审计：任一产物含 secret 内容
+   或高熵串即中止。同一 manifest 渲染结果字节确定（可重复校验）。
+4. **部署**：把产物拷到 VPS/家机对应位置（§3 拷贝步骤用产物替代手抄模板），
+   按 §4-§7 完成 DNS/ACME/防火墙；`.env` 中 TURN secret 在 VPS 上按
+   §6 同源清单回填。
+5. **preflight**：按产物里的 `PREFLIGHT.md` 命令执行（工具本体见 §9），
+   人工 4G/5G 清单逐项签认后才可宣称公网生产可用。
+6. **回滚**：预案见 §10；渲染产物本身可随时重出（确定性），回滚不依赖
+   渲染目录存活。
+
 ## 4. DNS 与 Caddy ACME
 
 1. DNS 控制台添加五条 A 记录 → VPS 公网 IP（TTL 先 300 便于调试，稳定后调大）；
