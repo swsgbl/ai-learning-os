@@ -79,6 +79,44 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-152 状态更新
+
+- M14-152 current-main 发布证据刷新（证据/docs-only 切片，分支
+  `ops/m14-152-current-main-release-evidence`（复用 m14-151 worktree，
+  基于 main `7438227ce1cd1a8059ef621293ba195e4896ce11`（PR #239 merge
+  = M14-151 release-approval-draft 合入，精确基点 = 直连 fetch 核验的
+  origin/main），单 local commit，不 push、不开 PR（任务书指令））：
+  M14-151 引入真实运行时代码（release_approval_draft 工具 182 行 +
+  `_eval_release_approval` DRAFT 保留字段防线 39 行 + CLI 子命令 110
+  行）与 37 个测试，代码绑定门相对 M14-149 基点 c948931b 漂移不再
+  docs-only，按契约真实重执行两门——**ci-main** run **36219558569**
+  （run_number 601，push@main 唯一、completed success、5/5 jobs 精确
+  集合全绿）断言驱动程序化派生（`a21a69ef…` 1269 bytes）；**
+  release-check** 干净 7438227 隔离环境（uv venv 3.12.14 从零重建 +
+  npm ci 411）full 重跑 all_green 10/10（pytest **5121 passed /
+  33 skipped**，较 M14-149 的 5084 恰 +37 = M14-151 测试面精确对账；
+  e2e 5 步 1253ms；alembic head 仍 0027_audit_chain；`bd57af64…`
+  2491 bytes）。provider-smoke（`d589181e…`）与 long-soak
+  （`d939c652…`）按任务边界零重跑，只读核验出处 + 任务书给定哈希
+  逐字节一致后哈希锁定复用（provider-smoke 原始窗口 2026-09-26
+  T01:12→01:14、long-soak 窗口 2026-09-22→23 原样保留，不制造新
+  窗口）；production-state 六源 6/6 哈希 MATCH 原样 staging；
+  evidence-cockpit 聚合 **cockpit_ready=true、blockers=[]、pass=9/
+  missing=2**（release-approval not-staged human-only + turn-tls
+  optional），两 code-bound 门 current@7438227（embedded/flag），
+  staged 10/10 IDENTICAL；**release_ready=false /
+  production_ready=false 恒不变**。M14-151 release-approval-draft
+  工具首次真实运行演示（staging 上生成 DRAFT 至 artifacts/，证据
+  目录零写入、零 release-approval.json 创建——DRAFT 不是审批记录）。
+  **no-infinite-refresh 边界**：docs-only 入库不触发刷新，代码绑定门
+  证据只对执行时点树成立，下一个非 docs-only 合并才需要新刷新切片，
+  本切片不递归追新。验证：聚焦九套件 444 passed（= M14-149 的 407 +
+  M14-151 的 37 恰对账）；契约断言 35 项全过；canonical 五类秘密
+  扫描 0 命中；ruff 基线全过；`git diff --check` 干净；新增行秘密/
+  本地绝对路径/U+FFFD 扫描 0 命中。零生产触碰（唯一网络访问 =
+  GitHub 只读 API + git fetch，均直连）。证据
+  `docs/evidence/m14-152-current-main-release-evidence/README.md`。
+
 ### M14-149 状态更新
 
 - M14-149 current-main 发布证据刷新（证据/docs-only 切片，分支 `ops/m14-149-current-main-release-evidence`（独立 worktree，基于 main `c948931b890fd562dac4f53bd7b5d9add4b0f020`（PR #236 merge = M14-148 provider readiness recovery Round 1 合入，精确基点 = 任务执行时的 origin/main），任务执行期单 local commit，已随 **PR #237** 合并 main：head `440bc2b9b1329bebed1b7cca8b255b019f058e56`、merge/current main `f0647b3460957553e167c262aa66f494947b1ed5`，PR CI run **36215485023** 5/5 jobs success，post-merge main CI run **36215740760** 5/5 jobs success；**证据边界（M14-150 回填写入）**：code/test/hash 证据仍绑定任务基点 c948931b 与 head 440bc2b，f0647b3 相对 c948931b 仅引入 docs merge（5 文件全在 docs/），不触发证据重跑、不开启无限 docs-only 刷新）：M14-146 证据绑定 239b881，其后 7 提交（PR #234/#235/#236）**含真实代码/测试面变更**（M14-148 恢复 helper `tools/ops/searxng_egress_recovery.py` +336 行 + searxng egress 28 项离线契约测试 + compose profiles +2 渲染回归），本切片真实重执行刷新——**ci-main**：归档 head c948931b 唯一 push/main run **36213290023**（run_number 595，completed success，5/5 jobs 精确集合全绿），按 `_eval_ci_main` 契约断言驱动派生 canonical `ci-main.json`（`da80ae9c…`，1201 bytes）；**release-check**：干净 c948931b 执行树从零隔离环境（uv venv CPython 3.12.14 + 59 packages + npm ci 411 packages，运行前 HEAD/porcelain 双核验留痕）full 重跑 **all_green 10/10**（pytest **5084 passed / 33 skipped** in 257.74s，较 M14-146 恰 +30——searxng egress recovery 28 + compose profiles 2 真实测试面增长精确对账；e2e 5 步 1210ms；alembic head 仍 0027_audit_chain；逐字节复制复核 IDENTICAL `2de5cbe4…`）；**provider-smoke 不重跑**，只读核验当前真实聚合 `artifacts/temp/provider-smoke/20260926T0106/`（M14-148 恢复轮按其 §6 序列真实重跑产物：三输入 schema/executed/pass/exit0/时间自洽逐份核验（search 7496ms / local-voice 18442ms / llm 12213ms，窗口 2026-09-26T01:12:09Z→01:13:56Z、聚合 01:14:14Z）+ 三份失败 attempt（envmiss 60ms / querymiss 769ms / timeout 10483ms）如实保留且核验未改写）后哈希锁定逐字节登记（`d589181e…`，564 bytes，取代 M14-146 复用的 M14-117 旧聚合 `029ee84f…`——新真实证据登记、非改写历史）；**long-soak 不重跑**，同哈希 `d939c652…` 只读复用（窗口 2026-09-22T02:00:01Z→2026-09-23T02:00:01Z 97 样本全 ok / max gap 17.25 / span 1440，早于 M14-117 切换且在 m14-70 栈，如实呈现、不制造新窗口）；**evidence-cockpit**：生产状态源 6/6 哈希 MATCH 后原样 staging，staged 10 文件 10/10 IDENTICAL，**cockpit_ready=true、blockers=[]、pass=9/missing=2（release-approval not-staged human-only + turn-tls optional）**，两 code-bound 门 current（current-head 与 release-check 声明头均 c948931b，generated_at 2026-09-26T03:22:15Z）。**诚实边界：`release_ready=false` / `production_ready=false` 恒不变——release-approval human-only 从未发生，不代拟；零生产触碰（零容器/DB/MinIO/语音/secrets、零部署、零 provider/soak 重跑、零代理/CC Switch 生命周期变更、不安装 M14-141 scheduler）。**验证：聚焦契约测试 407 passed（与 M14-146 恰一致，工具契约面区间零变更实证）+ ruff All checks passed + SHA256SUMS 28/28 OK + 契约断言 22 项全过 + 秘密/本地绝对路径/U+FFFD 新增行扫描 0 命中 + `git diff --check` 干净。证据 `docs/evidence/m14-149-current-main-release-evidence/README.md`。
