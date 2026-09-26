@@ -322,16 +322,21 @@ def validate_secret_file(reference: Any, name: str) -> str:
 
     Round 2：本地路径限定安全字符集（引号/$/#/反引号/控制字符/.. 段拒绝
     ——该值会被替换进 frpc TOML 引号字符串）；文件超过支持上限（4096 字节）
-    显式拒绝而非静默截断。错误绝不回显路径与字节。
+    显式拒绝而非静默截断。Round 3：路径中的**普通空格**放行（真实项目根
+    `D:/AI Learning OS/...` 必须可用）；首尾空白拒绝（Windows 会剥离尾随
+    空格造成路径歧义），制表符/换行/其他控制字符由字符集正则拒绝。
+    错误绝不回显路径与字节。
     """
-    if not isinstance(reference, str) or not reference.strip() or any(ch.isspace() for ch in reference):
-        raise PrepareError(f"local_secret_files.{name} 必须是无空白文件路径")
+    if not isinstance(reference, str) or not reference.strip():
+        raise PrepareError(f"local_secret_files.{name} 必须是非空文件路径")
+    if reference != reference.strip():
+        raise PrepareError(f"local_secret_files.{name} 路径不得以空白开头/结尾")
     if "://" in reference:
         raise PrepareError(f"local_secret_files.{name} 必须是本地文件路径（拒绝 URL）")
     if not _LOCAL_PATH_CHARS.fullmatch(reference):
         raise PrepareError(
             f"local_secret_files.{name} 路径含不安全字符（只允许盘符冒号、斜杠、"
-            f"字母数字、空格、. _ -；引号/$/#/反引号/控制字符拒绝）"
+            f"字母数字、普通空格、. _ -；引号/制表符/换行/控制字符拒绝）"
         )
     without_drive = reference[2:] if re.match(r"^[A-Za-z]:", reference) else reference
     _reject_dotdot(re.split(r"[\\/]+", without_drive), f"local_secret_files.{name}")
@@ -534,26 +539,35 @@ def _atomic_write(directory: Path, name: str, content: str, mode: int) -> None:
 
 # 渲染自审计的高熵豁免（文档化）：静态豁免当前为空（五个模板均无 ≥32 hex
 # 或 40+ base64 形态的合法长串需求）。动态豁免 = 本视图合法替换进产物的
-# 长 token（secret 文件路径、VPS secret 目录）——render_to_directory 传入；
-# 它们是操作者声明的部署路径，不是 secret 材料。未来模板确需静态豁免时
-# 在 AUDIT_ENTROPY_ALLOWLIST 登记并注明理由。
+# **精确**长 token（secret 文件路径、VPS secret 目录）——render_to_directory
+# 传入并在扫描前做整串替换净化；它们是操作者声明的部署路径，不是 secret
+# 材料。未来模板确需静态豁免时在 AUDIT_ENTROPY_ALLOWLIST 登记并注明理由。
 AUDIT_ENTROPY_ALLOWLIST: tuple[str, ...] = ()
 
+# 净化占位符：非 ASCII + 非字符集字符，替换后不会拼出新的高熵连跑
+_PERMITTED_PLACEHOLDER = "<许可路径>"
 
-def _iter_entropy_tokens(text: str):
+
+def _sanitize_permitted(text: str, permitted_long_tokens: tuple[str, ...]) -> str:
+    """把许可的精确长 token（部署路径）整串替换为占位符后再做熵扫描。"""
+    for permitted in permitted_long_tokens:
+        if permitted:
+            text = text.replace(permitted, _PERMITTED_PLACEHOLDER)
+    return text
+
+
+def _iter_entropy_tokens(text: str, permitted_long_tokens: tuple[str, ...] = ()):
     """与 manifest 高熵策略同款：≥32 hex 或 40+ base64 形态串。
 
-    base64 类的路径形态豁免：token 含 `/` 或 `\\` 视为路径（.env 的
-    `VAR=/opt/.../name` 行、frpc 的 token 文件路径都是合法长串）——
-    hex 类不豁免（hex secret 从不含斜杠，路径也不会含 32+ 连续 hex）；
-    真正泄漏的 secret 内容另由 audit_rendered 的精确匹配兜底。
+    Round 3 fail-closure：**不做任何"含斜杠即豁免"的类别放宽**——标准
+    base64 secret 本就常含 `/`，必须仍被拦下。合法渲染的长路径值由调用方
+    以**精确整串**（permitted_long_tokens）先行净化替换，扫描只看净化后
+    的文本；静态豁免仅 AUDIT_ENTROPY_ALLOWLIST（逐串登记+理由）。
     """
-    for token in re.findall(r"[0-9a-fA-F]{32,}|[A-Za-z0-9+/_=-]{40,}", text):
-        if token in AUDIT_ENTROPY_ALLOWLIST:
-            continue
-        if "/" in token or "\\" in token:
-            continue  # 路径形态（见 docstring）
-        yield token
+    sanitized = _sanitize_permitted(text, permitted_long_tokens)
+    for token in re.findall(r"[0-9a-fA-F]{32,}|[A-Za-z0-9+/_=-]{40,}", sanitized):
+        if token not in AUDIT_ENTROPY_ALLOWLIST:
+            yield token
 
 
 def audit_rendered(
@@ -564,18 +578,16 @@ def audit_rendered(
     """渲染自审计（fail-closed）：
 
     1. 精确匹配：产物不得含任一 secret 文件内容；
-    2. 高熵策略（Round 2 对齐 manifest）：产物不得含 ≥32 hex 或 40+ base64
-       形态串（精确匹配漏掉的 base64 长 secret 由这条兜住）。豁免仅两类：
-       静态 AUDIT_ENTROPY_ALLOWLIST（模板合法长串，登记+理由）与本视图
-       合法替换的长 token（secret 路径/VPS 目录——permitted_long_tokens）。
+    2. 高熵策略（Round 2 对齐 manifest / Round 3 收紧）：产物（经许可路径
+       精确净化后）不得含 ≥32 hex 或 40+ base64 形态串——base64 secret
+       即使含 `/` 也被拦下。豁免仅两类：静态 AUDIT_ENTROPY_ALLOWLIST
+       （登记+理由）与许可的精确部署路径整串（净化替换，非类别放宽）。
     """
     for name, (content, _mode) in artifacts.items():
         for secret_name, value in secret_values.items():
             if value and value in content:
                 raise PrepareError(f"渲染产物 {name} 泄漏 secret 内容（{secret_name}）——中止写出")
-        for token in _iter_entropy_tokens(content):
-            if any(token in permitted for permitted in permitted_long_tokens):
-                continue
+        for token in _iter_entropy_tokens(content, permitted_long_tokens):
             raise PrepareError(f"渲染产物 {name} 含高熵串（疑似 secret）: {token[:8]}...")
 
 

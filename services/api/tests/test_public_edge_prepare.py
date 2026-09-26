@@ -343,8 +343,13 @@ def test_render_substitutes_real_values_without_secrets(tmp_path: Path) -> None:
     preflight_doc = artifacts["PREFLIGHT.md"][0]
     assert "--turn-host turn.acme-public.org" in preflight_doc
     assert "mobile-4g5g-open" in preflight_doc  # 人工清单条目在场
-    # 渲染产物不含任何 secret 值（audit_rendered 作为断言器复用）
-    prepare.audit_rendered(artifacts, view["secret_values"])
+    # 渲染产物不含任何 secret 值（audit_rendered 作为断言器复用；
+    # 许可路径按 render_to_directory 同款精确净化传入——Round 3 无类别豁免）
+    frpc_path = view["local_secret_paths"]["frpc_token"]
+    prepare.audit_rendered(
+        artifacts, view["secret_values"],
+        permitted_long_tokens=(frpc_path, frpc_path.replace("\\", "/"), view["vps_secrets_dir"]),
+    )
 
 
 def test_audit_rendered_raises_on_secret_injection() -> None:
@@ -628,3 +633,73 @@ def test_secret_file_upper_size_boundary(tmp_path: Path) -> None:
     over.write_text("a" * (prepare.SECRET_MAX_BYTES + 1), encoding="utf-8")
     with pytest.raises(prepare.PrepareError, match="上限"):
         prepare.validate_secret_file(str(over), "turn_secret")
+
+
+# ---------------------------------------------------------------- Round 3 回归
+
+
+def test_local_secret_path_with_space_roundtrip(tmp_path: Path) -> None:
+    """Round 3 修正 1：含普通空格的真实项目根形态路径（D:/AI Learning OS/...）
+    必须可用——校验通过、渲染产物含精确解析路径、TOML 可解析。"""
+    import tomllib
+
+    spaced_dir = tmp_path / "AI Learning OS secrets"
+    spaced_dir.mkdir()
+    spaced = spaced_dir / "frpc token.txt"
+    spaced.write_text(SECRET_CONTENT, encoding="utf-8")
+    assert prepare.validate_secret_file(str(spaced), "frpc_token") == SECRET_CONTENT
+
+    manifest = _valid_manifest(tmp_path)
+    manifest["local_secret_files"]["frpc_token"] = str(spaced)
+    view = prepare.validate_manifest(manifest)
+    artifacts = prepare.render_artifacts(view)
+    frpc_text = artifacts["frpc.windows.toml"][0]
+    expected_posix = str(spaced.resolve()).replace("\\", "/")
+    assert expected_posix in frpc_text, "渲染必须含精确解析路径（空格原样）"
+    model = tomllib.loads(frpc_text)
+    assert model["auth"]["tokenSource"]["file"]["path"] == expected_posix
+
+    # 端到端：render_to_directory（含许可路径净化 + 自审计 + 写出）成功
+    written = prepare.render_to_directory(view)
+    assert ".env" in written
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        " D:/secrets/lead.txt",   # 首部空白
+        "D:/secrets/trail.txt ",  # 尾部空白
+        "D:/secrets/tab\tsep.txt",  # 制表符（字符集拒绝）
+        "D:/secrets/new\nline.txt",  # 换行（字符集拒绝）
+    ],
+)
+def test_local_secret_path_whitespace_edges_rejected(bad: str) -> None:
+    """首尾空白/制表符/换行仍拒（空格只在路径中部放行）。"""
+    with pytest.raises(prepare.PrepareError):
+        prepare.validate_secret_file(bad, "frpc_token")
+
+
+def test_audit_catches_base64_leak_containing_slash() -> None:
+    """Round 3 修正 2：含 `/` 的 40+ base64 形态泄漏（非精确匹配）必须被拦——
+    斜杠类别豁免已移除，标准 base64 secret 常含 `/`。"""
+    leak = "Zg9Zh4/Jk6lM8nOpQrStUv1Wx3Yy5Za7bc9de0fg/hi4"  # 42 字符，含 /
+    assert not re.search(r"[0-9a-fA-F]{32,}", leak)  # 自证：非 hex 形态
+    artifacts = {"Caddyfile": (f"header X-Leak {leak}", 0o644)}
+    with pytest.raises(prepare.PrepareError, match="高熵"):
+        prepare.audit_rendered(artifacts, {"frps_token": "a-totally-different-secret-value"})
+
+
+def test_audit_permitted_path_still_renders_without_class_exemption(tmp_path: Path) -> None:
+    """许可路径经精确净化后放行（无斜杠类别豁免下的合法性证明）：
+    无空格长 tmp 路径（会构成 40+ 连跑）渲染+审计成功；同一文本若注入
+    未登记的 base64 长 token 仍被拒。"""
+    view = _validated(tmp_path)  # tmp 无空格路径——靠 permitted 净化放行
+    artifacts = prepare.render_artifacts(view)
+    frpc_path = view["local_secret_paths"]["frpc_token"]
+    permitted = (frpc_path, frpc_path.replace("\\", "/"), view["vps_secrets_dir"])
+    prepare.audit_rendered(artifacts, view["secret_values"], permitted)  # 不抛即通过
+    # 净化后的文本里再注入一个未许可的含 / base64 长串——必须被拒
+    smuggled = artifacts["frpc.windows.toml"][0] + '\nleak = "Zg9Zh4/Jk6lM8nOpQrStUv1Wx3Yy5Za7bc9de0fg/hi4"'
+    with pytest.raises(prepare.PrepareError, match="高熵"):
+        prepare.audit_rendered({"frpc.windows.toml": (smuggled, 0o600)},
+                               view["secret_values"], permitted)
