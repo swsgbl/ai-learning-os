@@ -91,6 +91,9 @@ def test_is_public_host(host: str, expected: bool) -> None:
         "http://edge.acme-public.org",  # 非 https
         "https://user:pass@edge.acme-public.org",  # userinfo
         "https://edge.acme-public.org/#frag",  # fragment
+        "https://edge.acme-public.org/callback/x",  # path（Round 4 origin-only）
+        "https://edge.acme-public.org?token=SUPERSECRET",  # query（Round 4）
+        "https://edge.acme-public.org/rtc?access_token=tok",  # path+query
         "https://app.example.com",  # 保留域
         "https://127.0.0.1:8443",  # loopback
         "https://192.168.1.5",  # 私网
@@ -104,11 +107,120 @@ def test_parse_public_https_url_rejects(url: str) -> None:
         preflight.parse_public_https_url(url)
 
 
-def test_parse_public_https_url_accepts_public_form() -> None:
-    endpoint = preflight.parse_public_https_url("https://edge.acme-public.org/some/path")
+def test_parse_public_https_url_accepts_public_origin_only() -> None:
+    """Round 4：合法形态只有 origin（裸/尾斜杠），url=canonical 重构值。"""
+    endpoint = preflight.parse_public_https_url("https://edge.acme-public.org")
     assert endpoint.host == "edge.acme-public.org"
     assert endpoint.port == 443
+    assert endpoint.url == "https://edge.acme-public.org"
     assert endpoint.origin == "https://edge.acme-public.org"
+    trailing = preflight.parse_public_https_url("https://edge.acme-public.org/")
+    assert trailing.url == "https://edge.acme-public.org", "尾斜杠归一为 canonical origin"
+    with_port = preflight.parse_public_https_url("https://edge.acme-public.org:8443")
+    assert with_port.url == "https://edge.acme-public.org:8443"
+
+
+# ---------------------------------------------------------------- Round 4 泄漏回归
+
+
+def test_rejected_url_secrets_never_appear_in_error_messages() -> None:
+    """Round 4：userinfo 密码 / query token / path 绝不出现在异常文本。"""
+    secret_pairs = (
+        ("https://user:SuperSecretPass@edge.acme-public.org", "SuperSecretPass"),
+        ("https://edge.acme-public.org?access_token=TOKEN-LEAK-CANDIDATE", "TOKEN-LEAK-CANDIDATE"),
+        ("https://edge.acme-public.org/SECRET-PATH-SEGMENT", "SECRET-PATH-SEGMENT"),
+    )
+    for url, secret in secret_pairs:
+        with pytest.raises(preflight.PreflightError) as excinfo:
+            preflight.parse_public_https_url(url)
+        message = str(excinfo.value)
+        assert secret not in message, f"拒绝消息泄漏了输入敏感段: {message}"
+        assert url not in message, f"拒绝消息回显了原始 URL: {message}"
+        assert "edge.acme-public.org" in message, "安全展示仍应包含 host 便于排障"
+
+
+def test_safe_endpoint_display_reconstructs_not_echoes() -> None:
+    """集中脱敏助手：输出是 canonical 重构，绝不包含 userinfo/query/fragment。"""
+    assert preflight._safe_endpoint_display("https://u:p@host.acme-public.org/x?k=v#f") == "https://host.acme-public.org"
+    assert preflight._safe_endpoint_display("https://host.acme-public.org:8443/?q=1") == "https://host.acme-public.org:8443"
+    assert preflight._safe_endpoint_display("") == "<invalid-endpoint>"
+    assert preflight._safe_endpoint_display("::::") == "<invalid-endpoint>"
+
+
+def test_network_error_never_contains_raw_url() -> None:
+    """Round 4：网络错误只含 canonical origin+path + 错误类别，不含原始串。"""
+    dead = preflight.Endpoint(url="http://127.0.0.1", host="127.0.0.1", port=1)  # 端口 1 必拒连
+    with pytest.raises(preflight.PreflightError) as excinfo:
+        preflight._http_request(dead, "/health", timeout=2.0)
+    message = str(excinfo.value)
+    assert "http://127.0.0.1/health" in message, "canonical origin+path 是安全展示应有部分"
+    assert "?" not in message and "@" not in message, "错误消息不得含 query/userinfo 形态"
+
+
+def test_main_report_persists_canonical_endpoints_only(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Round 4：报告 endpoints 只存 canonical 值（尾斜杠归一），不存原始参数。"""
+    monkeypatch.setattr(
+        preflight, "run_checks",
+        lambda *args, **kwargs: [{"name": "app-https:x", "status": "pass", "detail": "ok"}],
+    )
+    report_path = tmp_path / "report.json"
+    code = preflight.main([
+        "--app-url", "https://edge.acme-public.org/",
+        "--turn-host", "turn.acme-public.org.",
+        "--output", str(report_path),
+    ])
+    assert code == preflight.EXIT_MANUAL_PENDING
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["endpoints"]["app_url"] == "https://edge.acme-public.org"
+    assert report["endpoints"]["turn_host"] == "turn.acme-public.org"
+    dumped = json.dumps(report)
+    assert "edge.acme-public.org/" not in dumped, "报告不得保留原始（带斜杠）参数形态"
+
+
+def test_main_rejects_credential_bearing_url_without_echo(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Round 4：带凭据端点直接 FAIL，stderr/报告不落密码，也不产出报告。"""
+    report_path = tmp_path / "report.json"
+    code = preflight.main([
+        "--app-url", "https://user:LeakedPassword@edge.acme-public.org",
+        "--output", str(report_path),
+    ])
+    assert code == preflight.EXIT_FAILURE
+    captured = capsys.readouterr()
+    assert "LeakedPassword" not in captured.err + captured.out
+    assert not report_path.exists(), "端点非法时不得产出报告"
+
+
+def test_turn_host_is_host_only_public_value() -> None:
+    """Round 4：TURN 主机 host-only——scheme/path/userinfo/query/非公网全拒。"""
+    assert preflight.parse_public_turn_host("turn.acme-public.org") == "turn.acme-public.org"
+    assert preflight.parse_public_turn_host("Turn.Acme-Public.org.") == "turn.acme-public.org"
+    for bad in (
+        "https://turn.acme-public.org",
+        "turn.acme-public.org/path",
+        "user@turn.acme-public.org",
+        "turn.acme-public.org?x=1",
+        "turn.acme-public.org#f",
+        "turn.acme-public.org extra",
+        "127.0.0.1",
+        "app.example.com",
+        "",
+    ):
+        with pytest.raises(preflight.PreflightError):
+            preflight.parse_public_turn_host(bad)
+
+
+def test_secret_file_read_error_reports_class_only(tmp_path: Path) -> None:
+    """Round 4：secret 文件读取失败只透出错误类别，不回显文件路径。"""
+    secret_path = tmp_path / "definitely-missing-token-file.txt"
+    with pytest.raises(preflight.PreflightError) as excinfo:
+        preflight._read_secret_file(str(secret_path), "LiveKit token")
+    message = str(excinfo.value)
+    assert "definitely-missing-token-file" not in message and str(tmp_path) not in message
+    assert "FileNotFoundError" in message or "无法读取" in message
 
 
 def test_run_checks_without_endpoints_makes_no_requests() -> None:
@@ -368,31 +480,34 @@ def test_source_embeds_no_default_endpoints() -> None:
         return body
 
     offenders: list[str] = []
-    fstring_fragments: set[int] = set()
+    # 豁免集合：f-string 字面片段 + 各级（含嵌套函数的）首部 docstring 节点
+    exempt_ids: set[int] = set()
     for node in ast.walk(tree):
-        if isinstance(node, ast.JoinedStr):  # f-string 的字面片段不是独立常量
+        if isinstance(node, ast.JoinedStr):
             for sub in ast.walk(node):
                 if isinstance(sub, ast.Constant) and isinstance(sub.value, str):
-                    fstring_fragments.add(id(sub))
+                    exempt_ids.add(id(sub))
     for node in ast.walk(tree):
-        bodies: list[list[ast.stmt]] = []
         if isinstance(node, ast.Module | ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
-            bodies.append(_strip_docstrings(node.body))
-        for body in bodies:
-            for stmt in body:
-                for sub in ast.walk(stmt):
-                    if (
-                        isinstance(sub, ast.Constant)
-                        and isinstance(sub.value, str)
-                        and "://" in sub.value
-                        and id(sub) not in fstring_fragments
-                    ):
-                        offenders.append(sub.value)
-    # 豁免只有两类：argparse help 的占位示例（https://app.example.com）
-    # 与人工清单里的占位模板（wss://<livekit 域名>）——共同特征是占位标记
+            body = _strip_docstrings(node.body)
+            if body is not node.body:  # docstring 已被识别——该常量节点记入豁免
+                exempt_ids.add(id(node.body[0].value))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Constant)
+            and isinstance(node.value, str)
+            and "://" in node.value
+            and id(node) not in exempt_ids
+        ):
+            offenders.append(node.value)
+    # 豁免三类：argparse help 的占位示例（https://app.example.com）、
+    # 人工清单占位模板（wss://<livekit 域名>）、代码里的 scheme 存在性
+    # 检测标记（裸 "://" 字面量——不是端点）
     assert offenders, "扫描器应至少命中 help 文本（否则扫描逻辑失效）"
     for text in offenders:
-        assert ".example.com" in text or "<" in text, f"源码含非占位 URL 常量: {text!r}"
+        assert text.strip() == "://" or ".example.com" in text or "<" in text, (
+            f"源码含非占位 URL 常量: {text!r}"
+        )
 
 
 def test_source_has_no_hardcoded_ip_targets() -> None:
@@ -427,9 +542,10 @@ def test_direct_opener_reaches_loopback_http_server() -> None:
     thread.start()
     try:
         port = server.server_address[1]
-        status, headers = preflight._http_request(f"http://127.0.0.1:{port}/health", timeout=5)
+        endpoint = preflight.Endpoint(url=f"http://127.0.0.1:{port}", host="127.0.0.1", port=port)
+        status, headers = preflight._http_request(endpoint, "/health", timeout=5)
         assert status == 200 and headers.get("Content-Type") == "application/json"
-        status, _ = preflight._http_request(f"http://127.0.0.1:{port}/nope", timeout=5)
+        status, _ = preflight._http_request(endpoint, "/nope", timeout=5)
         assert status == 404
     finally:
         server.shutdown()

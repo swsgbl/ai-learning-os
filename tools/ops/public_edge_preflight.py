@@ -7,9 +7,15 @@ infra/edge/ 与 docs/PUBLIC_EDGE_DEPLOYMENT.md）部署后的公网验收。
 Fail-closed 契约（违反任何一条都不放行）：
 - 只访问命令行显式给出的端点：本脚本不内置任何默认域名/IP/端口
   （--turn-port 除外——它是协议常量而非目标地址）；
-- 端点必须是公网 https：拒绝 http、URL userinfo、loopback/私网/
-  RFC 5737 文档段、RFC 2606 保留域（example.com/.invalid/.test/
-  .localhost）——拿模板占位域名做"验收"直接 FAIL；
+- 端点 origin-only（Round 4）：只接受 scheme + 公网 host + port——
+  userinfo、query、fragment、path 一律在入口拒绝；拒绝 http、
+  loopback/私网/RFC 5737 文档段、RFC 2606 保留域（example.com/
+  .invalid/.test/.localhost）——拿模板占位域名做"验收"直接 FAIL；
+- 脱敏集中化（Round 4）：任何 URL 相关错误/报告只出现 canonical
+  scheme://host[:port]（由 _safe_endpoint_display 重构，绝不截取原文）；
+  原始端点输入（可能内嵌 userinfo 密码/query token）绝不进入异常文本、
+  stderr、检查详情或 JSON 报告；secret 文件读取错误只透出错误类别，
+  不回显文件路径；
 - 请求直连（显式禁用系统代理），验收的是边缘本身而不是代理链路；
 - 被要求验证的检查不可证即 FAIL，绝不静默跳过或降级为警告：
   * HTTPS/证书链：受信 CA + 域名匹配 + 剩余有效期 >= 14 天
@@ -163,20 +169,51 @@ def is_public_host(host: str) -> bool:
     return not any(ip in network for network in reserved_doc_ranges)
 
 
+def _safe_endpoint_display(raw: str) -> str:
+    """集中脱敏展示（Round 4）：端点输入只显示 canonical scheme://host[:port]。
+
+    原始输入可能内嵌 userinfo 密码/query token/path——绝不能进入异常文本、
+    stderr、检查详情或报告。本助手从解析结果**重构**展示串（非原文截取）：
+    解析不出 host 时返回固定占位符，任何失败路径都不回显原文。
+    """
+    try:
+        parts = urlsplit(raw.strip() if isinstance(raw, str) else "")
+        host = (parts.hostname or "").lower()
+        port = parts.port
+    except ValueError:
+        return "<invalid-endpoint>"
+    if not host:
+        return "<invalid-endpoint>"
+    if port in (None, 443):
+        return f"https://{host}"
+    return f"https://{host}:{port}"
+
+
 def parse_public_https_url(raw: str) -> Endpoint:
-    """解析并校验一个显式提供的公网 https 端点；非法即抛 PreflightError。"""
+    """解析并校验显式提供的公网 https 端点；非法即抛 PreflightError。
+
+    origin-only（Round 4）：只接受 scheme + 公网 host + port——userinfo、
+    query、fragment、path 一律拒绝（端点参数可能携带凭据，必须 fail-closed
+    在入口拦截且不回显原文）。返回的 url/origin 是 canonical 重构值。
+    """
     if not raw or not raw.strip():
         raise PreflightError("空端点")
     parts = urlsplit(raw.strip())
     if parts.scheme != "https":
-        raise PreflightError(f"必须是 https 端点（收到 scheme={parts.scheme!r}）: {raw}")
+        raise PreflightError(
+            f"必须是 https 端点（收到 scheme={parts.scheme!r}）: {_safe_endpoint_display(raw)}"
+        )
     if parts.username or parts.password:
-        raise PreflightError(f"端点不得携带 userinfo: {raw}")
+        raise PreflightError(f"端点不得携带 userinfo: {_safe_endpoint_display(raw)}")
     host = (parts.hostname or "").lower()
     if not host:
-        raise PreflightError(f"缺少主机名: {raw}")
+        raise PreflightError("端点缺少主机名")
+    if parts.path not in ("", "/"):
+        raise PreflightError(f"端点不得携带 path（origin-only）: {_safe_endpoint_display(raw)}")
+    if parts.query:
+        raise PreflightError(f"端点不得携带 query（origin-only）: {_safe_endpoint_display(raw)}")
     if parts.fragment:
-        raise PreflightError(f"端点不得携带 fragment: {raw}")
+        raise PreflightError(f"端点不得携带 fragment: {_safe_endpoint_display(raw)}")
     if not is_public_host(host):
         raise PreflightError(
             f"主机不是公网地址（loopback/私网/保留段/占位域均拒绝）: {host}"
@@ -189,7 +226,27 @@ def parse_public_https_url(raw: str) -> Endpoint:
         port = 443
     if not 1 <= port <= 65535:
         raise PreflightError(f"端口越界（1-65535）: {port}")
-    return Endpoint(url=raw.strip().rstrip("/"), host=host, port=port)
+    canonical = f"https://{host}" if port == 443 else f"https://{host}:{port}"
+    return Endpoint(url=canonical, host=host, port=port)
+
+
+def parse_public_turn_host(raw: str) -> str:
+    """TURN/TLS 主机校验（Round 4）：host-only——拒绝 scheme/path/userinfo/query。
+
+    输入必须是纯公网主机名/IPv4（无 `://` `/` `?` `#` `@` 空白）。
+    返回 canonical 主机值；非法抛 PreflightError（不回显原文）。
+    """
+    if not raw or not raw.strip():
+        raise PreflightError("空 TURN 主机")
+    candidate = raw.strip()
+    if any(marker in candidate for marker in ("://", "/", "?", "#", "@")) or any(ch.isspace() for ch in candidate):
+        raise PreflightError(
+            "TURN 主机必须是纯主机名/IPv4（不得携带 scheme/path/userinfo/query）"
+        )
+    lowered = candidate.lower().rstrip(".")
+    if not is_public_host(lowered):
+        raise PreflightError(f"TURN 主机不是公网地址: {lowered}")
+    return lowered
 
 
 # ---------------------------------------------------------------- 纯判定逻辑
@@ -324,17 +381,30 @@ def _direct_opener() -> Any:
 
 
 def _http_request(
-    url: str, method: str = "GET", headers: dict[str, str] | None = None, timeout: float = 10.0
+    endpoint: Endpoint,
+    path: str,
+    method: str = "GET",
+    headers: dict[str, str] | None = None,
+    data: bytes | None = None,
+    timeout: float = 10.0,
 ) -> tuple[int, dict[str, str]]:
-    """直连 HTTP(S) 请求：返回 (状态码, 响应头)；网络层错误抛 PreflightError。"""
-    request = Request(url, method=method, headers=headers or {})
+    """直连 HTTP(S) 请求：返回 (状态码, 响应头)；网络层错误抛 PreflightError。
+
+    Round 4 脱敏：只接收**已校验**的 Endpoint + 内部受控 path——错误消息
+    展示 canonical origin+path（两者均无凭据面），并对底层异常文本做
+    原串剥离（urllib 异常可能内嵌完整 URL）。
+    """
+    url = f"{endpoint.url}{path}"
+    display = f"{endpoint.url}{path}"
+    request = Request(url, method=method, headers=headers or {}, data=data)
     try:
         with _direct_opener().open(request, timeout=timeout) as response:
             return int(response.status), {k: v for k, v in response.headers.items()}
     except HTTPError as cause:
         return int(cause.code), {k: v for k, v in cause.headers.items()}
     except (URLError, OSError, TimeoutError) as cause:
-        raise PreflightError(f"请求失败 {url}: {cause}") from cause
+        detail = str(cause).replace(url, "<endpoint>")
+        raise PreflightError(f"请求失败 {display}: {type(cause).__name__} {detail}") from cause
 
 
 def tls_probe(endpoint: Endpoint, timeout: float = 10.0) -> dict[str, Any]:
@@ -464,7 +534,7 @@ def run_checks(
     if app_url:
         app = parse_public_https_url(app_url)
         _cert_check(app, timeout, checks)
-        status, headers = _http_request(app.url, timeout=timeout)
+        status, headers = _http_request(app, "/", timeout=timeout)
         if status != 200:
             record(f"app-https:{app.host}", [f"入口返回 {status}（期望 200）"])
         else:
@@ -481,7 +551,7 @@ def run_checks(
     if api_url:
         api = parse_public_https_url(api_url)
         _cert_check(api, timeout, checks)
-        status, _headers = _http_request(f"{api.url}/health", timeout=timeout)
+        status, _headers = _http_request(api, "/health", timeout=timeout)
         record(
             f"api-health:{api.host}",
             [] if status == 200 else [f"/health 返回 {status}（期望 200）"],
@@ -495,12 +565,12 @@ def run_checks(
                 "Access-Control-Request-Headers": "content-type",
             }
             status, headers = _http_request(
-                f"{api.url}/health", method="OPTIONS", headers=preflight_headers, timeout=timeout
+                api, "/health", method="OPTIONS", headers=preflight_headers, timeout=timeout
             )
             problems = evaluate_cors_headers(app_origin, headers)
             if status == 405 or status == 400:  # 非预flight路径兜底：直接带 Origin GET
                 status, headers = _http_request(
-                    f"{api.url}/health", headers={"Origin": app_origin}, timeout=timeout
+                    api, "/health", headers={"Origin": app_origin}, timeout=timeout
                 )
                 problems = evaluate_cors_headers(app_origin, headers)
             record(
@@ -510,21 +580,14 @@ def run_checks(
             )
         if login_credentials is not None:
             body = json.dumps(login_credentials).encode("utf-8")
-            request = Request(
-                f"{api.url}/api/v1/auth/login",
-                data=body,
+            status, headers = _http_request(
+                api,
+                "/api/v1/auth/login",
                 method="POST",
                 headers={"Content-Type": "application/json"},
+                data=body,
+                timeout=timeout,
             )
-            try:
-                with _direct_opener().open(request, timeout=timeout) as response:
-                    status = int(response.status)
-                    headers = {k: v for k, v in response.headers.items()}
-            except HTTPError as cause:
-                status = int(cause.code)
-                headers = {k: v for k, v in cause.headers.items()}
-            except (URLError, OSError, TimeoutError) as cause:
-                raise PreflightError(f"登录探测失败: {cause}") from cause
             if status != 200:
                 record(
                     f"api-cookie:{api.host}",
@@ -546,7 +609,7 @@ def run_checks(
     if livekit_url:
         livekit = parse_public_https_url(livekit_url)
         _cert_check(livekit, timeout, checks)
-        status, _headers = _http_request(livekit.url, timeout=timeout)
+        status, _headers = _http_request(livekit, "/", timeout=timeout)
         record(
             f"livekit-signal:{livekit.host}",
             [] if status == 200 else [f"signal 端点返回 {status}（期望 200）"],
@@ -561,8 +624,9 @@ def run_checks(
                     [] if upgrade_status == 101 else [f"WSS 升级握手返回 {upgrade_status}（期望 101）"],
                     detail="真实 WSS 升级握手 101",
                 )
-            except PreflightError as cause:
-                record(f"livekit-wss:{livekit.host}", [str(cause)])
+            except (PreflightError, OSError) as cause:
+                detail = str(cause).replace(livekit_token, "<token>")
+                record(f"livekit-wss:{livekit.host}", [f"WSS 探测失败: {type(cause).__name__} {detail}"])
         else:
             record(
                 f"livekit-wss:{livekit.host}",
@@ -595,7 +659,8 @@ def _read_secret_file(path: str, what: str) -> str:
         with open(path, encoding="utf-8") as handle:
             return handle.read().strip()
     except OSError as cause:
-        raise PreflightError(f"无法读取{what}文件（路径不回显）: {cause}") from cause
+        # Round 4：OSError 文本内嵌文件路径——只透出错误类别，绝不回显路径/内容
+        raise PreflightError(f"无法读取{what}文件: {type(cause).__name__}") from cause
 
 
 def _read_credentials_file(path: str) -> dict[str, str]:
@@ -603,8 +668,12 @@ def _read_credentials_file(path: str) -> dict[str, str]:
     try:
         with open(path, encoding="utf-8") as handle:
             payload = json.load(handle)
-    except (OSError, json.JSONDecodeError) as cause:
-        raise PreflightError(f"登录凭据文件不可读/非法 JSON: {cause}") from cause
+    except OSError as cause:
+        # Round 4：同上——OSError 文本含路径，只透出错误类别
+        raise PreflightError(f"登录凭据文件不可读: {type(cause).__name__}") from cause
+    except json.JSONDecodeError as cause:
+        # JSONDecodeError 文本只含行/列位置，不含路径——可安全透出
+        raise PreflightError(f"登录凭据文件非法 JSON: {cause}") from cause
     if not isinstance(payload, dict) or not all(
         isinstance(payload.get(key), str) and payload.get(key) for key in ("username", "password")
     ):
@@ -660,17 +729,27 @@ def main(argv: list[str] | None = None) -> int:
     if not provided:
         parser.error("必须至少显式提供一个端点（--app-url/--api-url/--livekit-url/--turn-host）")
 
+    # Round 4：先解析后持久——报告只存 canonical 端点（scheme+公网 host+port），
+    # 原始 CLI 参数（可能带 userinfo/query）绝不进入报告/日志。
+    try:
+        canonical: dict[str, str | int | None] = {
+            "app_url": parse_public_https_url(args.app_url).url if args.app_url else None,
+            "api_url": parse_public_https_url(args.api_url).url if args.api_url else None,
+            "livekit_url": parse_public_https_url(args.livekit_url).url if args.livekit_url else None,
+            "turn_host": parse_public_turn_host(args.turn_host) if args.turn_host else None,
+            "turn_port": args.turn_port if args.turn_host else None,
+        }
+        livekit_token = _read_secret_file(args.livekit_token_file, "LiveKit token") if args.livekit_token_file else None
+        credentials = _read_credentials_file(args.login_credentials_file) if args.login_credentials_file else None
+    except PreflightError as cause:
+        print(f"[preflight] FAIL: {cause}", file=sys.stderr)
+        return EXIT_FAILURE
+
     report: dict[str, Any] = {
         "schema": SCHEMA,
         "tool": TOOL_NAME,
         "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "endpoints": {
-            "app_url": args.app_url,
-            "api_url": args.api_url,
-            "livekit_url": args.livekit_url,
-            "turn_host": args.turn_host,
-            "turn_port": args.turn_port if args.turn_host else None,
-        },
+        "endpoints": canonical,
         "checks": [],
         "manual_checklist": build_manual_checklist(),
         "mobile_attestation": {"status": "pending"},
@@ -679,10 +758,6 @@ def main(argv: list[str] | None = None) -> int:
 
     exit_code = EXIT_OK
     try:
-        if args.turn_host and not is_public_host(args.turn_host.rstrip(".").lower()):
-            raise PreflightError(f"TURN 主机不是公网地址: {args.turn_host}")
-        livekit_token = _read_secret_file(args.livekit_token_file, "LiveKit token") if args.livekit_token_file else None
-        credentials = _read_credentials_file(args.login_credentials_file) if args.login_credentials_file else None
         checks = run_checks(
             args.app_url, args.api_url, args.livekit_url, args.turn_host,
             args.turn_port, livekit_token, credentials, args.timeout,

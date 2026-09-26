@@ -42,7 +42,13 @@
   安全响应头（HSTS≥180 天等）。手机 4G/5G 验收为人工清单（7 项），
   `--mobile-attested-file` 逐项签认前整体只到 manual_pending（exit 3），
   绝不宣称生产可用；exit 0/1/3 语义锁定。输出 JSON 报告原子落盘、不含
-  secret/绝对路径。
+  secret/绝对路径。**Round 4 泄漏加固**：端点输入 origin-only（userinfo/
+  query/fragment/path 一律入口拒绝）；集中脱敏助手 `_safe_endpoint_display`
+  从解析结果重构 canonical scheme://host[:port] 展示（绝不截取原文），
+  URL 相关异常/网络错误/报告 endpoints 全部只含 canonical 值；
+  TURN 主机 host-only 校验（拒 scheme/path/userinfo/query）；secret 文件
+  读取错误只透出错误类别不回显路径——附 10 项泄漏回归（凭据密码/query
+  token/path 不出现于消息与报告）。
 - 新增 fail-closed 测试两套件（`services/api/tests/
   test_edge_deployment_templates.py` + `test_public_edge_preflight.py`，
   89 项全绿）：token-from-file、TLS force、loopback-only vhost 路由、
