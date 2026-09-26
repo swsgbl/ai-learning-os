@@ -2800,6 +2800,43 @@ AGC 材料缺位（当前仓库常态）时各阶段的**预期状态**：
   生产状态改动；`production_ready=false` 不变，release approval 仍
   human-only。
 
+## SearXNG 出站恢复流程（M14-148）
+
+- **适用场景**：生产 SearXNG 容器 healthy 但上游引擎全数
+  `Suspended: timeout`，且容器出站被部署 env 的
+  `AIOS_SEARXNG_HTTP(S)_PROXY` 固定在坏代理路径（宿主直连正常）。
+  仓库契约：三槽位缺省/空/注释 = compose 插值为空 = urllib 忽略 =
+  **直连出网（可恢复的生产默认）**——代理启用恒为部署显式 opt-in
+  （M14-66），槽位非 PIN_KEYS、可随网络状况增删而不触碰九键。
+- **恢复工具**：`python tools/ops/searxng_egress_recovery.py
+  --dry-run`（只读：九键键名验证 + 禁用计划，值绝不回显）→ 获准后
+  去掉 `--dry-run` enforce（幂等：激活非空代理槽位行转
+  `# [disabled-by-searxng-egress-recovery] KEY=…` 标记注释，原值保留
+  gitignored 文件内供日后 opt-in；其余行逐字节不变，写后重验九键）。
+  `--env-file` 可覆写目标（默认 `infra/env.production-recovery`）。
+  工具零子进程（AST 源码契约锁定）——不做任何容器/服务生命周期
+  操作。
+- **写纪律契约（M14-148 修正轮，supervisor 要求）**：①env 读取恒
+  **严格 UTF-8**——非 UTF-8 字节在任何写入之前 fail-closed 拒绝
+  （exit 1，不回显解码内容或替换字符，文件字节逐字节不变）；
+  ②enforce 写入恒**原子替换**（`_atomic_write_text`：同目录临时
+  文件写 + flush + fsync + 权限位复制后 `os.replace`，成功路径零
+  `.tmp` 残留）；③**失败保真**——原子替换任一步失败即清理临时
+  文件、原文件逐字节不变、可见 exit 1，secret env 文件绝不承受
+  半写状态。退出码契约：0 完成/无需变更；1 可见失败（env 缺失/
+  非 UTF-8/缺键/原子替换失败/写后重验失败）；2 参数错误。
+- **生效与复核**：enforce 后需在获准窗口 recreate searxng 容器使新
+  egress 事实生效（compose `--env-file` 同通道 up，唯一容器生命周期
+  动作，显式获准）；宿主 `curl 'http://127.0.0.1:8878/search?q=…
+  &format=json'` 复核非空聚合（China Bing 直连引擎）；再以
+  `provider-smoke-preflight` → `provider-smoke-export/aggregate`
+  复核 search 槽位（llm 槽位另需 operator 加载模型驻留，M14-117
+  同款）。
+- **边界**：模板 `infra/env.production-recovery.example` 三槽位保持
+  注释形态 = canonical 直连默认；NO_PROXY 槽位恒不禁用（直连下无效
+  但无害）；helper 与 production_recovery 的 PIN_KEYS 为同一事实源
+  （importlib 复用，零副本）。
+
 ## Current-main 发布证据刷新流程（M14-146，沿 M14-125 契约）
 
 - **适用场景**：current main 前移后（无论 docs-only 还是真实代码

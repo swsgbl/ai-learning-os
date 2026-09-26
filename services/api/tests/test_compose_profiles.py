@@ -33,12 +33,17 @@ def _render(
     profile: str | None = None,
     extra_env: dict[str, str] | None = None,
     unset: tuple[str, ...] | None = None,
+    env_file: Path | None = None,
 ) -> dict:
     """docker compose config --format json：渲染合并后的 compose model（不启动容器）。
 
-    unset 显式剔除宿主侧变量（默认渲染断言不受本机环境污染）。
+    unset 显式剔除宿主侧变量（默认渲染断言不受本机环境污染）；
+    env_file 经 --env-file 传入（production_recovery 同款注入通道——
+    宿主 shell 变量优先级更高，配 unset 使用保证确定性）。
     """
     cmd = ["docker", "compose", "-f", str(COMPOSE_FILE)]
+    if env_file is not None:
+        cmd += ["--env-file", str(env_file)]
     if profile:
         cmd += ["--profile", profile]
     cmd += ["config", "--format", "json"]
@@ -414,6 +419,67 @@ def test_searxng_outbound_proxy_explicit_passthrough() -> None:
     assert partial["HTTP_PROXY"] == ""
     assert partial["NO_PROXY"] == ""
 
+
+#: M14-148 env-file 渲染回归的伪 pin 值（九键齐全形态；伪 secret 标记值
+#: 只进 tmp 文件与插值结果，绝不进任何输出/断言打印）
+RECOVERY_ENV_PIN_ROWS = (
+    "AIOS_IMAGE_TAG=m14-148-render-probe",
+    "AIOS_WEB_IMAGE_TAG=m14-148-render-probe",
+    "AIOS_APP_ENV=production-zxmarker",
+    "AIOS_WEB_PORT=3021",
+    "AIOS_AUTH_SECRET=ZX-markerauth-0123456789abcdef",
+    "AIOS_LIVEKIT_API_SECRET=ZX-markerlivekit-0123456789abcdef",
+    "AIOS_BIND_IP=127.0.0.1",
+    "AIOS_LIVEKIT_BIND_IP=127.0.0.1",
+    "AIOS_PUBLIC_LIVEKIT_URL=ws://127.0.0.1:7880",
+)
+
+
+def _write_recovery_env(path: Path, slot_rows: tuple[str, ...]) -> Path:
+    path.write_text(
+        "\n".join(RECOVERY_ENV_PIN_ROWS + slot_rows) + "\n",
+        encoding="utf-8", newline="\n",
+    )
+    return path
+
+
+@pytest.mark.skipif(not _compose_available(), reason="需要 docker compose CLI")
+def test_searxng_env_file_disabled_proxy_slots_render_direct(tmp_path) -> None:
+    """M14-148：--env-file 通道下，代理槽位被 searxng_egress_recovery 标记
+    注释禁用 / 保持注释 / 置空 = compose 解析跳过或取空 → 容器三槽位渲染
+    恒空 = **直连出网（可恢复的生产默认）**；九键插值照常生效（pin 面与
+    出站开关面互不干扰——production_recovery 的 --env-file 通道即本形态）。
+    空值槽位（``KEY=`` 激活形态）同渲染为空：``:-`` 语义缺省/空同回落。"""
+    env_file = _write_recovery_env(tmp_path / "env.production-recovery", (
+        ("# [disabled-by-searxng-egress-recovery] "
+         "AIOS_SEARXNG_HTTP_PROXY=socks5h://ZX-markerproxy-0123456789abcdef"),
+        "AIOS_SEARXNG_HTTPS_PROXY=",
+        "# AIOS_SEARXNG_NO_PROXY=127.0.0.1,localhost",
+    ))
+    model = _render("search", unset=SEARXNG_PROXY_ENV_KEYS, env_file=env_file)
+    env = _searxng_env(model)
+    assert env["HTTP_PROXY"] == ""
+    assert env["HTTPS_PROXY"] == ""
+    assert env["NO_PROXY"] == ""
+    # pin 面照常：九键里的 AIOS_WEB_PORT 经 env-file 插值生效（web 端口锚点）
+    web_ports = model["services"]["web"]["ports"]
+    assert any(str(p.get("published")) == "3021" for p in web_ports)
+
+
+@pytest.mark.skipif(not _compose_available(), reason="需要 docker compose CLI")
+def test_searxng_env_file_active_proxy_slots_pass_through(tmp_path) -> None:
+    """M14-148 对照面：同一 --env-file 通道，激活且非空的代理槽位原样
+    透传到容器 env——证明 env-file 是有效注入通道（禁用后回到直连的
+    恢复语义真实成立），且取消注释即恢复显式 opt-in。"""
+    synthetic = "http://synthetic-proxy.invalid:1080"
+    env_file = _write_recovery_env(tmp_path / "env.production-recovery", (
+        f"AIOS_SEARXNG_HTTP_PROXY={synthetic}",
+        f"AIOS_SEARXNG_HTTPS_PROXY={synthetic}",
+    ))
+    model = _render("search", unset=SEARXNG_PROXY_ENV_KEYS, env_file=env_file)
+    env = _searxng_env(model)
+    assert env["HTTP_PROXY"] == synthetic
+    assert env["HTTPS_PROXY"] == synthetic
 
 # ---------------------------------------------------------------- 门控真启动冒烟
 
