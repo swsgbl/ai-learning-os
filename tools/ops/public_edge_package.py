@@ -137,6 +137,8 @@ def _require_public_ipv4(value: str, label: str) -> None:
 
 
 def _parse_env(text: str) -> dict[str, str]:
+    """Round 1 缺口 5：重复键拒绝——不同 dotenv 实现的覆盖语义不一致，
+    封包前必须确保键唯一。"""
     env: dict[str, str] = {}
     for line in text.splitlines():
         line = line.strip()
@@ -145,7 +147,10 @@ def _parse_env(text: str) -> dict[str, str]:
         key, sep, value = line.partition("=")
         if not sep:
             raise PackageError(f".env 存在无 '=' 的行: {line[:20]}...")
-        env[key.strip()] = value.strip()
+        key = key.strip()
+        if key in env:
+            raise PackageError(f".env 含重复键 {key}（不同 dotenv 的覆盖语义不一致——拒绝）")
+        env[key] = value.strip()
     return env
 
 

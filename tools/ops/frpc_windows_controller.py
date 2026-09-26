@@ -18,9 +18,10 @@
 - install/uninstall 需 (1) 显式确认短语 ``--confirm-phrase
   INSTALL-AIOS-EDGE-FRPC`` 精确匹配 且 (2) ``--execute``——缺一即只打印
   计划命令（dry-run 语义），不执行任何写命令；
-- secret 纪律：token 文件只做结构与存在性校验（复用 prepare 的
-  validate_secret_file——0600/UTF-8/长度/非占位；错误只透出类别），绝不
-  读取/展示其内容，输出不含任何 secret。
+- secret 纪律（Round 1 缺口 1）：token 文件只做**元数据**校验（存在/
+  路径形态/权限/非符号链接——绝不 open/read 内容）；弱值/UTF-8/占位
+  形态由 public_edge_prepare 渲染时担保 + plan 的 ``frpc.exe verify -c``
+  运行期复核负责（见 runbook §3B 文档）；输出不含任何 secret。
 
 Exit codes：0 = 成功（含 dry-run 计划输出）；1 = 预检失败/拒绝执行；
 2 = 用法错误（argparse）；status 专用：0=installed / 1=unknown /
@@ -39,11 +40,6 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import tomllib
-
-try:  # 包导入（pytest）与脚本直跑两种形态
-    from tools.ops import public_edge_prepare as prepare
-except ImportError:  # python tools/ops/frpc_windows_controller.py
-    import public_edge_prepare as prepare
 
 TOOL_NAME = "frpc_windows_controller"
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -91,10 +87,67 @@ def _require_regular_file(path: Path, label: str) -> None:
         raise ControllerError(f"{label} 必须是常规文件（存在、非符号链接）: {path.name}")
 
 
+def _require_absolute(path: Path, label: str) -> None:
+    """Round 1 缺口 4：--frpc-exe/--config 必须是绝对路径——计划任务落成后，
+    相对路径按 Task Scheduler 工作目录解析，动作不可达。"""
+    if not path.is_absolute():
+        raise ControllerError(f"{label} 必须是绝对路径（相对路径会使计划任务动作不可解析）")
+
+
+def _validate_token_reference(token_path: str) -> bool:
+    """Round 1 缺口 1：token 引用**仅元数据**校验——绝不 open/read 内容。
+
+    只验证：路径形态（平台感知绝对路径、非 URL、无 ``..``/危险字符——复用
+    prepare 的路径形态正则与 ``..`` 段检查逻辑但**不走文件内容读取**）、
+    逐组件 + 末段非符号链接、常规文件存在、POSIX 下 others/group 无权限。
+    弱值/UTF-8/占位形态不在本工具职责内——那些已由 public_edge_prepare
+    渲染时的 validate_secret_file 担保，运行期正确性由 plan 里的
+    ``frpc.exe verify -c`` 负责（见 runbook §3B）。
+    """
+    if not token_path or token_path != token_path.strip():
+        return False
+    if "://" in token_path:
+        return False
+    # 路径形态（平台感知字符集，与 prepare 同款但不调它的文件读取路径）
+    if os.name == "nt":
+        shape = re.compile(r"^[A-Za-z]:[\\/][A-Za-z0-9 ._:\\/-]*$")
+    else:
+        shape = re.compile(r"^/[A-Za-z0-9 ._/ -]*$")
+    if not shape.fullmatch(token_path):
+        return False
+    without_drive = token_path[2:] if re.match(r"^[A-Za-z]:", token_path) else token_path
+    segments = re.split(r"[\\/]+", without_drive)
+    if any(seg == ".." for seg in segments):
+        return False
+    path = Path(token_path).expanduser()
+    # 逐组件符号链接检查（中间组件 + 末段）
+    current = Path(path.anchor) if path.anchor else Path("/")
+    for part in path.parts[1:] if path.anchor else path.parts:
+        if part in ("/", "\\"):
+            continue
+        current = current / part
+        if current.is_symlink():
+            return False
+    if not path.is_file():
+        return False
+    if os.name == "posix":
+        import stat as _stat
+
+        if _stat.S_IMODE(path.stat().st_mode) & 0o077:
+            return False
+    return True
+
+
 def preflight_checks(frpc_exe: Path, config_path: Path) -> dict[str, Any]:
-    """只读预检：exe/配置/token 文件全部不变量；零写入零网络。"""
+    """只读预检：exe/配置/token 文件全部不变量；零写入零网络。
+
+    token 文件只做**元数据**校验（存在/形态/权限/symlink）——内容绝不
+    读取；弱值/UTF-8 由 prepare 渲染时担保 + plan 的 frpc.exe verify 负责。
+    """
     if frpc_exe.name.lower() != "frpc.exe":
         raise ControllerError("--frpc-exe 必须指向名为 frpc.exe 的可执行文件（官方 release）")
+    _require_absolute(frpc_exe, "--frpc-exe")
+    _require_absolute(config_path, "--config")
     _require_regular_file(frpc_exe, "frpc.exe")
     _require_regular_file(config_path, "frpc 配置")
     try:
@@ -135,11 +188,15 @@ def preflight_checks(frpc_exe: Path, config_path: Path) -> dict[str, Any]:
         for domain in proxy.get("customDomains", []):
             if not DNS_NAME_RE.fullmatch(domain) or domain.endswith(".example.com"):
                 raise ControllerError(f"customDomains 残留占位/畸形域名: {domain}")
-    # token 文件结构与权限校验（复用 prepare：错误只透出类别，不回显路径/内容）
-    prepare.validate_secret_file(token_path, "frpc_token")
+    # token 引用元数据校验（Round 1：绝不读取内容；弱值归 prepare+verify 管）
+    if not _validate_token_reference(token_path):
+        raise ControllerError(
+            "token 文件引用未过元数据校验（存在/形态/权限/非符号链接）——"
+            "内容不读取；弱值/UTF-8 由 prepare 渲染时担保 + plan 的 frpc.exe verify 负责"
+        )
     return {
-        "frpc_exe": str(frpc_exe),
-        "config": str(config_path),
+        "frpc_exe": str(frpc_exe.resolve()),
+        "config": str(config_path.resolve()),
         "server_addr": server_addr,
         "proxies": [p.get("name") for p in proxies],
         "token_file_present": True,
@@ -193,13 +250,19 @@ def task_status(runner: Runner) -> int:
 
 
 def planned_commands(facts: dict[str, Any]) -> dict[str, str]:
-    """打印用计划命令（不执行）：verify 预检 / schtasks 创建 / 删除。"""
+    """打印用计划命令（不执行）：verify 预检 / schtasks 创建 / 删除。
+
+    install 命令与实际 XML 安装方式**一致**：经临时 XML 文件创建（非
+    /SC ONSTART 快捷参数——XML 显式携带 BootTrigger/RestartOnFailure/
+    S4U/LeastPrivilege 语义）。
+    """
     exe, config = facts["frpc_exe"], facts["config"]
     return {
         "verify": f'"{exe}" verify -c "{config}"',
         "install": (
-            f'schtasks /Create /TN "{TASK_NAME}" '
-            f'/TR "\\"{exe}\\" -c \\"{config}\\"" /SC ONSTART /RL LIMITED'
+            f'schtasks /Create /TN "{TASK_NAME}" /XML <install-task.xml>  '
+            f"（BootTrigger+短延迟 / RestartOnFailure×3 / S4U / LeastPrivilege；"
+            f"Exec: \"{exe}\" -c \"{config}\"）"
         ),
         "uninstall": f'schtasks /Delete /TN "{TASK_NAME}"',
         "query": f'schtasks /Query /TN "{TASK_NAME}" /XML',
@@ -212,12 +275,28 @@ INSTALL_XML_TEMPLATE = f"""<?xml version="1.0" encoding="UTF-16"?>
     <Description>{TASK_URI_MARKER}</Description>
     <URI>\\{TASK_NAME}</URI>
   </RegistrationInfo>
-  <Triggers><LogonTrigger><Enabled>true</Enabled></LogonTrigger></Triggers>
+  <Principals>
+    <Principal id="Author">
+      <UserId>__USER_SID__</UserId>
+      <LogonType>S4U</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>
+  <Triggers>
+    <BootTrigger>
+      <Enabled>true</Enabled>
+      <Delay>PT30S</Delay>
+    </BootTrigger>
+  </Triggers>
   <Settings>
     <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <StartWhenAvailable>true</StartWhenAvailable>
+    <RestartOnFailure>
+      <Interval>PT1M</Interval>
+      <Count>3</Count>
+    </RestartOnFailure>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
     <Hidden>false</Hidden>
   </Settings>
@@ -239,6 +318,52 @@ def _install_xml(facts: dict[str, Any]) -> str:
     )
 
 
+def _verify_installed_task(runner: Runner, facts: dict[str, Any]) -> tuple[bool, str]:
+    """Round 1 缺口 3：装后只读验证——Description 归属 + Exec Command/Arguments。
+
+    返回 (ok, 差异描述)；不做自动删除（留给 supervisor 审查后处置）。
+    """
+    xml_text = _query_task_xml(runner)
+    if xml_text is None:
+        return False, "查询不到刚安装的任务（任务可能未实际写入）"
+    if "<!DOCTYPE" in xml_text or "<!ENTITY" in xml_text:
+        return False, "装后 XML 含 DOCTYPE/ENTITY（拒绝解析）"
+    try:
+        root = ET.fromstring(xml_text)
+    except ET.ParseError as cause:
+        return False, f"装后 XML 解析失败: {cause}"
+    ns = TASK_NS
+    descriptions = root.findall(f"./{ns}RegistrationInfo/{ns}Description")
+    if len(descriptions) != 1 or (descriptions[0].text or "").strip() != TASK_URI_MARKER:
+        return False, "Description 归属标记不匹配（不是本工具写入的任务）"
+    execs = root.findall(f"./{ns}Actions/{ns}Exec")
+    if len(execs) != 1:
+        return False, "Exec 动作数 != 1"
+    commands = execs[0].findall(f"./{ns}Command")
+    arguments = execs[0].findall(f"./{ns}Arguments")
+    if len(commands) != 1 or len(arguments) != 1:
+        return False, "Command/Arguments 元素缺失"
+    actual_command = (commands[0].text or "").strip()
+    actual_arguments = (arguments[0].text or "").strip()
+    expected_command = facts["frpc_exe"]
+    expected_arguments = f'-c {facts["config"]}'
+    if actual_command != expected_command:
+        return False, f"Exec Command 不匹配: {actual_command!r} != {expected_command!r}"
+    if actual_arguments != expected_arguments:
+        return False, f"Exec Arguments 不匹配: {actual_arguments!r} != {expected_arguments!r}"
+    return True, ""
+
+
+def _install_xml(facts: dict[str, Any]) -> str:
+    from xml.sax.saxutils import escape
+
+    return (
+        INSTALL_XML_TEMPLATE
+        .replace("__FRPC_EXE__", escape(facts["frpc_exe"]))
+        .replace("__FRPC_CONFIG__", escape(facts["config"]))
+    )
+
+
 # ---------------------------------------------------------------- 子命令
 
 
@@ -246,7 +371,8 @@ def cmd_preflight(frpc_exe: Path, config_path: Path, log) -> int:
     facts = preflight_checks(frpc_exe, config_path)
     for key, value in facts.items():
         log(f"{key}: {value}")
-    log("preflight PASS（零写入零网络；token 文件仅存在性/结构校验，内容不读取）")
+    log("preflight PASS（零写入零网络；token 文件仅元数据校验——存在/形态/权限/"
+        "非符号链接，内容绝不读取；弱值/UTF-8 由 prepare+frpc verify 负责）")
     return EXIT_OK
 
 
@@ -290,7 +416,13 @@ def cmd_install(frpc_exe: Path, config_path: Path, *, confirm_phrase: str | None
     if code != 0:
         log(f"安装失败: returncode={code}")
         return EXIT_FAILURE
-    log(f"install OK：任务 {TASK_NAME}（LogonTrigger + LeastPrivilege 语义经 XML 显式写入）")
+    # Round 1 缺口 3：装后只读验证——returncode 0 不等于任务内容正确
+    verified, discrepancy = _verify_installed_task(runner, facts)
+    if not verified:
+        log(f"安装验证失败（不做自动删除，留 supervisor 处置）: {discrepancy}")
+        return EXIT_FAILURE
+    log(f"install OK：任务 {TASK_NAME}（BootTrigger+30s / RestartOnFailure×3 / S4U / "
+        f"LeastPrivilege；装后验证通过——Description+Exec 精确匹配）")
     return EXIT_OK
 
 
@@ -362,9 +494,6 @@ def main(argv: list[str] | None = None, *, runner: Runner | None = None) -> int:
                              runner=runner, log=log)
     except ControllerError as cause:
         print(f"[{TOOL_NAME}] FAIL: {cause}", file=sys.stderr)
-        return EXIT_FAILURE
-    except prepare.PrepareError as cause:
-        print(f"[{TOOL_NAME}] FAIL: token 文件校验未过: {cause}", file=sys.stderr)
         return EXIT_FAILURE
 
 

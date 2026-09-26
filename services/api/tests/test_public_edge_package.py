@@ -133,6 +133,18 @@ def test_inspect_rejects_secret_value_in_env(tmp_path: Path) -> None:
         pkg.cmd_inspect(directory)
 
 
+def test_inspect_rejects_duplicate_env_keys(tmp_path: Path) -> None:
+    """Round 1 缺口 5：重复 env 键拒绝——不同 dotenv 的覆盖语义不一致。"""
+    directory = _render_package(tmp_path)
+    env = directory / ".env"
+    text = env.read_text(encoding="utf-8")
+    # 追加一个与已有键同名的行（值不同——不同 dotenv 会取首值/末值/报错）
+    text += "AIOS_EDGE_COTURN_TLS_ENABLED=true\n"
+    env.write_text(text, encoding="utf-8")
+    with pytest.raises(pkg.PackageError, match="重复键"):
+        pkg.cmd_inspect(directory)
+
+
 def test_inspect_rejects_frpc_private_server(tmp_path: Path) -> None:
     directory = _render_package(tmp_path)
     frpc = directory / "frpc.windows.toml"

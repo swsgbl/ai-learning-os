@@ -34,6 +34,22 @@
   DOCTYPE 防护、命名空间包双模块类同一性修正）。runbook 新增 §3B。
 - 边界：零部署零网络探测零服务启停；不读任何真实 env/secret 文件；
   没有真实域名/VPS/DNS/4G 验收前仍不宣称公网生产上线。
+- **Round 1（supervisor 六项修正）**：(1) token 引用改为**仅元数据**校验
+  （`_validate_token_reference`：路径形态/逐组件+末段非符号链接/常规文件
+  存在/POSIX 0600；**绝不 open/read 内容**——弱值/UTF-8 由 prepare 渲染时
+  担保 + plan 的 `frpc.exe verify -c` 运行期复核），补非 UTF-8/极短 token
+  仍通过 + 缺失/symlink 拒绝回归；(2) 计划任务 XML 改为 **BootTrigger
+  （+PT30S 延迟）/ RestartOnFailure×3 / S4U / LeastPrivilege**（原
+  LogonTrigger + planned_commands 展示不执行的 `/SC ONSTART` 不一致已修），
+  planned install 说明与 XML 方式一致，测试锁定全部五项 XML 不变量 +
+  绝对路径入 Command/Arguments；(3) install 装后**只读验证**——Create
+  returncode 0 后必再 query 一次并校验 Description 归属 + Exec Command/
+  Arguments 精确匹配（被篡改/缺失 → 验证失败报告差异，不做自动删除）；
+  (4) `--frpc-exe`/`--config` 必须**绝对路径**（相对路径使计划任务动作
+  不可解析）；(5) `.env` 解析**拒绝重复键**（不同 dotenv 覆盖语义不一致）；
+  (6) 零网络/零真实 schtasks/零 secret 读取不变。验证：新工具两套件
+  **51 passed** + 邻域三套件 **195 passed + 3 skipped** + ruff/py_compile/
+  `git diff --check` 全净 + 新增行扫描 334 行 **0 hits**。
 
 ## M14-154 — 边缘部署准备与渲染（public_edge_prepare，fail-closed 不部署）
 
