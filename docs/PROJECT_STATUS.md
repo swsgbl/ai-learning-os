@@ -9,6 +9,55 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-149 current-main 发布证据刷新（证据/docs-only 切片）**：worktree
+`m14-149-current-main-release-evidence`，分支
+`ops/m14-149-current-main-release-evidence`，基于 main
+`c948931b890fd562dac4f53bd7b5d9add4b0f020`（PR #236 merge = M14-148
+provider readiness recovery Round 1 合入，精确基点 = 当前 origin/main，
+起点即 tracked-clean 核验通过），单 local commit、不 push、不开 PR
+（任务书指令）。M14-146 证据绑定 239b881，其后 7 提交
+（PR #234/#235/#236）含真实代码/测试面变更（M14-148 恢复 helper
+`tools/ops/searxng_egress_recovery.py` +336 行 + searxng egress 28 项
+离线契约测试 + compose profiles +2 渲染回归），本切片按 supervisor
+指令真实重执行刷新：**ci-main** 归档 head c948931b 唯一 push/main run
+**36213290023**（run_number 595，completed success，jobs 5/5 精确集合
+全绿），按 `_eval_ci_main` 契约断言驱动程序化派生 canonical
+`ci-main.json`（`da80ae9c…`，1201 bytes；raw 双响应归档）；**release-check**
+干净 c948931b 执行树从零隔离环境（uv venv CPython 3.12.14 + 59
+packages + npm ci 411 packages，运行前 HEAD/porcelain 双核验留痕）full
+重跑 **all_green 10/10**（pytest **5084 passed / 33 skipped** in
+257.74s，较 M14-146 的 5054 恰 +30——区间 searxng egress recovery 28 +
+compose profiles 2 真实测试面增长精确对账；e2e 5 步 1210ms；alembic
+head 仍 0027_audit_chain；逐字节复制复核 IDENTICAL `2de5cbe4…`）；
+**provider-smoke 不重跑**，只读核验当前真实聚合
+`artifacts/temp/provider-smoke/20260926T0106/`（M14-148 恢复轮按其 §6
+序列真实重跑产物：三输入 schema/executed/pass/exit0/时间自洽逐份核验
+（search 7496ms / local-voice 18442ms / llm 12213ms，窗口
+2026-09-26T01:12:09Z→01:13:56Z、聚合 01:14:14Z）+ 三份失败 attempt
+（envmiss 60ms / querymiss 769ms / timeout 10483ms）如实保留且核验
+未改写）后哈希锁定逐字节登记（`d589181e…`，564 bytes，取代 M14-146
+复用的 M14-117 旧聚合 `029ee84f…`——新真实证据登记、非改写历史）；
+**long-soak 不重跑**，同哈希 `d939c652…` 只读复用（窗口
+2026-09-22T02:00:01Z→2026-09-23T02:00:01Z 97 样本全 ok / max gap
+17.25 / span 1440，早于 M14-117 切换且在 m14-70 栈，如实呈现、不制造
+新窗口）；**evidence-cockpit**：生产状态源 6/6 哈希 MATCH 后原样
+staging，staged 10 文件 10/10 IDENTICAL，**cockpit_ready=true、
+blockers=[]、pass=9/missing=2（release-approval not-staged human-only
++ turn-tls optional）**，两 code-bound 门 current（current-head 与
+release-check 声明头均 c948931b，generated_at 2026-09-26T03:22:15Z）。
+诚实边界：**`release_ready=false` / `production_ready=false` 恒不变
+——release-approval human-only 从未发生，不代拟**；零生产触碰（零
+容器/DB/MinIO/语音/secrets、零部署、零 provider/soak 重跑、零代理/
+CC Switch 生命周期变更、不安装 M14-141 scheduler）。验证：聚焦契约
+测试 407 passed（与 M14-146 恰一致，工具契约面区间零变更实证）+
+ruff All checks passed + SHA256SUMS 28/28 OK + JSON 契约断言 22 项
+全过 + 秘密/本地绝对路径/U+FFFD 新增行扫描 0 命中 + `git diff
+--check` 干净。证据
+`docs/evidence/m14-149-current-main-release-evidence/README.md`。
+同步更新 ROADMAP（M14-149 状态更新）、CHANGELOG（M14-149 条目）、
+DEVELOPMENT（provider-smoke 复用口径更新为当前真实聚合优先，登记值
+`d589181e…`）与本台账顶部任务结构（M14-148 移为次席）。
+
 **M14-148 provider readiness recovery Round 1（实现切片）**：worktree
 `m14-148-provider-readiness-recovery`，分支
 `ops/m14-148-provider-readiness-recovery`，基于 main
