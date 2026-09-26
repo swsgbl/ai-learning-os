@@ -1,0 +1,71 @@
+# M14-156 公网边缘本地彩排 compose 模板（example）。
+#
+# 由 tools/ops/public_edge_rehearsal.py 在真实 execute 时复制进仓库外
+# 彩排工作目录（token 是同目录一次性随机文件 frps_token.txt，绝不入库）。
+# 拓扑：probe → Caddy(容器:80，唯一 host 发布 127.0.0.1:39443) →
+# frps vhost(容器:8080) ← frpc(compose 网络) → host.docker.internal:8000/3011。
+#
+# 彩排边界（与生产 ../docker-compose.edge.example.yml 彻底分离）：
+# - HTTP-only：Caddy 关闭自动 HTTPS，无 ACME/证书/443；
+# - host 面只发布一个 127.0.0.1 高位端口（39443）——frps 控制面/vhost
+#   均不发布到 host（生产 frps 7000 公网可达 + vhost 127.0.0.1 独占）；
+# - compose project 恒为 aios-m14-156-edge-rehearsal，服务/网络带
+#   io.aios.rehearsal=m14-156 标签——清理只按本项目标签 scoped 执行，
+#   绝不触碰任何其他 compose 项目/容器/网络（含生产彩排栈）；
+# - 无 LiveKit/coturn/download——彩排只覆盖 HTTP 反向隧道链路；
+# - frpc 以容器形态运行（生产为家机 Windows 常驻进程），回连目标
+#   host.docker.internal:8000/3011（生产 frpc 与服务同机用 127.0.0.1）。
+#
+# 镜像 digest pin（Docker Hub registry API 2026-09-27 核实；升级 = 显式
+# 改 digest 并记录，绝不回退 :latest）：
+#   caddy = caddy:2.11.4-alpine（与生产边缘模板同 digest）
+#   frps  = fatedier/frps:v0.71.0（与生产边缘模板同 digest）
+#   frpc  = fatedier/frpc:v0.71.0 —— 使用 frp 官方 GHCR 镜像源
+#          ghcr.io/fatedier/frpc:v0.71.0，其 OCI index digest 经核实与
+#          Docker Hub 官方镜像完全一致（sha256:99ece6a2…，同一构建产物）。
+#          R3 原因：本地 daemon 镜像加速器对 docker.io/fatedier/frpc 的
+#          拉取按白名单策略拒绝（DaoCloud allowlist），直连 Docker Hub
+#          超时；ghcr.io 官方源同 digest 实测可拉。GHCR 仓库由 frp
+#          官方发布（官方 release 文档列明），不是第三方镜像。
+name: aios-m14-156-edge-rehearsal
+
+services:
+  frps:
+    image: docker.io/fatedier/frps@sha256:cd8b947ba61678b200baa4f71ccc33f3c52e4e2cc0059700ba3b8354e36af7c3
+    restart: "no"
+    command: ["-c", "/etc/frp/frps.toml"]
+    labels:
+      io.aios.rehearsal: m14-156
+    volumes:
+      - ./frps.toml:/etc/frp/frps.toml:ro
+      - ./frps_token.txt:/run/secrets/rehearsal_token:ro
+
+  frpc:
+    # R3：官方 GHCR 源（与 Docker Hub 同 digest——见顶部注释）；caddy/frps 不变
+    image: ghcr.io/fatedier/frpc@sha256:99ece6a2b62cfc68731e0df289af804ff1c699911cfc47871856434f1d6d53ee
+    restart: "no"
+    command: ["-c", "/etc/frp/frpc.toml"]
+    labels:
+      io.aios.rehearsal: m14-156
+    # 跨平台 host 回连：Docker Desktop 原生解析 host.docker.internal，
+    # Linux CE 依赖 host-gateway 映射。
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./frpc.toml:/etc/frp/frpc.toml:ro
+      - ./frps_token.txt:/run/secrets/rehearsal_token:ro
+    depends_on:
+      - frps
+
+  caddy:
+    image: docker.io/library/caddy@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
+    restart: "no"
+    labels:
+      io.aios.rehearsal: m14-156
+    ports:
+      # 唯一 host 发布端口：回环 + 高位（HTTP-only，无 443/TLS）
+      - "127.0.0.1:39443:80"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    depends_on:
+      - frps

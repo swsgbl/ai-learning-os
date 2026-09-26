@@ -1,0 +1,36 @@
+# M14-156 彩排 frpc 模板（example）——由 public_edge_rehearsal.py 复制进彩排工作目录。
+#
+# 与生产（../frpc.windows.toml.example）的差异（有意为之，彩排语义）：
+# - serverAddr = "frps"：彩排控制面走 compose 项目网络（生产为 VPS 公网
+#   IPv4；TLS force + token 文件不变量与生产相同）；
+# - localIP = "host.docker.internal"：frpc 以容器形态运行，家机位
+#   API/Web 经 host 网关回连（生产 frpc 与服务同机，用 127.0.0.1）；
+# - token 文件为彩排工作目录内一次性随机文件（挂载为
+#   /run/secrets/rehearsal_token，与 frps 同值同源；生产为家机
+#   secrets 目录常驻文件）。
+#
+# customDomains 是彩排专用 .localhost 标签（RFC 6761 保留，永不解析），
+# 与生产真实域名彻底区分；探测端用显式 Host 头路由，无需 DNS。
+
+serverAddr = "frps"
+serverPort = 7000
+
+auth.method = "token"
+auth.tokenSource.type = "file"
+auth.tokenSource.file.path = "/run/secrets/rehearsal_token"
+
+transport.tls.enable = true
+
+[[proxies]]
+name = "rehearsal-web"
+type = "http"
+localIP = "host.docker.internal"
+localPort = 3011
+customDomains = ["app.rehearsal.localhost"]
+
+[[proxies]]
+name = "rehearsal-api"
+type = "http"
+localIP = "host.docker.internal"
+localPort = 8000
+customDomains = ["api.rehearsal.localhost"]

@@ -79,6 +79,38 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-156 状态更新
+
+- M14-156 公网边缘本地彩排 supervisor（实现切片，分支
+  `m14-156-edge-rehearsal`（独立 worktree，基于 main
+  `b8db6ffa8c9f4ab858c846464b5a9990232d18e4`（PR #243 merge = M14-155
+  R2 合入，精确基点），单 local commit，不 push、不开 PR）：新增
+  `tools/ops/public_edge_rehearsal.py`（纯标准库；plan/execute/cleanup/
+  status，默认 plan 零变更）+ `infra/edge/rehearsal/` 四模板 +
+  `services/api/tests/test_public_edge_rehearsal.py`，把 M14-153/154/155
+  的可渲染部署包推进为**可执行的本地回环彩排**（Caddy → frps → frpc →
+  host.docker.internal 的家机 API/Web，Host 标签 .localhost 彩排域，
+  唯一 host 发布 127.0.0.1:39443）。fail-closed：双要素确认门（短语 +
+  --execute，缺一即零副作用非零退出）、只读 preflight（docker/compose/
+  家机目标/端口/work-dir 契约五门）、一次性 token 0600 文件绝不打印、
+  渲染自检（TLS force/token 文件/双标签精确集/回环高位发布/digest pin）、
+  成败恒定 scoped 清理（只按本项目精确标签，绝不触碰生产彩排栈或任何
+  其他项目）、证据 JSON+MD 原子写（public_ready 恒 false）、Docker/探测
+  全部经注入 Runner/Prober（测试零真实 Docker 零网络）。验证：新套件
+  52 passed + 邻域五套件合跑 300 passed + 3 skipped（外部 basetemp）；
+  ruff/py_compile/`git diff --check` 全净；新增行秘密/绝对路径扫描
+  0 命中。诚实边界：开发回合从未真实执行 Docker 彩排（全部为注入 fake
+  的离线契约验证）；彩排 HTTP-only/loopback-only，通过 ≠ 公网生产可用。
+  runbook 新增 §3C；研究文档快照刷新 2026-09-27（frp 109,639★ /
+  pangolin 22,930★ AGPL-3 商业双许可 / newt 1.17.0 / chisel v1.12.0 /
+  rathole v0.5.0-2023 / gost v3.3.0 / cloudflared 2026.9.3 / Headscale
+  44,144★ v0.29.4——结论不变：frp+Caddy 生产主路径）。**R1 修正
+  （同一 commit amend）**：mutated 提前至 mkdir 成功后（render 失败
+  也进 scoped 清理）、status 对 network ls fail-closed、work-dir/
+  evidence-dir 符号链接防线升级为路径链逐组件检查；R1 后验证：新套件
+  58 passed + 六套件合跑 306 passed + 3 skipped，ruff/py_compile/
+  `git diff --check` 全净。
+
 ### M14-152 状态更新
 
 - M14-152 current-main 发布证据刷新（证据/docs-only 切片，分支

@@ -1,4 +1,4 @@
-# 公网隧道与边缘部署定版调研（2026-09-26，M14-153 随分支入库版）
+# 公网隧道与边缘部署定版调研（2026-09-27 快照刷新，M14-156）
 
 > 本文档是 supervisor 批准的研究定版的入库副本。相对原始调研的唯一实质修订：
 > LiveKit 与外部 coturn 的联动语法按官方源码核实后改写为
@@ -6,6 +6,8 @@
 > 内嵌 TURN 开关，不适用于外部 coturn 拓扑；详见"语音生产设计"一节与
 > <https://github.com/livekit/livekit/blob/v1.13.7/config-sample.yaml>）。
 > 落地模板见 `infra/edge/`，运维手册见 `docs/PUBLIC_EDGE_DEPLOYMENT.md`。
+> M14-156 刷新下表 GitHub API 事实快照（2026-09-27）——结论不变：
+> **frp + Caddy 仍是公网生产主路径**（本地彩排见 runbook §3C）。
 
 ## 结论
 
@@ -35,22 +37,29 @@ VPS：Caddy + frps + LiveKit + coturn
 
 ## 候选项目对比（决策矩阵）
 
-GitHub 数据核实时间：2026-09-26。
+GitHub 数据核实时间：2026-09-27（M14-156 刷新；前值 2026-09-26）。
 
 | 项目 | Stars / License | 活跃度 | 判断 |
 | --- | --- | --- | --- |
-| [`fatedier/frp`](https://github.com/fatedier/frp) | 109,631 / Apache-2.0 | v0.71.0，2026-08-14 发布，2026-09-15 仍有 push | **主方案**。成熟、稳定，支持 HTTP/HTTPS/TCP/UDP、token/OIDC（含 token 从文件读取的 `auth.tokenSource`）、TLS force、HTTP vhost。 |
-| `fosrl/pangolin` + `newt` | 22,927 / NOASSERTION；newt 909 / AGPL-3.0 | 2026-09 活跃 | 备选。有身份、资源管理和控制台，但部署面更大，license 需专项审阅。 |
-| `jpillora/chisel` | 16,583 / MIT | v1.12.0，2026-08-29 | 轻量备选。适合少量 TCP/UDP 手工隧道，缺少域名路由和管理生态。 |
-| `rathole-org/rathole` | 14,260 / Apache-2.0 | 最近有 push，但 release 停在 v0.5.0（2023） | 极简高性能备选，不作为第一生产方案。 |
-| `go-gost/gost` | 7,538 / MIT | v3.3.0，2026-08-30 | 功能多、配置面大，审计和安全运维成本高。 |
+| [`fatedier/frp`](https://github.com/fatedier/frp) | 109,639 / Apache-2.0 | v0.71.0，2026-08-14 发布，2026-09-15 仍有 push | **主方案**。成熟、稳定，支持 HTTP/HTTPS/TCP/UDP、token/OIDC（含 token 从文件读取的 `auth.tokenSource`）、TLS force、HTTP vhost。 |
+| `fosrl/pangolin` + `newt` | pangolin 22,930（社区 AGPL-3.0 / 商业双许可）；newt 909 / AGPL-3.0 | pangolin 1.23.0，2026-09-16 发布，2026-09-25 仍有 push；newt 1.17.0 | 备选。有身份、资源管理和控制台，但部署面更大，社区 AGPL-3 与商业双许可需专项审阅。 |
+| `jpillora/chisel` | 16,587 / MIT | v1.12.0 | 轻量备选。适合少量 TCP/UDP 手工隧道，缺少域名路由和管理生态。 |
+| `rathole-org/rathole` | 14,261 / Apache-2.0 | 仓库仍有 push，但 release 停在 v0.5.0（2023） | 极简高性能备选，release 停滞，不作为第一生产方案。 |
+| `go-gost/gost` | 7,539 / MIT | v3.3.0 | 功能多、配置面大，审计和安全运维成本高。 |
 | `zhboner/realm` | 2,599 / MIT | v2.9.6，2026-08-30 | relay/port forward，不能单独解决家宽 NAT 后的反向公网入口。 |
 | `ehang-io/nps` | 34,238 / GPL-3.0 | release 停在 2021，维护停滞 | **排除**。存在已知安全问题，不用于生产。 |
 | `boringproxy` | 1,385 / MIT | 2024 后不活跃 | **排除**生产主线。 |
 | `ekzhang/bore` | 11,509 / MIT | v0.6.0，2025-06 | 只适合简单 TCP 隧道，不适合公网 API/Web/语音生产。 |
-| [Cloudflare Tunnel / `cloudflared`](https://github.com/cloudflare/cloudflared) | 15,916 / Apache-2.0 | 2026-09 活跃 | **Web Beta 方案**。outbound-only、CDN/WAF 便利；匿名公网 UDP/WebRTC 不适合作为生产语音入口，大陆访问质量需实测。 |
+| [Cloudflare Tunnel / `cloudflared`](https://github.com/cloudflare/cloudflared) | 15,921 / Apache-2.0 | 2026.9.3 发布 | **Web Beta 方案**。outbound-only、CDN/WAF 便利；匿名公网 UDP/WebRTC 不适合作为生产语音入口，大陆访问质量需实测。 |
 | Tailscale Funnel | 36,875 / BSD-3-Clause（客户端） | 2026-09 活跃 | 个人演示/运维方案。公网监听仅 443/8443/10000，不适合匿名手机用户生产入口。 |
-| Headscale / NetBird / ZeroTier / OpenZiti | 均活跃 | 活跃 | 私有 mesh / Zero Trust。适合运维通道，不适合任意手机浏览器直接访问。 |
+| Headscale（含 NetBird / ZeroTier / OpenZiti） | Headscale 44,144 / BSD-3-Clause，v0.29.4 | 均活跃 | 私有 mesh / Zero Trust。适合运维通道，不适合任意手机浏览器直接访问。 |
+
+> M14-156 R3 镜像源备注：frp 官方镜像同时发布于 GHCR（`ghcr.io/fatedier/frp`，
+> 官方 release 文档列明）。彩排实跑证实本地 daemon 镜像加速器按白名单拒收
+> `docker.io/fatedier/frpc`（DaoCloud allowlist）、直连 Docker Hub 超时；
+> `ghcr.io/fatedier/frpc:v0.71.0` 的 OCI index digest 与 Docker Hub 官方镜像
+> 逐字节一致（`sha256:99ece6a2…`，registry 核实 + 本地成功拉取）——同一
+> 构建产物的官方分发源，非第三方镜像；本地彩排模板据此改用 GHCR 引用。
 
 ## 域名与端口规划
 

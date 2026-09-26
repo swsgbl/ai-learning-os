@@ -1,0 +1,21 @@
+# M14-156 彩排 frps 模板（example）——由 public_edge_rehearsal.py 复制进彩排工作目录。
+#
+# 与生产（../frps.toml.example）的差异（有意为之，彩排隔离语义）：
+# - proxyBindAddr = "0.0.0.0"（容器内）：生产的 127.0.0.1 独占依赖 VPS
+#   host 网络里 Caddy 与 frps 同机；彩排中 Caddy 是独立容器，vhost 的
+#   隔离由 compose 项目网络边界承担（只有本项目 caddy 可达）；
+# - bindPort/vhostHTTPPort 与生产同值（7000/8080），但均不发布到 host
+#   （见 docker-compose.rehearsal.example.yml——host 面零暴露）。
+#
+# 不变量与生产一致：token 只从文件读取（无 inline token，与 auth.token
+# 互斥）+ transport.tls.force = true（拒绝一切非 TLS 控制连接）。
+bindAddr = "0.0.0.0"
+bindPort = 7000
+proxyBindAddr = "0.0.0.0"
+vhostHTTPPort = 8080
+
+auth.method = "token"
+auth.tokenSource.type = "file"
+auth.tokenSource.file.path = "/run/secrets/rehearsal_token"
+
+transport.tls.force = true
