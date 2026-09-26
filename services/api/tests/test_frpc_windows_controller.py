@@ -311,7 +311,7 @@ def test_install_never_overwrites_existing_task(tmp_path: Path, query: tuple[int
     assert not writes
 
 
-# ---------------------------------------------------------------- XML 模板不变量（Round 1 缺口 2）
+# ---------------------------------------------------------------- XML 模板不变量（Round 1 缺口 2 + Round 2）
 
 
 def test_install_xml_template_contains_boot_restart_s4u_leastprivilege() -> None:
@@ -325,13 +325,68 @@ def test_install_xml_template_contains_boot_restart_s4u_leastprivilege() -> None
     assert "/SC ONSTART" not in xml, "XML 安装不走 /SC 参数"
 
 
-def test_install_xml_resolves_absolute_paths(tmp_path: Path) -> None:
+def test_install_xml_no_unresolved_placeholders_and_single_principal(tmp_path: Path) -> None:
+    """Round 2：生成后 XML 无未解析占位符 + 恰一个 S4U/LeastPrivilege Principal
+    （无 UserId——Task Scheduler 默认解析为注册用户，跨平台安全）。"""
+    exe, config = _fake_exe(tmp_path), _render_config(tmp_path)
+    facts = ctrl.preflight_checks(exe, config)
+    generated = ctrl._install_xml(facts)  # 生成后的 XML（占位符已全部替换）
+    for placeholder in ("__FRPC_EXE__", "__FRPC_CONFIG__", "__USER_SID__", "__"):
+        assert placeholder not in generated, f"生成 XML 残留未解析占位符: {placeholder}"
+    # 模板结构检查：不写 UserId 元素（Task Scheduler 默认=注册用户）
+    assert "__USER_SID__" not in ctrl.INSTALL_XML_TEMPLATE, "模板不得含 UserId 占位符"
+    import re as _re
+
+    principals = _re.findall(r"<Principal\b[^>]*>.*?</Principal>", generated, _re.DOTALL)
+    assert len(principals) == 1, "恰一个 Principal"
+    assert "<LogonType>S4U</LogonType>" in principals[0]
+    assert "<RunLevel>LeastPrivilege</RunLevel>" in principals[0]
+    assert "<UserId>" not in principals[0], "不写 UserId（默认=注册用户）"
+
+
+def test_install_xml_resolves_absolute_paths_and_quotes_config(tmp_path: Path) -> None:
+    """Round 2：config 路径含空格时 Arguments 必须 `-c "<绝对路径>"` 引号包裹。"""
     exe, config = _fake_exe(tmp_path), _render_config(tmp_path)
     facts = ctrl.preflight_checks(exe, config)
     xml = ctrl._install_xml(facts)
     assert Path(facts["frpc_exe"]).is_absolute()
     assert Path(facts["config"]).is_absolute()
-    assert facts["frpc_exe"] in xml and facts["config"] in xml
+    assert facts["frpc_exe"] in xml
+    # Arguments 行 = `-c "<config>"`（双引号包裹）
+    assert f'-c "{facts["config"]}"' in xml, "config 路径必须双引号包裹（空格安全）"
+    # 即使 config 路径不含空格，也验证引用形态（防模板回归）
+    assert 'Arguments>-c "' in xml
+
+
+def test_install_xml_with_spaced_config_path(tmp_path: Path) -> None:
+    """Round 2：空格路径回归——渲染目录路径含空格时，XML 中 config 以
+    引号形式出现且验证通过。"""
+    spaced_dir = tmp_path / "AI Learning OS spaced"
+    spaced_dir.mkdir()
+    exe = spaced_dir / "frpc.exe"
+    exe.write_bytes(b"MZ-fake-frpc-binary")
+    # 构造含空格的 config 路径（复用渲染产物但放到空格目录）
+    config = _render_config(tmp_path)
+    spaced_config = spaced_dir / "frpc.windows.toml"
+    spaced_config.write_text(config.read_text(encoding="utf-8"), encoding="utf-8")
+    # 替换 token 路径引用（渲染产物里的 token 路径仍指向原 tmp，无需改）
+    facts = ctrl.preflight_checks(exe, spaced_config)
+    xml = ctrl._install_xml(facts)
+    assert f'-c "{facts["config"]}' in xml and " spaced" in facts["config"]
+    # 装后验证预期 Arguments 也是带引号形式
+    ok, discrepancy = ctrl._verify_installed_task(
+        _OwnedQueryRunner(xml), facts)
+    assert ok, f"空格路径的装后验证应通过: {discrepancy}"
+
+
+class _OwnedQueryRunner:
+    """辅助：单次查询返回给定 XML。"""
+
+    def __init__(self, xml: str) -> None:
+        self.xml = xml
+
+    def run(self, args: list[str]) -> tuple[int, str]:
+        return (0, self.xml) if args[1] == "/Query" else (0, "SUCCESS")
 
 
 # ---------------------------------------------------------------- status / uninstall

@@ -277,7 +277,6 @@ INSTALL_XML_TEMPLATE = f"""<?xml version="1.0" encoding="UTF-16"?>
   </RegistrationInfo>
   <Principals>
     <Principal id="Author">
-      <UserId>__USER_SID__</UserId>
       <LogonType>S4U</LogonType>
       <RunLevel>LeastPrivilege</RunLevel>
     </Principal>
@@ -302,7 +301,7 @@ INSTALL_XML_TEMPLATE = f"""<?xml version="1.0" encoding="UTF-16"?>
   </Settings>
   <Actions><Exec>
     <Command>__FRPC_EXE__</Command>
-    <Arguments>-c __FRPC_CONFIG__</Arguments>
+    <Arguments>-c "__FRPC_CONFIG__"</Arguments>
   </Exec></Actions>
 </Task>
 """
@@ -346,22 +345,12 @@ def _verify_installed_task(runner: Runner, facts: dict[str, Any]) -> tuple[bool,
     actual_command = (commands[0].text or "").strip()
     actual_arguments = (arguments[0].text or "").strip()
     expected_command = facts["frpc_exe"]
-    expected_arguments = f'-c {facts["config"]}'
+    expected_arguments = f'-c "{facts["config"]}"'
     if actual_command != expected_command:
         return False, f"Exec Command 不匹配: {actual_command!r} != {expected_command!r}"
     if actual_arguments != expected_arguments:
         return False, f"Exec Arguments 不匹配: {actual_arguments!r} != {expected_arguments!r}"
     return True, ""
-
-
-def _install_xml(facts: dict[str, Any]) -> str:
-    from xml.sax.saxutils import escape
-
-    return (
-        INSTALL_XML_TEMPLATE
-        .replace("__FRPC_EXE__", escape(facts["frpc_exe"]))
-        .replace("__FRPC_CONFIG__", escape(facts["config"]))
-    )
 
 
 # ---------------------------------------------------------------- 子命令
