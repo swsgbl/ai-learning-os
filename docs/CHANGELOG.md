@@ -60,7 +60,16 @@
   2 skipped（POSIX 专属用例在 Linux CI 执行）+ 全量 services/api 于本机
   默认临时目录全绿（带空格 basetemp 全量在本机病态缓慢——8%/3.3 分钟、
   投影 ~41 分钟，沿用 M14-153 R3 已认定不可行口径）+ ruff 全净 +
-  `git diff --check` exit 0。零部署、零服务启停、本轮零推送（本地提交）。
+  `git diff --check` exit 0。**Round 5（CI run 36252337283 修复，仅测试
+  夹具）**：secret 夹具统一经 `_write_secret` chmod 0600（POSIX CI 默认
+  0644 会被生产权限门拒绝——夹具满足契约而非削弱校验；二进制/越界体积/
+  POSIX 往返/symlink 真身等 7 处直写夹具全部收编）；注入/空白边界夹具
+  平台正确化（Windows 盘符 / POSIX 绝对基底，命中的是注入字符/.. 判定
+  而非越平台形态判定）；新增 POSIX 权限门显式回归（0644 拒 / 0600 过，
+  Windows 跳过）。生产校验零改动。验证：三套件 195 passed + 3 skipped
+  （空格 basetemp；3 skip = POSIX 专属，Linux CI 执行）+ 全量
+  services/api 默认临时目录全绿 + ruff 全净 + `git diff --check` exit 0。
+  零部署、零服务启停、本轮零推送（本地提交）。
 
 ## M14-153 — 公网边缘部署基础（VPS + frp + Caddy + LiveKit/coturn 模板与验收）
 

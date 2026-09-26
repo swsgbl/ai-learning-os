@@ -49,8 +49,11 @@ SECRET_CONTENT = "s" * 48 + "-not-a-real-secret"  # 测试值，仅驻 tmp/内�
 
 
 def _write_secret(directory: Path, name: str, content: str = SECRET_CONTENT) -> Path:
+    """写 secret 夹具文件并统一 chmod 0600（Round 5：POSIX CI 下默认 0644 会被
+    validate_secret_file 的权限门拒掉——夹具必须满足生产契约，而非削弱校验）。"""
     path = directory / name
     path.write_text(content, encoding="utf-8")
+    path.chmod(0o600)
     return path
 
 
@@ -286,6 +289,7 @@ def test_secret_file_missing_reports_class_only(tmp_path: Path) -> None:
 def test_secret_file_binary_reports_class_only_no_bytes(tmp_path: Path) -> None:
     binary = tmp_path / "secret.bin"
     binary.write_bytes(b"\xff\xfeSECRET-BYTES-MARKER\x80")
+    binary.chmod(0o600)  # Round 5：POSIX 权限门先于解码——夹具须满足生产契约
     with pytest.raises(prepare.PrepareError) as excinfo:
         prepare.validate_secret_file(str(binary), "turn_secret")
     message = str(excinfo.value)
@@ -295,8 +299,7 @@ def test_secret_file_binary_reports_class_only_no_bytes(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize("content", ["short", "x" * 31, "<placeholder of a secret>", "change-me-value-1234567890"])
 def test_weak_or_placeholder_secret_rejected(tmp_path: Path, content: str) -> None:
-    path = tmp_path / "weak.txt"
-    path.write_text(content, encoding="utf-8")
+    path = _write_secret(tmp_path, "weak.txt", content)
     with pytest.raises(prepare.PrepareError):
         prepare.validate_secret_file(str(path), "livekit_keys")
 
@@ -572,23 +575,24 @@ def test_output_dir_rejects_filesystem_root(tmp_path: Path) -> None:
 
 
 def test_local_secret_path_injection_rejected(tmp_path: Path) -> None:
-    """Round 2 缺口 3：引号/$/#/反引号/控制字符/.. 的本地 secret 路径全部拒绝。
-
-    字符集检查先于文件存在性——直接传字符串即可（Windows 也不允许建含
-    引号的文件名）。合法路径仍通过。
+    """Round 2 缺口 3（Round 5 平台正确化）：引号/$/#/反引号/%/;/.. 的本地
+    secret 路径全部拒绝。夹具按平台取正确基底（Windows 盘符 / POSIX 绝对），
+    确保命中的是注入字符/.. 判定而非越平台形态判定。字符集检查先于文件
+    存在性——直接传字符串即可。合法路径仍通过。
     """
+    base = "D:/secrets" if os.name == "nt" else "/tmp/secrets"
     for bad in (
-        'D:/secrets/bad"quote.txt',
-        "D:/secrets/bad$dollar.txt",
-        "D:/secrets/bad#hash.txt",
-        "D:/secrets/bad`tick.txt",
-        "D:/secrets/bad%percent.txt",
-        "D:/secrets/bad;semi.txt",
+        f'{base}/bad"quote.txt',
+        f"{base}/bad$dollar.txt",
+        f"{base}/bad#hash.txt",
+        f"{base}/bad`tick.txt",
+        f"{base}/bad%percent.txt",
+        f"{base}/bad;semi.txt",
     ):
         with pytest.raises(prepare.PrepareError, match="不安全"):
             prepare.validate_secret_file(bad, "frps_token")
     with pytest.raises(prepare.PrepareError, match=r"\.\."):
-        prepare.validate_secret_file("D:/secrets/../good.txt", "frps_token")
+        prepare.validate_secret_file(f"{base}/../good.txt", "frps_token")
     good = _write_secret(tmp_path, "good.txt")
     assert prepare.validate_secret_file(str(good), "frps_token") == SECRET_CONTENT
 
@@ -627,11 +631,9 @@ def test_audit_rendered_catches_base64_like_leak() -> None:
 
 def test_secret_file_upper_size_boundary(tmp_path: Path) -> None:
     """Round 2 紧固：恰好 SECRET_MAX_BYTES 通过；超 1 字节显式拒绝（无静默截断）。"""
-    exact = tmp_path / "exact.txt"
-    exact.write_text("a" * prepare.SECRET_MAX_BYTES, encoding="utf-8")
+    exact = _write_secret(tmp_path, "exact.txt", "a" * prepare.SECRET_MAX_BYTES)
     assert prepare.validate_secret_file(str(exact), "turn_secret") == "a" * prepare.SECRET_MAX_BYTES
-    over = tmp_path / "over.txt"
-    over.write_text("a" * (prepare.SECRET_MAX_BYTES + 1), encoding="utf-8")
+    over = _write_secret(tmp_path, "over.txt", "a" * (prepare.SECRET_MAX_BYTES + 1))
     with pytest.raises(prepare.PrepareError, match="上限"):
         prepare.validate_secret_file(str(over), "turn_secret")
 
@@ -646,8 +648,7 @@ def test_local_secret_path_with_space_roundtrip(tmp_path: Path) -> None:
 
     spaced_dir = tmp_path / "AI Learning OS secrets"
     spaced_dir.mkdir()
-    spaced = spaced_dir / "frpc token.txt"
-    spaced.write_text(SECRET_CONTENT, encoding="utf-8")
+    spaced = _write_secret(spaced_dir, "frpc token.txt")
     assert prepare.validate_secret_file(str(spaced), "frpc_token") == SECRET_CONTENT
 
     manifest = _valid_manifest(tmp_path)
@@ -665,19 +666,17 @@ def test_local_secret_path_with_space_roundtrip(tmp_path: Path) -> None:
     assert ".env" in written
 
 
-@pytest.mark.parametrize(
-    "bad",
-    [
-        " D:/secrets/lead.txt",   # 首部空白
-        "D:/secrets/trail.txt ",  # 尾部空白
-        "D:/secrets/tab\tsep.txt",  # 制表符（字符集拒绝）
-        "D:/secrets/new\nline.txt",  # 换行（字符集拒绝）
-    ],
-)
-def test_local_secret_path_whitespace_edges_rejected(bad: str) -> None:
-    """首尾空白/制表符/换行仍拒（空格只在路径中部放行）。"""
-    with pytest.raises(prepare.PrepareError):
-        prepare.validate_secret_file(bad, "frpc_token")
+def test_local_secret_path_whitespace_edges_rejected() -> None:
+    """首尾空白/制表符/换行仍拒（空格只在路径中部放行）——夹具按平台取基底。"""
+    base = "D:/secrets" if os.name == "nt" else "/tmp/secrets"
+    for bad in (
+        f" {base}/lead.txt",   # 首部空白
+        f"{base}/trail.txt ",  # 尾部空白
+        f"{base}/tab\tsep.txt",  # 制表符（字符集拒绝）
+        f"{base}/new\nline.txt",  # 换行（字符集拒绝）
+    ):
+        with pytest.raises(prepare.PrepareError):
+            prepare.validate_secret_file(bad, "frpc_token")
 
 
 def test_audit_catches_base64_leak_containing_slash() -> None:
@@ -731,8 +730,7 @@ def test_posix_secret_file_roundtrip_into_parseable_toml(tmp_path: Path) -> None
 
     deep = tmp_path / "home-runner-style-long-secret-subdirectory-name"
     deep.mkdir()
-    secret = deep / "frpc_token.txt"
-    secret.write_text(SECRET_CONTENT, encoding="utf-8")
+    secret = _write_secret(deep, "frpc_token.txt")
     assert str(secret).startswith("/")  # 自证：POSIX 绝对形态
     assert prepare.validate_secret_file(str(secret), "frpc_token") == SECRET_CONTENT
     manifest = _valid_manifest(tmp_path)
@@ -756,10 +754,22 @@ def test_cross_platform_path_shape_rejection() -> None:
 def test_symlinked_secret_file_rejected_before_resolve(tmp_path: Path) -> None:
     """Round 4 关键回归：末段符号链接必须在原展开路径上被拒——先 resolve()
     会跟随链接把 symlink 藏掉（这正是本轮修复的缺陷）。"""
-    real_secret = tmp_path / "real-secret.txt"
-    real_secret.write_text(SECRET_CONTENT, encoding="utf-8")
+    real_secret = _write_secret(tmp_path, "real-secret.txt")
     link = tmp_path / "linked-secret.txt"
     if not _symlink_available(real_secret, link):
         pytest.skip("本机无法创建符号链接（权限）")
     with pytest.raises(prepare.PrepareError, match="不可读"):
         prepare.validate_secret_file(str(link), "frps_token")
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX 权限语义（Windows ACL 不等价）")
+def test_posix_secret_permission_gate_enforced(tmp_path: Path) -> None:
+    """Round 5 契约锁定：生产权限门不因夹具放宽——group/others 可读（0644）
+    必须被拒，0600 通过。"""
+    loose = tmp_path / "loose.txt"
+    loose.write_text(SECRET_CONTENT, encoding="utf-8")
+    loose.chmod(0o644)
+    with pytest.raises(prepare.PrepareError, match="权限过宽"):
+        prepare.validate_secret_file(str(loose), "frps_token")
+    tight = _write_secret(tmp_path, "tight.txt")  # helper 统一 chmod 0600
+    assert prepare.validate_secret_file(str(tight), "frps_token") == SECRET_CONTENT
