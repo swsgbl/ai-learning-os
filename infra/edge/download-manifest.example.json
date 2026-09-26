@@ -1,0 +1,55 @@
+{
+  "schema": "aios-download-manifest/1",
+  "notes": "M14-153 移动分发清单模板（example）：部署 download.example.com 时复制为 download/manifest.json 并填真实值。所有 sha256 为占位文本（不是 64 位十六进制真值）；上线前必须逐文件重算并经 SHA256SUMS 复核。诚实边界：只有签名产物才允许标注 signed=true；未签名产物保持 signed=false 并留在 pending 列表——unsigned ≠ production-ready（docs/MOBILE_DISTRIBUTION.md）。",
+  "version": "<与应用 VERSION 一致，例如 0.14.0>",
+  "generated_at": "<ISO8601，清单生成时刻>",
+  "channels": {
+    "android": {
+      "versionCode": "<Android versionCode 整数，例如 14>",
+      "versionName": "<Android versionName，例如 0.14.0>",
+      "min_api_level": "<最低 Android API，例如 26>",
+      "files": [
+        {
+          "name": "ai-learning-os-<version>-release-signed.apk",
+          "url": "/android/ai-learning-os-<version>-release-signed.apk",
+          "sha256": "<sha256sum 输出，64 位十六进制——占位，勿提交真值>",
+          "size_bytes": "<字节数整数>",
+          "signed": true,
+          "keystore_alias": "<release keystore alias（不暴露 keystore 本体/密码）>",
+          "signature_scheme": "v2+v3"
+        }
+      ],
+      "pending_unsigned": [
+        {
+          "name": "ai-learning-os-<version>-debug.apk",
+          "reason": "debug 签名仅限内部测试，永不进入公开分发"
+        }
+      ]
+    },
+    "harmony": {
+      "versionName": "<HarmonyOS 版本名，例如 0.14.0>",
+      "stage": "<agc-submitted | agc-released | unsigned-blocked>",
+      "files": [
+        {
+          "name": "ai-learning-os-<version>-signed.hap",
+          "url": "/harmony/ai-learning-os-<version>-signed.hap",
+          "sha256": "<sha256sum 输出，64 位十六进制——占位，勿提交真值>",
+          "size_bytes": "<字节数整数>",
+          "signed": true,
+          "cert_profile": "<AGC release profile 名称（不暴露证书/Profile/密钥库本体）>",
+          "distribution": "AppGallery（AGC 提审发布，官网仅引导页）"
+        }
+      ],
+      "pending_unsigned": [
+        {
+          "name": "ai-learning-os-default-unsigned.hap",
+          "reason": "AGC 签名材料未落地（tools/harmony_release/preflight.py --expect-unsigned 边界）；未签名 HAP 不满足公开分发条件"
+        }
+      ]
+    },
+    "pwa": {
+      "manifest_url": "/pwa/manifest.webmanifest",
+      "install_guide": "/pwa/index.html"
+    }
+  }
+}

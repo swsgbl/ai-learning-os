@@ -1,5 +1,70 @@
 # Changelog
 
+## M14-153 — 公网边缘部署基础（VPS + frp + Caddy + LiveKit/coturn 模板与验收）
+
+- 新增 `infra/edge/` 边缘栈模板全套（VPS-only，家机永不出网入站）：
+  `frps.toml.example`（token 从文件读——`auth.tokenSource.type="file"`，
+  与 inline `auth.token` 互斥；`transport.tls.force=true`；vhost 8080 经
+  `proxyBindAddr=127.0.0.1` 只绑 loopback，唯一入口是本机 Caddy）、
+  `frpc.windows.toml.example`（token 文件 + TLS 显式开启 + customDomains
+  占位域 + 家机侧只回连 127.0.0.1）、`Caddyfile.example`（四站点 ACME 自动
+  HTTPS、api 限请求体 64MB、安全响应头、app/api→frps vhost 8080 /
+  livekit→7880 的 loopback 路由、download 静态分发）、
+  `livekit.edge.yaml.example`（signal 7880 只绑 loopback、媒体 UDP
+  60000-60100、内嵌 TURN 显式关闭、`use_external_ip: false`——v1.13.7
+  官方 config-sample 明示 node_ip 仅在该开关 false 时生效，与 compose
+  必传的 `--node-ip` 配套；Round 3 修订）、`docker-compose.edge.example.yml`
+  （四服务；caddy/frps/livekit host 网络、coturn 复用 `infra/coturn/`
+  entrypoint 全套 fail-closed 校验；全部必填变量 `:?` 无默认兜底；LiveKit
+  API 凭据经官方 `--key-file` 部署密钥文件注入（`cmd/server/main.go` flag +
+  `key_file` 0600 权限硬校验均源码核实；**不用** `--keys`/env——进程参数
+  零 secret 暴露，测试禁止该形态回归）；三个新
+  镜像 + coturn 均 digest pin——Docker Hub registry API 2026-09-26 核实
+  （caddy:2.11.4-alpine / frps:v0.71.0 / livekit-server:v1.13.7，Round 3 升级——GitHub tag v1.13.7 与 Docker Hub digest 双核实）、
+  无 `:latest`）、`.env.example`（含 TURN secret 同源双槽位五步部署清单与
+  `test "$(cat ...)" = "$AIOS_EDGE_COTURN_TURN_SECRET"` 自检）、
+  `download-manifest.example.json`（SHA256/版本清单模板，sha256 全占位、
+  未签名产物只留 `pending_unsigned`）。
+- **LiveKit 外部 coturn 联动语法核实与定案**：外部 TURN 通告走
+  `rtc.turn_servers[]`（`host/port/protocol/secret_file`，LiveKit 按 TURN
+  REST 算法 HMAC-SHA1 派发 turns 凭据；官方
+  `pkg/service/roommanager.go` + `pkg/config/config.go` 源码核实），**不**
+  使用顶层 `turn:` 块（那是内嵌 TURN 开关，启用会与外部 coturn 抢 5349）；
+  研究定版以 `docs/PUBLIC_EDGE_DEPLOYMENT_RESEARCH.md` 随分支入库并按此
+  修订（保留候选决策矩阵与官方链接）。
+- 新增公网验收 preflight `tools/ops/public_edge_preflight.py`：只打**显式
+  提供的公网端点**（无任何内置默认目标；保留域含子孙域/loopback/私网/
+  RFC 5737/http/userinfo 一律拒绝；直连禁代理）。检查面：TLS 证书链（受信
+  CA + 域名匹配 + 剩余 ≥14 天）、`/health`、CORS 精确回显 + 凭据、登录
+  Set-Cookie（Secure + SameSite=None + HttpOnly，值绝不回显）、LiveKit
+  signal + 真实 WSS 101 升级握手（需 token 文件）、TURN/TLS 未认证
+  Allocate 必须应答 401（STUN 应答解析校验 magic/txid/ERROR-CODE）、
+  安全响应头（HSTS≥180 天等）。手机 4G/5G 验收为人工清单（7 项），
+  `--mobile-attested-file` 逐项签认前整体只到 manual_pending（exit 3），
+  绝不宣称生产可用；exit 0/1/3 语义锁定。输出 JSON 报告原子落盘、不含
+  secret/绝对路径。
+- 新增 fail-closed 测试两套件（`services/api/tests/
+  test_edge_deployment_templates.py` + `test_public_edge_preflight.py`，
+  89 项全绿）：token-from-file、TLS force、loopback-only vhost 路由、
+  无 inline/default/弱 secret（32+ hex 扫描剥离 digest pin + 开发占位
+  黑名单）、域名/IP 占位白名单扫描、Caddy/frp/LiveKit/coturn 四方端口
+  两两零冲突且与配置文件逐项对账、compose 渲染（必填变量齐全成功/
+  任一缺失即失败点名）、公网主机拒绝矩阵（含 supervisor Round 1 修复的
+  `foo.example.com`/`foo.invalid` 子孙域回归）、CORS/cookie/STUN 判定、
+  人工签认行为、exit codes、源码契约（ast 常量扫描证无默认端点/无硬编码
+  IP）、本机回环行为面（直连 opener 可达 + 非 TLS 端口证书验证必失败）。
+- 新增运维手册 `docs/PUBLIC_EDGE_DEPLOYMENT.md`（VPS 初始化/DNS/Caddy
+  ACME/frp 与 Windows frpc 服务/LiveKit+coturn 含 DNS-01 TURN 证书/两层
+  防火墙与安全组一致表/生产 env 与 Web 重建/preflight 验收/监控/备份/
+  回滚/变更纪律）与移动分发清单 `docs/MOBILE_DISTRIBUTION.md`（Android
+  release keystore 外置、Harmony AGC 链条、PWA；诚实边界——debug APK 与
+  unsigned HAP 不满足公开分发条件，`pending_unsigned` 如实展示）。
+- **边界**：本切片零部署、零容器启停、零外网请求（测试全部离线或本机
+  回环；docker compose 仅 `config` 渲染）；不修改既有 auth/release 门
+  （harmony preflight `--expect-unsigned` 契约原样）；真实域名/VPS/DNS/
+  TURN 证书/Android keystore/AGC 材料未落地前不宣称公网生产可用
+  （runbook §1 外部资源清单）。
+
 ## M14-151 — 发布审批 DRAFT 底稿生成器 release-approval-draft
 
 - 为 11 门 readiness 契约（M10-11+M14-73）新增 fail-closed 的

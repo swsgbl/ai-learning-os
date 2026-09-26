@@ -1,0 +1,159 @@
+name: ai-learning-os-edge
+
+# M14-153 VPS 边缘栈模板（example）——Caddy + frps + LiveKit + coturn。
+# 只部署在有公网 IP 的 VPS 上；家用 Windows 永远不跑本文件（家机只跑
+# frpc 出站连接，见 frpc.windows.toml.example；研究定版见
+# docs/PUBLIC_EDGE_DEPLOYMENT_RESEARCH.md，运维手册 docs/PUBLIC_EDGE_DEPLOYMENT.md）。
+#
+# 部署前（runbook 第 3 节有完整命令）：
+#   cp frps.toml.example frps.toml          # 无需改（token 走 secrets 文件）
+#   cp Caddyfile.example Caddyfile          # 换真实域名 + 运维邮箱
+#   cp livekit.edge.yaml.example livekit.edge.yaml
+#   cp .env.example .env                    # 填必填变量（chmod 600）
+#   mkdir download turn-tls                 # Phase 4 再放 TURN 证书
+#
+# fail-closed 设计（三层）：
+# 1. compose 层：全部必填变量用 :? 插值——缺失时 `docker compose config/up`
+#    直接失败，无默认值兜底（尤其 LIVEKIT_KEYS_FILE / TURN secret /
+#    VPS 公网 IP，绝不许静默回落开发占位值）；
+# 2. 服务层：LiveKit 对 key 文件强制 0600 且凭据为空/缺失拒绝启动
+#    （--key-file，官方 flag）；coturn 复用 infra/coturn/entrypoint.sh 的
+#    全部校验（占位/弱 secret、端口越界/自冲突、配置注入、假 TLS 拒绝）；
+# 3. 测试层：test_edge_deployment_templates.py 锁定 --keys 形态绝不回归
+#    （进程参数不得携带 secret）。
+#
+# 网络模型：caddy/frps/livekit 用 host 网络——ACME 直占 80/443、frps vhost
+# 只绑 127.0.0.1:8080 由 Caddy 转入、LiveKit signal 只绑 127.0.0.1:7880 由
+# Caddy 转入（UDP 媒体段/RTP 不适合端口映射，host 直通性能与 candidate
+# 语义最忠实）。coturn 走端口映射（与 infra/coturn 模板一致）。
+#
+# 镜像 digest pin（Docker Hub registry API 2026-09-26 核实；升级 = 显式
+# 改 digest 并同步 runbook 记录，绝不回退 :latest）：
+#   caddy            = caddy:2.11.4-alpine
+#   frps             = fatedier/frps:v0.71.0
+#   livekit-server   = livekit/livekit-server:v1.13.7（GitHub tag v1.13.7
+#                      = 8d11efd，源码链接一律 pin 到 blob/v1.13.7）
+#   coturn           = 与 infra/coturn 默认相同的实测 digest
+
+services:
+  caddy:
+    image: docker.io/library/caddy@sha256:6aeddd44c3078b0f9a35206472a11420648a79c184603ef95957d0a20044cb2b
+    restart: unless-stopped
+    # host 网络：80/443(TCP)+443(UDP, HTTP/3) 由 Caddy 直接监听；
+    # 8080/7880 是它作为客户端访问的本机 loopback 端口，不占用宿主监听。
+    network_mode: host
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # ACME 证书与配置状态：重建容器不丢证书（避免触发 ACME 限流）
+      - caddy-data:/data
+      - caddy-config:/config
+      # 移动分发站（docs/MOBILE_DISTRIBUTION.md 的 APK/HAP/清单目录）
+      - ./download:/srv/aios-download:ro
+    depends_on:
+      - frps
+      - livekit
+    healthcheck:
+      # Caddy admin API（仅 loopback 可达）——证明进程活着且配置已加载
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:2019/config/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  frps:
+    image: docker.io/fatedier/frps@sha256:cd8b947ba61678b200baa4f71ccc33f3c52e4e2cc0059700ba3b8354e36af7c3
+    restart: unless-stopped
+    # host 网络：bindPort 7000 公网（TLS+token 强制）；vhost 8080 因
+    # frps.toml 的 proxyBindAddr=127.0.0.1 只绑 loopback（测试锁定）。
+    network_mode: host
+    volumes:
+      - ./frps.toml:/etc/frp/frps.toml:ro
+    # token 文件经 compose secrets 挂到 /run/secrets/frps_token
+    # （frps.toml 的 auth.tokenSource.file.path 指向同一路径）
+    secrets:
+      - frps_token
+
+  livekit:
+    # digest = livekit/livekit-server:v1.13.7（Docker Hub API 2026-09-26 核实）
+    image: docker.io/livekit/livekit-server@sha256:6fd3b7088874c4d119160dd688798dfec852bc014786d392caad15f6f63912a3
+    restart: unless-stopped
+    # host 网络：signal 7880 只绑 loopback（config bind_addresses）、
+    # RTC TCP 7881 + 媒体 UDP 60000-60100 公网直连。
+    network_mode: host
+    # API 凭据走部署密钥文件（官方 --key-file flag，v1.13.7 cmd/server/main.go）：
+    # 文件内容一行 "<api-key>: <api-secret>"（与家机 API 的
+    # LIVEKIT_API_KEY/LIVEKIT_API_SECRET 同值——家机签 token，VPS 验 token）。
+    # 刻意不用 --keys/env——那会把 secret 暴露进进程参数（docker inspect/ps 可见）。
+    # LiveKit 对 key 文件强制 0600 权限（可被 other 读即拒绝启动），故挂载
+    # 显式 mode: 0600；文件缺失/为空由 LiveKit ValidateKeys 拒绝启动
+    # （"one of key-file or keys must be provided"）——compose 层 :? +
+    # 服务层启动校验双层 fail-closed，绝不静默回落开发占位凭据。
+    command: >-
+      --config /etc/livekit/livekit.edge.yaml
+      --key-file /run/secrets/livekit_keys
+      --node-ip "${AIOS_EDGE_VPS_PUBLIC_IP:?必须提供 AIOS_EDGE_VPS_PUBLIC_IP（VPS 公网 IPv4，LiveKit 媒体 candidate 通告用）}"
+    volumes:
+      - ./livekit.edge.yaml:/etc/livekit/livekit.edge.yaml:ro
+    # TURN secret（Phase 4）：livekit.edge.yaml 的 rtc.turn_servers[].secret_file
+    # 指向 /run/secrets/turn_secret；与 COTURN_STATIC_AUTH_SECRET 同值同源。
+    # v1.13.7 对 turn secret 文件同样强制 others 权限为 0
+    # （config.go ErrTURNSecretFileIncorrectPermission）——mode 0600 是硬要求。
+    secrets:
+      - source: livekit_keys
+        mode: 0600
+      - source: turn_secret
+        mode: 0600
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:7880/ || exit 1"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  coturn:
+    # 复用 M10-05 模板（含全部 fail-closed 校验），端口固定为边缘规划值
+    image: ${COTURN_IMAGE:-coturn/coturn@sha256:aa68aab64a3b929d57fc2924c98ea447bf996cf8dade2508e7b71eaf23f1f14e}
+    restart: unless-stopped
+    entrypoint: ["/bin/sh", "/usr/local/bin/aios-coturn-entrypoint.sh"]
+    environment:
+      # 必填（fail-closed）：与 turn_secret 文件同值（TURN REST 凭据 HMAC 同源）
+      COTURN_STATIC_AUTH_SECRET: ${AIOS_EDGE_COTURN_TURN_SECRET:?必须提供 AIOS_EDGE_COTURN_TURN_SECRET（与 AIOS_EDGE_TURN_SECRET_FILE 文件同值，openssl rand -hex 32）}
+      COTURN_EXTERNAL_IP: ${AIOS_EDGE_VPS_PUBLIC_IP:?必须提供 AIOS_EDGE_VPS_PUBLIC_IP（VPS 公网 IPv4）}
+      # TURN/TLS：Phase 4 放好 ./turn-tls 证书（turn.example.com，DNS-01
+      # 签发，见 runbook 第 6 节）后置 true；未启用时 5349 映射后无监听
+      # （连接被拒，不是假 TLS）。不做 TLS 就不宣称公网语音生产可用。
+      COTURN_TLS_ENABLED: ${AIOS_EDGE_COTURN_TLS_ENABLED:-false}
+      COTURN_CERT_FILE: /etc/coturn/tls/cert.pem
+      COTURN_PKEY_FILE: /etc/coturn/tls/key.pem
+    volumes:
+      # 复用主仓 coturn entrypoint（只读）——同一份 fail-closed 语义
+      - ../coturn/entrypoint.sh:/usr/local/bin/aios-coturn-entrypoint.sh:ro
+      # TURN/TLS 证书目录（Phase 4；未启用时目录可为空）
+      - ./turn-tls:/etc/coturn/tls:ro
+    ports:
+      # listening（STUN/TURN UDP+TCP）+ TLS listening（TCP）+ relay 段
+      # （UDP 媒体中继为主，TCP 兜底）。固定边缘规划值：3478 / 5349 /
+      # 50000-50099——与 LiveKit 媒体段 60000-60100、Caddy 80/443、
+      # frps 7000/8080 零冲突（测试锁定；改端口必须同步 Caddyfile、
+      # 防火墙、云安全组与 test_edge_deployment_templates.py）。
+      - "3478:3478/udp"
+      - "3478:3478/tcp"
+      - "5349:5349/tcp"
+      - "50000-50099:50000-50099/udp"
+      - "50000-50099:50000-50099/tcp"
+
+volumes:
+  caddy-data:
+  caddy-config:
+
+secrets:
+  # 部署 secret 文件路径由 .env 提供（文件内容即凭据，600 权限，
+  # 不入库）；缺失/未设变量时 compose config 直接失败（:? 语义）。
+  frps_token:
+    file: ${AIOS_EDGE_FRPS_TOKEN_FILE:?必须提供 AIOS_EDGE_FRPS_TOKEN_FILE（frps token 文件路径，内容与家机 frpc_token.txt 同值）}
+  turn_secret:
+    file: ${AIOS_EDGE_TURN_SECRET_FILE:?必须提供 AIOS_EDGE_TURN_SECRET_FILE（TURN secret 文件路径，与 AIOS_EDGE_COTURN_TURN_SECRET 同值）}
+  # LiveKit API 凭据文件：一行 "<api-key> 冒号 <api-secret>"（与家机 API 同值）；
+  # LiveKit 强制 0600 —— 部署侧 install -m 600 创建，见 .env.example 与 runbook §6
+  livekit_keys:
+    file: ${AIOS_EDGE_LIVEKIT_KEYS_FILE:?必须提供 AIOS_EDGE_LIVEKIT_KEYS_FILE（LiveKit 凭据文件路径，内容一行 api-key 与 api-secret 以冒号分隔，与家机 API LIVEKIT_API_KEY/SECRET 同值）}

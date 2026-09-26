@@ -1,0 +1,52 @@
+# M14-153 VPS 边缘 LiveKit 配置模板（example）。
+#
+# 用法：部署时复制为同目录 livekit.edge.yaml（去掉 .example 后缀），由
+# infra/edge/docker-compose.edge.example.yml 的 livekit 服务（host 网络）挂载。
+# API key/secret 不在本文件——compose 经官方 --key-file flag 挂载部署密钥
+# 文件（/run/secrets/livekit_keys，一行 "<api-key>: <api-secret>"，0600，
+# 与家机 API 的 LIVEKIT_API_KEY/LIVEKIT_API_SECRET 同值：家机签 token，
+# VPS LiveKit 验 token）。不用 --keys/env——进程参数不携带 secret。
+#
+# 端口规划（与 Caddyfile.example / docker-compose.edge.example.yml 一致，
+# 测试 test_edge_deployment_templates.py 锁定不冲突）：
+#   7880 TCP   signal，只绑 127.0.0.1 —— 唯一入口是本机 Caddy（wss://）
+#   7881 TCP   RTC TCP 兜底通道（公网直连）
+#   60000-60100 UDP 媒体面（公网直连；与 coturn relay 50000-50099 错开）
+#
+# 官方文档（源码链接一律 pin 到本模板 digest 对应的 v1.13.7 tag）：
+# https://github.com/livekit/livekit/blob/v1.13.7/config-sample.yaml
+# https://github.com/livekit/livekit/blob/v1.13.7/cmd/server/main.go
+# 运维见 docs/PUBLIC_EDGE_DEPLOYMENT.md 第 6 节。
+
+port: 7880
+bind_addresses:
+  - "127.0.0.1"
+
+rtc:
+  tcp_port: 7881
+  port_range_start: 60000
+  port_range_end: 60100
+  # 必须 false：v1.13.7 官方 config-sample.yaml 明示「use_external_ip
+  # takes precedence, for this to take effect, set use_external_ip to
+  # false」——node_ip（compose 强制传入的 --node-ip <VPS 公网 IP>）只在
+  # use_external_ip=false 时生效。VPS 公网 IP 是确定值，显式通告优于
+  # STUN 自动探测（探测在多出口/代理环境可能拿到错误地址）。
+  use_external_ip: false
+  enable_loopback_candidate: false
+  # 外部 coturn 通告（Phase 4 公网语音时取消注释并核对）：
+  # - host/port/protocol 与 coturn 服务一致（TLS 监听 5349）；
+  # - secret_file 与 coturn COTURN_STATIC_AUTH_SECRET 同值同源——
+  #   LiveKit 用它按 coturn REST 凭据算法（HMAC-SHA1）给每个参与者
+  #   生成 turns: 用户名/密码，值不一致 = 客户端拿到 TURN 401；
+  # - compose secrets 把同一文件挂到 /run/secrets/turn_secret。
+  # 真实 secret 只进部署 secret 文件，绝不写进本仓库文件。
+  # turn_servers:
+  #   - host: turn.example.com
+  #     port: 5349
+  #     protocol: tls
+  #     secret_file: /run/secrets/turn_secret
+
+# 内嵌 TURN 保持关闭：TURN/TLS 由同 project 的外部 coturn 提供
+# （infra/coturn 模板复用；启用内嵌会与 coturn 抢 5349）。
+turn:
+  enabled: false

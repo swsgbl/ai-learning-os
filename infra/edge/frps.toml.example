@@ -1,0 +1,31 @@
+# M14-153 VPS frps 安全模板（example）。
+#
+# 用法：部署时复制为同目录 frps.toml（去掉 .example 后缀），由
+# infra/edge/docker-compose.edge.example.yml 只读挂载到 /etc/frp/frps.toml。
+# 本模板不含任何真实域名/IP/token——真实 token 只进部署 secret 文件。
+#
+# 官方文档：https://github.com/fatedier/frp（README 与 conf/frps_full_example.toml）。
+# 运维步骤/防火墙/回滚见 docs/PUBLIC_EDGE_DEPLOYMENT.md。
+
+# 控制面：接受家用 Windows frpc 的连接。公网可达，但只接受
+# TLS + token 认证（见下方 transport.tls.force 与 auth.tokenSource）。
+bindAddr = "0.0.0.0"
+bindPort = 7000
+
+# vhost HTTP 入口只绑 loopback：唯一调用方是本机 Caddy（host 网络，
+# reverse_proxy 127.0.0.1:8080）。proxyBindAddr 同时约束 TCP 代理监听——
+# 本拓扑只用 HTTP vhost 代理，不存在对外 TCP remotePort 暴露面。
+proxyBindAddr = "127.0.0.1"
+vhostHTTPPort = 8080
+
+# 认证：token 从文件读取（ValueSource，与 auth.token 互斥、二选一；
+# 文件内容首尾空白自动 trim）。真实 token 只进部署 secret 文件
+# （compose secrets 挂载，见 docker-compose.edge.example.yml 顶部注释），
+# 绝不写进仓库文件或环境变量命令行。
+auth.method = "token"
+auth.tokenSource.type = "file"
+auth.tokenSource.file.path = "/run/secrets/frps_token"
+
+# 强制 TLS：只接受 TLS 控制连接（frpc v0.50.0 起 transport.tls.enable
+# 默认开启；服务端 force=true 拒绝一切非 TLS 连接，防降级）。
+transport.tls.force = true

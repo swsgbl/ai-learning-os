@@ -1,0 +1,41 @@
+# M14-153 家用 Windows frpc 安全模板（example）。
+#
+# 用法：复制为 frpc.windows.toml（去掉 .example 后缀），填入 VPS 公网 IP；
+# token 文件（D:/AI Learning OS/secrets/frpc_token.txt，内容与 VPS 侧
+# frps_token 文件同值，建议 openssl rand -hex 32 生成，NTFS 权限仅限当前用户）。
+# 部署前先跑 `frpc verify -c frpc.windows.toml` 验证配置可解析。
+# 官方文档：https://github.com/fatedier/frp（README 与 conf/frpc_full_example.toml）。
+#
+# 运行方式（Windows 服务或计划任务）与安全边界见
+# docs/PUBLIC_EDGE_DEPLOYMENT.md 第 5 节。
+
+# VPS 控制面地址（占位——绝不把真实 IP 提交进仓库）
+serverAddr = "<VPS 公网 IPv4>"
+serverPort = 7000
+
+# 认证：token 从文件读取（ValueSource，与 auth.token 互斥、二选一）。
+# 真实 token 只进本机 secret 文件，绝不写进本文件/环境变量/命令行。
+auth.method = "token"
+auth.tokenSource.type = "file"
+auth.tokenSource.file.path = "D:/AI Learning OS/secrets/frpc_token.txt"
+
+# 显式开启 TLS（v0.50.0 起默认开启；服务端 transport.tls.force=true
+# 强制要求，此处显式声明避免旧版/改配置后静默降级）。
+transport.tls.enable = true
+
+# HTTP vhost 代理：域名经 VPS Caddy 443 → frps vhost 8080 路由回来。
+# customDomains 用文档占位域名（example.com 为 RFC 2606 保留域），
+# 部署副本换成真实域名，且必须与 VPS Caddyfile/DNS 记录一致。
+[[proxies]]
+name = "aios-web"
+type = "http"
+localIP = "127.0.0.1"
+localPort = 3011
+customDomains = ["app.example.com"]
+
+[[proxies]]
+name = "aios-api"
+type = "http"
+localIP = "127.0.0.1"
+localPort = 8000
+customDomains = ["api.example.com"]

@@ -1,0 +1,65 @@
+# M14-153 边缘 Caddy 模板（example）——VPS 公网入口（80/443）。
+#
+# 用法：部署时复制为同目录 Caddyfile（去掉 .example 后缀），把
+# admin@example.com 换成真实运维邮箱；*.example.com 占位域名全部换成
+# 真实域名（与 DNS 记录、frpc customDomains 保持一致）。由
+# infra/edge/docker-compose.edge.example.yml 的 caddy 服务（host 网络）挂载。
+#
+# 路由拓扑（研究定版 docs/PUBLIC_EDGE_DEPLOYMENT_RESEARCH.md）：
+#   app/api（frp HTTP vhost） → 127.0.0.1:8080（frps，仅 loopback）
+#   livekit signal（WSS）     → 127.0.0.1:7880（LiveKit，仅 loopback）
+#   download（静态分发站）    → 本地文件目录
+# Caddy 自动 HTTPS/ACME（Let's Encrypt），证书自动续期，无需手工证书。
+# 官方文档：https://caddyserver.com/docs/caddyfile（reverse_proxy/
+# request_body/header/file_server 指令与 automatic HTTPS）。
+# 运维步骤/回滚见 docs/PUBLIC_EDGE_DEPLOYMENT.md 第 4 节。
+
+{
+	# ACME 注册与到期通知邮箱（占位——部署副本必填真实邮箱）
+	email admin@example.com
+}
+
+app.example.com {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		-Server
+	}
+	reverse_proxy 127.0.0.1:8080
+}
+
+api.example.com {
+	# 请求体上限与 API 侧上传语义对齐（试卷/图片上传），超限 413。
+	request_body {
+		max_size 64MB
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		-Server
+	}
+	# CORS 由 API（AIOS_CORS_ORIGINS）应答，反代只透传——不在边缘放宽。
+	reverse_proxy 127.0.0.1:8080
+}
+
+# LiveKit signal：WebSocket 升级由 reverse_proxy 自动透传（客户端访问
+# wss://livekit.example.com）。媒体面（UDP 60000-60100 / TCP 7881）不经
+# Caddy，直连 LiveKit（见 livekit.edge.yaml.example）。
+livekit.example.com {
+	# WebSocket 长连接：关闭不必要的缓冲语义，交由 Caddy 默认流式转发
+	reverse_proxy 127.0.0.1:7880
+}
+
+# 移动分发站：APK/HAP/PWA 安装说明、SHA256 与版本清单
+# （docs/MOBILE_DISTRIBUTION.md；目录挂载见 docker-compose.edge.example.yml）。
+download.example.com {
+	root * /srv/aios-download
+	file_server
+	header /android/* Cache-Control "public, max-age=300"
+	header /harmony/* Cache-Control "public, max-age=300"
+	header /pwa/* Cache-Control "public, max-age=300"
+}
