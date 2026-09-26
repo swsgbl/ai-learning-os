@@ -1030,6 +1030,91 @@ def _run_release_readiness(args) -> int:
     return report["exit_code"]
 
 
+def _run_release_approval_draft(args) -> int:
+    """python -m app.ops.cli release-approval-draft --evidence-dir DIR
+    [--output PATH]
+
+    M14-151 发布审批 DRAFT 底稿生成器（只读）：对调用方显式提供的本地
+    evidence 目录计算每门证据 sha256（可绑定门 = 除 release-approval 外
+    全部 10 门，含 optional turn-tls）、如实列出缺席门与必需覆盖缺口、
+    透出 release-readiness 的门状态诚实子集（summary 计数/未过门清单/
+    optional 边界声明——**不含 release_ready/production_ready**）。输出是
+    DRAFT 底稿不是审批记录：直接改名为 release-approval.json 只会 malformed
+    （readiness 对携带任一底稿保留元数据字段的审批记录 fail-closed 拒绝）；
+    合法审批必须由审批人从底稿哈希出发从零组装。不连接数据库、不调用
+    API、不访问网络、不读取环境变量、不执行任何生产操作（无 --yes 执行
+    形态）；绝不创建或修改 release-approval.json、绝不签署、绝不放行。
+    --output 护栏（exit 2）：必须位于 gitignore 的 artifacts/temp、不得
+    位于证据目录内、文件名不得是 release-approval.json（一律拒绝）；
+    原子落盘（临时文件 + rename，失败保留旧文件、symlink 拒绝），写入
+    失败不打印底稿正文。
+    退出码：底稿生成成功=0（无论门状态——底稿是助手不是门裁决）/
+    目录/路径/IO 问题=2。
+    """
+    import json as _json
+
+    from app.ops.evidence_kit import EvidenceInputError
+    from app.ops.legacy_papers import is_safe_artifact_path
+    from app.ops.release_approval_draft import build_release_approval_draft
+
+    if args.output:
+        target = Path(args.output)
+        # 绝不创建或修改 release-approval.json（即使写在 artifacts/temp 内）
+        if target.name.lower() == "release-approval.json":
+            print(
+                "拒绝写入 release-approval.json：审批记录必须由审批人从零"
+                "人工组装——本工具绝不创建或修改 release-approval.json"
+                "（DRAFT 底稿请用其他文件名，如 release-approval.DRAFT.json）"
+            )
+            return 2
+        if not is_safe_artifact_path(target):
+            print(
+                f"拒绝写入 {args.output}：DRAFT 底稿只能写入 gitignore 的 "
+                "artifacts/ 或 temp/ 目录"
+            )
+            return 2
+        output_key = os.path.normcase(str(target.resolve()))
+        root_key = os.path.normcase(str(Path(args.evidence_dir).resolve()))
+        if output_key == root_key or output_key.startswith(root_key + os.sep):
+            print(
+                f"拒绝写入 {args.output}：输出不得位于证据目录内或等于证据"
+                "目录（不覆盖证据输入）"
+            )
+            return 2
+    try:
+        draft = build_release_approval_draft(args.evidence_dir)
+    except EvidenceInputError as cause:
+        print(f"证据输入无效（目录或路径问题，未产生底稿）: {cause}")
+        return 2
+    except OSError as cause:
+        print(
+            f"证据读取失败（IO 问题，未产生底稿）: {type(cause).__name__}: {cause}"
+        )
+        return 2
+    text = _json.dumps(draft, ensure_ascii=False, indent=2)
+    if args.output:
+        try:
+            output_path = Path(args.output)
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            _write_report_atomic(output_path, text + "\n")
+        except OSError as cause:
+            # 目录无法创建/权限/磁盘满/replace 失败：底稿未落盘或旧文件原样
+            # 保留（原子写不产生 partial），不得再打印底稿正文（防被误用）。
+            print(
+                f"底稿写入失败（路径/权限/磁盘问题，未产生底稿文件）: "
+                f"{type(cause).__name__}: {cause}"
+            )
+            return 2
+        print(f"DRAFT 底稿已写入: {args.output}")
+    print(text)
+    print(
+        "DRAFT：以上是审批哈希底稿，不是审批记录；人工逐项确认并填写全部 "
+        "REPLACE-ME 字段、从底稿哈希从零组装 release-approval.json（携带"
+        "底稿元数据字段改名只会 malformed）。"
+    )
+    return 0
+
+
 def _run_evidence_cockpit(args) -> int:
     """python -m app.ops.cli evidence-cockpit --gate-source GATE=PATH
 --current-head SHA --staging-dir DIR [--gate-declared-head GATE=SHA]
@@ -2341,6 +2426,29 @@ def main() -> None:
             "原子落盘：临时文件 + rename，失败保留旧报告、symlink 拒绝；默认不落盘）"
         ),
     )
+    p_rad = sub.add_parser(
+        "release-approval-draft",
+        help=(
+            "发布审批 DRAFT 底稿生成器（M14-151；只读计算 11 门 readiness "
+            "契约的审批哈希底稿与必需覆盖缺口，DRAFT 不是审批记录、改名即拒，"
+            "绝不创建/修改 release-approval.json、不签署、不放行，无 --yes 形态）"
+        ),
+    )
+    p_rad.add_argument(
+        "--evidence-dir",
+        required=True,
+        help="本地证据目录（只读，产出 DRAFT 哈希底稿）",
+    )
+    p_rad.add_argument(
+        "--output",
+        default=None,
+        help=(
+            "写 DRAFT 底稿到文件（必须位于 gitignore 的 artifacts/ 或 temp/ "
+            "目录、不得位于证据目录内、文件名不得是 release-approval.json；"
+            "原子落盘：临时文件 + rename，失败保留旧文件、symlink 拒绝；"
+            "默认只打印）"
+        ),
+    )
     p_ec = sub.add_parser(
         "evidence-cockpit",
         help=(
@@ -2897,6 +3005,8 @@ def main() -> None:
         raise SystemExit(_run_production_preflight(args))
     if args.command == "release-readiness":
         raise SystemExit(_run_release_readiness(args))
+    if args.command == "release-approval-draft":
+        raise SystemExit(_run_release_approval_draft(args))
     if args.command == "evidence-cockpit":
         raise SystemExit(_run_evidence_cockpit(args))
     if args.command == "cutover-rehearsal":

@@ -271,6 +271,31 @@ KNOWN_EVIDENCE_FILES = frozenset(spec.evidence_file for spec in GATES) | {
     ANCHOR_COMPANION_FILE
 }
 
+#: 审批记录禁止携带的 release-approval-draft 底稿保留元数据字段（M14-151）：
+#: 底稿输出中除 gate_evidence 哈希外的全部字段都是「草稿专用」元数据。人工
+#: 审批记录携带任一即 malformed（fail-closed：即使补齐 gate 自声明与全部
+#: 人工字段、哈希精确匹配也不放行）——审批人应从底稿哈希出发**从零组装**
+#: 合法审批记录，而不是在底稿文件上补字段改名。与
+#: release_approval_draft.build_release_approval_draft 的输出字段保持同步
+#: （测试守卫：底稿新增元数据字段而漏登记会直接红）。
+APPROVAL_DRAFT_RESERVED_FIELDS = frozenset(
+    (
+        "draft",
+        "manual_fields_required",
+        "confirmation_required",
+        "gate_evidence_missing",
+        "required_coverage_gaps",
+        "gate_statuses",
+        "readiness",
+        "load_problems",
+        "approval_file_present",
+        "generated_at",
+        "notice",
+        "tool",
+        "evidence_dir",
+    )
+)
+
 
 # --- 白名单字段提取（严格 schema，违例即 MalformedEvidence） -------------------------
 
@@ -973,6 +998,20 @@ def _eval_release_approval(
     obj: dict[str, Any], root: Path, sha: Mapping[str, str]
 ):
     _require_gate_self_id(obj, "release-approval")
+    # M14-151 DRAFT 不可审批边界 fail-closed：审批记录携带任一
+    # release-approval-draft 底稿保留元数据字段即结构不可信 => malformed
+    # ——否则「底稿补齐 gate 自声明与全部人工字段后改名」可能 pass，
+    # DRAFT 边界只剩命名自觉。合法人工审批不得携带这些字段（值是什么
+    # 不重要）。
+    reserved_hits = sorted(APPROVAL_DRAFT_RESERVED_FIELDS & set(obj))
+    if reserved_hits:
+        raise MalformedEvidence(
+            "审批记录携带 DRAFT 底稿保留元数据字段 "
+            + ", ".join(reserved_hits)
+            + "——release-approval-draft 底稿不是审批记录，合法审批不得"
+            "携带这些字段（请从底稿哈希出发从零组装，不要在底稿上补字段"
+            "改名）"
+        )
     schema_version = req_int(obj, "schema_version")
     if schema_version != 1:
         raise MalformedEvidence(f"schema_version 非 1: {schema_version}")

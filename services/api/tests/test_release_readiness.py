@@ -848,6 +848,66 @@ def test_embedded_credential_in_evidence_is_malformed_no_echo(tmp_path) -> None:
     assert "postgresql+asyncpg" not in dumped
 
 
+# --- 3b. M14-151 DRAFT 底稿不可审批（改名防线 fail-closed） ----------------------
+
+
+@pytest.mark.parametrize(
+    "reserved_field",
+    sorted(
+        {
+            "draft",
+            "manual_fields_required",
+            "confirmation_required",
+            "gate_evidence_missing",
+            "required_coverage_gaps",
+            "gate_statuses",
+            "readiness",
+            "load_problems",
+            "approval_file_present",
+            "generated_at",
+            "notice",
+            "tool",
+            "evidence_dir",
+        }
+    ),
+)
+def test_approval_with_draft_reserved_metadata_is_malformed(
+    tmp_path, reserved_field
+) -> None:
+    """合法审批 + 任一 approval-draft 底稿保留元数据字段 => malformed
+    fail-closed（即使哈希绑定精确匹配）——DRAFT 不可审批边界，合法人工
+    审批必须从底稿哈希出发从零组装（M14-151）。"""
+    from app.ops.release_readiness import APPROVAL_DRAFT_RESERVED_FIELDS
+
+    assert len(APPROVAL_DRAFT_RESERVED_FIELDS) == 13
+    directory = _evidence_dir(tmp_path)
+    _write_evidence(directory)
+    _write_approval(directory)
+    approval = json.loads(
+        (directory / "release-approval.json").read_text(encoding="utf-8")
+    )
+    approval[reserved_field] = {"marker": "any-value"}  # 值不重要，字段名命中即拒
+    _write_json(directory, "release-approval.json", approval)
+
+    report = _run(directory)
+    gate = _gate(report, "release-approval")
+    assert gate["status"] == "malformed"
+    assert reserved_field in gate["reason"]
+    assert "底稿保留元数据" in gate["reason"]
+    assert report["release_ready"] is False
+
+
+def test_approval_without_reserved_metadata_still_passes(tmp_path) -> None:
+    """回归锚：不带任何底稿元数据的合法审批照常 pass（防线不误伤）。"""
+    directory = _evidence_dir(tmp_path)
+    _write_evidence(directory)
+    _write_approval(directory)
+
+    report = _run(directory)
+    assert _statuses(report)["release-approval"] == "pass"
+    assert report["release_ready"] is True
+
+
 # --- 4. tampered：审批哈希绑定与锚文件副本 -------------------------------------
 
 

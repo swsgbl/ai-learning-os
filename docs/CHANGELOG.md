@@ -1,5 +1,50 @@
 # Changelog
 
+## M14-151 — 发布审批 DRAFT 底稿生成器 release-approval-draft
+
+- 为 11 门 readiness 契约（M10-11+M14-73）新增 fail-closed 的
+  **release-approval-draft** CLI 助手（`python -m app.ops.cli
+  release-approval-draft --evidence-dir <path> [--output <artifacts路径>]`，
+  实现 `services/api/app/ops/release_approval_draft.py`）：只读计算当前
+  证据目录内全部**可绑定门**（除 release-approval 外 10 门，含 optional
+  turn-tls——在场即绑定、缺席只进 gate_evidence_missing 不进
+  required_coverage_gaps）的 SHA-256 底稿，如实列出缺席门与必需覆盖
+  缺口，透出 release-readiness 门状态**诚实子集**（gate_statuses 逐门
+  required/status + summary 计数 + not_pass_required/optional +
+  optional_scope_note）——底稿任何位置不含 release_ready/
+  production_ready（永不作放行结论）；门状态只消费
+  run_release_readiness 既有评估结果（零语义重复），与 cutover-evidence-pack
+  approval-draft（M10-16）同构。
+- **DRAFT 不可审批边界（fail-closed 改名防线）**：`_eval_release_approval`
+  新增对任一底稿保留元数据字段（`APPROVAL_DRAFT_RESERVED_FIELDS`，13 个：
+  draft/manual_fields_required/confirmation_required/gate_evidence_missing/
+  required_coverage_gaps/gate_statuses/readiness/load_problems/
+  approval_file_present/generated_at/notice/tool/evidence_dir）的审批记录
+  一律判 malformed——即使补齐 gate 自声明与全部人工字段、哈希精确匹配
+  也不放行；底稿输出人工必填字段清单（八字段 REPLACE-ME，绝不代填/
+  代签/代批）。CLI 护栏：`--output` 文件名恰为 release-approval.json
+  一律拒绝（绝不创建或修改审批文件）、不得位于证据目录内、artifacts/
+  temp gitignore 边界 + 原子落盘（symlink 拒绝、失败不打印底稿正文）。
+  安全边界不变：不连 DB/网络/API、不读环境变量、无 --yes 形态、
+  零生产触碰、输出零敏感（load_problems 只报字段路径）。
+- 验证（worktree 基点 bed280d，canonical uv venv CPython 3.12.14）：
+  新增 37 个测试（test_release_approval_draft.py 23 个：精确哈希/缺席门/
+  optional turn-tls 双向/门状态一致性/零 release_ready/DRAFT 语义/审批文件
+  不动/底稿原样改名 malformed/补齐字段保留元数据仍 malformed/单保留字段
+  拒绝/保留字段集同步守卫/零敏感回显/只读/毒化 env/CLI 注册-分发-缺参-
+  护栏-原子写-改名拒-证据目录内拒-写入失败静默/AST 零 env-DB-网络/
+  UTC 时间戳；test_release_readiness.py +14：13 保留字段逐个 parametrize
+  拒绝 + 无保留字段合法审批回归锚）；聚焦+邻接七套件
+  （approval-draft/readiness/closure-manifest/cutover-pack/cutover-rehearsal/
+  cockpit/gap）**355 passed**；另 readiness 依赖面其余七套件 419 passed /
+  1 skipped 零回归；ruff All checks passed；py_compile 过；真实子进程
+  CLI 冒烟（生成/原子写/改名护栏 exit 2 零文件）；变更行秘密扫描 0 真实
+  命中（2 处为既有同款毒化 marker 变量引用）、本地绝对路径 0 命中、
+  U+FFFD 0 命中；`git diff --check` 干净。
+- 诚实边界：本切片是工具+测试实现，不产出 canonical 发布证据（无
+  evidence README 新增）；DRAFT 底稿在任何情况下都不构成审批、签署或
+  放行；release-approval 门维持 human-only。
+
 ## M14-149 — current-main 发布证据刷新（PR #236 后）
 
 - 在当前 main `c948931b`（PR #236 merge）上真实重执行两 code-bound 门

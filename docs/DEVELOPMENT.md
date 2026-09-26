@@ -1034,7 +1034,11 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
 - **状态语义**：`missing` / `malformed` / `tampered` / `blocked` / `pending` /
   `pass`，不得把 pending 包装成 pass。`release_ready=true` 仅表示全部 required
   gates `pass` 且 `release-approval` 的 gate id + evidence sha256 集合与当前证据
-  完整匹配；`approved_by` 只做记录，不做身份认证。
+  完整匹配；`approved_by` 只做记录，不做身份认证。M14-151 起
+  `_eval_release_approval` 对携带任一 release-approval-draft 底稿保留元数据
+  字段（`APPROVAL_DRAFT_RESERVED_FIELDS`，13 个）的审批记录一律判
+  `malformed`——即使补齐 gate 自声明与全部人工字段、哈希精确匹配也不放行
+  （DRAFT 不可审批边界，见下节）。
 - **turn-tls 语义**：本机/LAN 发布形态可 `pending`/缺省，不阻断
   `release_ready`；公网语音发布必须另行要求 `turn-tls=pass`。manifest 固定输出
   `not_pass_optional` 与 `optional_scope_note`，`release_ready` 不得解释为
@@ -1043,6 +1047,46 @@ variant NULL owner 草稿——只输出计数，不输出生产 ID）。
   paper/draft/用户 ID；敏感键或内嵌凭据证据判 `malformed`。`evidence_dir` 是
   唯一 caller-supplied 路径字段，可能含本机路径，供人工复核定位；`--output`
   仅允许 artifacts/temp 护栏并原子写入，symlink fail-closed。
+
+## 发布审批 DRAFT 底稿 release-approval-draft（M14-151）
+
+- **CLI**：`python -m app.ops.cli release-approval-draft --evidence-dir <path>
+  [--output <artifacts路径>]`，实现文件
+  `services/api/app/ops/release_approval_draft.py`。退出码：底稿生成
+  成功=0（无论门状态——底稿是助手不是门裁决）/ 目录、路径、IO 问题=2。
+- **定位**：为 11 门 readiness 契约（M10-11+M14-73）的 release-approval
+  门生成**审批哈希 DRAFT 底稿**——只读计算当前证据目录内全部可绑定门
+  （除 release-approval 外 10 门，含 optional `turn-tls`：在场即绑定哈希、
+  缺席只进 `gate_evidence_missing` 不进 `required_coverage_gaps`，公网语音
+  发布另行要求）的 SHA-256，如实列出缺席门与必需覆盖缺口，并透出
+  release-readiness 门状态**诚实子集**（`gate_statuses` 逐门 required/status
+  + `summary` 计数 + `not_pass_required`/`not_pass_optional` +
+  `optional_scope_note`）——底稿任何位置**不含** `release_ready`/
+  `production_ready`（本工具永不作放行结论）。门状态只消费
+  `run_release_readiness` 既有评估结果（零语义重复）；与
+  cutover-evidence-pack approval-draft（M10-16，13 步切换契约）同构。
+- **DRAFT 不是审批记录**（fail-closed 改名防线）：输出固定带 `draft: true`、
+  `manual_fields_required`（schema_version/approved_at/note/window.start/
+  window.end/rollback_plan/observation/approved_by 八个人工必填字段，全部
+  REPLACE-ME 提示——本工具绝不代填、不代签、不代批）与
+  `confirmation_required`；底稿改名为 release-approval.json 必然
+  `malformed`——`_eval_release_approval` 对携带任一底稿保留元数据字段
+  （`release_readiness.APPROVAL_DRAFT_RESERVED_FIELDS`：draft/
+  manual_fields_required/confirmation_required/gate_evidence_missing/
+  required_coverage_gaps/gate_statuses/readiness/load_problems/
+  approval_file_present/generated_at/notice/tool/evidence_dir，共 13 个；
+  测试守卫与底稿输出字段同步）的审批记录一律拒绝，即使补齐 gate 自声明
+  与全部人工字段、哈希精确匹配也不放行。合法审批必须由审批人逐项人工
+  确认后**从底稿哈希出发从零组装**。
+- **绝不创建或修改 release-approval.json**：`--output` 文件名恰为
+  release-approval.json 一律拒绝（exit 2，即使位于 artifacts/temp 内）；
+  输出不得位于证据目录内或等于证据目录（不覆盖证据输入）；artifacts/temp
+  gitignore 护栏 + CLI 原子落盘（临时文件 + fsync + os.replace，symlink
+  目标拒绝），写入失败不打印底稿正文。
+- **安全边界**：只读本地证据，不连 DB/网络/API、不读环境变量
+  （`os.environ` 零引用）、无 `--yes` 执行形态、不执行任何生产操作；
+  `approval_file_present` 只如实标注既有审批文件且字节不动；输出零敏感
+  （`load_problems` 只报字段路径，值从不回显，最终 scrub_sensitive 兜底）。
 
 ## 生产收口 manifest release-closure-manifest（M14-68）
 
