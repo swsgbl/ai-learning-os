@@ -2857,11 +2857,16 @@ AGC 材料缺位（当前仓库常态）时各阶段的**预期状态**：
   --json` 全 10 门（一次性 SQLite + 临时 API，不连生产面）；
   `release-check-isolated.json` 逐字节复制为 canonical
   `evidence/release-check.json`（filecmp 复核 IDENTICAL）。
-- **provider-smoke / long-soak（只读哈希锁定复用，不重跑）**：源
-  哈希与登记值（`029ee84f…` / `d939c652…`）一致且语义仍有效（生产
-  栈未再切换）才可复用；逐字节复制 + 重哈希 + JSON 契约断言；原始
-  时间窗口边界（2026-09-23T23:29:35Z / 2026-09-22→23）在 README
-  显式保留，距聚合时距如实陈述。
+- **provider-smoke / long-soak（只读哈希锁定复用，不重跑）**：
+  provider-smoke 优先只读核验 `artifacts/temp/provider-smoke/` 下
+  当前真实聚合——存在更新的真实重跑产物（三输入 schema/pass/时间
+  自洽 + 失败 attempt 原样保留未改写）即哈希锁定登记之（M14-149 起
+  登记值 `d589181e…` @ 2026-09-26T01:14:14Z，取代 M14-117 旧聚合
+  `029ee84f…`；绝不容忍失败 attempt 被改写为 pass），否则沿用登记
+  值；long-soak 沿用登记值（`d939c652…`）；语义仍有效（生产栈未再
+  整体切换）才可复用；逐字节复制 + 重哈希 + JSON 契约断言；原始
+  时间窗口边界（provider-smoke 2026-09-26T01:14:14Z / long-soak
+  2026-09-22→23）在 README 显式保留，距聚合时距如实陈述。
 - **evidence-cockpit 聚合**：六个生产状态源（M14-83 三门 / M14-85
   backup / M14-87 anchor + companion）就地 sha256 复核 6/6 MATCH 后
   原样 staging；`--gate-declared-head release-check=<HEAD>` 与

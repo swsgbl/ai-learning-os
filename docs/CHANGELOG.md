@@ -1,5 +1,38 @@
 # Changelog
 
+## M14-149 — current-main 发布证据刷新（PR #236 后）
+
+- 在当前 main `c948931b`（PR #236 merge）上真实重执行两 code-bound 门
+  并刷新发布证据链（docs-only 入库；canonical 原始证据 gitignored）：
+  **ci-main** run **36213290023**（run_number 595，push/main 唯一、
+  completed success、5/5 jobs 精确集合全绿）断言驱动程序化派生
+  （`da80ae9c…`）；**release-check** 干净 c948931b 隔离环境（uv venv
+  CPython 3.12.14 + npm ci 411 packages）full 重跑 all_green 10/10
+  （pytest **5084 passed / 33 skipped**，较 M14-146 +30 = 区间
+  searxng egress recovery 28 + compose profiles 2 真实测试面增长
+  对账；e2e 5 步 1210ms；alembic head 仍 0027_audit_chain）。
+- **provider-smoke 升级为只读登记当前真实聚合**：M14-148 恢复轮
+  真实重跑产物 `artifacts/temp/provider-smoke/20260926T0106/`
+  （`d589181e…`，564 bytes，聚合 2026-09-26T01:14:14Z；三输入
+  search 7496ms / local-voice 18442ms / llm 12213ms 逐份 schema/pass/
+  时间自洽核验，三份失败 attempt envmiss/querymiss/timeout 如实
+  保留且核验未改写）哈希锁定逐字节复制，取代 M14-146 复用的
+  M14-117 旧聚合（`029ee84f…`）——新真实证据登记、非改写历史；
+  本切片零冒烟执行、零 provider 接触。**long-soak** 按契约只读
+  哈希锁定复用（`d939c652…` 同源同哈希，不重跑 soak，原始窗口
+  2026-09-22→23（m14-70 栈、早于生产切换）显式保留、不制造新窗口）；
+  production-state 六源 6/6 哈希 MATCH 后原样 staging，
+  evidence-cockpit 聚合 **cockpit_ready=true、blockers=[]、
+  pass=9/missing=2**，两 code-bound 门 current（声明头均 c948931b）。
+- 验证：聚焦契约测试 407 passed；ruff All checks passed；
+  SHA256SUMS 28/28 OK；JSON 契约断言 22 项全过；秘密扫描 0 命中；
+  新增行秘密/本地绝对路径/U+FFFD 扫描 0 命中；`git diff --check`
+  干净。
+- 诚实边界：`release_ready=false` / `production_ready=false` 恒不变
+  （release-approval human-only 从未发生）；零生产触碰、零部署、
+  零 provider/soak 重跑、不安装 M14-141 scheduler；证据
+  `docs/evidence/m14-149-current-main-release-evidence/README.md`。
+
 ## M14-148 — provider readiness recovery Round 1（SearXNG 直连出网恢复默认 + 出站恢复 helper）
 
 - 把「SearXNG 直连出网 = 可恢复的生产默认」落为三层仓库事实（M14-147
