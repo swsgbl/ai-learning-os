@@ -22,6 +22,14 @@
   路径形态/权限/非符号链接——绝不 open/read 内容）；弱值/UTF-8/占位
   形态由 public_edge_prepare 渲染时担保 + plan 的 ``frpc.exe verify -c``
   运行期复核负责（见 runbook §3B 文档）；输出不含任何 secret。
+- 双模式窄验证（M14-165）：``transport.protocol`` 缺省 → 直连安全模式
+  （公网 IPv4 serverAddr + serverPort 7000 + TLS 显式开启）；``"wss"`` →
+  WSS 模式（DNS 域名 serverAddr + serverPort 443 + TLS + tls.serverName
+  与 serverAddr **精确相等**——与生产 frpc-ndtool-wss-443.toml 同构，
+  token 仍只走文件引用、内容绝不读取）；其余取值与一切混合/不安全组合
+  （WSS 端口≠443、直连 7000 用 DNS 域名、TLS 关闭、serverName 缺失或
+  不一致、WSS 用 IP serverAddr）一律 fail-closed 拒绝；两模式共享 inline
+  token 拒绝/loopback 后端/占位域名/绝对路径/token 元数据等全部检查。
 
 Exit codes：0 = 成功（含 dry-run 计划输出）；1 = 预检失败/拒绝执行；
 2 = 用法错误（argparse）；status 专用：0=installed / 1=unknown /
@@ -138,6 +146,52 @@ def _validate_token_reference(token_path: str) -> bool:
     return True
 
 
+def _validate_direct_transport(config: dict[str, Any]) -> str:
+    """直连安全模式：公网 IPv4 serverAddr + serverPort 7000 + TLS 显式开启。"""
+    server_addr = str(config.get("serverAddr", ""))
+    try:
+        ip = ipaddress.ip_address(server_addr)
+    except ValueError as cause:
+        raise ControllerError(f"serverAddr 必须是公网 IPv4（渲染值不得为占位）: {server_addr!r}") from cause
+    reserved_doc = (
+        ipaddress.ip_network("192.0.2.0/24"),
+        ipaddress.ip_network("198.51.100.0/24"),
+        ipaddress.ip_network("203.0.113.0/24"),
+    )
+    if ip.version != 4 or not ip.is_global or any(ip in net for net in reserved_doc):
+        raise ControllerError(f"serverAddr 不是公网 IPv4: {server_addr}")
+    if config.get("serverPort") != 7000:
+        raise ControllerError("serverPort != 7000（与 frps 控制面约定不符）")
+    if config.get("transport", {}).get("tls", {}).get("enable") is not True:
+        raise ControllerError("transport.tls.enable != true（TLS 必须显式开启）")
+    return server_addr
+
+
+def _validate_wss_transport(config: dict[str, Any]) -> str:
+    """M14-165 WSS 模式（与生产 frpc-ndtool-wss-443.toml 同构的窄形态）：
+    DNS 域名 serverAddr + serverPort 443 + transport.protocol="wss" + TLS
+    显式开启 + tls.serverName 与 serverAddr **精确相等**（TLS 证书校验
+    锚点）。IP 直连、端口≠443、TLS 关闭、serverName 缺失/不一致、占位
+    域名一律 fail-closed。"""
+    server_addr = str(config.get("serverAddr", ""))
+    try:
+        ipaddress.ip_address(server_addr)
+    except ValueError:
+        pass
+    else:
+        raise ControllerError(f"WSS 模式 serverAddr 必须是 DNS 域名（不得为 IP）: {server_addr}")
+    if not DNS_NAME_RE.fullmatch(server_addr) or server_addr.endswith(".example.com"):
+        raise ControllerError(f"WSS 模式 serverAddr 必须是合规 DNS 域名（非占位）: {server_addr!r}")
+    if config.get("serverPort") != 443:
+        raise ControllerError("WSS 模式 serverPort != 443（wss 只允许 443 TLS 入口，直连 7000 属混合形态）")
+    tls = config.get("transport", {}).get("tls", {})
+    if tls.get("enable") is not True:
+        raise ControllerError("transport.tls.enable != true（WSS 模式 TLS 必须显式开启）")
+    if tls.get("serverName") != server_addr:
+        raise ControllerError("transport.tls.serverName 必须与 serverAddr 精确相等（TLS 证书校验锚点，杜绝指向其他域）")
+    return server_addr
+
+
 def preflight_checks(frpc_exe: Path, config_path: Path) -> dict[str, Any]:
     """只读预检：exe/配置/token 文件全部不变量；零写入零网络。
 
@@ -157,22 +211,15 @@ def preflight_checks(frpc_exe: Path, config_path: Path) -> dict[str, Any]:
     except tomllib.TOMLDecodeError as cause:
         raise ControllerError(f"frpc 配置不可解析: {cause}") from cause
 
-    server_addr = str(config.get("serverAddr", ""))
-    try:
-        ip = ipaddress.ip_address(server_addr)
-    except ValueError as cause:
-        raise ControllerError(f"serverAddr 必须是公网 IPv4（渲染值不得为占位）: {server_addr!r}") from cause
-    reserved_doc = (
-        ipaddress.ip_network("192.0.2.0/24"),
-        ipaddress.ip_network("198.51.100.0/24"),
-        ipaddress.ip_network("203.0.113.0/24"),
-    )
-    if ip.version != 4 or not ip.is_global or any(ip in net for net in reserved_doc):
-        raise ControllerError(f"serverAddr 不是公网 IPv4: {server_addr}")
-    if config.get("serverPort") != 7000:
-        raise ControllerError("serverPort != 7000（与 frps 控制面约定不符）")
-    if config.get("transport", {}).get("tls", {}).get("enable") is not True:
-        raise ControllerError("transport.tls.enable != true（TLS 必须显式开启）")
+    transport = config.get("transport", {})
+    protocol = transport.get("protocol")
+    if protocol is None:
+        mode, server_addr = "direct", _validate_direct_transport(config)
+    elif protocol == "wss":
+        mode, server_addr = "wss", _validate_wss_transport(config)
+    else:
+        raise ControllerError(
+            f'transport.protocol 仅允许缺省（tcp 直连安全模式）或 "wss"，拒绝: {protocol!r}')
     auth = config.get("auth", {})
     if "token" in auth:
         raise ControllerError("配置含 inline auth.token——token 只允许文件引用（拒绝内联 secret）")
@@ -197,6 +244,7 @@ def preflight_checks(frpc_exe: Path, config_path: Path) -> dict[str, Any]:
     return {
         "frpc_exe": str(frpc_exe.resolve()),
         "config": str(config_path.resolve()),
+        "mode": mode,
         "server_addr": server_addr,
         "proxies": [p.get("name") for p in proxies],
         "token_file_present": True,
@@ -367,6 +415,8 @@ def cmd_preflight(frpc_exe: Path, config_path: Path, log) -> int:
 
 def cmd_plan(frpc_exe: Path, config_path: Path, log) -> int:
     facts = preflight_checks(frpc_exe, config_path)
+    log(f"preflight 模式: {facts['mode']}（serverAddr={facts['server_addr']}；"
+        "token 文件仅元数据校验，内容绝不读取）")
     log("以下命令均为**计划**（本工具不代跑；真实执行由 supervisor 审查后进行）：")
     for name, command in planned_commands(facts).items():
         log(f"plan[{name}]: {command}")
