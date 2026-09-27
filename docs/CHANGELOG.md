@@ -1,5 +1,42 @@
 # Changelog
 
+## M14-163 — 公共边缘安全头生产激活证据回填（docs-only，非代码）
+
+- 背景：M14-163 契约切片（PR #252，merge `e2a916a7`，CI 5/5 绿）
+  合入后，supervisor（Codex）于 2026-09-27 按 runbook §9 预告
+  路径真实执行生产激活——本切片只把结果落档，零生产触碰。
+- 远端边缘：`/etc/nginx/aios-base-path.locations.conf` 已部署仓库
+  canonical 模板（SHA256
+  `21d593cc490527dee653862df9aa3e69a2a48ac01b164ecbee2783595cdaa660`），
+  `nginx -t` 成功 + reload 成功 + 服务 active；回滚备份
+  `/etc/nginx/aios-backups/m14-163/aios-base-path.locations.conf.before-m14-163`
+  （SHA256 `359ac232ded45f5d7aea49ee24532f44511e85d913fc670d2bb9c4f9d84244f9`，
+  内容不入库）。
+- 生产 API：镜像保持 `aios/api:m14-124-production` 不变、容器
+  healthy；非敏感 env 键 `AIOS_CORS_ORIGINS`/
+  `AIOS_AUTH_COOKIE_SAMESITE`/`AIOS_AUTH_COOKIE_SECURE` 已生效
+  （当前 env SHA256 `96fef7b1b62b50e30cfcde8de33d61e7148da708d07fb3424bcd73c5c83d0278`，
+  变更前备份 SHA256
+  `02f5fc2d778431d7fc41559a1add321fcbe50db93ccd57c79fecd798724fb9c5`，
+  与 M14-160 §3 记录的变更前状态一致；secret 值一律不回显）。
+- 公网复测：`/aios` 200、`/aios/` 301、`/aios/health` 200——三
+  安全头（HSTS/nosniff/Referrer-Policy）全在；既有 `/` 与
+  `/health` 200 未受影响；边缘零 CORS。
+- 正式 preflight 终版
+  （`<仓库盘>/.verify/m14-163-public-edge-hardening/public-edge-preflight.after-m14-163-final.json`，
+  2026-09-27T12:49:21+00:00）：自动检查 **6/6 pass**（cert-chain
+  双端/app-https/api-health/api-cors/api-cookie），`exit 3` **仅因
+  人工 mobile checklist pending**。
+- 验收账号清理：一次性账号已从生产 PostgreSQL 删除（DELETE 1、
+  复查 count=0），仓库外凭据文件已清空（长度 0）；凭据值绝不
+  记录。
+- 诚实边界：**docs-only 证据回填——零代码/模板/测试/env/远端
+  变更**，不启动/停止任何生产服务；人工 mobile checklist 仍
+  pending，不写 production ready/「公网生产可用」（冻结口径见
+  证据 README §9）；生产纪律（compose 显式
+  `-p aios-m14-03-production-rehearsal`；Nginx 失败用上述备份
+  回滚）落档证据 README §7。回滚 = 还原本 commit。
+
 ## M14-163 — 公共边缘安全响应头 + CORS allowlist 契约（模板/docs/tests，非部署）
 
 - 背景（Codex 用 M14-162 preflight 实测 `https://ndtool.cn/aios`）：
