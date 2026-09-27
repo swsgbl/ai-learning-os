@@ -79,6 +79,36 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-159 状态更新
+
+- M14-159 公共 Web base path（配置/docs/tests 对齐切片，worktree
+  `m14-156-edge-rehearsal`（目录名历史沿用），分支
+  `m14-159-public-web-base-path`，基于 main
+  `9af4087b61b62d5e586512dd67c7d24dd8264bbe`（PR #246 merge = M14-158
+  合入，精确基点），单 local commit，不 push、不开 PR）：supervisor
+  云/网络外检实证 **8443 公网不可达、443 已有可达公共 HTTPS 服务**——
+  公共 Beta 入口定为同域路径 `https://ndtool.cn/aios/`（Web/API 同源，
+  API 展开 `https://ndtool.cn/aios/api/v1/...`）。交付：web 构建期
+  `NEXT_PUBLIC_BASE_PATH` 结构化校验（空 = 根路径构建不变；唯一非空值
+  恰为 `/aios`，其余构建期 fail-closed）+ `basePath` 接线 + `api.ts`
+  401 跳转 `LOGIN_PATH` 化（全仓导航审计：唯一绕过点）+ Dockerfile/compose
+  构建期注入；边缘新增 Nginx **location 片段**模板
+  `infra/edge/nginx.public-base-path.example.conf`（`= /~!frp` WS→frps
+  7000 既有行为、`= /aios` 301、`^~ /aios/api/` 尾斜杠 proxy_pass 剥
+  `/aios` + Host `api.internal.aios`、`^~ /aios/` 无 URI 原样保留 +
+  Host `app.internal.aios`；结构上不可遮蔽既有站点/`/api/v1/`/静态）；
+  frpc 模板 customDomains 追加同名内部 vhost；runbook §3E 落档公共契约
+  （精确 URL + 构建参数组合 + MSYS 路径转换坑提示）。测试：新增
+  test_public_edge_nginx_base_path 14 项（nginx 匹配语义仿真/不遮蔽/
+  跨工件对齐/构建契约锁定）；templates/prepare/controller 断言同步。
+  验证：web vitest **38 passed**、tsc、eslint 0 errors（既有 warning
+  基线不变）；`/aios` 生产构建产物引用 `/aios/_next/`（根 `/_next/`
+  0 命中）+ API base 内联 + rewrite source 自动前缀；默认构建根路径
+  不变；七套件合跑 **336 passed + 3 skipped**（外部 basetemp）；
+  ruff（默认 + F,E9）全绿；`git diff --check` 干净；新增行秘密/绝对
+  路径扫描 0 命中。诚实边界：**非公网部署、非 production_public_ready、
+  本地/彩排/Caddy vhost/回环网关行为不变**；回滚 = 还原本 commit。
+
 ### M14-158 状态更新
 
 - M14-158 公网边缘 Web 目标对齐 3012（配置/docs/tests 对齐切片，分支

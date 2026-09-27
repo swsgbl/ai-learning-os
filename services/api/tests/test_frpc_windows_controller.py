@@ -146,7 +146,7 @@ def test_preflight_rejects_missing_exe(tmp_path: Path) -> None:
         ('serverAddr = "8.8.8.8"', 'serverAddr = "192.168.0.5"'),
         ("transport.tls.enable = true", "transport.tls.enable = false"),
         ('localIP = "127.0.0.1"', 'localIP = "0.0.0.0"'),
-        ('customDomains = ["app.acme-public.org"]', 'customDomains = ["app.example.com"]'),
+        ('customDomains = ["app.acme-public.org", "app.internal.aios"]', 'customDomains = ["app.example.com"]'),
     ],
 )
 def test_preflight_rejects_config_invariants(tmp_path: Path, rewrite: str, keyword: str) -> None:

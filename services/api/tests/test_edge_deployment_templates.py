@@ -101,6 +101,8 @@ def test_edge_template_file_set() -> None:
         "docker-compose.edge.example.yml",
         ".env.example",
         "download-manifest.example.json",
+        # M14-159: 公共 Web base path 的 Nginx 443 location 片段
+        "nginx.public-base-path.example.conf",
     }
     actual = {p.name for p in EDGE_DIR.iterdir() if p.is_file()}
     assert expected <= actual, f"缺模板: {sorted(expected - actual)}"
@@ -145,7 +147,14 @@ def test_frpc_token_from_file_and_tls_enable() -> None:
         assert proxy["localIP"] == "127.0.0.1", "家机侧只允许回连本机 loopback"
     assert proxies[0]["localPort"] == 3012 and proxies[1]["localPort"] == 8000
     domains = [d for p in proxies for d in p["customDomains"]]
-    assert set(domains) == {"app.example.com", "api.example.com"}
+    # M14-159: 追加公共 Nginx base path 片段改写的内部 vhost 路由标签
+    # （无 DNS、仅 frps Host 路由用）；既有 Caddy vhost 占位域保持不变。
+    assert set(domains) == {
+        "app.example.com",
+        "api.example.com",
+        "app.internal.aios",
+        "api.internal.aios",
+    }
 
 
 # ---------------------------------------------------------------- Caddyfile：路由与头
@@ -304,6 +313,7 @@ def test_edge_templates_contain_no_real_domains_or_ips() -> None:
         "localhost",
         "github.com",       # 模板注释里的官方文档引用
         "caddyserver.com",
+        "nginx.org",        # M14-159: Nginx 片段模板注释里的官方文档引用
         "livekit.io",
         "docker.io",        # compose 镜像仓库
         "127.0.0.1",        # healthcheck 的 loopback 探针 URL

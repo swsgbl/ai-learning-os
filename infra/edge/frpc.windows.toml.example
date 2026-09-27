@@ -26,6 +26,10 @@ transport.tls.enable = true
 # HTTP vhost 代理：域名经 VPS Caddy 443 → frps vhost 8080 路由回来。
 # customDomains 用文档占位域名（example.com 为 RFC 2606 保留域），
 # 部署副本换成真实域名，且必须与 VPS Caddyfile/DNS 记录一致。
+# M14-159：*.internal.aios 是公共 Nginx base path 片段
+# （nginx.public-base-path.example.conf）改写的内部 Host——仅作 frps
+# vhost 路由标签，无 DNS 解析、不可公网直达；与既有 Caddy vhost
+# 路由并存互不影响。
 [[proxies]]
 name = "aios-web"
 # M14-158：Web 回连目标 3012 = M14-157 生产 Web 回环网关
@@ -35,11 +39,11 @@ name = "aios-web"
 type = "http"
 localIP = "127.0.0.1"
 localPort = 3012
-customDomains = ["app.example.com"]
+customDomains = ["app.example.com", "app.internal.aios"]
 
 [[proxies]]
 name = "aios-api"
 type = "http"
 localIP = "127.0.0.1"
 localPort = 8000
-customDomains = ["api.example.com"]
+customDomains = ["api.example.com", "api.internal.aios"]
