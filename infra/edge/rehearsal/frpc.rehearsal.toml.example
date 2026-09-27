@@ -23,9 +23,10 @@ transport.tls.enable = true
 
 [[proxies]]
 name = "rehearsal-web"
+# M14-158：Web 目标 3012 = M14-157 生产 Web 回环网关（3011 已知 stale）
 type = "http"
 localIP = "host.docker.internal"
-localPort = 3011
+localPort = 3012
 customDomains = ["app.rehearsal.localhost"]
 
 [[proxies]]

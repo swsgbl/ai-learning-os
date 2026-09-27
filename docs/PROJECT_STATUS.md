@@ -9,6 +9,29 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-158 公网边缘 Web 目标对齐 3012（配置/docs/tests 切片）**：worktree
+`m14-156-edge-rehearsal`（目录名历史沿用），分支
+`m14-158-public-edge-web-target`，基于 main
+`737d3fc103eebcc43283ba1fb8b55d9267681d0d`（PR #245 merge = M14-157
+合入，精确基点），单 local commit，不 push、不开 PR（任务书指令）。
+背景：M14-157 生产 Web 回环网关已安装验证（127.0.0.1:3012 → Caddy :80
+→ 生产 web:3000 返回 200），既有 3011 Docker Desktop host 转发 stale
+（TCP 空应答）、API 8000 健康——未来公网 frpc 的 Web 目标统一为 3012。
+变更：frpc.windows.toml.example aios-web localPort 3012（+stale 注释）、
+prepare manifest 样板 web_port 3012、rehearsal 默认 HOST_WEB_PORT 3012
+（--host-web-port 覆写保留）、彩排模板/compose 注释、runbook §3C/§5.2、
+研究文档骨架与当前边界——明确 3011 不再作为本机公网/彩排 Web 目标
+（M14-156 历史证据 39998 措辞原样保留）。测试锁定新默认并保留覆写/
+负例覆盖。验证：七套件合跑 **401 passed + 3 skipped**（外部 basetemp
+`<仓库盘>/.pytest-tmp/m14-158-public-edge-web-target`）；ruff（默认 +
+F,E9）全绿；py_compile 通过；`git diff --check` 干净；新增行秘密/
+绝对路径扫描 0 命中。诚实边界：**配置/docs/tests 对齐——不是公网
+部署、不构成 production_public_ready、不改生产边缘设计**；监控域
+（production_monitor/soak_rehearsal 的 3011 端点）与
+env.production-recovery AIOS_WEB_PORT=3011 未触碰（属监控/生产 compose
+域语义，留独立评估）；零 Docker 零生产变更；回滚 = 还原本 commit +
+网关 uninstall（§3D）。M14-157 移为次席。
+
 **M14-157 生产 Web 回环网关 controller（实现切片，Round 1）**：worktree
 `m14-156-edge-rehearsal`（目录名复用为有意设计），分支
 `m14-157-production-web-gateway`，基于 main

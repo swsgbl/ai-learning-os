@@ -143,7 +143,7 @@ def test_frpc_token_from_file_and_tls_enable() -> None:
     for proxy in proxies:
         assert proxy["type"] == "http"
         assert proxy["localIP"] == "127.0.0.1", "家机侧只允许回连本机 loopback"
-    assert proxies[0]["localPort"] == 3011 and proxies[1]["localPort"] == 8000
+    assert proxies[0]["localPort"] == 3012 and proxies[1]["localPort"] == 8000
     domains = [d for p in proxies for d in p["customDomains"]]
     assert set(domains) == {"app.example.com", "api.example.com"}
 

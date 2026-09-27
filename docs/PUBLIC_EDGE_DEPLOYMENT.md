@@ -177,7 +177,8 @@ python tools/ops/public_edge_rehearsal.py plan --work-dir <仓库外彩排目录
 # ② 真实彩排（需同时给 --execute 与精确短语，缺一即 fail-closed 拒绝；
 #    前置只读 preflight：Docker CLI/compose 可用、家机 API /health 与
 #    Web 入口 200、发布端口空闲、work-dir 契约成立。默认目标端口
-#    API 8000/Web 3011；本地 stale-port-forward 绕行时可加
+#    API 8000/Web 3012（M14-157 生产 Web 回环网关）；本地 stale-port-forward
+#    绕行时可加
 #    --host-api-port/--host-web-port <1..65535>——见下方"目标端口"契约）
 python tools/ops/public_edge_rehearsal.py execute --work-dir <仓库外彩排目录> \
     --confirm-phrase "EXECUTE PUBLIC EDGE REHEARSAL" --execute
@@ -194,9 +195,16 @@ python tools/ops/public_edge_rehearsal.py status [--work-dir <仓库外彩排目
 
 - **拓扑**：probe → Caddy（唯一 host 发布 `127.0.0.1:39443`，HTTP-only）
   → frps vhost（compose 网络内 8080）→ frpc → `host.docker.internal`
-  的家机 API(8000)/Web(3011)；Host 路由标签 `app.rehearsal.localhost` /
+  的家机 API(8000)/Web(3012，M14-157 生产 Web 回环网关)；Host 路由
+  标签 `app.rehearsal.localhost` /
   `api.rehearsal.localhost`（RFC 6761 保留域，探测用显式 Host 头，无 DNS）；
-- **目标端口（R2 恢复绕行）**：默认仍是 API 8000 / Web 3011。
+- **目标端口（M14-158 对齐）**：默认 API 8000 / Web **3012**（M14-157
+  生产 Web 回环网关，已验证 200）。既有 3011 host 映射对 Docker
+  Desktop 已知 stale（TCP 空应答），**3011 不再作为本机的公网/彩排
+  Web 目标**（历史依据见 §3D 与 M14-156 证据注记的 39998 一次性
+  绕行记录）。`--host-api-port`/`--host-web-port`（1..65535，畸形/
+  越界/相同端口即 `port-invalid` fail-closed）保留作本地
+  stale-port-forward 绕行：
   `--host-api-port`/`--host-web-port`（1..65535，畸形/越界/相同端口即
   `port-invalid` fail-closed）**仅**用于一种已文档化的本地场景：Docker
   Desktop 既有 host 端口映射陈旧（TCP 可连但应答为空、生产容器内部
@@ -339,8 +347,10 @@ exact_source_verified——**本机绝对路径绝不入证据**），
      `frpc.exe -c <绝对路径>\frpc.windows.toml`（仓库既有
      `tools/ops/windows_startup_task.py` 的注册模式可参考）；
    - 或 NSSM 包装为服务（`nssm install aios-frpc ...`，Stderr 日志落盘）；
-5. 家机安全边界不变：API/Web 仍只绑 loopback（`127.0.0.1:8000` /
-   `127.0.0.1:3011`），frpc 只是**出站**连接；不开路由器端口映射、不暴露
+5. 家机安全边界不变：frpc 只回连 loopback——API `127.0.0.1:8000`，Web
+   `127.0.0.1:3012`（M14-157 生产 Web 回环网关；M14-158 起 frpc 模板
+   `localPort = 3012`，3011 已知 stale 不再作为公网目标），frpc 只是
+   **出站**连接；不开路由器端口映射、不暴露
    Postgres/Redis/MinIO/SearXNG/远程桌面。
 
 ### 5.3 验证

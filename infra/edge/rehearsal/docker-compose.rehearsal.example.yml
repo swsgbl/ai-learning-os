@@ -3,7 +3,7 @@
 # 由 tools/ops/public_edge_rehearsal.py 在真实 execute 时复制进仓库外
 # 彩排工作目录（token 是同目录一次性随机文件 frps_token.txt，绝不入库）。
 # 拓扑：probe → Caddy(容器:80，唯一 host 发布 127.0.0.1:39443) →
-# frps vhost(容器:8080) ← frpc(compose 网络) → host.docker.internal:8000/3011。
+# frps vhost(容器:8080) ← frpc(compose 网络) → host.docker.internal:8000/3012。
 #
 # 彩排边界（与生产 ../docker-compose.edge.example.yml 彻底分离）：
 # - HTTP-only：Caddy 关闭自动 HTTPS，无 ACME/证书/443；
@@ -14,7 +14,8 @@
 #   绝不触碰任何其他 compose 项目/容器/网络（含生产彩排栈）；
 # - 无 LiveKit/coturn/download——彩排只覆盖 HTTP 反向隧道链路；
 # - frpc 以容器形态运行（生产为家机 Windows 常驻进程），回连目标
-#   host.docker.internal:8000/3011（生产 frpc 与服务同机用 127.0.0.1）。
+#   host.docker.internal:8000/3012（M14-158：Web 走 M14-157 回环网关 3012，
+#   3011 已知 stale；生产 frpc 与服务同机用 127.0.0.1）。
 #
 # 镜像 digest pin（Docker Hub registry API 2026-09-27 核实；升级 = 显式
 # 改 digest 并记录，绝不回退 :latest）：

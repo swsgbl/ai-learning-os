@@ -28,9 +28,13 @@ transport.tls.enable = true
 # 部署副本换成真实域名，且必须与 VPS Caddyfile/DNS 记录一致。
 [[proxies]]
 name = "aios-web"
+# M14-158：Web 回连目标 3012 = M14-157 生产 Web 回环网关
+# （127.0.0.1:3012 → Caddy :80 → 生产 web:3000，已验证 200）。既有
+# 3011 host 映射对 Docker Desktop 已知 stale（TCP 空应答），不再作为
+# 本机的公网 frpc Web 目标。
 type = "http"
 localIP = "127.0.0.1"
-localPort = 3011
+localPort = 3012
 customDomains = ["app.example.com"]
 
 [[proxies]]

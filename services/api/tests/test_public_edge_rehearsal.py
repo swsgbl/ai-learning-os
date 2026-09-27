@@ -411,7 +411,7 @@ def test_frp_invariants_match_production_discipline(tmp_path: Path) -> None:
     domains = {d for p in frpc["proxies"] for d in p["customDomains"]}
     targets = {(p["localIP"], p["localPort"]) for p in frpc["proxies"]}
     assert domains == {rehearsal.APP_HOST, rehearsal.API_HOST}
-    assert targets == {("host.docker.internal", 3011), ("host.docker.internal", 8000)}
+    assert targets == {("host.docker.internal", 3012), ("host.docker.internal", 8000)}
 
 
 def test_validate_rendered_configs_rejects_tampering(tmp_path: Path) -> None:
@@ -557,7 +557,7 @@ def test_preflight_rejects_api_target_unreachable(tmp_path: Path, capsys) -> Non
 def test_preflight_rejects_web_target_unhealthy(tmp_path: Path, capsys) -> None:
     err = _prefail_execute(
         tmp_path, FakeRunner(),
-        FakeProber(responses={"http://127.0.0.1:3011/": 502}), capsys,
+        FakeProber(responses={"http://127.0.0.1:3012/": 502}), capsys,
     )
     assert rehearsal.CATEGORY_TARGET in err
 
@@ -754,10 +754,10 @@ def test_default_target_ports_used_without_flags(tmp_path: Path) -> None:
     code, report, _ = _evidence_of(_happy_execute_args(tmp_path), tmp_path, FakeRunner())
     assert code == rehearsal.EXIT_OK
     targets = report["targets"]
-    assert targets["api_port"] == 8000 and targets["web_port"] == 3011
+    assert targets["api_port"] == 8000 and targets["web_port"] == 3012
     assert targets["defaults_used"] is True
     assert targets["api"] == "host.docker.internal:8000"
-    assert targets["web"] == "host.docker.internal:3011"
+    assert targets["web"] == "host.docker.internal:3012"
 
 
 def test_valid_port_overrides_thread_through_everything(tmp_path: Path, capsys,
@@ -831,7 +831,7 @@ def test_equal_target_ports_rejected(capsys) -> None:
 def test_boundary_ports_accepted(tmp_path: Path) -> None:
     assert rehearsal.parse_host_port("1", 8000, "--host-api-port") == 1
     assert rehearsal.parse_host_port("65535", 8000, "--host-api-port") == 65535
-    assert rehearsal.parse_host_port(None, 3011, "--host-web-port") == 3011
+    assert rehearsal.parse_host_port(None, 3012, "--host-web-port") == 3012
     assert rehearsal.parse_host_port(" 8080 ", 8000, "--host-api-port") == 8080
 
 
@@ -865,7 +865,7 @@ def test_frpc_validation_rejects_wrong_port_under_override(tmp_path: Path) -> No
 def test_plan_and_status_surface_effective_ports(capsys, tmp_path: Path) -> None:
     assert rehearsal.main(["plan"]) == rehearsal.EXIT_OK
     out = capsys.readouterr().out
-    assert "8000(API)/3011(Web)（默认端口）" in out
+    assert "8000(API)/3012(Web)（默认端口）" in out
     assert rehearsal.main(
         ["plan", "--host-api-port", "18000", "--host-web-port", "13011"]
     ) == rehearsal.EXIT_OK
@@ -901,4 +901,4 @@ def test_probes_use_rehearsal_host_headers(tmp_path: Path) -> None:
         "Host": rehearsal.API_HOST}
     # preflight 的家机目标探测（无 Host 覆写）
     assert ("http://127.0.0.1:8000/health" in headers_by_url)
-    assert ("http://127.0.0.1:3011/" in headers_by_url)
+    assert ("http://127.0.0.1:3012/" in headers_by_url)

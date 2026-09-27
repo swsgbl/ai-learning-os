@@ -79,6 +79,27 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-158 状态更新
+
+- M14-158 公网边缘 Web 目标对齐 3012（配置/docs/tests 对齐切片，分支
+  `m14-158-public-edge-web-target`（复用 m14-156 worktree 目录，基于
+  main `737d3fc103eebcc43283ba1fb8b55d9267681d0d`（PR #245 merge =
+  M14-157 合入，精确基点），单 local commit，不 push、不开 PR）：
+  M14-157 网关已验证 `127.0.0.1:3012` → 生产 web:3000 返回 200、既有
+  3011 Docker Desktop host 转发 stale——本切片把全部**渲染/文档化未来
+  公网 Web 目标**的路径统一为 3012：frpc.windows.toml.example
+  localPort 3012 + 注释、prepare manifest 样板 web_port 3012、
+  public_edge_rehearsal 默认 HOST_WEB_PORT 3012（--host-web-port 覆写
+  保留）、彩排模板/注释、runbook §3C/§5.2、研究文档 frpc 骨架与当前
+  边界（明确 3011 不再作为本机公网目标；M14-156 历史证据 39998 措辞
+  原样）。测试锁定新默认（templates/prepare/package/controller/
+  rehearsal 五套件）。验证：七套件合跑 **401 passed + 3 skipped**
+  （含 gateway 79 + rehearsal 74，外部 basetemp）；ruff（默认 + F,E9）
+  全绿；py_compile 通过；`git diff --check` 干净；新增行秘密/绝对
+  路径扫描 0 命中。诚实边界：**非公网部署、非 production_public_ready、
+  不改生产边缘设计**；监控域 3011 端点与 env.production-recovery
+  AIOS_WEB_PORT=3011 未触碰（独立评估）；零 Docker 零生产变更。
+
 ### M14-157 状态更新
 
 - M14-157 生产 Web 回环网关 controller（实现切片 Round 1，分支

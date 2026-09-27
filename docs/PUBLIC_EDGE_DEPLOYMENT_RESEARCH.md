@@ -29,7 +29,9 @@ VPS：Caddy + frps + LiveKit + coturn
 
 ## 当前边界
 
-1. 本机生产彩演栈 API/Web 仅绑定 loopback：API `127.0.0.1:8000`，Web `127.0.0.1:3011`。
+1. 本机生产彩演栈 API/Web 仅绑定 loopback：API `127.0.0.1:8000`，Web 经
+   M14-157 生产 Web 回环网关 `127.0.0.1:3012`（既有 3011 host 映射对
+   Docker Desktop 已知 stale，M14-158 起不再作为公网 frpc 目标）。
 2. 当前看到的公网出口来自系统代理，不是家用宽带的公网入站地址；不能通过路由器端口映射直接暴露本机。
 3. Web 的 `NEXT_PUBLIC_API_BASE_URL` 是构建期注入，公网域名确定后必须重建 Web 镜像。
 4. 公网语音必须补齐域名、受信 CA 证书、LiveKit 公网 candidate 与 TURN/TLS。当前 `turn-tls` 仍是 release readiness 的 optional 缺口。
@@ -127,11 +129,12 @@ auth.tokenSource.file.path = "D:/AI Learning OS/secrets/frpc_token.txt"
 
 transport.tls.enable = true
 
+# M14-158：Web 目标 3012 = M14-157 生产 Web 回环网关（3011 已知 stale）
 [[proxies]]
 name = "aios-web"
 type = "http"
 localIP = "127.0.0.1"
-localPort = 3011
+localPort = 3012
 customDomains = ["app.example.com"]
 
 [[proxies]]
