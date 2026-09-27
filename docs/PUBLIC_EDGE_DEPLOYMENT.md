@@ -257,6 +257,51 @@ supervisor 在 commit `aa35929509a4c742c06fc12279566701726fe601`（R3 后）
 API/Web）在真实容器中通过；没有真实域名/VPS/DNS/公网手机验收，**不
 宣称公网生产可用**。
 
+## 3D. 生产 Web 回环网关（production_web_gateway，M14-157）
+
+生产 Web 容器 `aios-m14-03-production-rehearsal-web-1` 在 compose 网络
+`aios-m14-03-production-rehearsal_default` 上健康运行，但既有 host 映射
+`127.0.0.1:3011` 对 Docker Desktop 呈 TCP 空应答（API 8000 正常）。
+`tools/ops/production_web_gateway.py` 提供稳定、可回滚的**本地回环恢复
+入口**：pinned Caddy 容器加入同一生产 compose 网络，`Caddy :80 →
+web:3000`，只发布 `127.0.0.1:<host-port>:80`（默认 3012）——不重启/
+不重建既有生产栈。
+
+```bash
+# ① 只读计划（默认子命令；零写入零探测零 Docker）
+python tools/ops/production_web_gateway.py plan
+# ② 只读状态（missing/installed/degraded/foreign 分类）
+python tools/ops/production_web_gateway.py status
+# ③ 真实安装（需 --execute + 精确短语，缺一即 fail-closed）
+python tools/ops/production_web_gateway.py install --config-dir <绝对路径仓库外> \
+    --confirm-phrase "INSTALL PRODUCTION WEB GATEWAY" --execute
+# ④ 回收（只删精确自有网关容器；配置目录与证据保留）
+python tools/ops/production_web_gateway.py uninstall \
+    --confirm-phrase "UNINSTALL PRODUCTION WEB GATEWAY" --execute
+```
+
+契约要点：install preflight 五门 fail-closed（Docker 可用/目标网络存在/
+生产 Web 容器 running+healthy/host 端口空闲/config-dir 契约——绝对路径、
+仓库外、路径链无符号链接、只允许 Caddyfile 幂等覆写）；同名容器已存在
+（无论归属）绝不覆盖；host-port 封锁生产/彩演已知端口集（3011/8000/
+39443 及 infra/docker-compose.yml 全部 host 发布位）；装后 inspect 精确
+复核 image/labels/network/bind/port/restart/**Caddyfile bind mount**
+（install 必须精确核对挂载 source = 渲染产物；status 未给 `--config-dir`
+时只校验挂载形状——bind + 只读 + 目标 `/etc/caddy/Caddyfile` + source
+basename，输出**明示未精确验证**，绝不虚报）+ `GET /` 必须 200 才报
+pass；docker argv 白名单在 **RealRunner 运行时强制**（仅 --version/
+network inspect/inspect/run/rm 五前缀可执行，其余 argv 在触及
+subprocess 前即拒绝——绝无 stop/restart/recreate 生产容器面；超时/
+缺省二进制均无 traceback）；证据 JSON+MD 原子写（默认 gitignored
+`.verify/artifacts/m14-157-production-web-gateway/`，显式与默认路径均
+过路径链符号链接检查），挂载只记脱敏事实（source basename +
+exact_source_verified——**本机绝对路径绝不入证据**），
+`production_public_ready=false` 恒不变。
+
+诚实边界：网关是**本地回环恢复路径**——不修复 Docker Desktop 的坏
+映射、不暴露任何公网流量、不改变生产边缘设计与公网验收口径；生产
+公网 readiness 维持 false。
+
 ## 4. DNS 与 Caddy ACME
 
 1. DNS 控制台添加五条 A 记录 → VPS 公网 IP（TTL 先 300 便于调试，稳定后调大）；

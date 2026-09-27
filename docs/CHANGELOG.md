@@ -1,5 +1,83 @@
 # Changelog
 
+## M14-157 — 生产 Web 回环网关 controller（本地恢复路径，不部署）
+
+- 新增 `tools/ops/production_web_gateway.py`（纯标准库；子命令
+  **plan / status / install / uninstall**，默认 plan 零写入零探测零
+  Docker）。问题（supervisor 实证）：生产 Web 容器
+  `aios-m14-03-production-rehearsal-web-1` 在
+  `aios-m14-03-production-rehearsal_default` 网络上健康，但既有 host
+  映射 `127.0.0.1:3011` 对 Docker Desktop 呈 TCP 空应答（API 8000
+  正常）——网关以 pinned Caddy 容器加入同一生产 compose 网络
+  `Caddy :80 → web:3000`，只发布 `127.0.0.1:<host-port>:80`，提供
+  稳定可回滚的本地回环入口，**不重启/不重建既有生产栈**。
+- **隔离与所有权**：镜像恒为 `docker.io/library/caddy@sha256:6aeddd44…`
+  （与边缘模板同 digest）；容器名恒 `aios-production-web-gateway`；
+  所有权标签 `io.aios.managed-by=production_web_gateway` +
+  `io.aios.milestone=m14-157`；restart unless-stopped；只 attach
+  生产 compose 网络；唯一 host 发布为回环端口。默认 host 端口 3012，
+  **封锁** 3011/8000/39443 与生产 compose 全部 host 发布位
+  （3000/5433/6379/7880/7881/7882-7892/8878/9000/9001）——畸形/
+  越界/封锁端口稳定类别 port-invalid fail-closed（无 traceback、
+  不回显原始输入）。
+- **fail-closed 契约**：install 需 `--execute` + 精确短语
+  `INSTALL PRODUCTION WEB GATEWAY`（uninstall 需
+  `UNINSTALL PRODUCTION WEB GATEWAY`）——缺一即 confirm-gate 非零
+  退出零副作用；install preflight 五门（Docker 可用/目标网络存在/
+  生产 Web 容器 running+healthy/host 端口空闲/config-dir 契约：绝对
+  路径·仓库外·路径链无符号链接·只允许 Caddyfile 幂等覆写）；同名
+  容器已存在（无论归属，含自有漂移形态）一律拒绝——**绝不覆盖**；
+  渲染原子写 + 写后自校验（HTTP-only :80、无 443/tls、上游恒
+  web:3000）；装后 inspect 精确复核 image/labels/network/bind/port/
+  restart + `GET /` 必须 200 才报 pass（校验/探测失败**不自动删除**，
+  留 supervisor 处置）。
+- **只读与回收**：status 只读分类 missing/installed/degraded（自有但
+  漂移）/foreign（外来标签），零变更；uninstall 只删**精确自有**容器
+  （`docker rm -f`），绝不删除配置目录与证据；missing 幂等、foreign
+  拒绝。docker argv 白名单：仅 --version/network inspect/inspect/
+  run/rm——**绝无 stop/restart/recreate 面向生产容器**。
+- **证据与注入边界**：gateway-evidence.json + gateway-report.md 原子
+  写（默认 gitignored
+  `.verify/artifacts/m14-157-production-web-gateway/`）：result、
+  host_port、upstream、容器事实、回滚指引；
+  `production_public_ready=false` 恒不变；无 secret、无本机绝对路径。
+  Docker 与 HTTP 探测全部经注入 Runner/Prober（测试零真实 Docker 零
+  网络；RealRunner 对 docker 缺失统一转 returncode 127）。
+- 新增模板 `infra/edge/production-web-gateway/Caddyfile.example`（与
+  生产边缘 Caddyfile 的差异全部注释说明：HTTP-only、上游为 compose
+  服务别名 web:3000、无 ACME/443）；runbook 新增 §3D。
+- 测试：`services/api/tests/test_production_web_gateway.py`（63 项）——
+  plan 默认零调用、确认门矩阵、端口默认/边界/畸形/封锁集、config-dir
+  防线（含 Windows 安全 monkeypatch 符号链接链形态）、精确渲染与篡改
+  拒绝、docker argv 白名单与 run 形状、preflight 六类失败、归属/漂移/
+  外来分类、install 成功全链、装后校验与探测失败不自动删除、status
+  四分类只读、uninstall 所有权纪律、证据边界。
+- 边界：**本地回环恢复路径**——不修复 Docker Desktop 的坏 3011 host
+  映射、不暴露任何公网流量、不改变生产边缘设计与公网验收口径；
+  开发回合零真实执行（全部为注入 fake 的离线契约验证），未触碰任何
+  运行中服务/容器/网络/任务/secret；`production_public_ready=false`
+  不变。
+- **Round 1（supervisor 三项修正，amend 进同一 commit）**：(1) **bind
+  mount 精确校验补齐**——`gateway_facts` 新增 `{{json .Mounts}}` 装后
+  检查：install 必须精确核对挂载 source == 渲染产物 Caddyfile（斜杠
+  归一比较），形状（bind + 只读 + 目标 `/etc/caddy/Caddyfile` +
+  basename）任一不符或 source 不一致 → degraded/verify-failed（不自动
+  删除）；status 未给 `--config-dir` 时只做形状校验并**明示"未精确
+  验证"**（加 `--config-dir` 可精确核对）——绝不虚报精确验证；证据只
+  记脱敏事实（source basename + exact_source_verified，顶层
+  exact_source_verified），**本机绝对路径绝不入证据**，失败路径也记录
+  drift facts。(2) **evidence-dir 路径链防线**——显式与默认路径都先做
+  逐组件符号链接检查（与 config-dir 同款，末段检查会漏符号链接父
+  目录）；默认 gitignored `.verify` 路径保持放行。(3) **docker argv
+  白名单运行时强制**——RealRunner 在触及 subprocess 前按
+  ALLOWED_DOCKER_PREFIXES 五前缀（--version/network inspect/inspect/
+  run/rm）放行，其余 argv 一律 returncode=126 拒绝（测试以 subprocess
+  monkeypatch 证明 unsafe argv 绝不执行）；subprocess 超时 → 124、
+  二进制缺失 → 127，均无 traceback。新增 16 项回归测试（bind source/
+  形状漂移、status 精确/未验证双态、白名单/超时/缺省、evidence-dir
+  符号链接父链真链+Windows 安全形态）。验证：套件 63→**79 passed**；
+  ruff/py_compile/`git diff --check` 全净。
+
 ## M14-156 — 公网边缘本地彩排 supervisor（Caddy→frps→frpc→host 回环链路，不部署）
 
 - 新增 `tools/ops/public_edge_rehearsal.py`（纯标准库；子命令

@@ -79,6 +79,40 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-157 状态更新
+
+- M14-157 生产 Web 回环网关 controller（实现切片 Round 1，分支
+  `m14-157-production-web-gateway`（复用 m14-156 worktree 目录，基于
+  main `56004dda68d2daf051087df9d3fbadbddda86104`（PR #244 merge =
+  M14-156 合入，精确基点），单 local commit，不 push、不开 PR）：
+  supervisor 实证生产 Web 容器
+  `aios-m14-03-production-rehearsal-web-1` 在
+  `aios-m14-03-production-rehearsal_default` 网络健康，但既有 host
+  映射 `127.0.0.1:3011` 对 Docker Desktop 呈 TCP 空应答（API 8000
+  正常）——交付 `tools/ops/production_web_gateway.py`（纯标准库
+  plan/status/install/uninstall，默认 plan 零写入零探测零 Docker）+
+  `infra/edge/production-web-gateway/Caddyfile.example` + 63 项聚焦
+  契约测试：pinned Caddy（与边缘模板同 digest）加入生产 compose 网络
+  `Caddy :80 → web:3000`，唯一发布 `127.0.0.1:<host-port>:80`（默认
+  3012，封锁 3011/8000/39443 与生产 compose 全部 host 位）；所有权
+  标签 + restart unless-stopped；双要素确认门、preflight 五门
+  fail-closed（docker/网络/Web healthy/端口/config-dir 契约）、同名
+  容器绝不覆盖、装后 inspect 精确复核 + GET / 必须 200（失败不自动
+  删除）、status 只读四分类、uninstall 只删精确自有容器（配置目录与
+  证据保留）、docker argv 白名单（无 stop/restart/recreate 面）、
+  证据 JSON+MD 原子写 `production_public_ready=false` 恒不变、
+  Runner/Prober 注入（测试零真实 Docker 零网络）。**R1（supervisor 三项
+  修正，amend 进同一 commit）**：bind mount 装后精确校验补齐（install
+  source 精确核对、status 无 config-dir 时形状校验 + 明示未精确验证、
+  证据只记脱敏事实）、evidence-dir 路径链符号链接防线（显式+默认）、
+  docker argv 白名单 RealRunner 运行时强制（五前缀外 126 拒绝、超时
+  124/缺省 127 无 traceback）。验证：新套件 63→**79 passed** + 邻域
+  public_edge_rehearsal 74 passed；ruff/py_compile/`git diff --check`
+  全净。诚实边界：本地回环恢复
+  路径——不修复 Docker Desktop、不暴露公网流量、不改生产边缘设计；
+  开发回合零真实执行；production_public_ready=false 不变。runbook
+  新增 §3D。
+
 ### M14-156 状态更新
 
 - M14-156 公网边缘本地彩排 supervisor（实现切片，分支
