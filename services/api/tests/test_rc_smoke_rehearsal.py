@@ -54,10 +54,13 @@ RUNNER_PATH = REPO_ROOT / "tools" / "ops" / "rc_smoke_rehearsal.py"
 #: c9de722 原始登记。M14-148 再次显式更新 docker-compose.yml pin——本任务
 #: 仅有意改写 compose 注释（SearXNG 三槽位恢复口径说明），服务定义/网络/
 #: 卷/端口与全部 env 值等生产语义零变更（对基 306f72a diff 仅注释行）；见
-#: docs/evidence/m14-148-provider-readiness-recovery/。
+#: docs/evidence/m14-148-provider-readiness-recovery/。M14-159 第三次显式
+#: 更新 docker-compose.yml pin——web 构建新增空默认 NEXT_PUBLIC_BASE_PATH
+#: build arg（AIOS_PUBLIC_WEB_BASE_PATH 透传；空值 = 根路径构建，生产
+#: 默认渲染零变更），其余服务定义/网络/卷/端口等生产语义零变更。
 PRODUCTION_FILE_PINS = {
     "infra/docker-compose.yml":
-        "ee84bc338f3cdc8138b0975046947954f86457d366a3b5c0f05bd7656e7a6075",
+        "cc735ffc1b13b02911b08679e0e0451dd9d47ba1bcf7207d95b6ae7a9abc61c0",
     "infra/build_release_candidate.sh":
         "3efa02586c8a93a1d4b26f1fc981fd1233a87ae94be797cd3f939e9b464778b2",
     "infra/smoke_docker.sh":
