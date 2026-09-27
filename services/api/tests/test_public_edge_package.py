@@ -48,7 +48,7 @@ def _render_package(tmp_path: Path, subdir: str = "pkg") -> Path:
                     "livekit": "https://livekit.acme-public.org",
                     "download": "https://download.acme-public.org"},
         "turn_host": "turn.acme-public.org", "contact_email": "ops@acme-public.org",
-        "home": {"web_port": 3011, "api_port": 8000},
+        "home": {"web_port": 3012, "api_port": 8000},
         "output_dir": str(tmp_path / subdir), "vps_secrets_dir": "/opt/aios-edge/secrets",
         "local_secret_files": {k: str(secrets / v) for k, v in files.items()},
     }

@@ -68,7 +68,7 @@ def _valid_manifest(tmp_path: Path) -> dict:
         "origins": dict(VALID_ORIGINS),
         "turn_host": "turn.acme-public.org",
         "contact_email": "ops@acme-public.org",
-        "home": {"web_port": 3011, "api_port": 8000},
+        "home": {"web_port": 3012, "api_port": 8000},
         "output_dir": str(tmp_path / "render-out"),
         "vps_secrets_dir": "/opt/aios-edge/secrets",
         "local_secret_files": {

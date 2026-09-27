@@ -1,5 +1,34 @@
 # Changelog
 
+## M14-158 — 公网边缘 Web 目标对齐 3012（配置/docs/tests 对齐，非部署）
+
+- 背景（supervisor 实证）：M14-157 生产 Web 回环网关已安装并验证
+  （`127.0.0.1:3012` → Caddy :80 → 生产 web:3000 返回 200）；既有
+  `127.0.0.1:3011` Docker Desktop host 转发仍 stale（TCP 空应答），
+  API `127.0.0.1:8000` 健康。**未来公网 frpc 的 Web 目标因此统一为
+  3012**，API 8000 不变。
+- 变更面：`infra/edge/frpc.windows.toml.example` aios-web 代理
+  `localPort = 3012`（相邻注释说明 3012 = M14-157 网关、3011 已知
+  stale）；`tools/ops/public_edge_prepare.example.json` home.web_port
+  = 3012；`tools/ops/public_edge_rehearsal.py` 默认 HOST_WEB_PORT =
+  3012 + plan/execute/status/docstring 措辞（`--host-web-port` 覆写
+  行为保留）；`infra/edge/rehearsal/` frpc 模板与 compose 注释同步；
+  runbook §3C/§5.2 与研究文档 frpc 骨架/当前边界同步——明确 **3011
+  不再作为本机的公网/彩排 Web 目标**（M14-156 历史证据中 39998
+  一次性绕行措辞原样保留）。
+- 测试：test_edge_deployment_templates（frpc localPort 锁 3012）、
+  test_public_edge_prepare / test_public_edge_package /
+  test_frpc_windows_controller（manifest fixture web_port 3012）、
+  test_public_edge_rehearsal（默认断言/preflight URL/plan 文案全部
+  3012；--host-web-port 覆写与负例覆盖不变）。
+- 诚实边界：**配置/docs/tests 对齐切片——不是公网部署、不构成
+  production_public_ready、不改变生产边缘设计**。生产监控/soak 端点
+  （production_monitor/soak_rehearsal 的 3011 目标）与
+  env.production-recovery 的 AIOS_WEB_PORT=3011 属监控/生产 compose
+  域语义，未在本切片范围内触碰，留待独立评估。开发回合零 Docker、
+  零生产变更；回滚 = 还原本 commit（frpc 目标回到 3011 语义）+
+  网关 uninstall（M14-157 §3D）。
+
 ## M14-157 — 生产 Web 回环网关 controller（本地恢复路径，不部署）
 
 - 新增 `tools/ops/production_web_gateway.py`（纯标准库；子命令

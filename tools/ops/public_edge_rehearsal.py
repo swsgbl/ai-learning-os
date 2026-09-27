@@ -3,7 +3,7 @@
 
 把 M14-153/154/155 的可渲染部署包推进为**可执行的本地回环彩排**：
 probe → Caddy(127.0.0.1:39443) → frps vhost → frpc → host.docker.internal
-的 API(8000)/Web(3011)——在单机上真实跑通 Caddy → frps → frpc → 家机
+的 API(8000)/Web(3012，M14-157 生产 Web 回环网关)——在单机上真实跑通 Caddy → frps → frpc → 家机
 服务的 HTTP 反向隧道链路。**这不是公网部署**：HTTP-only、loopback-only、
 无域名/证书/ACME/LiveKit/coturn，彩排通过 ≠ 公网生产可用。
 
@@ -16,7 +16,7 @@ Fail-closed 契约（承接 M14-153/154/155 纪律）：
   Docker）；HTTP/端口探测经注入 Prober 边界（测试零网络）；
 - execute 前只读 preflight：docker CLI 与 compose 子命令可用、家机位
   API/Web 目标可达（默认 ``http://127.0.0.1:8000/health`` 与
-  ``http://127.0.0.1:3011``，R2 可经 ``--host-api-port``/``--host-web-port``
+  ``http://127.0.0.1:3012``（M14-157 回环网关），R2 可经 ``--host-api-port``/``--host-web-port``
   覆写为 1..65535 临时健康端口——仅限本地 Docker stale-port-forward
   绕行，host.docker.internal 固定不变，畸形/越界/相同端口一律
   port-invalid fail-closed；证据显式记录两端口与是否默认，覆写端口上
@@ -87,7 +87,9 @@ FRPS_VHOST_PORT = 8080  # compose 网络内 vhost（不发布到 host）
 APP_HOST = "app.rehearsal.localhost"
 API_HOST = "api.rehearsal.localhost"
 HOST_API_PORT = 8000  # 默认 host.docker.internal 目标：家机 API 同位 loopback
-HOST_WEB_PORT = 3011  # 默认 host.docker.internal 目标：家机 Web 同位 loopback
+HOST_WEB_PORT = 3012  # M14-158：家机 Web 目标 = M14-157 生产 Web 回环网关
+                      # （127.0.0.1:3012 → Caddy :80 → 生产 web:3000，已验证 200；
+                      #  既有 3011 host 映射对 Docker Desktop 已知 stale，不再作为目标）
 HOST_GATEWAY = "host.docker.internal"
 TOKEN_BYTES = 32
 TOKEN_FILE_NAME = "frps_token.txt"
