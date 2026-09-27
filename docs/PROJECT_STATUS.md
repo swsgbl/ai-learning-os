@@ -9,6 +9,58 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-157 生产 Web 回环网关 controller（实现切片，Round 1）**：worktree
+`m14-156-edge-rehearsal`（目录名复用为有意设计），分支
+`m14-157-production-web-gateway`，基于 main
+`56004dda68d2daf051087df9d3fbadbddda86104`（PR #244 merge = M14-156
+合入，精确基点 = 任务执行时的 origin/main），单 local commit，不 push、
+不开 PR（任务书指令）。问题（supervisor 实证）：生产 Web 容器
+`aios-m14-03-production-rehearsal-web-1` 在
+`aios-m14-03-production-rehearsal_default` 网络上健康，但既有 host 映射
+`127.0.0.1:3011` 对 Docker Desktop 呈 TCP 空应答（API 8000 正常）。
+交付 `tools/ops/production_web_gateway.py`（纯标准库；
+plan/status/install/uninstall，默认 plan 零写入零探测零 Docker）+
+`infra/edge/production-web-gateway/Caddyfile.example` 模板 + 聚焦测试
+`services/api/tests/test_production_web_gateway.py`（63 项）：pinned
+Caddy 容器（`docker.io/library/caddy@sha256:6aeddd44…` 与边缘模板同
+digest）加入生产 compose 网络，`Caddy :80 → web:3000`，唯一发布
+`127.0.0.1:<host-port>:80`（默认 3012；封锁 3011/8000/39443 与生产
+compose 全部 host 位 3000/5433/6379/7880/7881/7882-7892/8878/9000/
+9001）；容器名 `aios-production-web-gateway` + 所有权标签
+`io.aios.managed-by=production_web_gateway`/`io.aios.milestone=m14-157`
++ restart unless-stopped。fail-closed：双要素确认门（install 需
+`INSTALL PRODUCTION WEB GATEWAY`、uninstall 需
+`UNINSTALL PRODUCTION WEB GATEWAY`，缺一即零副作用非零退出）；install
+preflight 五门（docker/网络/Web running+healthy/端口空闲/config-dir
+契约——绝对路径·仓库外·路径链无符号链接·只允许 Caddyfile 幂等覆写）；
+同名容器（无论归属）绝不覆盖；渲染原子写 + 写后自校验（HTTP-only :80、
+无 443/tls、上游恒 web:3000）；装后 inspect 精确复核（image/labels/
+network/bind/port/restart）+ `GET /` 必须 200 才报 pass（失败不自动
+删除，留 supervisor 处置）；status 只读分类
+missing/installed/degraded/foreign；uninstall 只删精确自有容器（配置
+目录与证据保留）；docker argv 白名单（--version/network inspect/
+inspect/run/rm——绝无 stop/restart/recreate 生产容器面）；证据 JSON+MD
+原子写（result/host_port/upstream/容器事实/回滚指引，
+`production_public_ready=false` 恒不变，无 secret 无绝对路径）；Docker/
+HTTP 全部经注入 Runner/Prober（测试零真实 Docker 零网络）。验证：新
+套件 **63 passed** + 邻域套件 public_edge_rehearsal **74 passed**（合跑
+137 passed，外部 basetemp
+`<仓库盘>/.pytest-tmp/m14-157-gateway`）；ruff（默认规则集 + F,E9）
+全绿；py_compile 通过；`git diff --check` 干净。**R1（supervisor 三项
+修正，amend 进同一 commit）**：bind mount 装后**精确**校验补齐（install
+核对挂载 source == 渲染产物，status 无 --config-dir 时只校验形状并明示
+未精确验证——绝不虚报；证据只记 basename + exact_source_verified，
+绝对路径不入证据，失败路径也记录 drift facts）；evidence-dir 显式与
+默认路径均过路径链符号链接检查（默认 .verify 放行）；docker argv
+白名单在 RealRunner 运行时强制（五前缀外 argv 触及 subprocess 前即
+126 拒绝；超时 124/缺省 127 无 traceback）。新增 16 项回归测试，R1 后
+套件 **79 passed** + 邻域 74 passed。诚实边界：**本地回环
+恢复路径**——不修复 Docker Desktop 的坏 3011 映射、不暴露任何公网
+流量、不改变生产边缘设计；开发回合零真实执行（全部为注入 fake 的
+离线契约验证），未触碰任何运行中服务/容器/网络/任务/secret；
+`production_public_ready=false` 不变。runbook 新增 §3D；M14-156 移为
+次席。
+
 **M14-156 公网边缘本地彩排 supervisor（实现切片）**：worktree
 `m14-156-edge-rehearsal`，分支 `m14-156-edge-rehearsal`，基于 main
 `b8db6ffa8c9f4ab858c846464b5a9990232d18e4`（PR #243 merge = M14-155

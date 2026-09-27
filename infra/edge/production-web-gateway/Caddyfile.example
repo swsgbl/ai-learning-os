@@ -1,0 +1,26 @@
+# M14-157 生产 Web 回环网关 Caddy 模板（example）——由
+# tools/ops/production_web_gateway.py 在 install 时原子渲染进仓库外
+# 显式配置目录（Caddyfile，幂等覆写）。
+#
+# 用途（本地恢复路径，不是公网入口）：生产 Web 容器
+# aios-m14-03-production-rehearsal-web-1 在 compose 网络
+# aios-m14-03-production-rehearsal_default 上健康运行，但其既有 host
+# 映射 127.0.0.1:3011 对 Docker Desktop 呈 TCP 空应答。本网关以独立
+# pinned Caddy 容器加入同一 compose 网络，经服务别名 web:3000 反代，
+# 只发布 127.0.0.1:<host-port>:80（默认 3012）——不重建/不重启既有
+# 生产栈、不修复 Docker Desktop、不暴露任何公网流量。
+#
+# 与边缘栈模板（../Caddyfile.example）的差异（有意为之）：
+# - HTTP-only：auto_https off / admin off，无 ACME/证书/443——本地回环
+#   恢复路径不需要 TLS（公网 TLS 属 VPS 边缘 Caddy 职责）；
+# - 站点 :80（容器内），host 面唯一发布 127.0.0.1:<host-port>；
+# - 上游是 compose 网络内的服务别名 web:3000（生产 Web 容器），
+#   不是 frps vhost。
+{
+	auto_https off
+	admin off
+}
+
+:80 {
+	reverse_proxy web:3000
+}
