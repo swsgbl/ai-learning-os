@@ -9,6 +9,40 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-163 公共边缘安全头生产激活证据回填（docs-only 切片）**：
+worktree `m14-163-production-evidence`，分支
+`m14-163-production-evidence`，基于 main `e2a916a7`（PR #252
+merge = M14-163 契约切片合入，精确基点；PR #252 CI 5/5 绿）。
+事实：supervisor（Codex）已于 2026-09-27 按 runbook §9 预告路径
+真实执行生产激活并验收通过——①远端
+`/etc/nginx/aios-base-path.locations.conf` 部署 canonical 模板
+（SHA256 `21d593cc…a660`），`nginx -t` + reload + 服务 active，
+回滚备份 `/etc/nginx/aios-backups/m14-163/…before-m14-163`
+（SHA256 `359ac232…44f9`）；②生产 API 镜像保持
+`aios/api:m14-124-production` 不变、healthy，非敏感 env 键
+`AIOS_CORS_ORIGINS`/`AIOS_AUTH_COOKIE_SAMESITE`/
+`AIOS_AUTH_COOKIE_SECURE` 生效（当前 env SHA256 `96fef7b1…0278`，
+变更前备份 SHA256 `02f5fc2d…9c5` 与 M14-160 §3 一致，secret
+值不回显）；③公网复测 `/aios` 200、`/aios/` 301、
+`/aios/health` 200 三安全头全在，既有 `/`、`/health` 200 不受
+影响，边缘零 CORS；④正式 preflight 终版（`<仓库盘>/.verify/
+m14-163-public-edge-hardening/public-edge-preflight.after-m14-163-final.json`，
+2026-09-27T12:49:21+00:00）自动检查 **6/6 pass**，`exit 3` 仅因
+人工 mobile checklist pending；⑤一次性验收账号已从生产
+PostgreSQL 删除（DELETE 1、复查 count=0），仓库外凭据文件清空
+（长度 0）。交付：`docs/evidence/m14-163-production-edge-hardening/README.md`
+（唯一入库证据文件）+ 三本台账状态回填。验证：聚焦文档契约
+测试（nginx base_path/edge templates/versioning 措辞与版本守卫
+四套件，零网络）**全过**；`git diff --check` 干净；新增行
+秘密/本地绝对路径扫描 0 命中。诚实边界：**docs-only 证据回填
+——零代码/模板/测试/env/远端变更，零 secret 读写，不启动/停止
+任何生产服务**；人工 mobile checklist 仍 pending，不写
+production ready（生产已执行、自动验收通过、人工清单 pending
+口径）；生产纪律（compose 显式
+`-p aios-m14-03-production-rehearsal`；Nginx 失败用备份回滚）
+落档证据 §7。回滚 = 还原本 commit。M14-163 模板/docs/tests
+契约切片移为次席。
+
 **M14-163 公共边缘安全响应头 + CORS allowlist 契约（模板/docs/tests
 切片）**：worktree `m14-163-public-edge-hardening`，分支
 `m14-163-public-edge-hardening`，基于 main `63eb15a`（PR #251 merge =
