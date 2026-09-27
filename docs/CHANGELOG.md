@@ -1,5 +1,55 @@
 # Changelog
 
+## M14-161 — 公网 preflight 受控 base path 支持 + `/aios/health` 精确路由（工具/模板/docs/tests，非部署）
+
+- 背景：对 M14-159/M14-160 落地的同源路径制公共拓扑做正式 preflight 时，
+  `--app-url https://ndtool.cn/aios --api-url https://ndtool.cn/aios/api`
+  在检查开始前即失败——`public_edge_preflight.py` 是 origin-only 契约
+  （Round 4），无法验收生产实际拓扑。另有路由缺口：工具探测
+  `<api-origin>/health`，而公共拓扑只转发 `/aios/api/...` 到 API——
+  公共健康探测需要 canonical 端点。
+- preflight 工具（`tools/ops/public_edge_preflight.py`）：端点解析升级为
+  **origin + 受控 base path**——仅接受无 path、`/` 或精确 `/aios`
+  （canonical 无尾斜杠；白名单 `ALLOWED_BASE_PATHS`），白名单外 path
+  （尾斜杠 `/aios/`、深路径、dot segments、编码斜杠/反斜杠、双斜杠、
+  任意其他前缀）与 userinfo/query/fragment 一律入口拒绝且不回显原文，
+  继续只做 canonical 重构（url=origin+base）；`Endpoint` 新增
+  `base_path` 字段（默认空串，根 origin 行为逐字不变），`origin`
+  property 永不含 base path（CORS 语义）；探测契约——app base 拓扑
+  探测精确 canonical `/aios`（非 `/`），api base 拓扑健康探测
+  `/aios/health`、登录探测拼出 `/aios/api/v1/auth/login`，CORS
+  Origin 头恒为 endpoint origin（如 `https://ndtool.cn`）；根 origin
+  端点行为不变（app 探测 `/`、API 探测 `/health`）；argparse help
+  展示两种合法形态。
+- 边缘模板（`infra/edge/nginx.public-base-path.example.conf`）：新增
+  `location = /aios/health` 精确路由——`proxy_pass
+  http://127.0.0.1:8080/health;`（URI 显式 `/health`，本地 API
+  `/health`）+ Host 改写 `api.internal.aios`（frps API vhost）+
+  `X-Forwarded-For/X-Forwarded-Proto` 透传，与 API 前缀路由一致；
+  精确匹配只接整串，不遮蔽 Web（`/aios/healthz`、`/aios/health/x`
+  仍走 `^~ /aios/`）、不遮蔽 `/aios/api/`（`/aios/api/health` 仍走
+  API 前缀）、不遮蔽既有站点；location 清单五 → 六（注释重编号）。
+- 文档：runbook §3E 边缘路由表补 `= /aios/health` 行 + 公共
+  preflight base path 契约段；§9 验收命令给出公共 Beta（`/aios` base
+  path 端点）与子域 origin 两种形态及解析契约。
+- 测试：`test_public_edge_preflight.py` +26 项（base path parser 接受/
+  canonical 化/16 形态拒绝/拒绝消息不回显 path 原文；run_checks 打桩
+  零网络——app base 探测精确 `/aios`、api base 探测 `/aios/health`、
+  登录 `/aios/api/v1/auth/login`、CORS Origin 无 base、根 origin 探测
+  回归锚 ×2、报告存 canonical base path 端点）；
+  `test_public_edge_nginx_base_path.py` +2 项（`= /aios/health` 精确
+  转发本地 `/health` + Host/X-Forwarded 契约、精确优先且邻近 URI 不被
+  吞）+ location 清单六项锁 + runbook needle 4 项。
+- 验证：两套件合跑 **123 passed**；邻域 edge/template 套件
+  （templates/prepare/package/rehearsal/web healthcheck）合跑全绿
+  （数字见 PROJECT_STATUS）；ruff（默认 + F,E9）全绿；py_compile 通过；
+  `git diff --check` 干净；新增行秘密/本地绝对路径扫描 0 命中。
+- 诚实边界：**工具/模板/docs/tests 对齐切片——零生产变更**：不触碰
+  VPS/远程服务器/Docker 状态/env/secrets；边缘 nginx 片段的生产
+  reload（`= /aios/health` 生效）与对 `https://ndtool.cn/aios` 的正式
+  preflight 执行属生产部署动作，**均待 Codex 按分工执行**；本切片不
+  构成 production_public_ready；根 origin preflight 行为不变；回滚 =
+  还原本 commit。
 ## M14-160 — 公网边缘生产证据收口（docs-only 回填，非部署）
 
 - 背景：supervisor 于 2026-09-27 真实完成公共边缘上线（镜像重建、

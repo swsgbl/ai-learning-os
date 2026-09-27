@@ -7,8 +7,10 @@ infra/edge/ 与 docs/PUBLIC_EDGE_DEPLOYMENT.md）部署后的公网验收。
 Fail-closed 契约（违反任何一条都不放行）：
 - 只访问命令行显式给出的端点：本脚本不内置任何默认域名/IP/端口
   （--turn-port 除外——它是协议常量而非目标地址）；
-- 端点 origin-only（Round 4）：只接受 scheme + 公网 host + port——
-  userinfo、query、fragment、path 一律在入口拒绝；拒绝 http、
+- 端点 origin + 受控 base path（M14-161）：只接受 scheme + 公网 host +
+  port，外加唯一受控 base path `/aios`（M14-159 §3E 同源路径制公共
+  拓扑）——userinfo、query、fragment、dot segments、编码斜杠/反斜杠、
+  双斜杠、尾斜杠及其他任意 path 一律在入口拒绝；拒绝 http、
   loopback/私网/RFC 5737 文档段、RFC 2606 保留域（example.com/
   .invalid/.test/.localhost）——拿模板占位域名做"验收"直接 FAIL；
 - 脱敏集中化（Round 4）：任何 URL 相关错误/报告只出现 canonical
@@ -20,7 +22,8 @@ Fail-closed 契约（违反任何一条都不放行）：
 - 被要求验证的检查不可证即 FAIL，绝不静默跳过或降级为警告：
   * HTTPS/证书链：受信 CA + 域名匹配 + 剩余有效期 >= 14 天
     （默认验证上下文，自签/过期/错域名全部失败）；
-  * 健康检查：GET /health 必须返回 200；
+  * 健康检查：GET /health 必须返回 200（base path `/aios` 拓扑下探测
+    canonical `/aios/health`——M14-161 边缘精确路由的公共健康端点）；
   * CORS：preflight 应答必须精确回显应用源（绝不接受 *），且
     Access-Control-Allow-Credentials: true（cookie 跨源语义）；
   * Cookie：真实登录响应的 Set-Cookie 必须 Secure + SameSite=None +
@@ -70,6 +73,13 @@ TOOL_NAME = "public_edge_preflight"
 CERT_MIN_REMAIN_DAYS = 14
 HSTS_MIN_MAX_AGE = 15552000  # 180 天（OWASP 建议至少 6 个月）
 DEFAULT_TURN_TLS_PORT = 5349  # 协议常量（RFC 8489 之外的 TURN/TLS 惯例端口）
+
+# M14-161 端点 base path 白名单：仓库公共拓扑（M14-159 §3E）是同源
+# 路径制——根 origin（无 path / `/` 归一为空）行为不变，唯一允许的
+# 非空 base path 恰为 `/aios`（canonical 无尾斜杠）。白名单之外的
+# 一切 path（尾斜杠 /aios/、深路径、dot segments、编码斜杠/反斜杠、
+# 双斜杠、任意前缀）一律入口拒绝——绝不做 path 解码或归一化尝试。
+ALLOWED_BASE_PATHS = ("/aios",)
 
 # RFC 2606/6761 保留：占位域名不得作为"公网端点"参与验收。
 # 只存裸后缀——匹配时同时覆盖裸域名与其全部子孙域（foo.example.com、
@@ -132,11 +142,18 @@ class PreflightError(Exception):
 
 @dataclass(frozen=True)
 class Endpoint:
-    """显式提供的公网 https 端点。"""
+    """显式提供的公网 https 端点（origin + 可选受控 base path）。
+
+    - `url` 是 canonical 重构值：scheme://host[:port][/aios]——探测时
+      以 `{url}{path}` 拼接，base path 拓扑下 path 相对 base 解析；
+    - `origin` 永远不含 base path（CORS 与回显的应用源语义）；
+    - `base_path` 只可能是 ""（根 origin）或 "/aios"（受控白名单）。
+    """
 
     url: str
     host: str
     port: int
+    base_path: str = ""
 
     @property
     def origin(self) -> str:
@@ -192,9 +209,14 @@ def _safe_endpoint_display(raw: str) -> str:
 def parse_public_https_url(raw: str) -> Endpoint:
     """解析并校验显式提供的公网 https 端点；非法即抛 PreflightError。
 
-    origin-only（Round 4）：只接受 scheme + 公网 host + port——userinfo、
-    query、fragment、path 一律拒绝（端点参数可能携带凭据，必须 fail-closed
-    在入口拦截且不回显原文）。返回的 url/origin 是 canonical 重构值。
+    origin + 受控 base path（M14-161）：接受 scheme + 公网 host + port，
+    可选唯一受控 base path `/aios`（无 path / `/` 归一为根 origin，行为
+    与 Round 4 origin-only 完全一致）——userinfo、query、fragment 及
+    白名单之外的一切 path（尾斜杠 `/aios/`、深路径、dot segments、编码
+    斜杠/反斜杠、双斜杠、任意其他前缀）一律拒绝（端点参数可能携带
+    凭据，必须 fail-closed 在入口拦截且不回显原文）。返回的 url/origin
+    是 canonical 重构值：`url` = origin + base_path，`origin` 永不含
+    base path（CORS 语义）。
     """
     if not raw or not raw.strip():
         raise PreflightError("空端点")
@@ -208,10 +230,17 @@ def parse_public_https_url(raw: str) -> Endpoint:
     host = (parts.hostname or "").lower()
     if not host:
         raise PreflightError("端点缺少主机名")
-    if parts.path not in ("", "/"):
-        raise PreflightError(f"端点不得携带 path（origin-only）: {_safe_endpoint_display(raw)}")
+    if parts.path in ("", "/"):
+        base_path = ""
+    elif parts.path in ALLOWED_BASE_PATHS:
+        base_path = parts.path
+    else:
+        raise PreflightError(
+            "端点 path 非法（仅允许无 path、`/` 或精确 `/aios` base path）: "
+            f"{_safe_endpoint_display(raw)}"
+        )
     if parts.query:
-        raise PreflightError(f"端点不得携带 query（origin-only）: {_safe_endpoint_display(raw)}")
+        raise PreflightError(f"端点不得携带 query: {_safe_endpoint_display(raw)}")
     if parts.fragment:
         raise PreflightError(f"端点不得携带 fragment: {_safe_endpoint_display(raw)}")
     if not is_public_host(host):
@@ -226,8 +255,8 @@ def parse_public_https_url(raw: str) -> Endpoint:
         port = 443
     if not 1 <= port <= 65535:
         raise PreflightError(f"端口越界（1-65535）: {port}")
-    canonical = f"https://{host}" if port == 443 else f"https://{host}:{port}"
-    return Endpoint(url=canonical, host=host, port=port)
+    canonical = (f"https://{host}" if port == 443 else f"https://{host}:{port}") + base_path
+    return Endpoint(url=canonical, host=host, port=port, base_path=base_path)
 
 
 def parse_public_turn_host(raw: str) -> str:
@@ -393,6 +422,9 @@ def _http_request(
     Round 4 脱敏：只接收**已校验**的 Endpoint + 内部受控 path——错误消息
     展示 canonical origin+path（两者均无凭据面），并对底层异常文本做
     原串剥离（urllib 异常可能内嵌完整 URL）。
+
+    M14-161：`endpoint.url` 含受控 base path（`/aios`），`path` 相对
+    base 拼接——`{url}{path}` 恒为 canonical 探测 URL。
     """
     url = f"{endpoint.url}{path}"
     display = f"{endpoint.url}{path}"
@@ -534,7 +566,11 @@ def run_checks(
     if app_url:
         app = parse_public_https_url(app_url)
         _cert_check(app, timeout, checks)
-        status, headers = _http_request(app, "/", timeout=timeout)
+        # M14-161：base path 拓扑探测 canonical 入口（endpoint.url 已含
+        # `/aios`，path 取空串 = 精确无尾斜杠探测）；根 origin 行为不变
+        # （探测 `/`）。两条路径都不做归一化重定向。
+        app_entry_path = "" if app.base_path else "/"
+        status, headers = _http_request(app, app_entry_path, timeout=timeout)
         if status != 200:
             record(f"app-https:{app.host}", [f"入口返回 {status}（期望 200）"])
         else:
@@ -551,12 +587,18 @@ def run_checks(
     if api_url:
         api = parse_public_https_url(api_url)
         _cert_check(api, timeout, checks)
+        # M14-161：探测 path 相对 base 解析——根 origin 拼 `/health`
+        # （行为不变），base `/aios` 拼 `/aios/health`（M14-161 边缘
+        # 精确路由的 canonical 公共健康端点）。
+        health_probe = f"{api.base_path}/health"
         status, _headers = _http_request(api, "/health", timeout=timeout)
         record(
             f"api-health:{api.host}",
-            [] if status == 200 else [f"/health 返回 {status}（期望 200）"],
-            detail="/health 200",
+            [] if status == 200 else [f"{health_probe} 返回 {status}（期望 200）"],
+            detail=f"{health_probe} 200",
         )
+        # CORS 应用源恒为 endpoint origin（无 base path）——同源路径制
+        # 拓扑下页面 origin 与 API 路径前缀同在 https://ndtool.cn。
         app_origin = parse_public_https_url(app_url).origin if app_url else None
         if app_origin:
             preflight_headers = {
@@ -580,6 +622,8 @@ def run_checks(
             )
         if login_credentials is not None:
             body = json.dumps(login_credentials).encode("utf-8")
+            # base `/aios` 拼出公共登录路径 /aios/api/v1/auth/login（边缘
+            # ^~ /aios/api/ 剥 /aios 后即上游 /api/v1/auth/login）。
             status, headers = _http_request(
                 api,
                 "/api/v1/auth/login",
@@ -609,7 +653,8 @@ def run_checks(
     if livekit_url:
         livekit = parse_public_https_url(livekit_url)
         _cert_check(livekit, timeout, checks)
-        status, _headers = _http_request(livekit, "/", timeout=timeout)
+        livekit_entry_path = "" if livekit.base_path else "/"
+        status, _headers = _http_request(livekit, livekit_entry_path, timeout=timeout)
         record(
             f"livekit-signal:{livekit.host}",
             [] if status == 200 else [f"signal 端点返回 {status}（期望 200）"],
@@ -708,9 +753,17 @@ def main(argv: list[str] | None = None) -> int:
             "不提供任何端点则拒绝运行。手机 4G/5G 验收为人工清单（--mobile-attested-file 签认）。"
         ),
     )
-    parser.add_argument("--app-url", help="Web 入口（https://app.example.com）")
-    parser.add_argument("--api-url", help="API 入口（https://api.example.com）")
-    parser.add_argument("--livekit-url", help="LiveKit signal 入口（https://livekit.example.com）")
+    parser.add_argument(
+        "--app-url",
+        help="Web 入口（https://app.example.com 或 https://app.example.com/aios）",
+    )
+    parser.add_argument(
+        "--api-url",
+        help="API 入口（https://api.example.com 或 https://api.example.com/aios）",
+    )
+    parser.add_argument(
+        "--livekit-url", help="LiveKit signal 入口（https://livekit.example.com）"
+    )
     parser.add_argument("--turn-host", help="TURN/TLS 主机名（turn.example.com）")
     parser.add_argument("--turn-port", type=int, default=DEFAULT_TURN_TLS_PORT,
                         help=f"TURN/TLS 端口（默认 {DEFAULT_TURN_TLS_PORT}，协议常量）")
@@ -730,8 +783,9 @@ def main(argv: list[str] | None = None) -> int:
     if not provided:
         parser.error("必须至少显式提供一个端点（--app-url/--api-url/--livekit-url/--turn-host）")
 
-    # Round 4：先解析后持久——报告只存 canonical 端点（scheme+公网 host+port），
-    # 原始 CLI 参数（可能带 userinfo/query）绝不进入报告/日志。
+    # Round 4/M14-161：先解析后持久——报告只存 canonical 端点
+    # （scheme+公网 host+port[+/aios base path]），原始 CLI 参数（可能带
+    # userinfo/query/任意 path）绝不进入报告/日志。
     try:
         canonical: dict[str, str | int | None] = {
             "app_url": parse_public_https_url(args.app_url).url if args.app_url else None,
