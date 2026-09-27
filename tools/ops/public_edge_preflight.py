@@ -439,6 +439,32 @@ def _http_request(
         raise PreflightError(f"请求失败 {display}: {type(cause).__name__} {detail}") from cause
 
 
+def _format_cert_dn(dn: Any) -> str:
+    """证书 DN 展示（M14-162）：RDN 集合 → RDN → (key, value)。
+
+    `ssl.getpeercert()` 的 subject/issuer 是三层嵌套 tuple——外层是
+    DN（RDN 集合），中层是单个 RDN（可含多个 (key, value) 属性对，
+    RFC 4514 多属性 RDN），内层是二元组。旧实现的 `"=".join(part)`
+    对中层 RDN（元素是二元组而非 str）直接抛 TypeError（Codex 在
+    https://ndtool.cn/aios 实测崩溃）。本助手只做展示格式化：
+
+    - 单属性 RDN → `key=value`；RDN 之间 `, ` 连接；
+    - 多属性 RDN 内部以 `+` 连接（RFC 4514 惯例）；
+    - 空/缺失（None 或空集合）→ 空串；
+    - 非二元组条目防御性跳过——展示函数在任何证书形状下都不抛错，
+      不参与 TLS 验证判定（验证仍由默认上下文 fail-closed 把关）。
+    """
+    rdns: list[str] = []
+    for rdn in dn or ():
+        attributes: list[str] = []
+        for entry in rdn or ():
+            if isinstance(entry, (tuple, list)) and len(entry) == 2:
+                attributes.append(f"{entry[0]}={entry[1]}")
+        if attributes:
+            rdns.append("+".join(attributes))
+    return ", ".join(rdns)
+
+
 def tls_probe(endpoint: Endpoint, timeout: float = 10.0) -> dict[str, Any]:
     """TLS 探测：默认验证上下文（受信 CA + 域名匹配），并返回证书事实。
 
@@ -457,8 +483,8 @@ def tls_probe(endpoint: Endpoint, timeout: float = 10.0) -> dict[str, Any]:
         expires = datetime.strptime(not_after, "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
         remain_days = (expires - datetime.now(timezone.utc)).days
     return {
-        "subject": ", ".join("=".join(part) for part in cert.get("subject", ())),
-        "issuer": ", ".join("=".join(part) for part in cert.get("issuer", ())),
+        "subject": _format_cert_dn(cert.get("subject")),
+        "issuer": _format_cert_dn(cert.get("issuer")),
         "not_after": not_after,
         "remain_days": remain_days,
     }
@@ -509,7 +535,7 @@ def turn_tls_probe(host: str, port: int, timeout: float = 10.0) -> tuple[dict[st
         tls.settimeout(timeout)
         data = tls.recv(2048)
     facts: dict[str, Any] = {
-        "issuer": ", ".join("=".join(part) for part in cert.get("issuer", ())),
+        "issuer": _format_cert_dn(cert.get("issuer")),
         "not_after": cert.get("notAfter"),
     }
     msg_type, code = parse_stun_response(data, txid)

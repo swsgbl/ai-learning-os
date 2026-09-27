@@ -1,5 +1,42 @@
 # Changelog
 
+## M14-162 — preflight 证书 DN 嵌套 tuple 格式化崩溃修复（工具/tests，非部署）
+
+- 背景（Codex 实测）：M14-161 合入后的新版 preflight 对
+  `https://ndtool.cn/aios` 跑正式验收时在 `tls_probe` 崩溃——
+  `ssl.getpeercert()` 返回的 subject/issuer 是**三层嵌套 tuple**
+  （DN（RDN 集合）→ RDN → (key, value) 二元组），旧代码
+  `"=".join(part) for part in cert.get("subject")` 把中层 RDN 当作
+  字符串序列 join，元素是二元组而非 str → `TypeError: sequence
+  item 0: expected str instance, tuple found`。实测真实结构：
+  subject = `((("commonName", "ndtool.cn"),),)`；issuer =
+  `((("countryName", "US"),), (("organizationName", "Let's
+  Encrypt"),), (("commonName", "YE1"),))`。
+- 修复（`tools/ops/public_edge_preflight.py`）：新增纯展示助手
+  `_format_cert_dn(dn)`——按 **RDN 集合 → RDN → key/value** 展示：
+  单属性 RDN → `key=value`、RDN 间 `, ` 连接、多属性 RDN 内部
+  `+` 连接（RFC 4514 惯例）、空/缺失（None/空集合）→ 空串、非
+  二元组条目防御性跳过（展示函数在任何证书形状下都不抛错）；
+  `tls_probe` 与 `turn_tls_probe`（同款 bug）两处 join 全部替换。
+  **TLS 验证与 fail-closed 语义零变更**——默认验证上下文、证书
+  链/域名匹配/剩余有效期判定、错误转 FAIL 路径均不动，仅修展示
+  格式化层。
+- 测试（`test_public_edge_preflight.py` +4，全部零网络）：真实
+  嵌套形状（单字段 subject、三 RDN 含撇号值 issuer）格式化；
+  多属性 RDN/空/None 缺失/畸形条目跳过；**旧实现 TypeError 回归
+  锚**（重现旧 join 表达式对真实结构的崩溃，证明修复针对真实
+  崩溃面）；`tls_probe` 端到端打桩（monkeypatch socket/ssl，零
+  网络零真实凭据）——真实嵌套证书产出可读 subject/issuer 与
+  remain_days 解析。
+- 验证：preflight 套件 **109 passed**；邻域 edge/template 套件
+  合跑全绿（数字见 PROJECT_STATUS）；ruff（默认 + F,E9）全绿；
+  py_compile 通过；`git diff --check` 干净；新增行秘密/本地绝对
+  路径扫描 0 命中。
+- 诚实边界：**工具 bug 修复切片——零生产变更**（不触碰 VPS/远程/
+  Docker/env/secrets，不读取任何真实凭据）；对 `https://ndtool.
+  cn/aios` 的正式 preflight 重跑仍待 Codex 执行；回滚 = 还原本
+  commit。
+
 ## M14-161 — 公网 preflight 受控 base path 支持 + `/aios/health` 精确路由（工具/模板/docs/tests，非部署）
 
 - 背景：对 M14-159/M14-160 落地的同源路径制公共拓扑做正式 preflight 时，
