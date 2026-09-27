@@ -385,6 +385,39 @@ docker compose -f infra/docker-compose.yml --profile local up -d --build web
 在 basePath 下自动为静态资源（`/aios/_next/...`）与 rewrite source 加
 前缀，acceptance rewrite 写法不变。
 
+**容器 healthcheck 对齐构建形态（M14-160）**：M14-159 生产切换后
+supervisor 实证——`aios/web:m14-159-public-edge-beta` 镜像的 `/aios` 与
+`/aios/login` 均 200、Next Ready，但 Docker health 一直 **unhealthy**：
+compose web healthcheck 固定探测 `http://127.0.0.1:3000/`，而
+basePath=`/aios` 构建下 `/` 是 404（canonical 健康路径是 `/aios`）。
+修复原则：同一镜像/compose 在 root build 与 basePath build 下都健康，
+无密钥、无生产手工特例：
+
+- `apps/web/Dockerfile` run stage 固化**非敏感 runtime env**
+  `AIOS_WEB_HEALTH_PATH=${NEXT_PUBLIC_BASE_PATH:-/}`——值唯一来源是
+  构建期 build arg（经上述 normalizeBasePath 白名单校验：非法值构建期
+  抛错、镜像不产出，故运行时只可能是 `/` 或 `/aios`）；
+- compose web healthcheck 改为
+  `wget -q -O- http://127.0.0.1:3000$${AIOS_WEB_HEALTH_PATH:-/} ...`：
+  `$$` 在 compose 渲染后转义为字面 `$`，由容器内 CMD-SHELL 运行时展开
+  镜像 ENV（宿主侧不插值，无注入面；env 未设时 shell 回落 `/`）；
+- root 默认行为**逐字不变**（仍探测 `http://127.0.0.1:3000/`，与
+  M14-159 之前的固定命令一致）；basePath 构建探测
+  `http://127.0.0.1:3000/aios`；
+- compose web `environment` 不提供 `AIOS_WEB_HEALTH_PATH` override 入口
+  （探测路径与构建形态不可能漂移）；
+- RC 冒烟 compose（`infra/docker-compose.rc-smoke.yml`，R1 同步）web
+  healthcheck 与生产 compose **逐字一致**（同一 `$$` 转义命令——RC
+  冒烟镜像 = root 构建，ENV=`/`，探测行为不变）；生产 compose 的
+  LF 归一化 pin 在 `test_rc_smoke_rehearsal.py` `PRODUCTION_FILE_PINS`
+  第四次显式更新（`cc735ffc…` → `b003d0fe…`，pin-history 见该文件
+  注释），无静默漂移路径。
+
+契约由 `services/api/tests/test_web_healthcheck_base_path.py`（21 项）
+锁定：Dockerfile ENV 推导、`$$` 容器内展开、root 默认 `/` 回归锚、
+basePath `/aios`、非法值构建期 fail-closed + 纵深防御（绕过构建注入
+任意 ENV 也绝不可能命中 canonical 探测 URL）、无 secret/loopback-only。
+
 **范围外不变项**：本地/回环开发构建（base path 为空）、彩排模板
 （`infra/edge/rehearsal/`，域名路由制）、Caddy vhost 入口（§3）与
 M14-157 回环网关（§3D）行为均不变；本节只新增 443 路径制公共入口。

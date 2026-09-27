@@ -266,7 +266,13 @@ services:
     ports:
       - "${AIOS_BIND_IP:-127.0.0.1}:${AIOS_WEB_PORT:-3000}:3000"
     healthcheck:
-      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:3000/ >/dev/null 2>&1 || exit 1"]
+      # M14-160: 探测路径对齐 basePath 构建 —— $$ 在 compose 渲染后转义为
+      # 字面 $，由容器内 CMD-SHELL（/bin/sh）运行时展开镜像 ENV
+      # AIOS_WEB_HEALTH_PATH（root 构建 = /，basePath 构建 = /aios；M14-159
+      # 实证 basePath 构建下 / 是 404，canonical 健康路径是 /aios）。
+      # 宿主侧不插值（无单 ${}，杜绝宿主 env 注入面）；env 未设时 shell
+      # 回落 /，root 默认行为与固定探测 / 完全一致。
+      test: ["CMD-SHELL", "wget -q -O- http://127.0.0.1:3000$${AIOS_WEB_HEALTH_PATH:-/} >/dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
