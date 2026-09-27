@@ -58,9 +58,15 @@ RUNNER_PATH = REPO_ROOT / "tools" / "ops" / "rc_smoke_rehearsal.py"
 #: 更新 docker-compose.yml pin——web 构建新增空默认 NEXT_PUBLIC_BASE_PATH
 #: build arg（AIOS_PUBLIC_WEB_BASE_PATH 透传；空值 = 根路径构建，生产
 #: 默认渲染零变更），其余服务定义/网络/卷/端口等生产语义零变更。
+#: M14-160 第四次显式更新 docker-compose.yml pin——web healthcheck 探测
+#: 路径对齐 basePath 构建（test 命令改 $$ 转义容器内展开镜像 ENV
+#: AIOS_WEB_HEALTH_PATH：root 构建 = / 逐字不变，basePath 构建 = /aios；
+#: 修复 M14-159 实证的 basePath 构建下固定探测 / 404 unhealthy），其余
+#: 服务定义/网络/卷/端口等生产语义零变更；rc-smoke compose healthcheck
+#: 同步同一命令（R1，逐字一致契约保持）。
 PRODUCTION_FILE_PINS = {
     "infra/docker-compose.yml":
-        "cc735ffc1b13b02911b08679e0e0451dd9d47ba1bcf7207d95b6ae7a9abc61c0",
+        "b003d0fea0c00e57edd0bd94bc637275b407fccb25f64a95ad06ab0d709a502a",
     "infra/build_release_candidate.sh":
         "3efa02586c8a93a1d4b26f1fc981fd1233a87ae94be797cd3f939e9b464778b2",
     "infra/smoke_docker.sh":

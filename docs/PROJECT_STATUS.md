@@ -9,6 +9,49 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-160 Web 容器 healthcheck 对齐 basePath 构建（配置/docs/tests
+切片）**：worktree `m14-156-edge-rehearsal`（目录名历史沿用），分支
+`m14-160-public-web-healthcheck`，基于 main
+`477f1d6a4c3028362e0685cd1170c2987f49b0ab`（PR #247 merge = M14-159
+合入，精确基点），单 local commit，不 push、不开 PR（任务书指令）。
+问题（supervisor 实证）：M14-159 生产切换后镜像
+`aios/web:m14-159-public-edge-beta` 的 `/aios` 与 `/aios/login` 均 200、
+Next Ready，但 Docker health 一直 unhealthy——compose web healthcheck
+固定探测 `http://127.0.0.1:3000/`，basePath=`/aios` 构建下 `/` 返回
+404（canonical 健康路径应为 `/aios`）。交付：Dockerfile run stage 固化
+非敏感 runtime env `AIOS_WEB_HEALTH_PATH=${NEXT_PUBLIC_BASE_PATH:-/}`
+（构建期 normalizeBasePath 白名单 fail-closed：空/未设 → `/`；唯一
+非空值恰 `/aios` → `/aios`；其他任何值构建期抛错、镜像不产出，运行
+时 ENV 只可能两值）+ compose web healthcheck 改
+`wget -q -O- http://127.0.0.1:3000$${AIOS_WEB_HEALTH_PATH:-/} ...`
+（`$$` 渲染后为字面 `$`，容器内 CMD-SHELL 运行时展开镜像 ENV——宿主
+侧不插值、无注入面；env 未设 shell 回落 `/`）+ compose environment
+不提供该变量 override 入口。root 默认行为逐字不变（仍探测 `/`，与
+M14-159 之前固定命令一致）；basePath 构建探测
+`http://127.0.0.1:3000/aios`；无密钥、无生产手工特例。测试：新增
+`test_web_healthcheck_base_path.py` **21 项**（Dockerfile ENV 推导恰
+一处/右值唯一来源、`$$` 容器内展开、root `/` 逐字回归锚、basePath
+`/aios`、非法值 10 形态构建期 fail-closed + 校验器源码白名单锁、
+纵深防御——绕过构建注入任意 ENV 也绝不可能命中 canonical 探测 URL
+集、无未转义宿主插值、environment 无 override、loopback-only、
+无 secret）。**R1（supervisor PR CI 审查修正，amend 同一 commit）**：
+rc-smoke compose web healthcheck 同步同一 `$$` 转义命令（逐字一致
+契约保持；RC 冒烟镜像 = root 构建，`/` 探测行为不变）+
+`PRODUCTION_FILE_PINS` 第四次显式更新 docker-compose.yml pin
+（`cc735ffc…` → `b003d0fe…`，pin-history 追加 M14-160 口径），修复
+CI 三项失败（`test_smoke_compose_healthchecks_equal_base`/pin 击穿/
+`test_smoke_compose_render_env_and_health_parity_with_base`）。验证：
+新套件 **21 passed** + rc-smoke **59 passed**（渲染 parity 经
+`docker compose config` 真渲染，零容器启动）+ 邻域七套件，九套件合跑
+**334 passed + 4 skipped**（skip = docker 启动门控；外部 basetemp
+`<仓库盘>/.pytest-tmp/m14-160-public-web-healthcheck`）；ruff（默认 +
+F,E9）全绿；py_compile 通过；`git diff --check` 干净；新增行秘密/
+本地绝对路径扫描 0 命中。诚实边界：**配置/docs/tests 对齐——不触碰
+任何生产容器/env/secrets、零 Docker、不构成 production_public_ready**；
+生产 Beta 容器 unhealthy 未在本次直接修复（需 supervisor 按新机制
+重建镜像/compose 后自然恢复 healthy）；root 本地/回环/彩排构建行为
+不变；回滚 = 还原本 commit。M14-159 移为次席。
+
 **M14-159 公共 Web base path 443 `/aios`（配置/docs/tests 切片）**：
 worktree `m14-156-edge-rehearsal`（目录名历史沿用），分支
 `m14-159-public-web-base-path`，基于 main

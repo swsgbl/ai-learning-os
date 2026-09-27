@@ -1,5 +1,55 @@
 # Changelog
 
+## M14-160 — Web 容器 healthcheck 对齐 basePath 构建（配置/docs/tests，非部署）
+
+- 背景（M14-159 生产切换后 supervisor 实证）：镜像
+  `aios/web:m14-159-public-edge-beta` 的 `/aios` 与 `/aios/login` 均 200、
+  Next Ready，但 Docker health 一直 **unhealthy**——compose web
+  healthcheck 固定探测 `http://127.0.0.1:3000/`，basePath=`/aios` 构建下
+  `/` 返回 404（canonical 健康路径应为 `/aios`）。目标：同一镜像/compose
+  在 root build 与 basePath build 下都健康；无密钥、无生产手工特例。
+- 变更面：`apps/web/Dockerfile` run stage 固化非敏感 runtime env
+  `AIOS_WEB_HEALTH_PATH=${NEXT_PUBLIC_BASE_PATH:-/}`（run stage 重新声明
+  `ARG NEXT_PUBLIC_BASE_PATH=` 默认空；值唯一来源是构建期 build arg，
+  经 next.config.ts `normalizeBasePath` 白名单校验 fail-closed——空/未设
+  → `/`，唯一非空值 `/aios` → `/aios`，其他任何值构建期抛错、镜像不
+  产出）；compose web healthcheck 改为
+  `wget -q -O- http://127.0.0.1:3000$${AIOS_WEB_HEALTH_PATH:-/} ...`
+  （`$$` 渲染后转义为字面 `$`，容器内 CMD-SHELL 运行时展开镜像 ENV；
+  宿主侧不插值、无注入面；env 未设 shell 回落 `/`）；compose web
+  `environment` 不提供该变量 override 入口（探测路径与构建形态不可能
+  漂移）。root 默认行为**逐字不变**（仍探测 `/`，与 M14-159 之前的
+  固定命令一致）。
+- 测试：新增 `services/api/tests/test_web_healthcheck_base_path.py`
+  （21 项）：Dockerfile ENV 推导（恰一处定义、右值唯一来源）、compose
+  `$$` 容器内展开、root 默认 `/` 逐字回归锚、basePath `/aios`、非法值
+  （尾斜杠/查询串/片段/穿越/命令拼接等 10 形态）构建期 fail-closed +
+  校验器源码白名单锁、纵深防御（绕过构建注入任意 ENV 也绝不可能命中
+  canonical 探测 URL 集）、无未转义宿主插值、environment 无 override
+  入口、loopback-only、无 secret。
+- **R1（supervisor PR CI 审查修正，amend 进同一 commit）**：RC smoke
+  parity 与生产 pin 同步——`infra/docker-compose.rc-smoke.yml` web
+  healthcheck 同步同一 `$$` 转义 runtime-env 命令（与生产 compose 逐字
+  一致契约保持；RC 冒烟镜像 = root 构建，`/` 探测行为不变）；
+  `test_rc_smoke_rehearsal.py` 的 `PRODUCTION_FILE_PINS` 第四次显式更新
+  `infra/docker-compose.yml` LF 归一化 pin
+  （`cc735ffc…` → `b003d0fe…`，pin-history 注释追加 M14-160 口径：
+  healthcheck 探测路径对齐 basePath 构建，其余生产语义零变更）。R1 修复
+  CI 三项失败：`test_smoke_compose_healthchecks_equal_base`、
+  `test_production_files_byte_equivalent_to_base[docker-compose.yml]`、
+  `test_smoke_compose_render_env_and_health_parity_with_base`。
+- 验证：新套件 **21 passed** + rc-smoke **59 passed**（含上述三项，渲染
+  parity 经 `docker compose config` 真渲染，零容器启动）+ 邻域七套件
+  合跑九套件 **334 passed + 4 skipped**（skip = docker 启动门控；外部
+  basetemp `<仓库盘>/.pytest-tmp/m14-160-public-web-healthcheck`）；
+  ruff（默认 + F,E9）全绿；py_compile 通过；`git diff --check` 干净；
+  新增行秘密/本地绝对路径扫描 0 命中。
+- 诚实边界：**配置/docs/tests 对齐切片——不重启/不触碰任何生产容器、
+  不构成 production_public_ready**；生产 Beta 容器仍是 M14-159 构建
+  （unhealthy 状态未在本次修复——需 supervisor 按上述机制重建镜像/
+  compose 后自然恢复 healthy）；root 本地/回环/彩排构建行为不变；
+  零 Docker、零生产变更、零 secret；回滚 = 还原本 commit。
+
 ## M14-159 — 公共 Web base path（443 `/aios`，配置/docs/tests 对齐，非部署）
 
 - 背景（supervisor 云/网络外检实证）：**8443 对公网不可达**，而 **443 已有

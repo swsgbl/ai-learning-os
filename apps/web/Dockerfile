@@ -20,6 +20,14 @@ RUN npm run build --workspace apps/web
 FROM node:22-alpine AS run
 ENV NODE_ENV=production
 WORKDIR /app
+# M14-160: 容器健康探测路径固化为非敏感 runtime env —— 值唯一来源是
+# 构建期 NEXT_PUBLIC_BASE_PATH（经 next.config.ts normalizeBasePath 结构化
+# 校验 fail-closed：空/未设 → 探测 /；唯一允许的非空值恰为 /aios → 探测
+# /aios；任何其他值在 build stage 抛错、镜像不会产出，故本 ENV 运行时
+# 只可能是 / 或 /aios）。compose healthcheck 经 $$ 转义在容器内读此 env
+# —— root 构建行为与 M14-159 之前完全一致（仍探测 /）。
+ARG NEXT_PUBLIC_BASE_PATH=
+ENV AIOS_WEB_HEALTH_PATH=${NEXT_PUBLIC_BASE_PATH:-/}
 COPY --from=build /app/apps/web/.next/standalone ./
 COPY --from=build /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=build /app/apps/web/public ./apps/web/public
