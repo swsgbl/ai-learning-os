@@ -1,5 +1,51 @@
 # Changelog
 
+## M14-166 — 公共 PWA + FRPC WSS 生产证据收口（docs-only，非代码）
+
+- 背景：M14-164 通用 PWA 下载/安装入口（PR #254，state MERGED，
+  final head `586dd629`，merge commit `f71796cf`，checks 5/5
+  SUCCESS）与 M14-165 frpc WSS 控制器（PR #255，state MERGED，
+  final head `eded4964`，merge commit `978efec`，checks 5/5
+  SUCCESS；merge-post main CI run `36345231051` head `978efec`
+  conclusion SUCCESS）合入后，supervisor 复核生产观察——本切片
+  只把结果落档，零生产触碰。
+- M14-165 控制器事实（引用）：两种窄 preflight 模式（direct =
+  公网 IPv4+7000+TLS；WSS = DNS serverAddr+443+`transport.protocol
+  = "wss"`+TLS+`tls.serverName == serverAddr`）；fail-closed 边界
+  保持（inline token/非 loopback 后端/TLS 关闭/SNI 不一致/混合
+  端口协议/占位域名/相对路径/未支持 transport 全拒）；token 文件
+  只查安全元数据，内容不读不打印；R2 修复中文 Windows schtasks
+  解码（GBK/cp936 missing 消息正确分类、`/Query /XML` UTF-16 BOM
+  正确解析、未知失败仍 fail-closed）；R3 将解码/RealRunner 测试
+  钉到 Windows 分支（Linux CI 仍练 Windows 路径）；本地聚焦
+  59 passed + Ruff + `py_compile`。
+- 生产 preflight（supervisor 复核真实配置）：mode `wss`、server
+  `ndtool.cn`、proxies `aios-public-web`/`aios-public-api`、token
+  文件元数据 present、输出无 token/secret。
+- Windows 计划任务 `AIOS-Edge-FRPC`：controller status
+  `installed`、Task Scheduler Ready/Enabled、BootTrigger（短延迟）、
+  LogonType S4U、RunLevel least privilege、Command `<仓库盘>\.aios-public-edge\bin\frpc.exe`、
+  Arguments `-c "<仓库盘>\.aios-public-edge\frpc-ndtool-wss-443.toml"`、
+  描述 marker `urn:aios:m14-155:edge-frpc-controller`、
+  LastRunTime `1999/11/30` + LastTaskResult `267011`（boot 触发
+  且安装后未重启，任务尚未运行——预期状态非故障）。
+- 既有生产 frpc 进程**未重启**：PID `31256`、路径 `<仓库盘>\.aios-public-edge\bin\frpc.exe`、
+  启动时间 `2026-09-27 22:45:02` 本地时间。
+- 公网回归检查（全部 HTTP 200）：`/aios/download`
+  （text/html，20488 bytes）、`/aios/manifest.webmanifest`
+  （application/manifest+json，669 bytes）、`/aios/sw.js`
+  （application/javascript，7284 bytes）、`/aios/health`
+  （application/json，46 bytes）——前三项即 M14-164 PWA 入口的
+  公网实证。
+- 诚实边界：**docs-only 证据收口——零代码/模板/测试/compose/env/
+  infra/远端变更，零 secret 读写，不启动/停止任何生产服务**；
+  **reboot 自愈尚未验证**（受控重启后恰好一个控制器持有 frpc 实例
+  启动且公网恢复才算完成）；公网检查是时点证据非持续可用性保证；
+  真实 4G/5G 手机清单、TURN/TLS+真实语音 E2E、Android 签名 APK、
+  Harmony AGC 签名 HAP、持续监控告警、长 soak 仍开放。回滚 =
+  还原本 commit。证据：`docs/evidence/m14-166-public-edge-persistence/README.md`
+  （唯一入库证据文件）。
+
 ## M14-163 — 公共边缘安全头生产激活证据回填（docs-only，非代码）
 
 - 背景：M14-163 契约切片（PR #252，merge `e2a916a7`，CI 5/5 绿）
