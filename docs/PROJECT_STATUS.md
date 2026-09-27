@@ -9,6 +9,38 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-163 公共边缘安全响应头 + CORS allowlist 契约（模板/docs/tests
+切片）**：worktree `m14-163-public-edge-hardening`，分支
+`m14-163-public-edge-hardening`，基于 main `63eb15a`（PR #251 merge =
+M14-162 合入，精确基点）。问题（Codex 用 M14-162 preflight 实测
+`https://ndtool.cn/aios`）：① app-https FAIL——`/aios` 响应缺
+HSTS/X-Content-Type-Options/Referrer-Policy（上游 Next 未发、边缘
+未加）；② api-cors FAIL——预检缺 Access-Control-Allow-Origin
+（API CORS 中间件已回 Allow-Methods/Credentials），根因是公共
+origin 未列入家机 `AIOS_CORS_ORIGINS` allowlist。交付：边缘模板
+五个公共浏览器面 location（`= /aios`、`= /aios/`、`= /aios/health`、
+`^~ /aios/api/`、`^~ /aios/`）各显式 `add_header ... always` 恒定
+三头（HSTS `max-age=31536000` ≥ preflight 门槛 15552000、
+X-Content-Type-Options nosniff、Referrer-Policy
+strict-origin-when-cross-origin；按 nginx add_header 继承规则逐
+location 显式——location 内任一 add_header 即令 server 级失效，
+不依赖宿主；always 覆盖 301/4xx）；frp 隧道入口不加；不引入
+CSP/框架策略头（不放宽不收紧）；**边缘零 CORS**（无任何
+Access-Control-*）。runbook §3E 新增安全头契约段、§8 新增公共拓扑
+CORS allowlist 定版（`AIOS_CORS_ORIGINS` 显式包含
+`https://ndtool.cn`，值为无 path 应用源 origin，运行时 env 重启
+生效；边缘只透传绝不代答）+ Cookie 验收凭据纪律（受控
+credentials file 仓库外、真实凭据绝不入库）、§9 新增检查通过前置
+条件段。测试 **+5 项全零网络**（五 location 三头+覆盖完整性、frp
+无 add_header、零 CORS+无 CSP 头逐行扫描、add_header 必带 always、
+runbook 关键句契约）。验证：nginx 套件 **23 passed** + 八套件合跑
+**606 passed + 3 skipped**；ruff（默认 + F,E9）全绿；py_compile
+通过；`git diff --check` 干净；新增行秘密/本地绝对路径扫描
+0 命中。诚实边界：**模板/docs/tests 对齐——零生产变更、零凭据
+读写**；生产生效待 Codex 执行（边缘 reload + 家机 env 落地
+allowlist 并重启 API + 复跑正式 preflight）；回滚 = 还原本
+commit。M14-162 移为次席。
+
 **M14-162 preflight 证书 DN 嵌套 tuple 格式化崩溃修复（工具/tests
 切片）**：worktree `m14-162-tls-cert-dn-format`，分支
 `m14-162-tls-cert-dn-format`，基于 main `630c228`（PR #250 merge =

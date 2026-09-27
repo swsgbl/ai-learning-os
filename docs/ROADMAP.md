@@ -79,6 +79,33 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-163 状态更新
+
+- M14-163 公共边缘安全响应头 + CORS allowlist 契约（模板/docs/tests
+  对齐切片，worktree `m14-163-public-edge-hardening`，分支
+  `m14-163-public-edge-hardening`，基于 main `63eb15a`（PR #251
+  merge = M14-162 合入，精确基点））。问题（Codex 用 M14-162
+  preflight 实测 `https://ndtool.cn/aios`）：app-https FAIL（`/aios`
+  响应缺 HSTS/X-Content-Type-Options/Referrer-Policy——上游 Next
+  未发、边缘未加）+ api-cors FAIL（预检缺 Access-Control-Allow-
+  Origin，API 中间件已回 Methods/Credentials，根因 = 公共 origin
+  未列入家机 `AIOS_CORS_ORIGINS`）。交付：边缘模板五个公共浏览器面
+  location 各显式 `add_header ... always` 恒定三头（HSTS
+  `max-age=31536000`、nosniff、strict-origin-when-cross-origin；
+  按nginx add_header 继承规则逐 location 显式不依赖宿主、always
+  覆盖 301/4xx；frp 隧道入口不加；不引入 CSP/框架策略头；**边缘
+  零 CORS**）；runbook §3E 安全头契约段 + §8 公共拓扑 CORS
+  allowlist 定版（`AIOS_CORS_ORIGINS` 显式含 `https://ndtool.cn`，
+  运行时 env 重启生效，边缘只透传）+ Cookie 凭据纪律（受控
+  credentials file 仓库外）+ §9 前置条件段。测试 +5 项全零网络
+  （三头/覆盖完整性/frp 无头/零 CORS+无 CSP 逐行扫描/always 标志/
+  runbook 关键句）。验证：nginx 套件 **23 passed** + 八套件合跑
+  全绿；ruff（默认 + F,E9）全绿；py_compile 通过；
+  `git diff --check` 干净；新增行秘密/本地绝对路径扫描 0 命中。
+  诚实边界：模板/docs/tests 对齐——零生产变更、零凭据读写；生产
+  生效待 Codex 执行（边缘 reload + 家机 env allowlist 落地重启
+  API + 复跑正式 preflight）；回滚 = 还原本 commit。
+
 ### M14-162 状态更新
 
 - M14-162 preflight 证书 DN 嵌套 tuple 格式化崩溃修复（工具/tests
