@@ -21,7 +21,12 @@
    反斜杠、双斜杠、任意前缀）一律拒绝且不回显原文；run_checks 探测
    ——app base 拓扑探测精确 canonical /aios（非 /）、api base 拓扑
    探测 /aios/health、登录走 /aios/api/v1/auth/login、CORS Origin 用
-   endpoint origin（无 base）；根 origin 行为逐项不变（探测 /、/health）。
+   endpoint origin（无 base）；根 origin 行为逐项不变（探测 /、/health）；
+9. M14-162 证书 DN 格式化：ssl.getpeercert 的 subject/issuer 是三层
+   嵌套（DN→RDN→(key,value)），旧 `"=".join(part)` 对真实形状抛
+   TypeError（Codex 在 https://ndtool.cn/aios 实测崩溃）；新
+   _format_cert_dn 按 RDN 集合→RDN→key/value 展示，覆盖单字段、
+   多 RDN、多属性 RDN、空/缺失与畸形条目，TLS 验证语义不变。
 """
 from __future__ import annotations
 
@@ -36,6 +41,7 @@ import sys
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Self
 
 import pytest
 
@@ -838,6 +844,96 @@ def test_tls_probe_fails_closed_against_plain_tcp() -> None:
     finally:
         listener.close()
         thread.join(timeout=2)
+
+
+# --------------------------------------------- M14-162 证书 DN 格式化（零网络）
+
+
+# Codex 在 https://ndtool.cn/aios 实测崩溃的真实 ssl.getpeercert 形态：
+# subject/issuer 是三层嵌套 tuple——DN（RDN 集合）→ RDN → (key, value)。
+REAL_CERT_SUBJECT = ((("commonName", "ndtool.cn"),),)
+REAL_CERT_ISSUER = (
+    (("countryName", "US"),),
+    (("organizationName", "Let's Encrypt"),),  # 真实值含撇号
+    (("commonName", "YE1"),),
+)
+
+
+def test_format_cert_dn_real_nested_shapes() -> None:
+    """M14-162：真实三层嵌套（DN→RDN→key/value）格式化不再 TypeError。"""
+    assert preflight._format_cert_dn(REAL_CERT_SUBJECT) == "commonName=ndtool.cn"
+    assert preflight._format_cert_dn(REAL_CERT_ISSUER) == (
+        "countryName=US, organizationName=Let's Encrypt, commonName=YE1"
+    )
+
+
+def test_format_cert_dn_multivalue_empty_missing_and_malformed() -> None:
+    """多属性 RDN（RFC 4514 `+` 连接）、空/缺失 DN → 空串、畸形条目跳过。"""
+    multi_attribute_rdn = ((("countryName", "US"), ("organizationName", "Example Org"),),)
+    assert (
+        preflight._format_cert_dn(multi_attribute_rdn)
+        == "countryName=US+organizationName=Example Org"
+    ), "同一 RDN 内多属性以 + 连接"
+    assert preflight._format_cert_dn(()) == "", "空 DN → 空串"
+    assert preflight._format_cert_dn(None) == "", "缺失 DN（None）→ 空串"
+    mixed = ((("commonName", "ndtool.cn"),), ("malformed",), (("organizationalUnitName", "edge"),))
+    assert (
+        preflight._format_cert_dn(mixed) == "commonName=ndtool.cn, organizationalUnitName=edge"
+    ), "非二元组条目防御性跳过，合法 RDN 照常展示"
+
+
+def test_legacy_join_expression_crashed_on_real_shape() -> None:
+    """回归锚：旧实现的 `"=".join(part)` 对真实 RDN 结构确实抛
+    TypeError——证明本修复针对真实崩溃面（非臆测形状）。"""
+    with pytest.raises(TypeError):
+        ", ".join("=".join(part) for part in REAL_CERT_ISSUER)
+
+
+def test_tls_probe_formats_real_cert_dn_without_network(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """tls_probe 端到端（打桩 socket/ssl，零网络）：真实嵌套证书结构
+    产出可读 subject/issuer 与剩余有效期，不再在 DN 格式化处崩溃。"""
+
+    real_cert = {
+        "subject": REAL_CERT_SUBJECT,
+        "issuer": REAL_CERT_ISSUER,
+        "notAfter": "Sep 28 12:00:00 2027 GMT",
+    }
+
+    class _FakeTLS:
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *args: object) -> bool:
+            return False
+
+        def getpeercert(self) -> dict:
+            return real_cert
+
+    class _FakeContext:
+        def wrap_socket(self, sock: object, server_hostname: str | None = None) -> _FakeTLS:
+            return _FakeTLS()
+
+    class _FakeSock:
+        def __enter__(self) -> Self:
+            return self
+
+        def __exit__(self, *args: object) -> bool:
+            return False
+
+    monkeypatch.setattr(
+        preflight.socket, "create_connection", lambda address, timeout=None: _FakeSock()
+    )
+    monkeypatch.setattr(preflight.ssl, "create_default_context", lambda: _FakeContext())
+    endpoint = preflight.Endpoint(url="https://edge.acme-public.org", host="edge.acme-public.org", port=443)
+    facts = preflight.tls_probe(endpoint, timeout=5)
+    assert facts["subject"] == "commonName=ndtool.cn"
+    assert facts["issuer"] == "countryName=US, organizationName=Let's Encrypt, commonName=YE1"
+    assert facts["not_after"] == "Sep 28 12:00:00 2027 GMT"
+    assert isinstance(facts["remain_days"], int) and facts["remain_days"] > 300, (
+        "notAfter 解析链路随 DN 修复一并回归"
+    )
 
 
 def test_cli_entrypoint_module_compatible() -> None:

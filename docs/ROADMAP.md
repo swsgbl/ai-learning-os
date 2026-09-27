@@ -79,6 +79,30 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-162 状态更新
+
+- M14-162 preflight 证书 DN 嵌套 tuple 格式化崩溃修复（工具/tests
+  切片，worktree `m14-162-tls-cert-dn-format`，分支
+  `m14-162-tls-cert-dn-format`，基于 main `630c228`（PR #250 merge =
+  M14-161 合入，精确基点））。问题（Codex 实测）：新版 preflight 对
+  `https://ndtool.cn/aios` 正式验收时 `tls_probe` 崩溃——
+  `ssl.getpeercert()` 的 subject/issuer 是三层嵌套 tuple（DN（RDN
+  集合）→ RDN → (key, value)），旧 `"=".join(part)` 对中层 RDN
+  （元素为二元组非 str）抛 TypeError（实测 subject 单 RDN 单属性、
+  issuer 三 RDN 含撇号值 `Let's Encrypt`）。交付：纯展示助手
+  `_format_cert_dn`（单属性 `key=value`、RDN 间 `, `、多属性 RDN
+  内部 `+`（RFC 4514）、空/缺失 → 空串、非二元组条目防御性跳过，
+  任何证书形状不抛错）；`tls_probe` 与 `turn_tls_probe`（同款 bug）
+  两处替换；TLS 验证与 fail-closed 语义零变更。测试 +4 项全零网络
+  （真实嵌套形状/多属性/空/None/畸形/旧实现 TypeError 回归锚/
+  tls_probe 端到端打桩——monkeypatch socket/ssl，零真实凭据）。
+  验证：preflight 套件 **109 passed** + 邻域 edge/template 套件
+  合跑全绿；ruff（默认 + F,E9）全绿；py_compile 通过；
+  `git diff --check` 干净；新增行秘密/本地绝对路径扫描 0 命中。
+  诚实边界：工具 bug 修复——零生产变更、零凭据读取；
+  `https://ndtool.cn/aios` 正式 preflight 重跑仍待 Codex 执行；
+  回滚 = 还原本 commit。
+
 ### M14-161 状态更新
 
 - M14-161 公网 preflight 受控 base path 支持 + `/aios/health` 精确路由
