@@ -17,6 +17,7 @@ import {
   LineChart,
   LogIn,
   ShieldCheck,
+  Smartphone,
   type LucideIcon,
 } from "lucide-react";
 import { gsap, useMotion } from "@/lib/gsap";
@@ -238,6 +239,15 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           </nav>
           <div className="flex items-center gap-2">
             <AuthBadge state={auth} onLogout={handleLogout} />
+            {/* M14-164：下载/安装入口（header 图标按钮，不挤占移动底栏）。 */}
+            <Link
+              href="/download"
+              aria-label="下载与安装"
+              title="下载与安装"
+              className="inline-flex min-h-11 w-11 items-center justify-center rounded-lg text-muted transition-colors duration-150 hover:bg-surface-2 hover:text-ink md:min-h-9 md:w-9"
+            >
+              <Smartphone className="size-4" aria-hidden="true" />
+            </Link>
           </div>
         </div>
       </header>

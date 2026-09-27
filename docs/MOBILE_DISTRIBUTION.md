@@ -1,4 +1,4 @@
-# 移动分发清单（Android release / HarmonyOS signed / PWA）— M14-153
+# 移动分发清单（Android release / HarmonyOS signed / PWA）— M14-153 / M14-164
 
 公网边缘的移动入口分发规范。配套模板：`infra/edge/download-manifest.example.json`
 （部署为 `download.example.com` 的 `manifest.json`）。自动化验收入口：
@@ -53,12 +53,42 @@
        `auth_smoke.py` 对公网 API；
 8. [ ] preflight 人工清单 `mobile-harmony-pwa` 项签认。
 
-## 3. iPhone / 通用 PWA 清单
+## 3. iPhone / 通用 PWA 清单（M14-164 应用内实施）
 
-1. [ ] Web 已在 HTTPS（`app.example.com`）且有 manifest.webmanifest、
-       icons、可离线壳（service worker 缓存策略与考试数据边界一致）；
-2. [ ] iOS Safari「添加到主屏幕」体验可用（图标/启动屏/独立窗口）；
-3. [ ] `download.example.com/pwa/` 引导页就绪。
+Web 应用自带通用安装入口（`/download` 路由），不再单独依赖下载站引导页：
+
+1. [x] PWA manifest（`apps/web/src/app/manifest.ts` metadata route）：构建期
+       生成 `/manifest.webmanifest`，`start_url` / `scope` / `id` / icons
+       随 `NEXT_PUBLIC_BASE_PATH`（空 或 `/aios`）正确变化（契约见
+       `apps/web/src/lib/pwa.test.ts`）；
+2. [x] 图标：`apps/web/public/icons/` 192/512 × any/maskable 真实 PNG +
+       `public/apple-touch-icon.png`（180，iOS 主屏）；生成脚本
+       `apps/web/scripts/generate-pwa-icons.mjs` 入库、零依赖、可重复执行；
+       maskable 内容收缩在中心 80% 安全区（契约见
+       `apps/web/src/lib/icon-assets.test.ts`）；
+3. [x] service worker（`apps/web/public/sw.js` + `sw-register.tsx` 注册）：
+       仅同源 GET；API（`/api/`，含 `/aios/api/`）、认证、考试、语音、
+       上传流量双侧 bypass（请求侧 + 响应侧 Set-Cookie / JSON 守卫）；
+       导航 network-first、离线回退缓存壳；cache 版本化并清理旧版本
+       （契约见 `apps/web/src/lib/sw-contract.test.ts`）；
+4. [x] iOS Safari「添加到主屏幕」指引在 `/download` 页内联展示
+       （`apps/web/src/components/download/download-panel.tsx`）；
+5. [ ] 公网验收（supervisor / 真机）：iOS Safari 与 Android Chrome 实机
+       安装冒烟——安装按钮出现、图标正确、独立窗口打开、离线壳可用。
+       SW 的 scope 推导使其在根路径与 basePath 构建下行为一致，验收只需
+       对公网实际部署形态各跑一次。
+
+### /download 页面诚实边界（M14-164）
+
+- 渠道状态的单一事实来源是 `apps/web/src/lib/download.ts`：
+  PWA = `available`；Android（release keystore 未落地）与
+  HarmonyOS（AGC 证书未落地）= `pending`；
+- 原生渠道**不存在任何下载链接**（数据层 `href` 恒为 `null`，结构上
+  排除误配；`download.test.ts` / `download-page.test.ts` 钉住页面与数据
+  全量不出现 `.apk` / `.hap` 引用）；
+- 本切片**不宣称移动端全量生产可用**：原生包状态就绪与否以
+  `download-manifest` 的 `signed: true` 为准（见下节规范），签名材料
+  落地前 /download 仅如实展示 pending 与原因。
 
 ## 4. manifest（SHA256/版本清单）规范
 
