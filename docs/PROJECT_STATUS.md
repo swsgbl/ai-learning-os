@@ -9,6 +9,41 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-166 公共 PWA + FRPC WSS 生产证据收口（docs-only 切片）**：
+worktree `.claude/worktrees/m14-166-public-edge-evidence`，分支
+`m14-166-public-edge-evidence`，基于 main `978efec`（PR #255
+merge = M14-165 合入，精确基点）。PR/CI 链：M14-164（PR #254
+MERGED，final head `586dd629`，merge `f71796cf`，5/5 SUCCESS）
+与 M14-165（PR #255 MERGED，final head `eded4964`，merge
+`978efec`，5/5 SUCCESS；merge-post main CI run `36345231051`
+SUCCESS）。事实（supervisor 复核，本切片只落档）：①M14-165
+控制器 direct/WSS 双窄 preflight 模式与 fail-closed 边界、token
+只查元数据、R2 GBK/UTF-16 解码修复、R3 Windows 分支 pin（本地
+聚焦 59 passed + Ruff + py_compile）；②生产 preflight：mode
+`wss`、server `ndtool.cn`、proxies `aios-public-web`/
+`aios-public-api`、token 元数据 present、输出无 secret；③计划
+任务 `AIOS-Edge-FRPC`：installed、Ready/Enabled、BootTrigger
+短延迟、S4U、least privilege、Command/Arguments 指向
+`<仓库盘>\.aios-public-edge\`、marker
+`urn:aios:m14-155:edge-frpc-controller`、LastRunTime
+`1999/11/30`+LastTaskResult `267011`（boot 触发且未重启，任务
+尚未运行——预期状态）；④既有 frpc 进程 PID `31256` 未被重启
+（启动 `2026-09-27 22:45:02` 本地时间）；⑤公网回归 4 项全 200
+（`/aios/download` 20488 bytes、`/aios/manifest.webmanifest`
+669 bytes、`/aios/sw.js` 7284 bytes、`/aios/health` 46 bytes）
+——前三项即 M14-164 PWA 入口公网实证。交付：
+`docs/evidence/m14-166-public-edge-persistence/README.md`（唯一
+入库证据文件）+ 三本台账状态回填。验证：controller 套件
+**59 passed**（canonical venv）+ 版本/措辞守卫（versioning
+sync、R1 wording sweep，零网络）通过；`git diff --check` 干净；
+新增行秘密/本地绝对路径/U+FFFD 扫描 **0 命中**。诚实边界：
+**docs-only 证据收口——零生产变更、零 secret 读写，不启动/停止
+任何生产服务**；**reboot 自愈尚未验证**（受控重启后恰好一个
+控制器持有 frpc 实例启动且公网恢复才关闭该项）；公网检查为
+时点证据非持续保证；真实 4G/5G 清单、TURN/TLS+真实语音 E2E、
+Android 签名 APK、Harmony AGC 签名 HAP、持续监控告警、长 soak
+仍开放。回滚 = 还原本 commit。M14-163 证据回填切片移为次席。
+
 **M14-163 公共边缘安全头生产激活证据回填（docs-only 切片）**：
 worktree `m14-163-production-evidence`，分支
 `m14-163-production-evidence`，基于 main `e2a916a7`（PR #252
