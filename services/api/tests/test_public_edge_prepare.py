@@ -612,7 +612,8 @@ def test_valid_render_produces_parseable_toml(tmp_path: Path) -> None:
     assert model["serverAddr"] == VALID_VPS_IP
     assert model["auth"]["tokenSource"]["file"]["path"].endswith("frpc_token.txt")
     assert [p["customDomains"] for p in model["proxies"]] == [
-        ["app.acme-public.org"], ["api.acme-public.org"],
+        ["app.acme-public.org", "app.internal.aios"],
+        ["api.acme-public.org", "api.internal.aios"],
     ]
 
 

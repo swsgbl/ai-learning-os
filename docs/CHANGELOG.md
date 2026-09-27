@@ -1,5 +1,65 @@
 # Changelog
 
+## M14-159 — 公共 Web base path（443 `/aios`，配置/docs/tests 对齐，非部署）
+
+- 背景（supervisor 云/网络外检实证）：**8443 对公网不可达**，而 **443 已有
+  可达的公共 HTTPS 服务**——AIOS 公共 Beta 入口定为同域路径
+  `https://ndtool.cn/aios`（无尾斜杠 canonical；斜杠形态 `/aios/` 由
+  边缘 301 归一化到 `/aios`，见 R3 修正），Web/API 同源（CORS 不在
+  关键路径），API 请求展开为 `https://ndtool.cn/aios/api/v1/...`。
+- Web 构建：新增 `apps/web/src/lib/base-path.ts`（`NEXT_PUBLIC_BASE_PATH`
+  结构化校验——空/未设置 = 根路径构建完全不变；唯一允许的非空值恰为
+  `/aios`；尾斜杠/查询串/片段/畸形/其他路径构建期抛错 fail-closed）；
+  `next.config.ts` 接线 `basePath`（空值不注入键，rewrites/静态资源由
+  Next 自动前缀）；`api.ts` 401 跳转改用校验后的 `LOGIN_PATH`
+  （`${BASE_PATH}/login`，无双重前缀；全仓导航审计确认 `Link`/`router.*`
+  由 Next 自动处理，唯 `window.location` 需手动改）；Dockerfile/compose
+  增加 `NEXT_PUBLIC_BASE_PATH` 构建期注入（compose 变量
+  `AIOS_PUBLIC_WEB_BASE_PATH`，默认空）。
+- 边缘路由：新增 `infra/edge/nginx.public-base-path.example.conf`——
+  **location 片段**（无 server/listen/静态指令/正则 location，结构上
+  不可能遮蔽既有站点）：`= /~!frp` WS 升级透传 frps 7000（既有行为）、
+  `= /aios` canonical 入口直接代理（无 URI `proxy_pass`，Host
+  `app.internal.aios`，零重定向）、`= /aios/` 301 归一化到 `/aios`、
+  `^~ /aios/api/` 尾斜杠 `proxy_pass .../api/` 仅剥 `/aios`（Host
+  `api.internal.aios`）、`^~ /aios/` 无 URI `proxy_pass` 原样保留路径
+  给 Next（Host `app.internal.aios`）；`frpc.windows.toml.example`
+  customDomains 追加同名内部 vhost 路由标签
+  （无 DNS、仅 frps Host 路由；既有 Caddy vhost 占位域不变）。
+- 测试：新增 `test_public_edge_nginx_base_path.py`（16 项——nginx 匹配
+  语义最小仿真：URI 映射/Host 改写/最长前缀/站点路径不遮蔽/上游仅
+  loopback/跨工件 vhost 对齐/公共构建契约锁定；R3 追加互逆重定向
+  结构性排除与斜杠归一化锁）；
+  `test_edge_deployment_templates.py` 同步（文件清单、frpc 域名集、
+  allowlist +nginx.org）；`test_public_edge_prepare` /
+  `test_frpc_windows_controller` 渲染断言同步内部 vhost 名。
+- 验证：web vitest **38 passed**、tsc 通过、eslint 0 errors（11 既有
+  组件 warning，改动文件零告警）；`/aios` 生产构建（`NEXT_PUBLIC_BASE_PATH=/aios`
+  + `NEXT_PUBLIC_API_BASE_URL=https://ndtool.cn/aios`）产物 HTML/静态引用
+  **`/aios/_next/`**（根 `/_next/` 0 命中）、client chunk 内联 API base、
+  required-server-files `basePath: "/aios"`、acceptance rewrite source 自动
+  前缀 `/aios/api/:path*`；默认构建根路径行为不变（`/aios` 0 命中、
+  `basePath: ""`）；七套件合跑 **336 passed + 3 skipped**；ruff（默认 +
+  F,E9）全绿；`git diff --check` 干净；新增行秘密/绝对路径扫描 0 命中。
+  证据 `.verify/artifacts/m14-159-public-web-base-path/`（gitignored）。
+- 诚实边界：**配置/docs/tests 对齐切片——不是公网部署、不构成
+  production_public_ready**；本地/回环/彩排/Caddy vhost/回环网关行为均
+  不变（§3E 范围外不变项）；§9 preflight + 人工清单对 443 `/aios` 全绿
+  前不宣称公共 Beta 生产可用。开发回合零 Docker、零生产变更；回滚 =
+  还原本 commit。
+- **R3 修正（supervisor 阻断反馈）**：Codex 构建
+  `aios/web:m14-159-public-edge-beta` 并冒烟实证 Next 16.3.4 对 `/aios/`
+  返回 308 → `/aios`（basePath 构建、默认 trailingSlash=false），与模板
+  原 `= /aios` 301 → `/aios/` 互为反向重定向，构成公共重定向环
+  （`/aios/` → `/aios` → `/aios/`）。修正（仅模板 + 相关测试/docs/
+  台账）：canonical 公共入口改为无尾斜杠 `https://ndtool.cn/aios`——
+  `= /aios` 改为直接代理（完整 URI/HTTP 1.1/X-Forwarded-For/X-Forwarded-
+  Proto + Host `app.internal.aios`，零重定向）；新增 `= /aios/` 301
+  归一化到 `/aios`（恰好一跳）；`^~ /aios/api/` 与 `^~ /aios/` 前缀
+  行为不变。测试锁定：exact `/aios` 代理无重定向、exact `/aios/` 单次
+  301、互逆重定向结构性排除、`/aios/api/v1/foo` → `/api/v1/foo` 不变；
+  API 契约 `https://ndtool.cn/aios/api/v1/` 不变。
+
 ## M14-158 — 公网边缘 Web 目标对齐 3012（配置/docs/tests 对齐，非部署）
 
 - 背景（supervisor 实证）：M14-157 生产 Web 回环网关已安装并验证

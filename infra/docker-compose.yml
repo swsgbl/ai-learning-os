@@ -249,6 +249,9 @@ services:
       args:
         # M9-07: API 地址构建期注入（局域网设备访问时需设为实际 API 地址并 rebuild）
         NEXT_PUBLIC_API_BASE_URL: ${AIOS_PUBLIC_API_BASE_URL:-http://127.0.0.1:8000}
+        # M14-159: 公共 Web base path 构建期注入（公共 Beta 构建设 /aios；
+        # 默认空 = 根路径构建不变）。改值必须 rebuild（构建期生效）。
+        NEXT_PUBLIC_BASE_PATH: ${AIOS_PUBLIC_WEB_BASE_PATH:-}
     # M14-09: Web 镜像 tag 独立锚点 —— 只读 AIOS_WEB_IMAGE_TAG（默认 local），
     # 不再跟随 AIOS_IMAGE_TAG（避免 Web-only 升级时混用两代镜像或破坏 recovery
     # pin）。只设 AIOS_IMAGE_TAG 不会改变 Web tag（compose config 可见）；

@@ -13,7 +13,17 @@ import type {
   VariantDraft,
   VoiceTokenResponse,
 } from "./types";
+import { normalizeBasePath } from "./base-path";
+
 const API_BASE = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://127.0.0.1:8000";
+
+// M14-159: 公共 base path（构建期注入，经 normalizeBasePath 结构化校验；
+// 空 = 根路径，行为与既有构建完全一致）。全仓导航审计结论：Link/router.*
+// 由 Next 自动处理 basePath，唯一下面的 window.location 直接赋值会绕过
+// 前缀 —— 登录跳转与 pathname 判定必须共用显式带前缀的 LOGIN_PATH，
+// 否则 basePath 构建下会跳到根路径 404；前缀由校验器保证不会双重叠加。
+const BASE_PATH = normalizeBasePath(process.env.NEXT_PUBLIC_BASE_PATH);
+export const LOGIN_PATH = `${BASE_PATH}/login`;
 
 // M10-02: 治理页需要区分 403（非管理员）/ 409（重复审核）做明确状态反馈
 export class ApiError extends Error {
@@ -39,8 +49,9 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 
   if (!response.ok) {
     // M9-02/M9-03: 认证开启后 401 = 未登录或凭据失效 —— 引导到登录页
-    if (response.status === 401 && typeof window !== "undefined" && !window.location.pathname.startsWith("/login")) {
-      window.location.href = "/login";
+    // M14-159: 登录页地址随 BASE_PATH（/aios 构建下为 /aios/login）
+    if (response.status === 401 && typeof window !== "undefined" && !window.location.pathname.startsWith(LOGIN_PATH)) {
+      window.location.href = LOGIN_PATH;
     }
     const detail = await response.json().catch(() => ({ detail: response.statusText }));
     const message = typeof detail.detail === "string" ? detail.detail : "请求失败";
@@ -106,4 +117,4 @@ export const api = {
     }),
 };
 
-export { API_BASE };
+export { API_BASE, BASE_PATH };

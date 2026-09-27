@@ -9,6 +9,44 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-159 公共 Web base path 443 `/aios`（配置/docs/tests 切片）**：
+worktree `m14-156-edge-rehearsal`（目录名历史沿用），分支
+`m14-159-public-web-base-path`，基于 main
+`9af4087b61b62d5e586512dd67c7d24dd8264bbe`（PR #246 merge = M14-158
+合入，精确基点），逐 round 各一个 local commit（R1 实现 + R2 CI pin
+修复 + R3 重定向环修正），不 push、PR #247 由 supervisor 掌握。
+背景：supervisor 云/网络外检实证 8443 公网不可达、443 已有可达公共
+HTTPS 服务——公共 Beta 入口定为 `https://ndtool.cn/aios`（无尾斜杠
+canonical；斜杠形态 `/aios/` 由边缘 301 归一化到 `/aios`；Web/API
+同源，API 展开 `https://ndtool.cn/aios/api/v1/...`）。交付：web
+`NEXT_PUBLIC_BASE_PATH` 构建期结构化校验（空 = 根路径构建不变；唯一
+非空值恰为 `/aios`，尾斜杠/查询串/片段/其他路径 fail-closed）+
+next.config `basePath` 接线 + api.ts 401 跳转 `${BASE_PATH}/login` 化
+（全仓导航审计：`Link`/`router.*` 自动处理，唯 window.location 需手动）
++ Dockerfile/compose 构建期注入（compose 变量 `AIOS_PUBLIC_WEB_BASE_PATH`）；
+边缘新增 Nginx location 片段模板（`=/~!frp` WS→frps 7000 既有行为、
+`= /aios` canonical 入口直接代理零重定向、`= /aios/` 301 归一化、
+`^~ /aios/api/` 尾斜杠 proxy_pass 仅剥 `/aios` + Host
+`api.internal.aios`、`^~ /aios/` 原样保留路径 + Host `app.internal.aios`，
+结构上不可遮蔽既有站点）；frpc 模板 customDomains 追加同名内部 vhost；
+runbook §3E 落档。测试：新增 test_public_edge_nginx_base_path 16 项；
+templates/prepare/controller 断言同步。验证：web vitest **38 passed**、
+tsc、eslint 0 errors；`/aios` 构建产物引用 `/aios/_next/`（根 0 命中）、
+API base 内联、rewrite source 自动前缀 `/aios/api/:path*`；默认构建
+根路径行为不变；七套件合跑 **336 passed + 3 skipped**（外部 basetemp
+`<仓库盘>/.pytest-tmp/m14-159-public-web-base-path`）；ruff（默认 +
+F,E9）全绿；`git diff --check` 干净；新增行秘密/绝对路径扫描 0 命中；
+证据 `.verify/artifacts/m14-159-public-web-base-path/`（gitignored）。
+诚实边界：**配置/docs/tests 对齐——不是公网部署、不构成
+production_public_ready、本地/回环/彩排/Caddy vhost/回环网关行为不变**；
+§9 preflight + 人工清单对 443 `/aios` 全绿前不宣称公共 Beta 生产可用；
+零 Docker 零生产变更；回滚 = 还原本 commit。**R3 修正（supervisor
+阻断反馈）**：Codex 冒烟实证 Next 16.3.4 对 `/aios/` 308 → `/aios`、
+与模板原 `= /aios` 301 → `/aios/` 构成公共重定向环——修正为 canonical
+无尾斜杠入口直接代理 + `= /aios/` 单向 301 归一化（`^~ /aios/api/`、
+`^~ /aios/` 前缀行为不变），模板/tests/runbook/台账同步。
+M14-158 移为次席。
+
 **M14-158 公网边缘 Web 目标对齐 3012（配置/docs/tests 切片）**：worktree
 `m14-156-edge-rehearsal`（目录名历史沿用），分支
 `m14-158-public-edge-web-target`，基于 main
