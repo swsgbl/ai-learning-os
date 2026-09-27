@@ -5,7 +5,10 @@
    try_files、无正则 location）——include 进既有 443 站点后**结构上不可能**
    遮蔽既有 ndtool.cn 站点、既有 /api/v1/ 或既有静态资源；
 2. 路由契约：`= /~!frp` WebSocket 升级透传到 frps 控制面 7000；
-   `= /aios` 301 到 /aios/；`^~ /aios/api/` 尾斜杠 proxy_pass 仅剥 /aios
+   `= /aios` canonical 入口直接代理到 Next（零重定向）；`= /aios/`
+   301 归一化到 /aios（恰好一跳——R3 修正：Next 16 basePath 构建默认
+   trailingSlash=false，对 /aios/ 回 308 /aios，边缘不得反向 301 构成
+   互逆重定向环）；`^~ /aios/api/` 尾斜杠 proxy_pass 仅剥 /aios
    （/aios/api/v1/foo → /api/v1/foo）；`^~ /aios/` 无 URI proxy_pass 原样
    保留完整路径给 Next；
 3. 匹配语义仿真：按 nginx 精确优先/最长前缀实现一个最小匹配器，逐用例
@@ -15,7 +18,8 @@
    精确对齐（frps 按 Host 路由）；上游恒为 loopback 7000/8080；
 5. 公共构建契约锁定：Dockerfile/compose 注入 NEXT_PUBLIC_BASE_PATH（默认
    空 = 根路径构建不变），runbook 记录公共 Beta 入口
-   （8443 公网不可达 → 443 /aios/）、NEXT_PUBLIC_BASE_PATH=/aios 与
+   （8443 公网不可达 → 443 /aios，无尾斜杠 canonical；/aios/ 经边缘
+   301 归一化）、NEXT_PUBLIC_BASE_PATH=/aios 与
    NEXT_PUBLIC_API_BASE_URL=https://ndtool.cn/aios 的精确组合。
 
 边界：本文件只读模板/文档，不发任何网络请求、不启动任何容器、不渲染
@@ -140,14 +144,16 @@ def test_fragment_is_location_only_cannot_shadow_host_site() -> None:
 
 
 def test_fragment_location_inventory_and_order() -> None:
-    """声明面恰为四个 location，顺序与任务书一致（= /~!frp → = /aios →
-    ^~ /aios/api/ → ^~ /aios/；语义上精确/最长前缀本就无歧义，锁顺序便于审查）。"""
+    """声明面恰为五个 location，顺序与 R3 修正后任务书一致（= /~!frp →
+    = /aios → = /aios/ → ^~ /aios/api/ → ^~ /aios/；语义上精确/最长前缀
+    本就无歧义，锁顺序便于审查）。"""
     signatures = [
         (b["modifier"], b["path"]) for b in _parse_locations(_stripped(_text()))
     ]
     assert signatures == [
         ("=", "/~!frp"),
         ("=", "/aios"),
+        ("=", "/aios/"),
         ("^~", "/aios/api/"),
         ("^~", "/aios/"),
     ]
@@ -167,10 +173,58 @@ def test_frp_websocket_entry_preserved() -> None:
     assert 'proxy_set_header Connection "upgrade";' in block["body"]
 
 
-def test_bare_aios_redirects_301_to_slash_form() -> None:
-    block = _match_location(_parse_locations(_stripped(_text())), "/aios")
-    assert block is not None, "缺 = /aios（裸入口 301）"
-    assert re.search(r"return\s+301\s+/aios/;", block["body"]), "必须 301 到 /aios/"
+def test_bare_aios_proxies_to_app_upstream_without_redirect() -> None:
+    """R3：= /aios 是 canonical 入口（无尾斜杠），直接代理到 Next，零重定向
+    ——Next（basePath=/aios 构建，默认 trailingSlash=false）在 /aios 直接
+    渲染根页面；此处若 301 到 /aios/ 会与 Next 对 /aios/ 的 308 互逆成环。"""
+    blocks = _parse_locations(_stripped(_text()))
+    block = _match_location(blocks, "/aios")
+    assert block is not None and block["path"] == "/aios", "缺 = /aios（canonical 入口直接代理）"
+    assert "return" not in block["body"], "= /aios 不得再重定向（曾致公共重定向环）"
+    authority, uri_part = _proxy_target(block)
+    assert authority == "127.0.0.1:8080"
+    assert uri_part == "", "proxy_pass 不得带 URI（完整 /aios 原样交给 Next）"
+    assert _host_header(block) == "app.internal.aios"
+    assert "proxy_http_version 1.1;" in block["body"]
+    assert "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;" in block["body"]
+    assert "proxy_set_header X-Forwarded-Proto $scheme;" in block["body"]
+    assert _forwarded_uri(block, "/aios") == "/aios"
+
+
+def test_slash_form_aios_redirects_301_once_to_bare_aios() -> None:
+    """R3：= /aios/ 唯一行为是 301 → /aios（斜杠形态单向归一化到 canonical
+    无尾斜杠入口，恰好一跳；随后 /aios 由上一测试的直接代理到达 Next
+    一次）。精确匹配优先于 ^~ /aios/ 前缀。"""
+    blocks = _parse_locations(_stripped(_text()))
+    block = _match_location(blocks, "/aios/")
+    assert block is not None and block["path"] == "/aios/", "缺 = /aios/（斜杠归一化）"
+    assert re.search(r"return\s+301\s+/aios;", block["body"]), "必须 301 到 /aios（恰好一跳归一化）"
+    assert "proxy_pass" not in block["body"]
+
+
+def test_no_mutually_inverse_redirects() -> None:
+    """R3 回归锁：边缘不得存在互为反向的重定向对。带 /aios 前缀的
+    location 里唯一允许的 return 重定向恰为 = /aios/ → /aios；目标
+    /aios 自身必须无 return（直接代理）——若重新引入 = /aios 301 →
+    /aios/，会与 Next 对 /aios/ 的 308 → /aios 构成 /aios/ → /aios →
+    /aios/ 的公共重定向环。"""
+    blocks = _parse_locations(_stripped(_text()))
+    redirects: dict[str, str] = {}
+    for block in blocks:
+        if not block["path"].startswith("/aios"):
+            continue
+        match = re.search(r"return\s+(\d{3})\s+(\S+);", block["body"])
+        if match:
+            redirects[block["path"]] = match.group(2)
+        else:
+            assert "proxy_pass" in block["body"], (
+                f"{block['path']} 非重定向块就必须 proxy_pass"
+            )
+    assert redirects == {"/aios/": "/aios"}, "唯一允许的重定向是 /aios/ 301 归一化到 /aios"
+    for source, target in redirects.items():
+        assert target not in redirects, (
+            f"{source} → {target} 与 {target} 上的重定向互为反向（重定向环）"
+        )
 
 
 def test_aios_api_prefix_maps_to_upstream_api() -> None:
@@ -184,6 +238,7 @@ def test_aios_api_prefix_maps_to_upstream_api() -> None:
     assert _host_header(block) == "api.internal.aios"
     # 逐用例：公共 API 契约 https://ndtool.cn/aios/api/v1/... → /api/v1/...
     for public, upstream in (
+        ("/aios/api/v1/foo", "/api/v1/foo"),
         ("/aios/api/v1/papers", "/api/v1/papers"),
         ("/aios/api/v1/auth/me", "/api/v1/auth/me"),
         ("/aios/api/v1/exams/e1/answers", "/api/v1/exams/e1/answers"),
@@ -237,7 +292,7 @@ def test_host_site_paths_fall_through_unshadowed() -> None:
 def test_upstreams_are_loopback_only() -> None:
     for block in _parse_locations(_stripped(_text())):
         if "proxy_pass" not in block["body"]:
-            continue  # 301 跳转块无上游
+            continue  # = /aios/ 归一化块无上游
         authority, _ = _proxy_target(block)
         assert authority in {"127.0.0.1:7000", "127.0.0.1:8080"}, (
             f"{block['path']} 上游越界: {authority}"
@@ -253,7 +308,8 @@ def test_nginx_host_rewrites_match_frpc_internal_vhosts() -> None:
     hosts = {
         _host_header(b)
         for b in _parse_locations(_stripped(_text()))
-        if b["path"].startswith("/aios/") and "proxy_pass" in b["body"]
+        if (b["path"] == "/aios" or b["path"].startswith("/aios/"))
+        and "proxy_pass" in b["body"]
     }
     frpc = tomllib.loads(FRPC_EXAMPLE.read_text(encoding="utf-8"))
     domains = {d for p in frpc["proxies"] for d in p["customDomains"]}
@@ -288,12 +344,14 @@ def test_compose_passes_base_path_build_arg() -> None:
 
 
 def test_runbook_documents_public_beta_entry_contract() -> None:
-    """runbook §3E：8443 公网不可达 → 443 /aios/ 为公共 Beta 入口；
-    Web/API 精确 URL 与构建 env 组合落档。"""
+    """runbook §3E：8443 公网不可达 → 443 /aios（无尾斜杠 canonical）为
+    公共 Beta 入口，/aios/ 301 归一化到 /aios；Web/API 精确 URL 与构建
+    env 组合落档；旧的带尾斜杠整 URL 入口形态不得再出现。"""
     text = RUNBOOK.read_text(encoding="utf-8")
     for needle in (
         "8443",
-        "https://ndtool.cn/aios/",
+        "| 公共 Web 入口 | `https://ndtool.cn/aios`",
+        "301 归一化到 `/aios`",
         "https://ndtool.cn/aios/api/v1/",
         "NEXT_PUBLIC_BASE_PATH=/aios",
         "NEXT_PUBLIC_API_BASE_URL=https://ndtool.cn/aios",
@@ -302,3 +360,7 @@ def test_runbook_documents_public_beta_entry_contract() -> None:
         "api.internal.aios",
     ):
         assert needle in text, f"runbook §3E 缺公共契约要素: {needle}"
+    assert "`https://ndtool.cn/aios/`" not in text, (
+        "公共 Web 入口必须是无尾斜杠 https://ndtool.cn/aios"
+        "（/aios/ 仅经边缘 301 归一化，不是 canonical 入口）"
+    )

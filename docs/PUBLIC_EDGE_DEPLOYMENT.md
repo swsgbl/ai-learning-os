@@ -310,18 +310,21 @@ exact_source_verified——**本机绝对路径绝不入证据**），
 映射、不暴露任何公网流量、不改变生产边缘设计与公网验收口径；生产
 公网 readiness 维持 false。
 
-## 3E. 公共 Web base path（443 `/aios/`，M14-159）
+## 3E. 公共 Web base path（443 `/aios`，M14-159）
 
 公网入口现状（supervisor 云/网络外检实证）：**8443 端口对公网不可达**
 （云安全组/防火墙未放行），而 **443 已有可达的公共 HTTPS 服务**。因此
-AIOS 公共 Beta 入口定为同域路径 **`https://ndtool.cn/aios/`**（443），
-不开新端口、不另申请证书。
+AIOS 公共 Beta 入口定为同域路径 **`https://ndtool.cn/aios`**（443），
+不开新端口、不另申请证书。canonical 入口为**无尾斜杠**形态：Next
+（`basePath=/aios` 构建）默认 `trailingSlash=false`，在 `/aios` 直接
+渲染根页面；斜杠形态 `/aios/` 由边缘 **301 归一化到 `/aios`**（恰好
+一跳）后经 canonical 入口到达 Next。
 
 精确公共契约：
 
 | 项 | 值 |
 | --- | --- |
-| 公共 Web 入口 | `https://ndtool.cn/aios/` |
+| 公共 Web 入口 | `https://ndtool.cn/aios`（无尾斜杠 canonical；`/aios/` 301 归一化到 `/aios`） |
 | 公共 API 根 | `https://ndtool.cn/aios/api/v1/`（请求展开 `https://ndtool.cn/aios/api/v1/...`） |
 | Web 构建参数 | `NEXT_PUBLIC_BASE_PATH=/aios`（构建期注入，改值必须重建） |
 | API base | `NEXT_PUBLIC_API_BASE_URL=https://ndtool.cn/aios`（既有请求代码仍调 `${API_BASE}/api/v1/...`，展开即上表） |
@@ -333,15 +336,24 @@ allowlist 纪律追加 `https://ndtool.cn`。
 **边缘路由（Nginx 片段模板 `infra/edge/nginx.public-base-path.example.conf`）**：
 该文件是 **location 片段**（非独立 server 块），include 进 VPS 上既有
 公共 443 server（即承载 ndtool.cn 站点的那个 server；真实域名按仓库
-纪律不入模板，部署副本自填）。片段只含四个 location，结构上不可能
+纪律不入模板，部署副本自填）。片段只含五个 location，结构上不可能
 遮蔽既有站点：
 
 | location | 行为 |
 | --- | --- |
 | `= /~!frp` | frpc WebSocket 入口（既有行为保持）：升级头透传到 frps 控制面 `127.0.0.1:7000` |
-| `= /aios` | 301 → `/aios/`（规范入口） |
+| `= /aios` | canonical 入口直接代理：`proxy_pass http://127.0.0.1:8080;`（无 URI）+ Host 改写 `app.internal.aios`——完整 `/aios` 原样交给 Next（basePath 构建下 `/aios` 直接渲染，**零重定向**） |
+| `= /aios/` | 301 → `/aios`——斜杠形态归一化到 canonical 无尾斜杠入口（恰好一跳，随后按上一行直接代理） |
 | `^~ /aios/api/` | `proxy_pass http://127.0.0.1:8080/api/;`（尾斜杠 URI）+ Host 改写 `api.internal.aios`——仅剥 `/aios` 一段，`/aios/api/v1/foo` → `/api/v1/foo` |
 | `^~ /aios/` | `proxy_pass http://127.0.0.1:8080;`（无 URI）+ Host 改写 `app.internal.aios`——完整 `/aios/...` 路径原样交给 Next（basePath 构建） |
+
+重定向语义（R3 修正，supervisor 阻断反馈）：Next 16 默认
+`trailingSlash=false`——basePath 构建下 `/aios` 直接渲染、`/aios/`
+返回 308 → `/aios`（Codex 在 `aios/web:m14-159-public-edge-beta`
+镜像冒烟实证）。边缘若对 `/aios` 反向 301 到 `/aios/` 即构成互逆
+重定向环（`/aios/` → `/aios` → `/aios/` 循环）。因此 canonical 入口
+为无尾斜杠 `/aios`（直接代理、零重定向），`/aios/` 仅做单向 301
+归一化——两个方向不互逆，Next 只被到达一次。
 
 `app.internal.aios` / `api.internal.aios` 是**内部 vhost 路由标签**：仅作
 frps vhost（loopback 8080）按 Host 路由到家机 frpc 代理之用（frpc 模板
@@ -493,7 +505,7 @@ M14-157 回环网关（§3D）行为均不变；本节只新增 443 路径制公
 ## 8. 生产 env 与 Web 重建（家机）
 
 公网切换时**显式设置并重建 Web**（`NEXT_PUBLIC_API_BASE_URL` 是构建期注入，
-改 env 不重建 = 前端仍指向旧地址；公共 Beta 路径制入口 443 `/aios/` 的
+改 env 不重建 = 前端仍指向旧地址；公共 Beta 路径制入口 443 `/aios` 的
 `NEXT_PUBLIC_BASE_PATH`/`NEXT_PUBLIC_API_BASE_URL` 精确组合见 §3E）：
 
 ```text
