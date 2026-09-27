@@ -1,5 +1,52 @@
 # Changelog
 
+## M14-160 — 公网边缘生产证据收口（docs-only 回填，非部署）
+
+- 背景：supervisor 于 2026-09-27 真实完成公共边缘上线（镜像重建、
+  容器切换、frpc/frps 链路、远端 Nginx 切换、公网验收）；本切片把
+  生产证据落档为 tracked 文档/证据，零部署、零生产触碰、零 secret。
+- 基点与 CI：main `25bba2cb…`（PR #248 merge）；PR #248 与 main CI
+  （run `36314059971`）五标准 job 全绿（收口时 gh 只读复核一致）。
+- 生产栈：Web `aios/web:m14-160-public-edge-beta`
+  （`sha256:9f42d0e5…`）容器 `cb32feb1d386…` running+healthy（root
+  与 `/aios` 构建双健康，M14-159 unhealthy 缺陷消除）；API 未变更
+  （`aios/api:m14-124-production`，容器 `77bb87569d98…` healthy）；
+  恢复 dry-run+enforce pin 9/9、六服务 healthy/running、healthy 栈
+  跳过 `up`；本地 3011/3012 双端口 `/aios`、`/aios/login` 200。
+- 生产 env：切换前备份与当前文件 SHA256 `211F95AB…` / `02F5FC2D…`
+  （收口本地重算逐字节一致；内容不回显、不入库）。
+- 公网边缘：frpc 2026-09-27 14:29 启动（Web→3012、API→8000，
+  内部标签 `app.internal.aios`/`api.internal.aios`）；远端 frps PID
+  335753（loopback 7000/8080 在线）；**部署源更正（supervisor
+  口径）**——M14-159 目录 110 字节 locations 残片无效、不是部署源，
+  部署源为仓库模板 `infra/edge/nginx.public-base-path.example.conf`
+  （SHA256 `18B5DDE2…`，与远端文件逐字节同哈希）；远端切换
+  2026-09-27 19:08 +08（ndtool 哈希 `627ca884…`、双备份
+  `de020c9a…`/`3cbd1a6b…`、`nginx -t` 前后过、reload 成功）。
+- 公网验收：`https://ndtool.cn/aios` 与 `/aios/login` 200、斜杠形态
+  301 归一化、HTML 18031 bytes 引用 `/aios/_next/…`、woff2 200
+  `font/woff2`、privacy/providers 401 `WWW-Authenticate: Bearer` +
+  `X-Request-Id`（证明边缘路由经 frps/frpc 到家机 FastAPI）；既有
+  `/`、`/health` 前后 200，既有 `/api/v1/health` 前后 404（非回归）。
+- 语音（委派时点，如实呈现）：FunASR managed-running（`/health`
+  200，SenseVoice CPU 已载入）；CosyVoice managed-running、模型
+  加载中、`/health` 503——不宣称 CosyVoice 生产就绪。
+- 变更面：`docs/PUBLIC_EDGE_DEPLOYMENT.md` 新增 §3F（公共边缘生产
+  上线与验收记录）；`docs/PROJECT_STATUS.md`/`docs/ROADMAP.md`/
+  `docs/CHANGELOG.md` 状态条目；新增 tracked 证据
+  `docs/evidence/m14-160-public-edge-closeout/README.md`（仓库既有
+  生产证据惯例形态）。
+- 验证（docs-only 口径）：基点/CI/容器/公网端点/三处 SHA256 全部
+  只读复核一致；聚焦文档契约测试四套（nginx base path + edge
+  templates + versioning 同步 + monitor 措辞守卫）全过；
+  `git diff --check` 干净；新增行秘密/本地绝对路径（`<仓库盘>`
+  占位）/U+FFFD 扫描 0 命中。
+- 诚实边界：**docs-only 回填——上线本身由 supervisor 执行，本切片
+  零部署零生产触碰**；§9 正式 preflight + 人工 4G/5G 清单未执行，
+  按纪律不写「公网生产可用」；`release_ready`/`production_ready`
+  恒 false 口径不变；push 分支并开 PR 交 Codex 审查、等 CI、由其
+  合并（本切片不合并）。
+
 ## M14-160 — Web 容器 healthcheck 对齐 basePath 构建（配置/docs/tests，非部署）
 
 - 背景（M14-159 生产切换后 supervisor 实证）：镜像

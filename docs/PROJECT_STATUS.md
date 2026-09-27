@@ -9,6 +9,45 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-160 公网边缘生产证据收口（docs-only 回填）**：worktree
+`m14-160-public-edge-closeout`，分支 `docs/m14-160-public-edge-closeout`，
+基于 main `25bba2cb8c6ab7a12a41014e74a8d139a951dd73`（PR #248 merge =
+M14-160 healthcheck 配置切片合入，精确基点）。supervisor 已于
+2026-09-27 真实完成公共边缘上线，本切片把证据落档：生产 Web 镜像
+`aios/web:m14-160-public-edge-beta`（`sha256:9f42d0e5…`，容器
+`cb32feb1d386…` running+healthy，root 与 `/aios` 构建双健康）；API
+未变更（`aios/api:m14-124-production`，容器 `77bb87569d98…`
+healthy）；恢复 dry-run+enforce pin 9/9、六服务 healthy/running、
+healthy 栈跳过 `up`；env 备份 SHA256 `211F95AB…`（当前
+`02F5FC2D…`，内容不回显）。公网边缘：frpc 2026-09-27 14:29 启动
+（Web→`127.0.0.1:3012`、API→`127.0.0.1:8000`，内部标签
+`app.internal.aios`/`api.internal.aios`），远端 frps PID 335753
+（loopback 7000/8080 在线）；**supervisor 更正**：M14-159 目录 110
+字节 locations 残片无效、不是部署源——部署源为仓库模板
+`infra/edge/nginx.public-base-path.example.conf`（SHA256
+`18B5DDE2…`，与远端 `/etc/nginx/aios-base-path.locations.conf`
+逐字节同哈希）；远端切换 2026-09-27 19:08 +08（ndtool 哈希
+`627ca884…`，双备份 `de020c9a…`/`3cbd1a6b…`，`nginx -t` 前后过、
+reload 成功）。公网验收：`https://ndtool.cn/aios` 与 `/aios/login`
+200、斜杠形态 301 归一化、HTML 引用 `/aios/_next/…`、woff2 200
+`font/woff2`、privacy/providers 401 `WWW-Authenticate: Bearer` +
+`X-Request-Id`（证明经 frps/frpc 到家机 FastAPI）；既有 `/`、
+`/health` 前后 200，既有 `/api/v1/health` 前后 404（非回归）。语音
+委派时点：FunASR managed-running（`/health` 200，SenseVoice CPU 已
+载入）；CosyVoice managed-running、模型加载中、`/health` 503——
+**不宣称 CosyVoice 生产就绪**。验证（docs-only 收口实测）：PR #248
+与 main CI（run `36314059971`）五标准 job 全绿（gh 只读复核）；
+`docker ps` 只读复核两容器 healthy；公网端点只读复核逐项一致；三处
+SHA256（env 备份/当前 env/仓库 Nginx 模板）本地重算一致；聚焦文档
+契约测试四套（nginx base path 18 + edge templates + versioning 同步 +
+monitor 措辞守卫）全过；`git diff --check` 干净；新增行秘密/本地绝对
+路径（`<仓库盘>` 占位）/U+FFFD 扫描 0 命中。诚实边界：**docs-only
+回填、零部署、零生产触碰、零 secret 读写；§9 正式 preflight + 人工
+4G/5G 清单未执行，不宣称公共 Beta 公网生产可用**；runbook §3F 落档、
+证据 `docs/evidence/m14-160-public-edge-closeout/README.md` 入库；
+push 分支并开 PR 交 Codex 审查、等 CI、由其合并（本切片不合并）。
+M14-160 healthcheck 配置切片移为次席。
+
 **M14-160 Web 容器 healthcheck 对齐 basePath 构建（配置/docs/tests
 切片）**：worktree `m14-156-edge-rehearsal`（目录名历史沿用），分支
 `m14-160-public-web-healthcheck`，基于 main
