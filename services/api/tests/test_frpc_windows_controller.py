@@ -25,7 +25,14 @@
 5. status：missing/installed/foreign/malformed（DOCTYPE 实体防护）分类；
 6. uninstall 纪律：foreign 绝不删除；owned 缺 --execute 只打印计划；
    owned+execute 只删精确任务名；
-7. 输出纪律：stdout/stderr 不含 token 文件内容；CLI 用法错误 exit 2。
+7. 输出纪律：stdout/stderr 不含 token 文件内容；CLI 用法错误 exit 2；
+8. RealRunner Windows 输出解码（M14-165 R2）：schtasks 本地化消息按
+   OEM/ANSI 代码页解码（中文系统 GBK——旧版 UTF-8 硬解出 mojibake 使
+   missing 判定失效、status 误报查询失败）、``/Query /XML`` 按 BOM
+   探测按 UTF-16 解码；无法解码的字节兜底 replace 不抛异常；正确解码
+   ≠放松 fail-closed——无 missing 特征的未知失败（如"拒绝访问"）仍按
+   查询失败拒绝；全程注入 fake subprocess + 注入代码页，不碰真实
+   schtasks；
 
 全部经注入 Fake runner——绝不触碰真实 schtasks；零网络零服务操作。
 """
@@ -575,6 +582,78 @@ def test_uninstall_owned_dry_run_then_execute() -> None:
 def test_uninstall_missing_is_idempotent() -> None:
     assert ctrl.main(["uninstall", "--confirm-phrase", ctrl.CONFIRM_PHRASE,
                       "--execute"], runner=FakeRunner()) == ctrl.EXIT_OK
+
+
+# --------------------------------- RealRunner Windows 输出解码（M14-165 R2）
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    ("错误: 系统找不到指定的文件。".encode("gbk"), "错误: 系统找不到指定的文件。"),
+    (b"ERROR: The system cannot find the file specified.",
+     "ERROR: The system cannot find the file specified."),
+    ("系统找不到".encode("utf-16"), "系统找不到"),  # /Query /XML 形态（BOM 探测）
+    ("« café »".encode("utf-8-sig"), "« café »"),
+])
+def test_decode_process_output_matrix(
+    monkeypatch: pytest.MonkeyPatch, raw: bytes, expected: str
+) -> None:
+    """解码矩阵：本地化消息（OEM/ANSI 代码页）/ASCII/UTF-16 BOM/
+    UTF-8 BOM 全部正确解出——绝不做 mojibake 字符串匹配。"""
+    monkeypatch.setattr(ctrl, "_windows_console_encoding", lambda: "gbk")
+    assert ctrl._decode_process_output(raw) == expected
+
+
+def test_decode_process_output_garbage_never_raises(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """任何编码都解不了的字节兜底 replace、不抛异常——状态判定交给
+    fail-closed 的调用方（查询失败/不猜测状态）。"""
+    monkeypatch.setattr(ctrl, "_windows_console_encoding", lambda: "gbk")
+    ctrl._decode_process_output(b"\xff")  # GBK/UTF-8 均非法、非 BOM 开头
+
+
+def test_realrunner_reports_missing_for_localized_gbk_output(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M14-165 R2 核心回归：中文 Windows schtasks 缺任务消息是 OEM/ANSI
+    代码页（GBK）字节——旧版 UTF-8 硬解出 mojibake，"找不到" 匹配失效，
+    missing 被误判为查询失败（install 因此无法安全进行）。正确解码后
+    真实 status 必须报告 missing（exit 2）。全程 fake subprocess。"""
+    monkeypatch.setattr(ctrl, "_windows_console_encoding", lambda: "gbk")
+    message = "错误: 系统找不到指定的文件。".encode("gbk")
+
+    def fake_run(args, **_kwargs):
+        return subprocess.CompletedProcess(args, 1, stdout=b"", stderr=message)
+
+    monkeypatch.setattr(ctrl.subprocess, "run", fake_run)
+    assert ctrl.main(["status"], runner=ctrl.RealRunner()) == ctrl.STATUS_MISSING
+
+
+def test_realrunner_parses_utf16_xml_query(monkeypatch: pytest.MonkeyPatch) -> None:
+    """M14-165 R2 回归：真实 schtasks /Query /XML 输出 UTF-16（带 BOM）——
+    BOM 探测解码后归属判定必须照常工作（installed）。"""
+    xml_bytes = _owned_xml().encode("utf-16")  # encode 自带 LE BOM，同真实形态
+
+    def fake_run(args, **_kwargs):
+        return subprocess.CompletedProcess(args, 0, stdout=xml_bytes, stderr=b"")
+
+    monkeypatch.setattr(ctrl.subprocess, "run", fake_run)
+    assert ctrl.main(["status"], runner=ctrl.RealRunner()) == ctrl.STATUS_INSTALLED
+
+
+def test_realrunner_unknown_failure_remains_fail_closed(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """正确解码 ≠ 放松 fail-closed：本地化文本里没有 missing 特征的失败
+    （如"拒绝访问"）仍必须按查询失败拒绝（exit 1），绝不猜测状态。"""
+    monkeypatch.setattr(ctrl, "_windows_console_encoding", lambda: "gbk")
+    message = "错误: 拒绝访问。".encode("gbk")
+
+    def fake_run(args, **_kwargs):
+        return subprocess.CompletedProcess(args, 1, stdout=b"", stderr=message)
+
+    monkeypatch.setattr(ctrl.subprocess, "run", fake_run)
+    assert ctrl.main(["status"], runner=ctrl.RealRunner()) == ctrl.EXIT_FAILURE
 
 
 # ---------------------------------------------------------------- CLI

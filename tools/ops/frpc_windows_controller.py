@@ -30,6 +30,12 @@
   （WSS 端口≠443、直连 7000 用 DNS 域名、TLS 关闭、serverName 缺失或
   不一致、WSS 用 IP serverAddr）一律 fail-closed 拒绝；两模式共享 inline
   token 拒绝/loopback 后端/占位域名/绝对路径/token 元数据等全部检查。
+- Windows 控制台输出解码（M14-165 R2）：schtasks 本地化消息是 OEM/ANSI
+  代码页字节（中文系统 = GBK/cp936，绝非 UTF-8）、``/Query /XML`` 是
+  UTF-16（带 BOM）——RealRunner 以 bytes 捕获后 BOM 探测 + 代码页解码，
+  绝不做 mojibake 字符串匹配；无法解码的字节兜底 replace；正确解码 ≠
+  放松纪律——无 missing 特征的未知失败仍 fail-closed（查询失败异常，
+  不猜测状态）。
 
 Exit codes：0 = 成功（含 dry-run 计划输出）；1 = 预检失败/拒绝执行；
 2 = 用法错误（argparse）；status 专用：0=installed / 1=unknown /
@@ -38,7 +44,9 @@ Exit codes：0 = 成功（含 dry-run 计划输出）；1 = 预检失败/拒绝�
 from __future__ import annotations
 
 import argparse
+import codecs
 import ipaddress
+import locale
 import os
 import re
 import subprocess
@@ -76,15 +84,62 @@ class Runner(Protocol):
 
 
 class RealRunner:
-    """真实 Runner：仅捕获输出；Windows 下 CREATE_NO_WINDOW（无弹窗）。"""
+    """真实 Runner：仅捕获输出；Windows 下 CREATE_NO_WINDOW（无弹窗）。
+
+    以 bytes 捕获再按平台解码（M14-165 R2）：Windows 控制台程序经管道的
+    输出**不是 UTF-8**——本地化消息走 OEM/ANSI 代码页（中文系统 GBK），
+    ``/Query /XML`` 走 UTF-16。旧版 ``text=True + encoding="utf-8"`` 会
+    硬解出 mojibake，使缺任务消息（"找不到"）匹配失效、missing 被误判
+    为查询失败。
+    """
 
     def run(self, args: list[str]) -> tuple[int, str]:
         creationflags = 0x08000000 if os.name == "nt" else 0  # CREATE_NO_WINDOW
         result = subprocess.run(
-            args, capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=60, check=False, creationflags=creationflags,
+            args, capture_output=True, timeout=60, check=False,
+            creationflags=creationflags,
         )
-        return result.returncode, (result.stdout or "") + (result.stderr or "")
+        output = (_decode_process_output(result.stdout or b"")
+                  + _decode_process_output(result.stderr or b""))
+        return result.returncode, output
+
+
+def _windows_console_encoding() -> str:
+    """Windows 控制台程序（schtasks）管道输出的本地化文本代码页：
+    OEM 优先（控制台惯例；中文系统 = 936/GBK），取不到时退回 ANSI
+    首选编码。非 UTF-8——这正是旧版 mojibake 的根源。"""
+    import ctypes
+
+    windll = getattr(ctypes, "windll", None)
+    if windll is not None:
+        try:
+            return f"cp{windll.kernel32.GetOEMCP()}"
+        except (AttributeError, OSError):
+            pass  # 极端环境退回 ANSI 首选编码
+    return locale.getpreferredencoding(False) or "mbcs"
+
+
+def _decode_process_output(data: bytes) -> str:
+    """Windows 控制台程序管道输出解码（M14-165 R2）：
+
+    先 BOM 探测（``schtasks /Query /XML`` 输出 UTF-16；UTF-8 BOM 变体
+    兼容），再按 Windows 控制台代码页解码本地化消息（如中文
+    "找不到"——GBK 字节），最后试 UTF-8；全部失败时 ``errors=replace``
+    兜底**不抛异常**——状态判定留给 fail-closed 的调用方（查询失败/
+    不猜测状态），绝不做 mojibake 字符串匹配。非 Windows 平台直接 UTF-8。
+    """
+    if data.startswith((codecs.BOM_UTF16_LE, codecs.BOM_UTF16_BE)):
+        return data.decode("utf-16")
+    if data.startswith(codecs.BOM_UTF8):
+        return data.decode("utf-8-sig")
+    if os.name == "nt":
+        for encoding in (_windows_console_encoding(), "utf-8"):
+            try:
+                return data.decode(encoding)
+            except UnicodeDecodeError:
+                continue
+        return data.decode("utf-8", errors="replace")
+    return data.decode("utf-8", errors="replace")
 
 
 # ---------------------------------------------------------------- preflight
