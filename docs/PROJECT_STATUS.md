@@ -41,9 +41,20 @@ reload 成功）。公网验收：`https://ndtool.cn/aios` 与 `/aios/login`
 SHA256（env 备份/当前 env/仓库 Nginx 模板）本地重算一致；聚焦文档
 契约测试四套（nginx base path 18 + edge templates + versioning 同步 +
 monitor 措辞守卫）全过；`git diff --check` 干净；新增行秘密/本地绝对
-路径（`<仓库盘>` 占位）/U+FFFD 扫描 0 命中。诚实边界：**docs-only
-回填、零部署、零生产触碰、零 secret 读写；§9 正式 preflight + 人工
-4G/5G 清单未执行，不宣称公共 Beta 公网生产可用**；runbook §3F 落档、
+路径（`<仓库盘>` 占位）/U+FFFD 扫描 0 命中。**R2（supervisor followup，
+PR #249 审查轮）**：CosyVoice 终态 `/health` **200**（模型
+`Fun-CosyVoice3-0.5B-2512` 加载完成，loopback 8011 只读复核一致；
+委派时点 503 保留为历史快照不改写）；**basePath preflight 阻塞落档**
+——`public_edge_preflight.py` 端点解析 origin-only（Round 4 防凭据
+加固，带 path 的入口即被拒，测试负例锁定）+ 探测路径固定 origin
+相对（`/`、`/health`、`/api/v1/auth/login`），传裸 origin 只探测到
+既有站点自身（`/` 200、`/health` 200、`/api/v1/auth/login` GET 405
+均为既有站点行为，只读实测）——对 `/aios` 路径制入口结构性不可用，
+解除阻塞需独立工具切片；聚焦四套件复跑 40 passed。诚实边界：
+**docs-only
+回填、零部署、零生产触碰、零 secret 读写；§9 自动 preflight 对路径制
+入口结构性被阻塞 + 人工 4G/5G 清单未执行，不宣称公共 Beta 公网生产
+可用**；runbook §3F 落档、
 证据 `docs/evidence/m14-160-public-edge-closeout/README.md` 入库；
 push 分支并开 PR 交 Codex 审查、等 CI、由其合并（本切片不合并）。
 M14-160 healthcheck 配置切片移为次席。

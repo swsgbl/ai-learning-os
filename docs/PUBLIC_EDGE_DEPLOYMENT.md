@@ -484,15 +484,23 @@ healthy/running，healthy 栈跳过 `up`。
 回滚 = 恢复 env 备份 + 按 §10 镜像锚点切回旧 tag + 用两份 ndtool
 备份还原 Nginx。
 
-**语音状态（委派时点，如实呈现）**：FunASR managed-running（PID
-45921，`/health` 200，SenseVoice CPU 模型已加载）；CosyVoice
-managed-running（PID 45978，端口监听，模型加载中），委派时点
-`/health` 503——**不据此宣称 CosyVoice 生产就绪**。
+**语音状态（委派时点 + followup 终态）**：FunASR managed-running
+（PID 45921，`/health` 200，SenseVoice CPU 模型已加载）；CosyVoice
+managed-running（PID 45978），委派时点模型加载中、`/health` 503，
+**supervisor followup 终态 `/health` 200**（模型
+`Fun-CosyVoice3-0.5B-2512` 加载完成，收口时 loopback 8011 只读复核
+一致）——健康缺口消除，如实落档；公网语音（TURN/TLS + 真实语音
+E2E）就绪口径仍不在本证据范围。
 
-诚实边界：本节是上线后的证据回填——**§9 正式 preflight + 人工
-4G/5G 清单尚未对该入口执行**，按 §9 纪律仍不写「公网生产可用」；
-公网入口持续可用依赖家机 frpc 常驻与 VPS Nginx/frps 存活，验收是
-时点证据，不承诺窗口外健康。
+诚实边界：本节是上线后的证据回填——**§9 自动 preflight 对该入口
+结构性被阻塞**（`public_edge_preflight.py` 端点解析 origin-only
+（Round 4 防凭据加固，带 path 的 `https://ndtool.cn/aios` 入口即被
+拒），探测路径固定为 origin 相对路径（`/`、`/health`、
+`/api/v1/auth/login`）；传裸 origin 只会探测到既有站点自身——假阳性
+零证明力。解除阻塞需工具获得显式 basePath 支持，属独立代码切片），
+人工 4G/5G 清单亦未执行，按 §9 纪律仍不写「公网生产可用」；公网
+入口持续可用依赖家机 frpc 常驻与 VPS Nginx/frps 存活，验收是时点
+证据，不承诺窗口外健康。
 
 ## 4. DNS 与 Caddy ACME
 

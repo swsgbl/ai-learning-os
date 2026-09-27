@@ -41,8 +41,22 @@
   templates + versioning 同步 + monitor 措辞守卫）全过；
   `git diff --check` 干净；新增行秘密/本地绝对路径（`<仓库盘>`
   占位）/U+FFFD 扫描 0 命中。
+- **R2（supervisor followup，PR #249 审查轮）**：① CosyVoice 终态
+  `/health` **200**（模型 `Fun-CosyVoice3-0.5B-2512` 加载完成，
+  loopback 8011 只读复核一致；委派时点 503 保留为历史快照不改写，
+  健康缺口消除并如实落档；公网语音就绪口径仍不在本证据范围）；
+  ② **basePath preflight 阻塞落档**——`public_edge_preflight.py`
+  端点解析 origin-only（Round 4 防凭据加固：带 path 的入口 URL
+  即被拒，`test_public_edge_preflight.py` 参数化负例锁定）+ 探测
+  路径固定 origin 相对（`/`、`/health`、`/api/v1/auth/login`），
+  对 `/aios` 路径制公共入口**结构性不可用**；传裸 origin 只会探测
+  到既有站点自身（`/` 200、`/health` 200、`/api/v1/auth/login`
+  GET 405 均为既有站点行为，只读实测）——假阳性、对 AIOS 入口零
+  证明力；解除阻塞需工具获得显式 basePath 支持（独立代码切片）。
+  R2 复验：聚焦四套件复跑 40 passed；扫描复跑 0 命中。
 - 诚实边界：**docs-only 回填——上线本身由 supervisor 执行，本切片
-  零部署零生产触碰**；§9 正式 preflight + 人工 4G/5G 清单未执行，
+  零部署零生产触碰**；§9 自动 preflight 对路径制入口结构性被阻塞
+  + 人工 4G/5G 清单未执行，
   按纪律不写「公网生产可用」；`release_ready`/`production_ready`
   恒 false 口径不变；push 分支并开 PR 交 Codex 审查、等 CI、由其
   合并（本切片不合并）。

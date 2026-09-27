@@ -104,11 +104,20 @@
   引用、woff2 200 `font/woff2`、privacy/providers 401 Bearer +
   `X-Request-Id`；既有站点前后不变。语音委派时点：FunASR running
   `/health` 200（SenseVoice CPU 已载入）；CosyVoice 模型加载中
-  `/health` 503——不宣称就绪。验证：PR #248/main CI 五 job 全绿 +
+  `/health` 503——**R2（supervisor followup，PR #249 审查轮）终态
+  `/health` 200**（模型 `Fun-CosyVoice3-0.5B-2512` 加载完成，
+  loopback 8011 只读复核一致；503 保留为历史快照）。验证：PR #248/
+  main CI 五 job 全绿 +
   容器/端点/三处 SHA256 只读复核一致 + 聚焦文档契约测试四套全过 +
-  `git diff --check` 干净 + 新增行秘密/绝对路径/U+FFFD 扫描 0 命中。
-  诚实边界：docs-only 回填、零部署零生产触碰零 secret；§9 正式
-  preflight + 人工 4G/5G 清单未执行，不宣称公共 Beta 公网生产可用；
+  `git diff --check` 干净 + 新增行秘密/绝对路径/U+FFFD 扫描 0 命中；
+  R2 追加 basePath preflight 阻塞落档——`public_edge_preflight.py`
+  端点解析 origin-only（Round 4 防凭据加固，带 path 入口即被拒，
+  测试负例锁定）+ 探测路径固定 origin 相对，对 `/aios` 路径制入口
+  结构性不可用（传裸 origin 只探测到既有站点自身，只读实测假阳性），
+  解除需独立工具切片；四套件复跑 40 passed。
+  诚实边界：docs-only 回填、零部署零生产触碰零 secret；§9 自动
+  preflight 对路径制入口结构性被阻塞 + 人工 4G/5G 清单未执行，
+  不宣称公共 Beta 公网生产可用；
   push 并开 PR 交 Codex 审查合并（本切片不合并）。
 
 ### M14-160 状态更新
