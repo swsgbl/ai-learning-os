@@ -32,7 +32,11 @@
    探测按 UTF-16 解码；无法解码的字节兜底 replace 不抛异常；正确解码
    ≠放松 fail-closed——无 missing 特征的未知失败（如"拒绝访问"）仍按
    查询失败拒绝；全程注入 fake subprocess + 注入代码页，不碰真实
-   schtasks；
+   schtasks；**平台隔离（R3）**：全部解码/RealRunner 用例把解码层钉在
+   Windows 分支（os.name="nt" + 注入代码页）——宿主是 Linux CI 也必须
+   验证 Windows 路径；另有平台契约守卫：非 Windows 分支保持纯 UTF-8
+   （不做代码页解码），GBK 回归覆盖只能来自钉 nt 的用例、无法被宿主
+   平台静默绕过；
 
 全部经注入 Fake runner——绝不触碰真实 schtasks；零网络零服务操作。
 """
@@ -587,6 +591,16 @@ def test_uninstall_missing_is_idempotent() -> None:
 # --------------------------------- RealRunner Windows 输出解码（M14-165 R2）
 
 
+def _force_windows_console(monkeypatch: pytest.MonkeyPatch, encoding: str = "gbk") -> None:
+    """平台隔离（M14-165 R3）：把解码层钉在 Windows 分支——os.name="nt"
+    （``_decode_process_output``/``RealRunner`` 的分支由此驱动）+ 注入
+    控制台代码页。宿主是 Linux CI 时这些用例也必须验证 Windows 解码
+    路径（R2 CI 失败根因：posix 分支在代码页解码之前返回，GBK 用例被
+    宿主平台静默绕过）。"""
+    monkeypatch.setattr(ctrl.os, "name", "nt")
+    monkeypatch.setattr(ctrl, "_windows_console_encoding", lambda: encoding)
+
+
 @pytest.mark.parametrize(("raw", "expected"), [
     ("错误: 系统找不到指定的文件。".encode("gbk"), "错误: 系统找不到指定的文件。"),
     (b"ERROR: The system cannot find the file specified.",
@@ -599,7 +613,7 @@ def test_decode_process_output_matrix(
 ) -> None:
     """解码矩阵：本地化消息（OEM/ANSI 代码页）/ASCII/UTF-16 BOM/
     UTF-8 BOM 全部正确解出——绝不做 mojibake 字符串匹配。"""
-    monkeypatch.setattr(ctrl, "_windows_console_encoding", lambda: "gbk")
+    _force_windows_console(monkeypatch)
     assert ctrl._decode_process_output(raw) == expected
 
 
@@ -608,8 +622,24 @@ def test_decode_process_output_garbage_never_raises(
 ) -> None:
     """任何编码都解不了的字节兜底 replace、不抛异常——状态判定交给
     fail-closed 的调用方（查询失败/不猜测状态）。"""
-    monkeypatch.setattr(ctrl, "_windows_console_encoding", lambda: "gbk")
+    _force_windows_console(monkeypatch)
     ctrl._decode_process_output(b"\xff")  # GBK/UTF-8 均非法、非 BOM 开头
+
+
+def test_posix_branch_stays_pure_utf8_gbk_not_decoded(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """平台契约守卫（M14-165 R3）：非 Windows 分支保持**纯 UTF-8**——
+    即使注入了代码页函数也不做 GBK 解码（Linux CI 宿主形态）。这固化了
+    平台差异契约：GBK 回归覆盖**只能**来自上方钉住 nt 的用例；若有人
+    移除 os.name 钉扎，Linux CI 上 GBK 用例必然失败，无法被宿主平台
+    静默绕过（正是 R2 CI 失败暴露的形态）。"""
+    monkeypatch.setattr(ctrl.os, "name", "posix")
+    monkeypatch.setattr(ctrl, "_windows_console_encoding", lambda: "gbk")
+    gbk_bytes = "错误: 系统找不到指定的文件。".encode("gbk")
+    decoded = ctrl._decode_process_output(gbk_bytes)
+    assert "找不到" not in decoded, "posix 分支不得做代码页解码"
+    assert decoded == gbk_bytes.decode("utf-8", errors="replace"), "posix 分支形态 = UTF-8 replace"
 
 
 def test_realrunner_reports_missing_for_localized_gbk_output(
@@ -619,7 +649,7 @@ def test_realrunner_reports_missing_for_localized_gbk_output(
     代码页（GBK）字节——旧版 UTF-8 硬解出 mojibake，"找不到" 匹配失效，
     missing 被误判为查询失败（install 因此无法安全进行）。正确解码后
     真实 status 必须报告 missing（exit 2）。全程 fake subprocess。"""
-    monkeypatch.setattr(ctrl, "_windows_console_encoding", lambda: "gbk")
+    _force_windows_console(monkeypatch)
     message = "错误: 系统找不到指定的文件。".encode("gbk")
 
     def fake_run(args, **_kwargs):
@@ -632,6 +662,7 @@ def test_realrunner_reports_missing_for_localized_gbk_output(
 def test_realrunner_parses_utf16_xml_query(monkeypatch: pytest.MonkeyPatch) -> None:
     """M14-165 R2 回归：真实 schtasks /Query /XML 输出 UTF-16（带 BOM）——
     BOM 探测解码后归属判定必须照常工作（installed）。"""
+    _force_windows_console(monkeypatch)
     xml_bytes = _owned_xml().encode("utf-16")  # encode 自带 LE BOM，同真实形态
 
     def fake_run(args, **_kwargs):
@@ -646,7 +677,7 @@ def test_realrunner_unknown_failure_remains_fail_closed(
 ) -> None:
     """正确解码 ≠ 放松 fail-closed：本地化文本里没有 missing 特征的失败
     （如"拒绝访问"）仍必须按查询失败拒绝（exit 1），绝不猜测状态。"""
-    monkeypatch.setattr(ctrl, "_windows_console_encoding", lambda: "gbk")
+    _force_windows_console(monkeypatch)
     message = "错误: 拒绝访问。".encode("gbk")
 
     def fake_run(args, **_kwargs):
