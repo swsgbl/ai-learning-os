@@ -336,7 +336,7 @@ allowlist 纪律追加 `https://ndtool.cn`。
 **边缘路由（Nginx 片段模板 `infra/edge/nginx.public-base-path.example.conf`）**：
 该文件是 **location 片段**（非独立 server 块），include 进 VPS 上既有
 公共 443 server（即承载 ndtool.cn 站点的那个 server；真实域名按仓库
-纪律不入模板，部署副本自填）。片段只含五个 location，结构上不可能
+纪律不入模板，部署副本自填）。片段只含六个 location，结构上不可能
 遮蔽既有站点：
 
 | location | 行为 |
@@ -344,8 +344,20 @@ allowlist 纪律追加 `https://ndtool.cn`。
 | `= /~!frp` | frpc WebSocket 入口（既有行为保持）：升级头透传到 frps 控制面 `127.0.0.1:7000` |
 | `= /aios` | canonical 入口直接代理：`proxy_pass http://127.0.0.1:8080;`（无 URI）+ Host 改写 `app.internal.aios`——完整 `/aios` 原样交给 Next（basePath 构建下 `/aios` 直接渲染，**零重定向**） |
 | `= /aios/` | 301 → `/aios`——斜杠形态归一化到 canonical 无尾斜杠入口（恰好一跳，随后按上一行直接代理） |
+| `= /aios/health`（M14-161） | 公共 API 健康端点精确路由：`proxy_pass http://127.0.0.1:8080/health;`（URI 显式 `/health`）+ Host 改写 `api.internal.aios`——转发 frps API vhost 与本地 API `/health`，`X-Forwarded-*` 与 API 前缀路由一致。精确匹配只接整串 `/aios/health`：不遮蔽 Web（`/aios/healthz`、`/aios/health/x` 仍走 `^~ /aios/`）、不遮蔽 `/aios/api/`（`/aios/api/health` 仍走 API 前缀）、不遮蔽既有站点 |
 | `^~ /aios/api/` | `proxy_pass http://127.0.0.1:8080/api/;`（尾斜杠 URI）+ Host 改写 `api.internal.aios`——仅剥 `/aios` 一段，`/aios/api/v1/foo` → `/api/v1/foo` |
 | `^~ /aios/` | `proxy_pass http://127.0.0.1:8080;`（无 URI）+ Host 改写 `app.internal.aios`——完整 `/aios/...` 路径原样交给 Next（basePath 构建） |
+
+**公共 preflight base path 契约（M14-161）**：同源路径制拓扑下公共
+验收端点带 base path——`--app-url https://ndtool.cn/aios`（探测精确
+canonical `/aios`，非 `/`）、`--api-url https://ndtool.cn/aios`（健康
+探测 `/aios/health`——上表精确路由的 canonical 端点；登录探测拼出
+`/aios/api/v1/auth/login`；CORS 应用源恒为 endpoint origin
+`https://ndtool.cn`，不含 base path）。preflight 端点解析保持严格
+fail-closed：仅接受无 path、`/` 或精确 `/aios`（canonical 无尾斜杠），
+白名单外 path（尾斜杠 `/aios/`、深路径、dot segments、编码斜杠/
+反斜杠、双斜杠、任意其他前缀）一律入口拒绝；根 origin 端点行为不变
+（app 探测 `/`、API 探测 `/health`）。
 
 重定向语义（R3 修正，supervisor 阻断反馈）：Next 16 默认
 `trailingSlash=false`——basePath 构建下 `/aios` 直接渲染、`/aios/`
@@ -502,6 +514,16 @@ E2E）就绪口径仍不在本证据范围。
 入口持续可用依赖家机 frpc 常驻与 VPS Nginx/frps 存活，验收是时点
 证据，不承诺窗口外健康。
 
+**M14-161 更新（阻塞解除路径落档）**：上述工具切片已交付——
+preflight 端点接受受控 base path（精确 `/aios`），app 探测 canonical
+`/aios`、API 探测 `/aios/health`、登录走 `/aios/api/v1/auth/login`
+（§3E/§9 契约）；仓库模板已新增 `location = /aios/health` 精确路由
+（§3E 路由表；模板内容自此前进，本节所载收口时点哈希为历史事实）。
+**生产侧最终解除仍待 Codex 执行**：远端 Nginx 更新片段并 reload
+（使 `/aios/health` 生效）+ 按新版 §9 命令对 `https://ndtool.cn/aios`
+跑正式 preflight + 人工 4G/5G 清单——完成前「公网生产可用」口径
+维持不变。
+
 ## 4. DNS 与 Caddy ACME
 
 1. DNS 控制台添加五条 A 记录 → VPS 公网 IP（TTL 先 300 便于调试，稳定后调大）；
@@ -642,7 +664,21 @@ CORS 不得放宽为 `*`（preflight 断言精确回显）；cookie 非 Secure/S
 ## 9. 公网验收（preflight + 人工）
 
 ```bash
-# 自动化（只打显式端点；fail-closed；报告 JSON 原子落盘）：
+# 自动化（只打显式端点；fail-closed；报告 JSON 原子落盘）。
+# 公共 Beta 同源路径制拓扑（M14-159 §3E + M14-161）：端点带精确 /aios
+# base path——app 探测 canonical /aios、API 健康探测 /aios/health
+# （边缘 = /aios/health 精确路由）、登录走 /aios/api/v1/auth/login、
+# CORS 应用源恒为 https://ndtool.cn（无 base path）：
+python tools/ops/public_edge_preflight.py \
+  --app-url https://ndtool.cn/aios \
+  --api-url https://ndtool.cn/aios \
+  --livekit-url https://livekit.example.com \
+  --turn-host turn.example.com \
+  --livekit-token-file <token 文件> \
+  --login-credentials-file <凭据 JSON> \
+  --output preflight-report.json
+
+# 子域 origin 制拓扑（如彩排/未来形态）端点不带 path，行为不变：
 python tools/ops/public_edge_preflight.py \
   --app-url https://app.example.com \
   --api-url https://api.example.com \
@@ -653,6 +689,13 @@ python tools/ops/public_edge_preflight.py \
   --output preflight-report.json
 # exit 0 = 自动+人工全过；1 = 有 FAIL；3 = 自动全过但人工清单待签认
 ```
+
+端点解析契约（M14-161）：仅接受 https + 公网 host + port，可选唯一
+受控 base path `/aios`（canonical 无尾斜杠；无 path/`/` 归一为根
+origin）。白名单外 path（尾斜杠 `/aios/`、深路径、dot segments、编码
+斜杠/反斜杠、双斜杠、任意其他前缀）与 userinfo/query/fragment 一律
+入口拒绝且不回显原文；报告只存 canonical 重构值（origin 或
+origin+`/aios`）。
 
 人工 4G/5G 清单（脚本会输出同款清单；用 `--mobile-attested-file` 签认）：
 真实蜂窝网络打开入口、跨源 cookie/CORS、考试全流程、语音连接、受限网络

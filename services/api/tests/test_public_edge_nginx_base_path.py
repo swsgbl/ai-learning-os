@@ -1,6 +1,6 @@
-"""M14-159 公共 Web base path —— Nginx 边缘片段模板 fail-closed 校验。
+"""M14-159/M14-161 公共 Web base path —— Nginx 边缘片段模板 fail-closed 校验。
 
-覆盖矩阵（任务书第 4/3/5 条）：
+覆盖矩阵（任务书第 4/3/5 条 + M14-161 健康路由）：
 1. 片段形态：只含 location 块（无 server/listen/server_name/root/alias/
    try_files、无正则 location）——include 进既有 443 站点后**结构上不可能**
    遮蔽既有 ndtool.cn 站点、既有 /api/v1/ 或既有静态资源；
@@ -8,19 +8,23 @@
    `= /aios` canonical 入口直接代理到 Next（零重定向）；`= /aios/`
    301 归一化到 /aios（恰好一跳——R3 修正：Next 16 basePath 构建默认
    trailingSlash=false，对 /aios/ 回 308 /aios，边缘不得反向 301 构成
-   互逆重定向环）；`^~ /aios/api/` 尾斜杠 proxy_pass 仅剥 /aios
+   互逆重定向环）；`= /aios/health`（M14-161）精确转发 frps API vhost
+   + 本地 API /health（公共 preflight 的 canonical 健康端点）；
+   `^~ /aios/api/` 尾斜杠 proxy_pass 仅剥 /aios
    （/aios/api/v1/foo → /api/v1/foo）；`^~ /aios/` 无 URI proxy_pass 原样
    保留完整路径给 Next；
 3. 匹配语义仿真：按 nginx 精确优先/最长前缀实现一个最小匹配器，逐用例
    断言上游 URI 与 Host 改写；站点自身路径（/、/api/v1/*、静态）全部
-   落空（不遮蔽）；
+   落空（不遮蔽）；`/aios/health` 精确命中且邻近 URI（/aios/healthz、
+   /aios/health/x、/aios/api/health）仍走各自最长前缀；
 4. 跨工件契约：Nginx Host 改写的内部 vhost 名与 frpc 模板 customDomains
    精确对齐（frps 按 Host 路由）；上游恒为 loopback 7000/8080；
 5. 公共构建契约锁定：Dockerfile/compose 注入 NEXT_PUBLIC_BASE_PATH（默认
    空 = 根路径构建不变），runbook 记录公共 Beta 入口
    （8443 公网不可达 → 443 /aios，无尾斜杠 canonical；/aios/ 经边缘
    301 归一化）、NEXT_PUBLIC_BASE_PATH=/aios 与
-   NEXT_PUBLIC_API_BASE_URL=https://ndtool.cn/aios 的精确组合。
+   NEXT_PUBLIC_API_BASE_URL=https://ndtool.cn/aios 的精确组合，
+   以及 M14-161 公共 preflight 契约（/aios/health 精确健康路由）。
 
 边界：本文件只读模板/文档，不发任何网络请求、不启动任何容器、不渲染
 真实站点配置。
@@ -144,9 +148,9 @@ def test_fragment_is_location_only_cannot_shadow_host_site() -> None:
 
 
 def test_fragment_location_inventory_and_order() -> None:
-    """声明面恰为五个 location，顺序与 R3 修正后任务书一致（= /~!frp →
-    = /aios → = /aios/ → ^~ /aios/api/ → ^~ /aios/；语义上精确/最长前缀
-    本就无歧义，锁顺序便于审查）。"""
+    """声明面恰为六个 location，顺序与 R3/M14-161 任务书一致（= /~!frp →
+    = /aios → = /aios/ → = /aios/health → ^~ /aios/api/ → ^~ /aios/；
+    语义上精确/最长前缀本就无歧义，锁顺序便于审查）。"""
     signatures = [
         (b["modifier"], b["path"]) for b in _parse_locations(_stripped(_text()))
     ]
@@ -154,6 +158,7 @@ def test_fragment_location_inventory_and_order() -> None:
         ("=", "/~!frp"),
         ("=", "/aios"),
         ("=", "/aios/"),
+        ("=", "/aios/health"),
         ("^~", "/aios/api/"),
         ("^~", "/aios/"),
     ]
@@ -225,6 +230,39 @@ def test_no_mutually_inverse_redirects() -> None:
         assert target not in redirects, (
             f"{source} → {target} 与 {target} 上的重定向互为反向（重定向环）"
         )
+
+
+def test_aios_health_exact_route_forwards_to_local_api_health() -> None:
+    """M14-161：`= /aios/health` 精确转发 frps API vhost（Host 改写
+    api.internal.aios）+ 本地 API `/health`（proxy_pass URI 显式 /health，
+    精确匹配下整串替换），保留 X-Forwarded-* 与 API 前缀路由一致——
+    公共 preflight 在 /aios 拓扑的 canonical 健康探测端点。"""
+    blocks = _parse_locations(_stripped(_text()))
+    block = _match_location(blocks, "/aios/health")
+    assert block is not None and block["path"] == "/aios/health", "缺 = /aios/health 精确健康路由"
+    assert "return" not in block["body"], "健康路由直接代理，不重定向"
+    authority, uri_part = _proxy_target(block)
+    assert authority == "127.0.0.1:8080", "上游必须是 frps vhost loopback 8080"
+    assert uri_part == "/health", "上游 URI 必须是本地 API /health（非 /api/health）"
+    assert _host_header(block) == "api.internal.aios"
+    assert "proxy_http_version 1.1;" in block["body"]
+    assert "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;" in block["body"]
+    assert "proxy_set_header X-Forwarded-Proto $scheme;" in block["body"]
+    assert _forwarded_uri(block, "/aios/health") == "/health"
+
+
+def test_aios_health_exact_match_wins_without_shadowing() -> None:
+    """M14-161：精确匹配优先于 `^~ /aios/`（Web）前缀；同时不吞邻近 URI——
+    /aios/healthz、/aios/health/x 仍走 Web 前缀，/aios/api/health 仍走
+    API 前缀，站点自身 /health 不受影响。"""
+    blocks = _parse_locations(_stripped(_text()))
+    assert _match_location(blocks, "/aios/health")["path"] == "/aios/health", (
+        "整串 /aios/health 必须被精确路由抢先（否则落 Web 前缀 404）"
+    )
+    assert _match_location(blocks, "/aios/healthz")["path"] == "/aios/"
+    assert _match_location(blocks, "/aios/health/status")["path"] == "/aios/"
+    assert _match_location(blocks, "/aios/api/health")["path"] == "/aios/api/"
+    assert _match_location(blocks, "/health") is None, "站点自身 /health 不被片段接管"
 
 
 def test_aios_api_prefix_maps_to_upstream_api() -> None:
@@ -346,7 +384,9 @@ def test_compose_passes_base_path_build_arg() -> None:
 def test_runbook_documents_public_beta_entry_contract() -> None:
     """runbook §3E：8443 公网不可达 → 443 /aios（无尾斜杠 canonical）为
     公共 Beta 入口，/aios/ 301 归一化到 /aios；Web/API 精确 URL 与构建
-    env 组合落档；旧的带尾斜杠整 URL 入口形态不得再出现。"""
+    env 组合落档；旧的带尾斜杠整 URL 入口形态不得再出现。M14-161：
+    /aios/health 精确健康路由与公共 preflight base path 契约（探测
+    /aios、/aios/health）落档 §3E/§9。"""
     text = RUNBOOK.read_text(encoding="utf-8")
     for needle in (
         "8443",
@@ -358,6 +398,11 @@ def test_runbook_documents_public_beta_entry_contract() -> None:
         "nginx.public-base-path.example.conf",
         "app.internal.aios",
         "api.internal.aios",
+        # M14-161：健康路由 + preflight base path 契约
+        "`= /aios/health`",
+        "--app-url https://ndtool.cn/aios",
+        "--api-url https://ndtool.cn/aios",
+        "探测 `/aios/health`",
     ):
         assert needle in text, f"runbook §3E 缺公共契约要素: {needle}"
     assert "`https://ndtool.cn/aios/`" not in text, (

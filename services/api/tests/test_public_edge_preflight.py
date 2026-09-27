@@ -14,7 +14,14 @@
 6. 源码契约：不内置默认端点（ast 常量扫描——带 :// 的字符串常量只允许
    出现在 argparse help 的占位示例里）、无硬编码 IP；
 7. 本机回环行为面（不触外网）：直连 opener 对本机临时 HTTP 服务可达；
-   tls_probe 对非 TLS 端口必须抛错（证书验证链路真实生效）。
+   tls_probe 对非 TLS 端口必须抛错（证书验证链路真实生效）；
+8. M14-161 base path 契约：端点接受 origin 或 origin + 精确 `/aios`
+   （url=canonical origin+base、origin 永不含 base——CORS 语义）；
+   白名单外 path（尾斜杠 /aios/、深路径、dot segments、编码斜杠/
+   反斜杠、双斜杠、任意前缀）一律拒绝且不回显原文；run_checks 探测
+   ——app base 拓扑探测精确 canonical /aios（非 /）、api base 拓扑
+   探测 /aios/health、登录走 /aios/api/v1/auth/login、CORS Origin 用
+   endpoint origin（无 base）；根 origin 行为逐项不变（探测 /、/health）。
 """
 from __future__ import annotations
 
@@ -118,6 +125,65 @@ def test_parse_public_https_url_accepts_public_origin_only() -> None:
     assert trailing.url == "https://edge.acme-public.org", "尾斜杠归一为 canonical origin"
     with_port = preflight.parse_public_https_url("https://edge.acme-public.org:8443")
     assert with_port.url == "https://edge.acme-public.org:8443"
+
+
+# ------------------------------------------------- M14-161 受控 base path 契约
+
+
+def test_parse_public_https_url_accepts_exact_aios_base_path() -> None:
+    """M14-161：精确 `/aios` base path 受控放行；url=canonical origin+base，
+    origin 永不含 base path（CORS 语义），base_path 字段携带归一值。"""
+    endpoint = preflight.parse_public_https_url("https://edge.acme-public.org/aios")
+    assert endpoint.base_path == "/aios"
+    assert endpoint.host == "edge.acme-public.org"
+    assert endpoint.url == "https://edge.acme-public.org/aios", "url 是 canonical 重构值"
+    assert endpoint.origin == "https://edge.acme-public.org", "origin 不含 base path"
+    with_port = preflight.parse_public_https_url("https://edge.acme-public.org:8443/aios")
+    assert with_port.url == "https://edge.acme-public.org:8443/aios"
+    assert with_port.origin == "https://edge.acme-public.org:8443"
+    assert with_port.base_path == "/aios"
+
+
+def test_parse_public_https_url_root_forms_have_empty_base_path() -> None:
+    """M14-161：根 origin 两种形态（裸/尾斜杠）base_path 归一为空串。"""
+    assert preflight.parse_public_https_url("https://edge.acme-public.org").base_path == ""
+    assert preflight.parse_public_https_url("https://edge.acme-public.org/").base_path == ""
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://edge.acme-public.org/aios/",  # 尾斜杠（canonical 是无尾斜杠）
+        "https://edge.acme-public.org/aios/login",  # 深路径
+        "https://edge.acme-public.org/AIOS",  # 大小写敏感：/AIOS 非白名单
+        "https://edge.acme-public.org//aios",  # 双斜杠
+        "https://edge.acme-public.org/./aios",  # dot segment
+        "https://edge.acme-public.org/aios/..",  # dot segment
+        "https://edge.acme-public.org/../aios",  # dot segment（越顶）
+        "https://edge.acme-public.org/%2e%2e",  # 编码 dot segment
+        "https://edge.acme-public.org/aios%2fapi",  # 编码斜杠
+        "https://edge.acme-public.org/aios%5c",  # 编码反斜杠
+        "https://edge.acme-public.org/aios\\",  # 裸反斜杠
+        "https://edge.acme-public.org/api",  # 任意其他前缀
+        "https://edge.acme-public.org/aios%20",  # 编码空格
+        "https://edge.acme-public.org/aios?q=1",  # base+query 组合（query 亦拒绝）
+        "https://edge.acme-public.org/aios#f",  # base+fragment 组合
+        "https://app.example.com/aios",  # 保留域 + 合法 base 仍整体拒绝
+    ],
+)
+def test_parse_public_https_url_rejects_non_whitelisted_base_paths(url: str) -> None:
+    """M14-161：白名单外 path 一律入口拒绝——绝不解码/归一化尝试后放行。"""
+    with pytest.raises(preflight.PreflightError):
+        preflight.parse_public_https_url(url)
+
+
+def test_rejected_base_path_never_echoes_raw_path() -> None:
+    """M14-161：base path 拒绝消息只含 canonical origin，绝不回显 path 原文。"""
+    with pytest.raises(preflight.PreflightError) as excinfo:
+        preflight.parse_public_https_url("https://edge.acme-public.org/SECRET-BASE/piece")
+    message = str(excinfo.value)
+    assert "SECRET-BASE" not in message and "piece" not in message
+    assert "edge.acme-public.org" in message, "安全展示仍应包含 host 便于排障"
 
 
 # ---------------------------------------------------------------- Round 4 泄漏回归
@@ -283,6 +349,160 @@ def test_run_checks_rejects_placeholder_endpoint_before_any_request() -> None:
     """保留域端点在发请求前即被拒绝（fail-closed 参数防线）。"""
     with pytest.raises(preflight.PreflightError):
         preflight.run_checks("https://app.example.com", None, None, None, 5349, None, None, 5.0)
+
+
+# ------------------------------------- M14-161 base path 探测契约（打桩，零网络）
+
+
+class _ProbeRecorder:
+    """打桩 _http_request：记录完整探测 URL（endpoint.url+path）与请求头。"""
+
+    def __init__(self) -> None:
+        self.urls: list[str] = []
+        self.origin_headers: list[str | None] = []
+
+    def __call__(
+        self,
+        endpoint: preflight.Endpoint,
+        path: str,
+        method: str = "GET",
+        headers: dict[str, str] | None = None,
+        data: bytes | None = None,
+        timeout: float = 10.0,
+    ) -> tuple[int, dict[str, str]]:
+        self.urls.append(f"{endpoint.url}{path}")
+        self.origin_headers.append((headers or {}).get("Origin"))
+        response_headers = {
+            "Strict-Transport-Security": "max-age=31536000",
+            "X-Content-Type-Options": "nosniff",
+            "Referrer-Policy": "strict-origin-when-cross-origin",
+            "Access-Control-Allow-Origin": "https://edge.acme-public.org",
+            "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+            "Access-Control-Allow-Credentials": "true",
+        }
+        return 200, response_headers
+
+
+def _stub_network(monkeypatch: pytest.MonkeyPatch, recorder: _ProbeRecorder) -> None:
+    monkeypatch.setattr(preflight, "_http_request", recorder)
+    monkeypatch.setattr(preflight, "_cert_check", lambda *args, **kwargs: None)
+
+
+def test_app_base_path_probes_exact_canonical_aios_entry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M14-161：app base /aios 拓扑探测精确 canonical `/aios`（无尾斜杠），
+    绝不探测根路径 `/`（basePath 构建下 `/` 是 404）。"""
+    recorder = _ProbeRecorder()
+    _stub_network(monkeypatch, recorder)
+    checks = preflight.run_checks(
+        "https://edge.acme-public.org/aios", None, None, None, 5349, None, None, 5.0
+    )
+    assert "https://edge.acme-public.org/aios" in recorder.urls
+    assert "https://edge.acme-public.org/" not in recorder.urls, "base 拓扑不得探测根 /"
+    assert all(check["status"] == preflight.STATUS_PASS for check in checks)
+
+
+def test_app_root_origin_still_probes_root_slash(monkeypatch: pytest.MonkeyPatch) -> None:
+    """M14-161 回归锚：根 origin app 探测 `/`（与 M14-161 之前逐字一致）。"""
+    recorder = _ProbeRecorder()
+    _stub_network(monkeypatch, recorder)
+    preflight.run_checks(
+        "https://edge.acme-public.org", None, None, None, 5349, None, None, 5.0
+    )
+    assert "https://edge.acme-public.org/" in recorder.urls
+    assert all(url == "https://edge.acme-public.org/" for url in recorder.urls)
+
+
+def test_api_base_path_probes_aios_health(monkeypatch: pytest.MonkeyPatch) -> None:
+    """M14-161：api base /aios 拓扑健康探测 canonical `/aios/health`（边缘
+    精确路由），CORS preflight 与兜底 GET 同路径；绝不探测根 `/health`。"""
+    recorder = _ProbeRecorder()
+    _stub_network(monkeypatch, recorder)
+    checks = preflight.run_checks(
+        None, "https://edge.acme-public.org/aios", None, None, 5349, None, None, 5.0
+    )
+    assert recorder.urls.count("https://edge.acme-public.org/aios/health") >= 1
+    assert "https://edge.acme-public.org/health" not in recorder.urls, "base 拓扑不得探测根 /health"
+    health = next(c for c in checks if c["name"].startswith("api-health"))
+    assert health["status"] == preflight.STATUS_PASS
+    assert "/aios/health" in health["detail"], "检查详情用 canonical 完整探测路径"
+
+
+def test_api_root_origin_still_probes_root_health(monkeypatch: pytest.MonkeyPatch) -> None:
+    """M14-161 回归锚：根 origin api 探测 `/health`（与 M14-161 之前一致）。"""
+    recorder = _ProbeRecorder()
+    _stub_network(monkeypatch, recorder)
+    checks = preflight.run_checks(
+        None, "https://edge.acme-public.org", None, None, 5349, None, None, 5.0
+    )
+    assert recorder.urls.count("https://edge.acme-public.org/health") >= 1
+    assert all(not url.endswith("/aios/health") for url in recorder.urls)
+    health = next(c for c in checks if c["name"].startswith("api-health"))
+    assert health["status"] == preflight.STATUS_PASS
+
+
+def test_base_path_login_probes_public_login_route(monkeypatch: pytest.MonkeyPatch) -> None:
+    """M14-161：base 拓扑登录探测拼出公共登录路径 /aios/api/v1/auth/login
+    （边缘 ^~ /aios/api/ 剥 /aios 后即上游 /api/v1/auth/login）。"""
+    recorder = _ProbeRecorder()
+    _stub_network(monkeypatch, recorder)
+    preflight.run_checks(
+        None,
+        "https://edge.acme-public.org/aios",
+        None,
+        None,
+        5349,
+        None,
+        {"username": "u", "password": "p"},
+        5.0,
+    )
+    assert "https://edge.acme-public.org/aios/api/v1/auth/login" in recorder.urls
+
+
+def test_base_path_cors_origin_is_origin_without_base(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M14-161：CORS Origin 头恒为 endpoint origin（无 base path）——同源
+    路径制拓扑下页面 origin 是 https://edge.acme-public.org。"""
+    recorder = _ProbeRecorder()
+    _stub_network(monkeypatch, recorder)
+    checks = preflight.run_checks(
+        "https://edge.acme-public.org/aios",
+        "https://edge.acme-public.org/aios",
+        None,
+        None,
+        5349,
+        None,
+        None,
+        5.0,
+    )
+    sent = [origin for origin in recorder.origin_headers if origin is not None]
+    assert sent and set(sent) == {"https://edge.acme-public.org"}, (
+        "Origin 头必须是 endpoint origin（无 base path）"
+    )
+    cors = next(c for c in checks if c["name"].startswith("api-cors"))
+    assert cors["status"] == preflight.STATUS_PASS
+
+
+def test_main_report_persists_canonical_base_path_endpoints(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """M14-161：报告 endpoints 存 canonical origin+/aios 值（重构非原文）。"""
+    monkeypatch.setattr(
+        preflight, "run_checks",
+        lambda *args, **kwargs: [{"name": "app-https:x", "status": "pass", "detail": "ok"}],
+    )
+    report_path = tmp_path / "report.json"
+    code = preflight.main([
+        "--app-url", "https://edge.acme-public.org/aios",
+        "--api-url", "https://edge.acme-public.org/aios",
+        "--output", str(report_path),
+    ])
+    assert code == preflight.EXIT_MANUAL_PENDING
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report["endpoints"]["app_url"] == "https://edge.acme-public.org/aios"
+    assert report["endpoints"]["api_url"] == "https://edge.acme-public.org/aios"
 
 
 # ---------------------------------------------------------------- 判定逻辑
