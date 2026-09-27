@@ -6,6 +6,14 @@
    非 loopback 后端、TLS 关闭、占位 customDomains、token 文件缺失/
    符号链接/路径形态错误）全拒；**token 内容不读取**（非 UTF-8/极短
    内容的 token 文件 preflight 仍通过——弱值归 prepare+frpc verify 管）；
+   M14-165 双模式：直连安全模式（transport.protocol 缺省 + 公网 IPv4 +
+   7000 + TLS）与 WSS 模式（DNS serverAddr + 443 + "wss" + TLS +
+   tls.serverName == serverAddr，与生产 frpc-ndtool-wss-443.toml 同构）；
+   混合/不安全组合全拒：WSS 端口≠443、直连用 DNS 域名、任一模式 TLS
+   关闭、serverName 不一致/缺失、WSS 用 IP serverAddr、未支持的
+   transport.protocol（含显式 "tcp"——只接受两种规范形态）；WSS 模式
+   对共享 fail-closed 检查（inline token/loopback/占位域名/token 文件
+   元数据）零放松；
 2. plan：打印 verify/install/uninstall/query 计划命令且零执行；install
    计划说明与 XML 安装方式一致（不展示不执行的 /SC ONSTART）；
 3. install 纪律：缺确认短语拒绝（零 runner 调用）；短语正确但缺
@@ -17,7 +25,18 @@
 5. status：missing/installed/foreign/malformed（DOCTYPE 实体防护）分类；
 6. uninstall 纪律：foreign 绝不删除；owned 缺 --execute 只打印计划；
    owned+execute 只删精确任务名；
-7. 输出纪律：stdout/stderr 不含 token 文件内容；CLI 用法错误 exit 2。
+7. 输出纪律：stdout/stderr 不含 token 文件内容；CLI 用法错误 exit 2；
+8. RealRunner Windows 输出解码（M14-165 R2）：schtasks 本地化消息按
+   OEM/ANSI 代码页解码（中文系统 GBK——旧版 UTF-8 硬解出 mojibake 使
+   missing 判定失效、status 误报查询失败）、``/Query /XML`` 按 BOM
+   探测按 UTF-16 解码；无法解码的字节兜底 replace 不抛异常；正确解码
+   ≠放松 fail-closed——无 missing 特征的未知失败（如"拒绝访问"）仍按
+   查询失败拒绝；全程注入 fake subprocess + 注入代码页，不碰真实
+   schtasks；**平台隔离（R3）**：全部解码/RealRunner 用例把解码层钉在
+   Windows 分支（os.name="nt" + 注入代码页）——宿主是 Linux CI 也必须
+   验证 Windows 路径；另有平台契约守卫：非 Windows 分支保持纯 UTF-8
+   （不做代码页解码），GBK 回归覆盖只能来自钉 nt 的用例、无法被宿主
+   平台静默绕过；
 
 全部经注入 Fake runner——绝不触碰真实 schtasks；零网络零服务操作。
 """
@@ -60,6 +79,28 @@ def _render_config(tmp_path: Path) -> Path:
     }
     prepare.render_to_directory(prepare.validate_manifest(manifest))
     return tmp_path / "pkg" / "frpc.windows.toml"
+
+
+WSS_DOMAIN = "edge.acme-public.org"
+
+
+def _to_wss_config(tmp_path: Path, *, server_addr: str = WSS_DOMAIN,
+                   server_name: str | None = WSS_DOMAIN,
+                   server_port: int = 443) -> Path:
+    """把直连渲染产物改写成 WSS 形态（与生产 frpc-ndtool-wss-443.toml 同构）：
+    DNS serverAddr + serverPort 443 + transport.protocol="wss" +
+    transport.tls.serverName（token 仍是文件引用，内容不触碰）。
+    server_name=None 表示省略 serverName 键（缺失 mismatch 用例）。"""
+    config = _render_config(tmp_path)
+    text = config.read_text(encoding="utf-8")
+    text = text.replace('serverAddr = "8.8.8.8"', f'serverAddr = "{server_addr}"')
+    text = text.replace("serverPort = 7000", f"serverPort = {server_port}")
+    server_name_line = "" if server_name is None else f'\ntransport.tls.serverName = "{server_name}"'
+    text = text.replace(
+        "transport.tls.enable = true",
+        f'transport.protocol = "wss"\ntransport.tls.enable = true{server_name_line}')
+    config.write_text(text, encoding="utf-8")
+    return config
 
 
 def _fake_exe(tmp_path: Path, name: str = "frpc.exe") -> Path:
@@ -164,6 +205,126 @@ def test_preflight_rejects_inline_token(tmp_path: Path) -> None:
     config.write_text(text, encoding="utf-8")
     with pytest.raises(ctrl.ControllerError, match="inline"):
         ctrl.preflight_checks(_fake_exe(tmp_path), config)
+
+
+# ------------------------------------------- M14-165 双模式（直连安全 / WSS）
+
+
+def test_preflight_direct_mode_reports_mode(tmp_path: Path) -> None:
+    facts = ctrl.preflight_checks(_fake_exe(tmp_path), _render_config(tmp_path))
+    assert facts["mode"] == "direct"
+
+
+def test_preflight_wss_mode_passes_and_reports_facts(tmp_path: Path) -> None:
+    """M14-165：与生产 frpc-ndtool-wss-443.toml 同构的 WSS 配置通过预检。"""
+    facts = ctrl.preflight_checks(_fake_exe(tmp_path), _to_wss_config(tmp_path))
+    assert facts["mode"] == "wss"
+    assert facts["server_addr"] == WSS_DOMAIN
+    assert facts["proxies"] == ["aios-web", "aios-api"]
+    assert facts["token_file_present"] is True
+
+
+def test_preflight_rejects_wss_with_port_not_443(tmp_path: Path) -> None:
+    """混合形态：WSS + 直连端口 7000 → 拒绝（wss 只允许 443 TLS 入口）。"""
+    config = _to_wss_config(tmp_path, server_port=7000)
+    with pytest.raises(ctrl.ControllerError, match="443"):
+        ctrl.preflight_checks(_fake_exe(tmp_path), config)
+
+
+def test_preflight_rejects_wss_with_tls_disabled(tmp_path: Path) -> None:
+    config = _to_wss_config(tmp_path)
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            "transport.tls.enable = true", "transport.tls.enable = false"),
+        encoding="utf-8")
+    with pytest.raises(ctrl.ControllerError, match="tls.enable"):
+        ctrl.preflight_checks(_fake_exe(tmp_path), config)
+
+
+@pytest.mark.parametrize("server_name", ["other.acme-public.org", None])
+def test_preflight_rejects_wss_with_server_name_mismatch(
+    tmp_path: Path, server_name: str | None
+) -> None:
+    """serverName 必须与 serverAddr **精确相等**——值不一致或键缺失均拒。"""
+    config = _to_wss_config(tmp_path, server_name=server_name)
+    with pytest.raises(ctrl.ControllerError, match="serverName"):
+        ctrl.preflight_checks(_fake_exe(tmp_path), config)
+
+
+def test_preflight_rejects_wss_with_ip_server_addr(tmp_path: Path) -> None:
+    """WSS 模式 serverAddr 必须是 DNS 域名——IP 直连 WSS 属混合形态，拒绝。"""
+    config = _to_wss_config(tmp_path, server_addr="8.8.8.8", server_name="8.8.8.8")
+    with pytest.raises(ctrl.ControllerError, match="serverAddr"):
+        ctrl.preflight_checks(_fake_exe(tmp_path), config)
+
+
+def test_preflight_rejects_direct_with_dns_server_addr(tmp_path: Path) -> None:
+    """直连模式（transport.protocol 缺省）serverAddr 必须仍是公网 IPv4。"""
+    config = _render_config(tmp_path)
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            'serverAddr = "8.8.8.8"', f'serverAddr = "{WSS_DOMAIN}"'),
+        encoding="utf-8")
+    with pytest.raises(ctrl.ControllerError, match="公网 IPv4"):
+        ctrl.preflight_checks(_fake_exe(tmp_path), config)
+
+
+@pytest.mark.parametrize("protocol", ["websocket", "kcp", "quic", "tcp"])
+def test_preflight_rejects_unsupported_transport_protocol(
+    tmp_path: Path, protocol: str
+) -> None:
+    """transport.protocol 只允许缺省（直连安全模式）或 "wss"——显式 "tcp"
+    也拒绝（窄验证：渲染模板从不写该键，非规范形态一律 fail-closed）。"""
+    config = _to_wss_config(tmp_path)
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(
+            'transport.protocol = "wss"', f'transport.protocol = "{protocol}"'),
+        encoding="utf-8")
+    with pytest.raises(ctrl.ControllerError, match="protocol"):
+        ctrl.preflight_checks(_fake_exe(tmp_path), config)
+
+
+@pytest.mark.parametrize(
+    ("rewrite", "keyword"),
+    [
+        ('auth.tokenSource.type = "file"',
+         'auth.token = "inline"\nauth.tokenSource.type = "file"'),
+        ('localIP = "127.0.0.1"', 'localIP = "0.0.0.0"'),
+        ('customDomains = ["app.acme-public.org", "app.internal.aios"]',
+         'customDomains = ["app.example.com"]'),
+    ],
+)
+def test_preflight_wss_preserves_fail_closed_invariants(
+    tmp_path: Path, rewrite: str, keyword: str
+) -> None:
+    """WSS 模式对共享 fail-closed 检查零放松（inline token/loopback/占位域名）。"""
+    config = _to_wss_config(tmp_path)
+    config.write_text(
+        config.read_text(encoding="utf-8").replace(rewrite, keyword), encoding="utf-8")
+    with pytest.raises(ctrl.ControllerError):
+        ctrl.preflight_checks(_fake_exe(tmp_path), config)
+
+
+def test_preflight_wss_missing_token_file_rejected(tmp_path: Path) -> None:
+    config = _to_wss_config(tmp_path)
+    import tomllib
+
+    model = tomllib.loads(config.read_text(encoding="utf-8"))
+    Path(model["auth"]["tokenSource"]["file"]["path"]).unlink()
+    with pytest.raises(ctrl.ControllerError, match="元数据校验"):
+        ctrl.preflight_checks(_fake_exe(tmp_path), config)
+
+
+def test_plan_wss_mode_reports_mode_without_secret(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """plan 对 WSS 配置同样零执行零 secret，且报告验证的模式。"""
+    code = ctrl.main(["plan", "--frpc-exe", str(_fake_exe(tmp_path)),
+                      "--config", str(_to_wss_config(tmp_path))])
+    assert code == ctrl.EXIT_OK
+    out = capsys.readouterr().out
+    assert "wss" in out
+    assert SECRET_CONTENT not in out
 
 
 # ---------------------------------------------------------------- token 元数据校验（Round 1 缺口 1）
@@ -425,6 +586,105 @@ def test_uninstall_owned_dry_run_then_execute() -> None:
 def test_uninstall_missing_is_idempotent() -> None:
     assert ctrl.main(["uninstall", "--confirm-phrase", ctrl.CONFIRM_PHRASE,
                       "--execute"], runner=FakeRunner()) == ctrl.EXIT_OK
+
+
+# --------------------------------- RealRunner Windows 输出解码（M14-165 R2）
+
+
+def _force_windows_console(monkeypatch: pytest.MonkeyPatch, encoding: str = "gbk") -> None:
+    """平台隔离（M14-165 R3）：把解码层钉在 Windows 分支——os.name="nt"
+    （``_decode_process_output``/``RealRunner`` 的分支由此驱动）+ 注入
+    控制台代码页。宿主是 Linux CI 时这些用例也必须验证 Windows 解码
+    路径（R2 CI 失败根因：posix 分支在代码页解码之前返回，GBK 用例被
+    宿主平台静默绕过）。"""
+    monkeypatch.setattr(ctrl.os, "name", "nt")
+    monkeypatch.setattr(ctrl, "_windows_console_encoding", lambda: encoding)
+
+
+@pytest.mark.parametrize(("raw", "expected"), [
+    ("错误: 系统找不到指定的文件。".encode("gbk"), "错误: 系统找不到指定的文件。"),
+    (b"ERROR: The system cannot find the file specified.",
+     "ERROR: The system cannot find the file specified."),
+    ("系统找不到".encode("utf-16"), "系统找不到"),  # /Query /XML 形态（BOM 探测）
+    ("« café »".encode("utf-8-sig"), "« café »"),
+])
+def test_decode_process_output_matrix(
+    monkeypatch: pytest.MonkeyPatch, raw: bytes, expected: str
+) -> None:
+    """解码矩阵：本地化消息（OEM/ANSI 代码页）/ASCII/UTF-16 BOM/
+    UTF-8 BOM 全部正确解出——绝不做 mojibake 字符串匹配。"""
+    _force_windows_console(monkeypatch)
+    assert ctrl._decode_process_output(raw) == expected
+
+
+def test_decode_process_output_garbage_never_raises(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """任何编码都解不了的字节兜底 replace、不抛异常——状态判定交给
+    fail-closed 的调用方（查询失败/不猜测状态）。"""
+    _force_windows_console(monkeypatch)
+    ctrl._decode_process_output(b"\xff")  # GBK/UTF-8 均非法、非 BOM 开头
+
+
+def test_posix_branch_stays_pure_utf8_gbk_not_decoded(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """平台契约守卫（M14-165 R3）：非 Windows 分支保持**纯 UTF-8**——
+    即使注入了代码页函数也不做 GBK 解码（Linux CI 宿主形态）。这固化了
+    平台差异契约：GBK 回归覆盖**只能**来自上方钉住 nt 的用例；若有人
+    移除 os.name 钉扎，Linux CI 上 GBK 用例必然失败，无法被宿主平台
+    静默绕过（正是 R2 CI 失败暴露的形态）。"""
+    monkeypatch.setattr(ctrl.os, "name", "posix")
+    monkeypatch.setattr(ctrl, "_windows_console_encoding", lambda: "gbk")
+    gbk_bytes = "错误: 系统找不到指定的文件。".encode("gbk")
+    decoded = ctrl._decode_process_output(gbk_bytes)
+    assert "找不到" not in decoded, "posix 分支不得做代码页解码"
+    assert decoded == gbk_bytes.decode("utf-8", errors="replace"), "posix 分支形态 = UTF-8 replace"
+
+
+def test_realrunner_reports_missing_for_localized_gbk_output(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """M14-165 R2 核心回归：中文 Windows schtasks 缺任务消息是 OEM/ANSI
+    代码页（GBK）字节——旧版 UTF-8 硬解出 mojibake，"找不到" 匹配失效，
+    missing 被误判为查询失败（install 因此无法安全进行）。正确解码后
+    真实 status 必须报告 missing（exit 2）。全程 fake subprocess。"""
+    _force_windows_console(monkeypatch)
+    message = "错误: 系统找不到指定的文件。".encode("gbk")
+
+    def fake_run(args, **_kwargs):
+        return subprocess.CompletedProcess(args, 1, stdout=b"", stderr=message)
+
+    monkeypatch.setattr(ctrl.subprocess, "run", fake_run)
+    assert ctrl.main(["status"], runner=ctrl.RealRunner()) == ctrl.STATUS_MISSING
+
+
+def test_realrunner_parses_utf16_xml_query(monkeypatch: pytest.MonkeyPatch) -> None:
+    """M14-165 R2 回归：真实 schtasks /Query /XML 输出 UTF-16（带 BOM）——
+    BOM 探测解码后归属判定必须照常工作（installed）。"""
+    _force_windows_console(monkeypatch)
+    xml_bytes = _owned_xml().encode("utf-16")  # encode 自带 LE BOM，同真实形态
+
+    def fake_run(args, **_kwargs):
+        return subprocess.CompletedProcess(args, 0, stdout=xml_bytes, stderr=b"")
+
+    monkeypatch.setattr(ctrl.subprocess, "run", fake_run)
+    assert ctrl.main(["status"], runner=ctrl.RealRunner()) == ctrl.STATUS_INSTALLED
+
+
+def test_realrunner_unknown_failure_remains_fail_closed(
+    monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """正确解码 ≠ 放松 fail-closed：本地化文本里没有 missing 特征的失败
+    （如"拒绝访问"）仍必须按查询失败拒绝（exit 1），绝不猜测状态。"""
+    _force_windows_console(monkeypatch)
+    message = "错误: 拒绝访问。".encode("gbk")
+
+    def fake_run(args, **_kwargs):
+        return subprocess.CompletedProcess(args, 1, stdout=b"", stderr=message)
+
+    monkeypatch.setattr(ctrl.subprocess, "run", fake_run)
+    assert ctrl.main(["status"], runner=ctrl.RealRunner()) == ctrl.EXIT_FAILURE
 
 
 # ---------------------------------------------------------------- CLI

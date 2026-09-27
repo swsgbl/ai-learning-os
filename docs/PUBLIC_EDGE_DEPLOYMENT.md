@@ -155,6 +155,16 @@ python tools/ops/frpc_windows_controller.py uninstall --confirm-phrase INSTALL-A
   `urn:aios:m14-155:edge-frpc-controller` 的自有任务；绝不枚举/触碰任何
   其他计划任务；token 文件只做存在性/结构校验（0600/UTF-8/长度），内容
   绝不读取或展示；
+- frpc 控制器双模式窄验证（M14-165）：`transport.protocol` 缺省 →
+  直连安全模式（公网 IPv4 serverAddr + serverPort 7000 + TLS 显式
+  开启）；`"wss"` → WSS 模式（DNS 域名 serverAddr + serverPort 443 +
+  TLS + `transport.tls.serverName` 与 serverAddr **精确相等**——与
+  生产 `<仓库盘>/.aios-public-edge/frpc-ndtool-wss-443.toml` 同构，
+  token 仍只走文件引用、内容绝不读取）；其余取值与一切混合/不安全组合
+  （WSS 端口≠443、直连 7000 用 DNS 域名、TLS 关闭、serverName 缺失或
+  不一致、WSS 用 IP serverAddr）一律 fail-closed 拒绝；两模式共享
+  inline token 拒绝/loopback 后端/占位域名/绝对路径/token 元数据等
+  全部检查；
 - 两个工具都不 SSH、不上传、不启停任何服务——真实命令（上传产物、
   secrets 就位、compose up、DNS 变更、schtasks 执行）全部由 supervisor
   在取得真实资源后按 DEPLOYMENT_PACKAGE.md 清单执行。
@@ -585,6 +595,17 @@ preflight 端点接受受控 base path（精确 `/aios`），app 探测 canonica
    `localPort = 3012`，3011 已知 stale 不再作为公网目标），frpc 只是
    **出站**连接；不开路由器端口映射、不暴露
    Postgres/Redis/MinIO/SearXNG/远程桌面。
+6. **WSS 中转变体（M14-165，生产 ndtool.cn 形态）**：控制面不走直连
+   7000，而走 443 的 WebSocket（CDN/Nginx `= /~!frp` 入口）——
+   `serverAddr` 填 DNS 域名（如 `ndtool.cn`）、`serverPort = 443`、
+   `transport.protocol = "wss"`、`transport.tls.enable = true`，且
+   `transport.tls.serverName` **必须与 serverAddr 精确相等**（TLS 证书
+   校验锚点）；token 仍是文件引用（`.aios-public-edge/secrets/` 下），
+   内容绝不写入配置/日志。`tools/ops/frpc_windows_controller.py
+   preflight` 对该形态按 WSS 模式校验通过（直连模式规则原样保留：
+   IPv4+7000+TLS）；混合/不安全形态（WSS 端口≠443、直连用 DNS 域名、
+   TLS 关闭、serverName 不一致或缺失、WSS 用 IP）一律 fail-closed
+   拒绝（见 §3B）。
 
 ### 5.3 验证
 
