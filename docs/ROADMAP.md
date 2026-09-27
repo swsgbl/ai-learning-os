@@ -79,6 +79,47 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-160 状态更新（公网边缘生产证据收口）
+
+- M14-160 公网边缘生产证据收口（docs-only 回填切片，worktree
+  `m14-160-public-edge-closeout`，分支 `docs/m14-160-public-edge-closeout`，
+  基于 main `25bba2cb8c6ab7a12a41014e74a8d139a951dd73`（PR #248
+  merge = M14-160 healthcheck 配置切片合入，精确基点））：supervisor
+  于 2026-09-27 真实完成公共边缘上线，本切片把证据落档并新增
+  runbook §3F 与 tracked 证据
+  `docs/evidence/m14-160-public-edge-closeout/README.md`。核心事实：
+  生产 Web 镜像 `aios/web:m14-160-public-edge-beta`
+  （`sha256:9f42d0e5…`）容器 `cb32feb1d386…` running+healthy（root
+  与 `/aios` 构建双健康）；API 未变更 healthy（
+  `aios/api:m14-124-production`，容器 `77bb87569d98…`）；恢复
+  dry-run+enforce pin 9/9 六服务健康跳过 `up`；env 备份/当前
+  SHA256 `211F95AB…`/`02F5FC2D…`（不回显）。frpc 14:29 启动
+  （Web→3012、API→8000，内部标签 `app.internal.aios`/
+  `api.internal.aios`）、远端 frps PID 335753（7000/8080 在线）；
+  **部署源更正**：M14-159 目录 110 字节残片无效，部署源为仓库模板
+  `infra/edge/nginx.public-base-path.example.conf`（SHA256
+  `18B5DDE2…`，与远端逐字节同哈希）；远端切换 19:08 +08（ndtool
+  `627ca884…`，双备份，`nginx -t` 过、reload 成功）。公网验收：
+  `/aios`、`/aios/login` 200、斜杠 301 归一化、`/aios/_next/…`
+  引用、woff2 200 `font/woff2`、privacy/providers 401 Bearer +
+  `X-Request-Id`；既有站点前后不变。语音委派时点：FunASR running
+  `/health` 200（SenseVoice CPU 已载入）；CosyVoice 模型加载中
+  `/health` 503——**R2（supervisor followup，PR #249 审查轮）终态
+  `/health` 200**（模型 `Fun-CosyVoice3-0.5B-2512` 加载完成，
+  loopback 8011 只读复核一致；503 保留为历史快照）。验证：PR #248/
+  main CI 五 job 全绿 +
+  容器/端点/三处 SHA256 只读复核一致 + 聚焦文档契约测试四套全过 +
+  `git diff --check` 干净 + 新增行秘密/绝对路径/U+FFFD 扫描 0 命中；
+  R2 追加 basePath preflight 阻塞落档——`public_edge_preflight.py`
+  端点解析 origin-only（Round 4 防凭据加固，带 path 入口即被拒，
+  测试负例锁定）+ 探测路径固定 origin 相对，对 `/aios` 路径制入口
+  结构性不可用（传裸 origin 只探测到既有站点自身，只读实测假阳性），
+  解除需独立工具切片；四套件复跑 40 passed。
+  诚实边界：docs-only 回填、零部署零生产触碰零 secret；§9 自动
+  preflight 对路径制入口结构性被阻塞 + 人工 4G/5G 清单未执行，
+  不宣称公共 Beta 公网生产可用；
+  push 并开 PR 交 Codex 审查合并（本切片不合并）。
+
 ### M14-160 状态更新
 
 - M14-160 Web 容器 healthcheck 对齐 basePath 构建（配置/docs/tests

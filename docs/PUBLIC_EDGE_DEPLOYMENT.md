@@ -426,6 +426,82 @@ M14-157 回环网关（§3D）行为均不变；本节只新增 443 路径制公
 公网部署宣告；在 §9 preflight + 人工 4G/5G 清单对该入口全绿之前，
 不宣称公共 Beta 生产可用。
 
+## 3F. 公共边缘生产上线与验收记录（M14-160 收口，2026-09-27）
+
+本节是 supervisor 真实执行公共边缘上线后的**证据回填**（docs-only）：
+记录部署形态、公网验收矩阵与回滚锚点；上线操作不因本节重演。完整
+事实与哈希清单见 `docs/evidence/m14-160-public-edge-closeout/README.md`。
+
+**上线形态**：
+
+| 项 | 值 |
+| --- | --- |
+| 仓库基点 | main `25bba2cb…`（PR #248 merge；PR 与 main CI 五标准 job 全绿） |
+| 生产 Web 镜像 | `aios/web:m14-160-public-edge-beta` = `sha256:9f42d0e5…`（root 与 `/aios` 构建均 healthy） |
+| 生产 Web 容器 | `cb32feb1d386…`，running + healthy |
+| 生产 API | 未变更：`aios/api:m14-124-production`，容器 `77bb87569d98…` healthy |
+| 家机 frpc | 2026-09-27 14:29（本地时间）启动，配置 `<仓库盘>/.aios-public-edge/frpc-ndtool-wss-443.toml`；目标 Web `127.0.0.1:3012`、API `127.0.0.1:8000`（内部路由标签 `app.internal.aios` / `api.internal.aios`，loopback、家机零新增入站） |
+| 远端 frps | `aios-frps` PID 335753；loopback 控制端口 7000 与 vhost 端口 8080 在线 |
+
+**边缘配置源更正（supervisor 口径）**：M14-159 工作目录残片
+`aios-base-path.locations.conf`（110 字节）无效，**不是部署源**，
+任何证据不得如此记载。部署源是仓库 canonical 模板
+`infra/edge/nginx.public-base-path.example.conf`（5235 bytes，SHA256
+`18B5DDE2…`）——与远端 `/etc/nginx/aios-base-path.locations.conf`
+逐字节同哈希。
+
+**远端切换（2026-09-27 19:08 +08 完成）**：生效 sites-enabled 与
+sites-available `ndtool` SHA256 `627ca88418d7664f…`；两份备份——
+`/root/aios-m14-160-nginx-backup/ndtool.sites-enabled.20260927_1908_m14_160`
+（SHA256 `de020c9a…`）与
+`/etc/nginx/sites-available/ndtool.backup.20260927_1908_m14_160`
+（SHA256 `3cbd1a6b…`）；`nginx -t` 在 reload 前后均通过，reload 成功。
+
+**公网验收（supervisor 实测 + 收口时只读复核一致）**：
+
+| 请求 | 结果 |
+| --- | --- |
+| `https://ndtool.cn/aios` | 200（HTML 18031 bytes，引用 `/aios/_next/…`） |
+| `https://ndtool.cn/aios/login` | 200 |
+| 斜杠形态（canonical 入口 + 尾斜杠） | 301 归一化到无尾斜杠 canonical 入口（一跳） |
+| `/aios/_next/static/media/…woff2` | 200，`font/woff2` |
+| `/aios/api/v1/system/privacy` | 预期认证响应 401，`WWW-Authenticate: Bearer`，含 API `X-Request-Id` |
+| `/aios/api/v1/voice/providers` | 预期认证响应 401，同上 |
+| 既有站点 `/`、`/health` | 切换前后均 200 |
+| 既有 `/api/v1/health` | 切换前后均 404（既有行为，非回归指标） |
+
+401 + `WWW-Authenticate: Bearer` + API `X-Request-Id` 证明公网请求
+经 Nginx → frps vhost → frpc → 家机 FastAPI 完整链路（真实后端语义，
+非边缘静态应答）。本地验收：3011 与 3012 双端口 `/aios`、`/aios/login`
+均 200，API `/health` 200，斜杠归一化生效；恢复 dry-run 与 enforce：
+pin 一致 9/9，API/LiveKit/MinIO/Postgres/Redis/Web 全部
+healthy/running，healthy 栈跳过 `up`。
+
+**生产 env 与回滚锚**：切换前 env 备份
+`<仓库盘>/.verify/m14-160-public-edge/env.production-recovery.before-m14-160.backup`
+（SHA256 `211F95AB…`）；当前 `infra/env.production-recovery`
+（SHA256 `02F5FC2D…`）。两文件内容均不回显、不入库，只以哈希留证。
+回滚 = 恢复 env 备份 + 按 §10 镜像锚点切回旧 tag + 用两份 ndtool
+备份还原 Nginx。
+
+**语音状态（委派时点 + followup 终态）**：FunASR managed-running
+（PID 45921，`/health` 200，SenseVoice CPU 模型已加载）；CosyVoice
+managed-running（PID 45978），委派时点模型加载中、`/health` 503，
+**supervisor followup 终态 `/health` 200**（模型
+`Fun-CosyVoice3-0.5B-2512` 加载完成，收口时 loopback 8011 只读复核
+一致）——健康缺口消除，如实落档；公网语音（TURN/TLS + 真实语音
+E2E）就绪口径仍不在本证据范围。
+
+诚实边界：本节是上线后的证据回填——**§9 自动 preflight 对该入口
+结构性被阻塞**（`public_edge_preflight.py` 端点解析 origin-only
+（Round 4 防凭据加固，带 path 的 `https://ndtool.cn/aios` 入口即被
+拒），探测路径固定为 origin 相对路径（`/`、`/health`、
+`/api/v1/auth/login`）；传裸 origin 只会探测到既有站点自身——假阳性
+零证明力。解除阻塞需工具获得显式 basePath 支持，属独立代码切片），
+人工 4G/5G 清单亦未执行，按 §9 纪律仍不写「公网生产可用」；公网
+入口持续可用依赖家机 frpc 常驻与 VPS Nginx/frps 存活，验收是时点
+证据，不承诺窗口外健康。
+
 ## 4. DNS 与 Caddy ACME
 
 1. DNS 控制台添加五条 A 记录 → VPS 公网 IP（TTL 先 300 便于调试，稳定后调大）；
