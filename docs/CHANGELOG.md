@@ -1,5 +1,116 @@
 # Changelog
 
+## M14-156 — 公网边缘本地彩排 supervisor（Caddy→frps→frpc→host 回环链路，不部署）
+
+- 新增 `tools/ops/public_edge_rehearsal.py`（纯标准库；子命令
+  **plan / execute / cleanup / status**，默认 plan 零变更零探测零 Docker）：
+  把 M14-153/154/155 的可渲染部署包推进为**可执行的本地回环彩排**——
+  probe → Caddy（唯一 host 发布 `127.0.0.1:39443`，HTTP-only）→ frps
+  vhost → frpc → `host.docker.internal` 的家机 API(8000)/Web(3011)。
+- **确认门 fail-closed**：execute 需同时满足 `--execute` 与精确短语
+  `EXECUTE PUBLIC EDGE REHEARSAL`；cleanup 需 `--execute` 与
+  `CLEANUP PUBLIC EDGE REHEARSAL`——缺一即稳定类别 confirm-gate +
+  非零退出 + 零副作用（不探测、不写证据、不清理）。
+- **只读 preflight**（execute 前置）：docker CLI 与 compose 子命令可用、
+  家机 API `/health` 与 Web 入口 200、发布端口空闲、work-dir 契约成立；
+  稳定错误类别（docker-unavailable / target-unreachable / port-busy …）
+  供 supervisor 与测试分类断言。
+- **work-dir 契约**（确定性、文档化）：仓库外、非符号链接、非文件系统根；
+  已存在时只允许恰为本工具产物名集（docker-compose.yml/frps.toml/
+  frpc.toml/Caddyfile/frps_token.txt——幂等覆写），任何外来条目/子目录
+  拒绝，绝不盲写盲删无关目录。
+- **一次性 token 纪律**：`secrets.token_hex(32)` 只写进 work-dir 的 0600
+  文件（frps/frpc 只读挂载共享同值同源，token-from-file 不变量与生产
+  同款），绝不打印、绝不进入日志/证据/命令行；证据只记长度事实。
+- **隔离不变量**：compose project 恒为 `aios-m14-156-edge-rehearsal`
+  （文件 `name:` 与 `-p` 双保险）；host 面唯一发布 `127.0.0.1:39443:80`
+  （回环+高位）；Host 路由标签 `app.rehearsal.localhost` /
+  `api.rehearsal.localhost`（RFC 6761 保留域）；镜像 digest pin（caddy
+  2.11.4-alpine / frps v0.71.0 与生产同 digest，frpc v0.71.0 为
+  2026-09-27 Docker Hub registry API 新核实）。
+- **渲染自检 + scoped 清理**：up 之前对四产物做全部不变量 fail-closed
+  复核（TLS force/token 文件/无 inline token/双标签精确集/回连目标/
+  HTTP-only/项目名/唯一回环发布/摘要 pin）；execute 无论成败恒定按
+  `label=com.docker.compose.project=<本项目>` 精确过滤清理本项目容器/
+  网络 + 契约内 work-dir，**绝不触碰 aios-m14-03-production-rehearsal
+  或任何其他项目**；cleanup 子命令可独立重放（中断恢复）。
+- **证据**：`rehearsal-evidence.json` + `rehearsal-report.md` 原子写
+  （同目录 temp+replace，失败保真无 .tmp 残留），成败路径都落盘；
+  `public_ready` 恒 false；证据目录默认仓库 gitignored
+  `.verify/artifacts/m14-156-edge-rehearsal/`，拒绝仓库 tracked 区。
+- **Docker/网络边界注入**：平台命令经 Runner 协议、探测经 Prober 协议
+  注入（对齐 M14-06/M14-155 windows_startup_task 纪律）——测试全部
+  FakeRunner/FakeProber，零真实 Docker、零网络。
+- 新增彩排模板 `infra/edge/rehearsal/`（compose/frps/frpc/Caddyfile 四
+  example，与生产模板刻意差异全部注释说明：HTTP-only、vhost 走 compose
+  网络隔离、frpc 容器形态 + host.docker.internal 回连）；runbook 新增
+  §3C；研究文档快照刷新 2026-09-27（frp 109,639★、pangolin 22,930★
+  AGPL-3/商业双许可、newt 1.17.0、chisel v1.12.0、rathole v0.5.0/2023、
+  gost v3.3.0、cloudflared 2026.9.3、Headscale 44,144★ v0.29.4——
+  结论不变：frp+Caddy 仍是生产主路径）。
+- 测试：`services/api/tests/test_public_edge_rehearsal.py` 52 项——argv
+  白名单/确认门矩阵、work-dir 安全矩阵、项目不变量、回环/高位端口绑定、
+  清理只碰自己（标签精确过滤 + 受保护项目名绝不出现）、token 零泄漏
+  （stdout/证据/命令行全扫）、证据原子性（失败保真/无 .tmp/tracked 区
+  拒绝）、preflight 六类失败、命令边界注入。
+- 边界：本地彩排是 HTTP-only/loopback-only 的链路验证——不构成公网
+  部署、不证明公网生产可用；未触碰任何生产容器/服务/env/secrets；
+  公网验收仍走 preflight + 人工 4G/5G 清单。
+- **Round 1（supervisor 三项修正）**：(1) `cmd_execute` 的 `mutated`
+  标志提前到 **work-dir mkdir 成功之后、chmod/render 之前**——任何
+  render/chmod 失败都会进入 scoped 清理并删除契约内 work-dir，不再留
+  半成品目录（新测试：注入 render 失败 → render-failed + work-dir 删除
+  + cleanup 入档 attempted/work_dir_removed）；(2) `cmd_status` 对
+  `docker network ls` 返回码同样 fail-closed（docker-unavailable，只读
+  查询不猜测状态；新测试覆盖 ps 正常而 network ls 失败的组合）；
+  (3) work-dir 与 evidence-dir 的符号链接防线升级为**路径链逐组件**
+  检查（任何已存在组件是符号链接即拒绝，先于 resolve() 执行；缺省
+  叶/父目录仍合法）——新增真实中间组件符号链接测试与 Windows 安全
+  monkeypatch is_symlink 双形态测试。验证：套件 52→**58 passed**、
+  六套件合跑 **306 passed + 3 skipped**、ruff/py_compile/
+  `git diff --check` 全净。
+- **Round 2（supervisor 焦点修正）**：新增 `--host-api-port`/
+  `--host-web-port`（1..65535，默认 8000/3011；畸形/非数字/越界/相同
+  端口稳定类别 `port-invalid` fail-closed，无 traceback、零副作用、
+  错误不回显原始输入）——仅用于已文档化的本地 Docker stale-port-forward
+  绕行（生产容器内部健康但既有 host 映射 TCP 空应答；不重启/不重建
+  生产）。host.docker.internal 固定，**无 host/address/URL 覆写面**；
+  入口恒为 39443。端口线程化贯穿：preflight URL、frpc 渲染（localPort
+  精确替换 + 出现次数恰一次校验）、渲染自检目标集、证据 targets
+  （显式记录 api_port/web_port/defaults_used——覆写端口上的 pass 不
+  伪装成对默认映射的验证）、markdown 目标段与 plan/status 输出。
+  新增 15 项聚焦测试（默认值/有效覆写/无效覆写矩阵/preflight URL
+  构造/frpc 目标校验/证据端口记录/plan-status 呈现）。验证：套件
+  58→**73 passed**、六套件合跑 **321 passed + 3 skipped**、ruff/
+  py_compile/`git diff --check` 全净。
+- **Round 3（supervisor 实跑修正——镜像源）**：supervisor 真实执行发现
+  compose 失败仅因拉取 frpc 镜像：本地 daemon 镜像加速器按白名单拒收
+  `docker.io/fatedier/frpc`（DaoCloud allowlist），直连 Docker Hub 超时。
+  经官方研究与 registry 核实：`ghcr.io/fatedier/frpc:v0.71.0` 是 frp
+  **官方** GHCR 镜像（官方 release 文档列明，非第三方镜像），OCI index
+  digest 与 Docker Hub 官方镜像逐字节一致
+  （`sha256:99ece6a2b62cfc68731e0df289af804ff1c699911cfc47871856434f1d6d53ee`，
+  该精确 digest 本地已成功拉取）。彩排 compose 模板仅改 frpc 服务镜像
+  引用为该 GHCR 地址（caddy/frps 与生产边缘模板零改动）；新增测试
+  断言精确官方 GHCR frpc 引用 + digest，并保持三镜像 digest-pin 不变量。
+  验证：套件 73→**74 passed**、六套件合跑 **322 passed + 3 skipped**、
+  ruff/py_compile/`git diff --check` 全净。
+- **Round 4（docs-only 收口——supervisor 真实彩排证据回填）**：supervisor
+  在 commit `aa35929509a4c742c06fc12279566701726fe601`（R3 后）真实执行
+  Docker 彩排并通过：API 默认 `127.0.0.1:8000`、Web 一次性临时 host 映射
+  `127.0.0.1:39998` 绕行（既有生产 3011 映射 TCP 空应答而 Web 容器本身
+  健康；临时映射彩排后即弃用）、Caddy 入口 `127.0.0.1:39443`；
+  `app.rehearsal.localhost/` 与 `api.rehearsal.localhost/health` 双路由
+  200；compose 起 Caddy+frps+frpc；scoped 清理移除 3 容器 + 1 网络 +
+  work-dir；证据 `result=pass`、`public_ready=false`、
+  `defaults_used=false`。证据哈希（全值见 runbook §3C 证据注记）：
+  rehearsal-evidence.json =
+  `D833D8D4DC7239B2174A6FBFFBDEDB51E4E332C317049B8D15C98E12C5267D9E`、
+  rehearsal-report.md =
+  `06501A69404B4656CDC8567B0B2B341658A89168F7B4C4E6551700D7B029CECB`。
+  诚实边界：只证明本地回环彩排链路（Caddy→frps→frpc→家机 API/Web）——
+  无真实域名/VPS/DNS/公网手机验收，不宣称公网生产可用。
+
 ## M14-155 — 边缘部署操作包与 frpc 控制器（可交接、不部署）
 
 - 新增 `tools/ops/public_edge_package.py`（零第三方依赖；零网络零服务）：

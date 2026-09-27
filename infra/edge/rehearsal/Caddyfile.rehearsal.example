@@ -1,0 +1,26 @@
+# M14-156 彩排 Caddy 模板（example）——由 public_edge_rehearsal.py 复制进彩排工作目录。
+#
+# 与生产（../Caddyfile.example）的差异（有意为之，彩排语义）：
+# - HTTP-only：auto_https off、admin off，无 ACME/证书/443/安全头
+#   （生产为 443 自动 HTTPS + HSTS 等安全响应头，由 preflight 验收）；
+# - 站点是 :80（容器内），host 面唯一发布 127.0.0.1:39443；
+# - Host 路由与生产同构：app/api 两个彩排标签经 frps vhost（compose
+#   网络 frps:8080，生产为本机 127.0.0.1:8080）回到家机 API/Web。
+{
+	auto_https off
+	admin off
+}
+
+:80 {
+	@api host api.rehearsal.localhost
+	handle @api {
+		reverse_proxy frps:8080
+	}
+
+	@app host app.rehearsal.localhost
+	handle @app {
+		reverse_proxy frps:8080
+	}
+
+	respond 404
+}

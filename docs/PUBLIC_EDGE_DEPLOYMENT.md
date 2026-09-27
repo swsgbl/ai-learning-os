@@ -6,9 +6,11 @@
 校验与手册，不含任何真实域名/IP/证书/token；未完成真实公网验收前不宣称
 公网生产可用。**
 
-- 模板：`infra/edge/`（frps/frpc/Caddyfile/livekit 边缘配置/compose/env/分发清单）
+- 模板：`infra/edge/`（frps/frpc/Caddyfile/livekit 边缘配置/compose/env/分发清单；
+  本地彩排模板在 `infra/edge/rehearsal/`，见 §3C）
 - 自动化：`services/api/tests/test_edge_deployment_templates.py`（模板 fail-closed
-  校验）、`tools/ops/public_edge_preflight.py`（公网验收 preflight，只打显式端点）
+  校验）、`tools/ops/public_edge_preflight.py`（公网验收 preflight，只打显式端点）、
+  `tools/ops/public_edge_rehearsal.py`（本地回环彩排 supervisor，§3C）
 - 外部 coturn 组件复用 `infra/coturn/`（M10-05，含 entrypoint fail-closed 校验）
 - 官方文档：[frp](https://github.com/fatedier/frp)、
   [Caddy](https://caddyserver.com/docs/caddyfile)、
@@ -161,6 +163,99 @@ python tools/ops/frpc_windows_controller.py uninstall --confirm-phrase INSTALL-A
 2 用法错误；frpc 控制器 —— 0 成功（含 dry-run 计划输出）/ 1 预检失败或
 拒绝执行 / 2 用法错误，`status` 专用 0=installed / 1=unknown / 2=missing /
 3=foreign / 4=malformed。
+
+## 3C. 本地彩排（public_edge_rehearsal，M14-156）
+
+在取得真实 VPS/域名之前，用 `tools/ops/public_edge_rehearsal.py` 在**本机
+回环**真实跑通 Caddy → frps → frpc → 家机 API/Web 的 HTTP 反向隧道链路
+（模板 `infra/edge/rehearsal/`）。supervisor 精确序列：
+
+```bash
+# ① 只读计划（默认子命令；零变更零探测零 Docker）
+python tools/ops/public_edge_rehearsal.py plan --work-dir <仓库外彩排目录>
+
+# ② 真实彩排（需同时给 --execute 与精确短语，缺一即 fail-closed 拒绝；
+#    前置只读 preflight：Docker CLI/compose 可用、家机 API /health 与
+#    Web 入口 200、发布端口空闲、work-dir 契约成立。默认目标端口
+#    API 8000/Web 3011；本地 stale-port-forward 绕行时可加
+#    --host-api-port/--host-web-port <1..65535>——见下方"目标端口"契约）
+python tools/ops/public_edge_rehearsal.py execute --work-dir <仓库外彩排目录> \
+    --confirm-phrase "EXECUTE PUBLIC EDGE REHEARSAL" --execute
+
+# ③ 残留回收（execute 被中断时独立重放；同样需短语 + --execute）
+python tools/ops/public_edge_rehearsal.py cleanup [--work-dir <仓库外彩排目录>] \
+    --confirm-phrase "CLEANUP PUBLIC EDGE REHEARSAL" --execute
+
+# ④ 只读状态（本项目容器/网络残留 + work-dir 状态）
+python tools/ops/public_edge_rehearsal.py status [--work-dir <仓库外彩排目录>]
+```
+
+行为契约：
+
+- **拓扑**：probe → Caddy（唯一 host 发布 `127.0.0.1:39443`，HTTP-only）
+  → frps vhost（compose 网络内 8080）→ frpc → `host.docker.internal`
+  的家机 API(8000)/Web(3011)；Host 路由标签 `app.rehearsal.localhost` /
+  `api.rehearsal.localhost`（RFC 6761 保留域，探测用显式 Host 头，无 DNS）；
+- **目标端口（R2 恢复绕行）**：默认仍是 API 8000 / Web 3011。
+  `--host-api-port`/`--host-web-port`（1..65535，畸形/越界/相同端口即
+  `port-invalid` fail-closed）**仅**用于一种已文档化的本地场景：Docker
+  Desktop 既有 host 端口映射陈旧（TCP 可连但应答为空、生产容器内部
+  健康）时，把彩排指到临时健康的 host 端口完成链路验证。host.docker.internal
+  与回环语义固定不变（无 host/address/URL 覆写面）；证据显式记录两端口
+  与 `defaults_used`——**覆写端口上的通过不构成对默认映射的验证**，
+  也不改变生产边缘设计、不构成任何公网就绪声明。入口恒为 39443；
+- **隔离**：compose project 恒为 `aios-m14-156-edge-rehearsal`（文件
+  `name:` 与 `-p` 双保险），清理只按本项目标签精确过滤——绝不触碰
+  `aios-m14-03-production-rehearsal` 或任何其他项目；frps/frpc 之间保持
+  token 文件 + TLS force 同生产不变量，token 为每次执行**一次性随机**
+  0600 文件，绝不打印/入证据；镜像 digest pin——caddy/frps 与生产同
+  digest，frpc 用 frp **官方 GHCR 源**（`ghcr.io/fatedier/frpc`，R3 实跑
+  证实本地镜像加速器按白名单拒收 `docker.io/fatedier/frpc` 且直连
+  Docker Hub 超时；官方 GHCR 镜像的 OCI index digest 与 Docker Hub
+  逐字节一致 `sha256:99ece6a2…`，同一构建产物，非第三方镜像）；
+- **work-dir 契约**（确定性）：仓库外、供给路径链中任何已存在组件均非
+  符号链接（缺省叶/父目录合法）、非根；已存在时只允许恰为本工具产物名
+  （幂等覆写），任何外来条目拒绝——绝不盲写盲删无关目录；
+- **证据**：`rehearsal-evidence.json` + `rehearsal-report.md` 原子写（默认
+  仓库 gitignored `.verify/artifacts/m14-156-edge-rehearsal/`，可用
+  `--evidence-dir` 显式指定仓库外/.verify 下目录）；成败路径都落盘，
+  `public_ready` 恒 false；
+- 退出码：0 成功 / 1 失败（稳定类别 confirm-gate、work-dir-unsafe、
+  evidence-dir-unsafe、**port-invalid**、docker-unavailable、
+  target-unreachable、port-busy、render-failed、compose-up-failed、
+  probe-failed、cleanup-failed、evidence-write-failed、internal-error）/
+  2 用法错误。
+
+诚实边界：本地彩排是 **HTTP-only、loopback-only 的链路验证**——无公网
+域名/证书/ACME/LiveKit/coturn，frpc→frps 控制面走 compose 项目网络而非
+公网。彩排通过只证明隧道链路与配置不变量在真实容器里成立，**不构成
+公网部署、不证明公网生产可用**；公网验收仍走 §9 preflight + 人工清单。
+
+### supervisor 真实彩排证据（M14-156 R4 回填）
+
+supervisor 在 commit `aa35929509a4c742c06fc12279566701726fe601`（R3 后）
+真实执行了一次 Docker 彩排并通过：
+
+- 目标端口：API 走默认 `127.0.0.1:8000`；Web 走临时绕行
+  `127.0.0.1:39998`（一次性临时 host 映射——既有生产 3011 映射 TCP
+  可连但空应答，Web 容器本身健康；彩排结束后该临时映射即弃用）；
+  Caddy 入口 `127.0.0.1:39443`；
+- 路由探测：`app.rehearsal.localhost/` → 200（经 Caddy→frps→frpc→
+  家机 Web）；`api.rehearsal.localhost/health` → 200（同链路到家机
+  API）；
+- compose 起了 Caddy + frps + frpc 三容器（frpc 镜像为 R3 的官方 GHCR
+  digest pin 引用）；scoped 清理移除 3 个容器、1 个网络与彩排
+  work-dir；
+- 证据事实：`result=pass`、`public_ready=false`、`defaults_used=false`
+  （覆写端口上的通过不构成对默认 Web 映射的验证——见 §3C 目标端口
+  契约）；证据文件 SHA256：`rehearsal-evidence.json` =
+  `D833D8D4DC7239B2174A6FBFFBDEDB51E4E332C317049B8D15C98E12C5267D9E`，
+  `rehearsal-report.md` =
+  `06501A69404B4656CDC8567B0B2B341658A89168F7B4C4E6551700D7B029CECB`。
+
+边界重申：该证据只证明**本地回环彩排链路**（Caddy→frps→frpc→家机
+API/Web）在真实容器中通过；没有真实域名/VPS/DNS/公网手机验收，**不
+宣称公网生产可用**。
 
 ## 4. DNS 与 Caddy ACME
 
