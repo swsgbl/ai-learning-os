@@ -359,6 +359,25 @@ fail-closed：仅接受无 path、`/` 或精确 `/aios`（canonical 无尾斜杠
 反斜杠、双斜杠、任意其他前缀）一律入口拒绝；根 origin 端点行为不变
 （app 探测 `/`、API 探测 `/health`）。
 
+**公共边缘安全响应头契约（M14-163）**：Codex 用 M14-162 preflight
+实测 `https://ndtool.cn/aios`——app-https FAIL（`/aios` 响应缺少
+`Strict-Transport-Security`/`X-Content-Type-Options`/`Referrer-Policy`：
+上游 Next 未发、边缘未加）。定版修复在边缘片段：除 `= /~!frp`（frpc
+隧道控制面，非浏览器响应面）外的五个 location（`= /aios`、
+`= /aios/`、`= /aios/health`、`^~ /aios/api/`、`^~ /aios/`）各显式
+`add_header ... always` 恒定三头：`Strict-Transport-Security:
+max-age=31536000`（≥ preflight 门槛 15552000；HSTS 是 host 级策略，
+同 host 的 Web/API/重定向响应一并覆盖）、`X-Content-Type-Options:
+nosniff`、`Referrer-Policy: strict-origin-when-cross-origin`。**为什么
+逐 location 显式**：nginx 的 add_header 继承规则是"location 内出现
+任何 add_header，server 级 add_header 全部失效"——片段 include 进
+任意宿主 server，显式声明使安全头不依赖宿主配置；`always` 保证
+301/4xx 等非 2xx 响应同样携带。**边界纪律**：不引入
+Content-Security-Policy/X-Frame-Options 等内容策略头（不放宽也不
+收紧，宿主站点与上游保持权威）；**边缘零 CORS**——不加任何
+`Access-Control-*` 头，CORS 判定权在家机 API 的 `AIOS_CORS_ORIGINS`
+精确 allowlist（§8），边缘只透传。
+
 重定向语义（R3 修正，supervisor 阻断反馈）：Next 16 默认
 `trailingSlash=false`——basePath 构建下 `/aios` 直接渲染、`/aios/`
 返回 308 → `/aios`（Codex 在 `aios/web:m14-159-public-edge-beta`
@@ -661,6 +680,35 @@ fail-closed 提醒：`AIOS_BIND_IP` 非 loopback 时 API 启动强制生产校�
 CORS 不得放宽为 `*`（preflight 断言精确回显）；cookie 非 Secure/SameSite=None
 组合会被 preflight 判 FAIL。
 
+**公共拓扑 CORS allowlist（M14-163 定版）**：API CORS 由家机
+`AIOS_CORS_ORIGINS` **精确 allowlist 判定，边缘只透传**——Codex 用
+M14-162 preflight 实测 `https://ndtool.cn/aios` 时 api-cors FAIL：
+预检应答缺 `Access-Control-Allow-Origin`（API CORS 中间件已回
+`Allow-Methods`/`Allow-Credentials`），根因即**公共 origin 未列入
+allowlist**。同源路径制公共拓扑必须在生产 env 显式包含公共 origin：
+
+```text
+# 子域制拓扑（每子域一条）：
+AIOS_CORS_ORIGINS=https://app.example.com[,https://<其他 origin>]
+# 同源路径制公共拓扑（M14-159 §3E，ndtool.cn 以真实公共域名为准）：
+AIOS_CORS_ORIGINS=https://ndtool.cn
+```
+
+要点：值是**应用源 origin**（scheme + host，无 path、无尾斜杠——与
+preflight 的 endpoint origin 语义一致）；改该值是 API 运行时 env 变更
+（非构建期），按部署纪律由 supervisor/Codex 在生产 env 落地后重启
+API 生效；**边缘（Nginx 片段）绝不做 CORS**——不加任何
+`Access-Control-*` 头（M14-163 边缘零 CORS 契约，见 §3E），allowlist
+判定权唯一在家机 API。
+
+**Cookie 验收凭据纪律**：preflight 的 `api-cookie` 检查（登录
+`Set-Cookie` 的 Secure/SameSite=None/HttpOnly 属性验证）必须提供
+`--login-credentials-file`（受控 JSON 文件：`{"username": ...,
+"password": ...}`）才可证明——不提供即 FAIL（fail-closed 不跳过）。
+凭据文件是**仓库外受控文件**：绝不写入仓库/文档/模板/测试，绝不把
+真实凭据值提交进任何 tracked 内容；文件权限最小化，验收后按密钥
+轮换纪律处置。
+
 ## 9. 公网验收（preflight + 人工）
 
 ```bash
@@ -696,6 +744,13 @@ origin）。白名单外 path（尾斜杠 `/aios/`、深路径、dot segments、
 斜杠/反斜杠、双斜杠、任意其他前缀）与 userinfo/query/fragment 一律
 入口拒绝且不回显原文；报告只存 canonical 重构值（origin 或
 origin+`/aios`）。
+
+检查通过的前置条件（M14-163 口径）：app-https 的三个安全响应头
+（HSTS/X-Content-Type-Options/Referrer-Policy）由边缘片段恒定补齐
+（§3E，待边缘 reload 生效）；api-cors 通过要求家机
+`AIOS_CORS_ORIGINS` 已显式包含公共 origin（§8）且 API 已重启生效
+——边缘只透传、不代答 CORS；api-cookie 证明需受控
+`--login-credentials-file`（仓库外文件，真实凭据绝不入库）。
 
 人工 4G/5G 清单（脚本会输出同款清单；用 `--mobile-attested-file` 签认）：
 真实蜂窝网络打开入口、跨源 cookie/CORS、考试全流程、语音连接、受限网络

@@ -1,6 +1,6 @@
-"""M14-159/M14-161 公共 Web base path —— Nginx 边缘片段模板 fail-closed 校验。
+"""M14-159/M14-161/M14-163 公共 Web base path —— Nginx 边缘片段模板 fail-closed 校验。
 
-覆盖矩阵（任务书第 4/3/5 条 + M14-161 健康路由）：
+覆盖矩阵（任务书第 4/3/5 条 + M14-161 健康路由 + M14-163 安全头）：
 1. 片段形态：只含 location 块（无 server/listen/server_name/root/alias/
    try_files、无正则 location）——include 进既有 443 站点后**结构上不可能**
    遮蔽既有 ndtool.cn 站点、既有 /api/v1/ 或既有静态资源；
@@ -24,7 +24,14 @@
    （8443 公网不可达 → 443 /aios，无尾斜杠 canonical；/aios/ 经边缘
    301 归一化）、NEXT_PUBLIC_BASE_PATH=/aios 与
    NEXT_PUBLIC_API_BASE_URL=https://ndtool.cn/aios 的精确组合，
-   以及 M14-161 公共 preflight 契约（/aios/health 精确健康路由）。
+   以及 M14-161 公共 preflight 契约（/aios/health 精确健康路由）；
+6. M14-163 安全响应头契约：五个公共浏览器面 location（= /aios、
+   = /aios/、= /aios/health、^~ /aios/api/、^~ /aios/）各显式恒定
+   三头（HSTS max-age=31536000 / X-Content-Type-Options nosniff /
+   Referrer-Policy strict-origin-when-cross-origin）且全部带 always；
+   frp 隧道入口不加；**边缘零 CORS**（无任何 Access-Control-*）且
+   不引入 CSP/框架策略头；runbook 落档 AIOS_CORS_ORIGINS 显式包含
+   公共 origin（边缘只透传）与受控 credentials file 纪律。
 
 边界：本文件只读模板/文档，不发任何网络请求、不启动任何容器、不渲染
 真实站点配置。
@@ -337,6 +344,88 @@ def test_upstreams_are_loopback_only() -> None:
         )
 
 
+# ------------------------------------- M14-163 公共边缘安全响应头契约
+
+SECURITY_HEADER_DIRECTIVES = (
+    'add_header Strict-Transport-Security "max-age=31536000" always;',
+    'add_header X-Content-Type-Options "nosniff" always;',
+    'add_header Referrer-Policy "strict-origin-when-cross-origin" always;',
+)
+
+M14_163_PUBLIC_LOCATIONS = {
+    ("=", "/aios"),
+    ("=", "/aios/"),
+    ("=", "/aios/health"),
+    ("^~", "/aios/api/"),
+    ("^~", "/aios/"),
+}
+
+
+def test_public_locations_carry_constant_security_headers_always() -> None:
+    """M14-163：五个公共浏览器面 location 各显式恒定三安全头——
+    `always` 保证 301/4xx 等非 2xx 响应同样携带（preflight 对任何状态码
+    判定）；逐 location 显式不依赖宿主 server 级继承（nginx 规则：
+    location 内出现任何 add_header 即令 server 级全部失效）；HSTS
+    max-age=31536000 ≥ preflight 门槛 15552000。"""
+    blocks = _parse_locations(_stripped(_text()))
+    seen: set[tuple[str, str]] = set()
+    for block in blocks:
+        signature = (block["modifier"], block["path"])
+        if signature not in M14_163_PUBLIC_LOCATIONS:
+            continue
+        seen.add(signature)
+        for directive in SECURITY_HEADER_DIRECTIVES:
+            assert directive in block["body"], (
+                f"{block['path']} 缺安全头指令: {directive}"
+            )
+    assert seen == M14_163_PUBLIC_LOCATIONS, (
+        "五个公共浏览器面 location 必须全部携带三安全头（缺一即 preflight FAIL 面）"
+    )
+
+
+def test_frp_tunnel_entry_has_no_security_headers() -> None:
+    """① frpc WebSocket 入口是隧道控制面、非浏览器响应面——不加
+    安全头（锁定"不加"本身是 M14-163 设计的一部分，防误扩散）。"""
+    block = _match_location(_parse_locations(_stripped(_text())), "/~!frp")
+    assert block is not None
+    assert "add_header" not in block["body"], "frp 隧道入口不得携带浏览器面安全头"
+
+
+def test_edge_adds_no_cors_and_no_content_policy_headers() -> None:
+    """M14-163 边界纪律：边缘零 CORS（绝无任何 Access-Control-* 头——
+    CORS 判定权在家机 API 的 AIOS_CORS_ORIGINS，边缘只透传）；不引入
+    CSP/X-Frame-Options 等内容策略头（不放宽也不收紧，宿主与上游
+    保持权威）。"""
+    stripped = _stripped(_text())
+    for block in _parse_locations(stripped):
+        for line in block["body"].splitlines():
+            directive = line.strip()
+            if not directive.startswith("add_header"):
+                continue
+            for banned in (
+                "Access-Control",
+                "Content-Security-Policy",
+                "X-Frame-Options",
+                "X-Content-Type-Policy",
+            ):
+                assert banned not in directive, (
+                    f"{block['path']} 的边缘 add_header 越界（{banned}）: {directive}"
+                )
+
+
+def test_every_add_header_carries_always_flag() -> None:
+    """M14-163：片段内所有 add_header 必须带 always——漏标会使 301/4xx
+    响应丢头（preflight 对非 2xx 一样判定安全头）。"""
+    stripped = _stripped(_text())
+    for block in _parse_locations(stripped):
+        for line in block["body"].splitlines():
+            directive = line.strip()
+            if directive.startswith("add_header"):
+                assert directive.endswith("always;"), (
+                    f"{block['path']} 的 add_header 缺 always 标志: {directive}"
+                )
+
+
 # ---------------------------------------------------------------- 跨工件契约
 
 
@@ -409,3 +498,26 @@ def test_runbook_documents_public_beta_entry_contract() -> None:
         "公共 Web 入口必须是无尾斜杠 https://ndtool.cn/aios"
         "（/aios/ 仅经边缘 301 归一化，不是 canonical 入口）"
     )
+
+
+def test_runbook_documents_security_headers_and_cors_contract() -> None:
+    """M14-163：runbook 落档安全头恒定三头（always/max-age=31536000/
+    逐 location 显式）、AIOS_CORS_ORIGINS 显式包含公共 origin、边缘
+    只透传零 CORS、受控 credentials file 纪律（真实凭据绝不入库）。"""
+    text = RUNBOOK.read_text(encoding="utf-8")
+    for needle in (
+        # §3E 安全头契约
+        "公共边缘安全响应头契约（M14-163）",
+        "max-age=31536000",
+        "always",
+        "边缘零 CORS",
+        # §8 CORS allowlist + 凭据纪律
+        "公共拓扑 CORS allowlist（M14-163 定版）",
+        "AIOS_CORS_ORIGINS=https://ndtool.cn",
+        "边缘只透传",
+        "仓库外受控文件",
+        "Cookie 验收凭据纪律",
+        # §9 前置条件
+        "检查通过的前置条件（M14-163 口径）",
+    ):
+        assert needle in text, f"runbook 缺 M14-163 契约要素: {needle}"

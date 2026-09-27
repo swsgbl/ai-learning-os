@@ -1,5 +1,50 @@
 # Changelog
 
+## M14-163 — 公共边缘安全响应头 + CORS allowlist 契约（模板/docs/tests，非部署）
+
+- 背景（Codex 用 M14-162 preflight 实测 `https://ndtool.cn/aios`）：
+  ① app-https FAIL——`/aios` 响应缺 `Strict-Transport-Security`/
+  `X-Content-Type-Options`/`Referrer-Policy`（上游 Next 未发、边缘
+  未加）；② api-cors FAIL——预检应答缺 `Access-Control-Allow-Origin`
+  （API CORS 中间件已回 Allow-Methods/Allow-Credentials），根因是
+  **公共 origin 未列入家机 `AIOS_CORS_ORIGINS` allowlist**。
+- 边缘模板（`infra/edge/nginx.public-base-path.example.conf`）：五个
+  公共浏览器面 location（`= /aios`、`= /aios/`、`= /aios/health`、
+  `^~ /aios/api/`、`^~ /aios/`）各显式 `add_header ... always` 恒定
+  三头：`Strict-Transport-Security: max-age=31536000`（≥ preflight
+  门槛 15552000；HSTS 是 host 级策略，同 host Web/API/重定向一并
+  覆盖）、`X-Content-Type-Options: nosniff`、`Referrer-Policy:
+  strict-origin-when-cross-origin`。**按 nginx add_header 继承规则
+  严谨设计**——location 内出现任何 add_header 即令 server 级全部
+  失效，片段 include 进任意宿主 server 不能依赖宿主声明，故逐
+  location 显式；`always` 保证 301/4xx 等非 2xx 响应同样携带。
+  ① frpc WebSocket 入口（隧道控制面、非浏览器响应面）不加。**不
+  引入 CSP/X-Frame-Options 等内容策略头**（不放宽也不收紧，宿主
+  与上游保持权威）；**边缘零 CORS**——不加任何 `Access-Control-*`。
+- runbook（`docs/PUBLIC_EDGE_DEPLOYMENT.md`）：§3E 新增"公共边缘
+  安全响应头契约（M14-163）"段（三头/always/继承规则/零 CORS 边界）；
+  §8 新增"公共拓扑 CORS allowlist（M14-163 定版）"——API CORS 由
+  家机 `AIOS_CORS_ORIGINS` 精确 allowlist 判定（同源路径制拓扑必须
+  显式包含 `https://ndtool.cn`，值为无 path/无尾斜杠的应用源
+  origin；运行时 env 变更，重启 API 生效），**边缘只透传、绝不
+  代答**；新增"Cookie 验收凭据纪律"——`--login-credentials-file`
+  是仓库外受控文件，真实凭据绝不入库；§9 新增"检查通过的前置
+  条件（M14-163 口径）"段。
+- 测试（`test_public_edge_nginx_base_path.py` +5，全零网络）：五个
+  公共 location 恒定三头 + 覆盖完整性断言；frp 入口无 add_header；
+  边缘零 CORS（无 Access-Control-*）且无 CSP/框架策略头（逐
+  add_header 行扫描）；所有 add_header 必带 `always` 标志；runbook
+  关键句契约（安全头段/allowlist 段/凭据纪律/前置条件）。
+- 验证：nginx 套件 **23 passed**；八套件合跑全绿（数字见
+  PROJECT_STATUS）；ruff（默认 + F,E9）全绿；`git diff --check`
+  干净；新增行秘密/本地绝对路径扫描 0 命中（py_compile 非适用面：
+  本次零 Python 工具改动，仍按惯例复跑通过）。
+- 诚实边界：**模板/docs/tests 对齐切片——零生产变更**（不触碰
+  VPS/远程/Docker/env/secrets，不读写任何真实凭据）；生产生效待
+  Codex 执行——边缘片段 reload（安全头生效）+ 家机 env 落地
+  `AIOS_CORS_ORIGINS` 并重启 API（api-cors 通过）+ 复跑正式
+  preflight；回滚 = 还原本 commit。
+
 ## M14-162 — preflight 证书 DN 嵌套 tuple 格式化崩溃修复（工具/tests，非部署）
 
 - 背景（Codex 实测）：M14-161 合入后的新版 preflight 对
