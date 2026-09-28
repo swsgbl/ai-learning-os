@@ -43,7 +43,10 @@
        失败清理本次新建文件、不误删既有文件）/ `verify`（复检存在性、
        仓库外边界、properties 四键、权限、证书 SHA256 指纹与有效期窗口）
        三个子命令，keytool/文件系统/时钟均可注入（零真实 keytool 的
-       单测见 `tests/android_release/test_material_bootstrapper.py`）。
+       单测见 `tests/android_release/test_material_bootstrapper.py`；
+       路径组件的链接检查覆盖 symlink 与 Windows junction/reparse
+       point——`Path.is_symlink` 在 Python 3.11 下对 junction 返回
+       False，检测器见 `tools/android_release/path_safety.py`）。
        **真实执行 generate 属于 Codex 运维步骤**，产物必须立即离线备份；
 2. [x] `apps/android` 侧 release 构建配置接入（M14-171A：`apps/android/app/
        build.gradle.kts` 的显式 opt-in 签名配置——四项外部输入
@@ -71,7 +74,8 @@
 6. [ ] 本地 staging（M14-174 readiness：`tools/android_release/
        stage_download.py`——先原样复用第 4 步 verify_artifact 语义，
        `versionCode` 严格递增；目标仅允许 staging root 的 `android/`
-       子目录 + `manifest.json`，拒绝 symlink/绝对 URL/遍历/query/
+       子目录 + `manifest.json`，拒绝 symlink/junction/reparse point/
+       绝对 URL/遍历/query/
        fragment/重复条目/已存在目标；APK 与 manifest 原子写入
        （temp+fsync+rename）后独立复核（重读重算 SHA256、重 parse
        schema）；任何失败恢复 previous manifest 字节、不删除既有

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import stat
+import subprocess
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -222,6 +223,21 @@ def keytool_stub(keystore: Path) -> Path:
     return stub
 
 
+def make_junction(link: Path, target: Path) -> bool:
+    """Create a real Windows directory junction; False when unavailable.
+
+    Output is captured as bytes (localized cmd output breaks utf-8 decode).
+    No network, no elevation: ``mklink /J`` needs no symlink privilege.
+    """
+    if os.name != "nt" or link.exists():
+        return False
+    proc = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+    )
+    return proc.returncode == 0 and link.exists()
+
+
 def write_valid_material(keystore: Path, properties: Path,
                          keystore_path_value: str | None = None) -> None:
     keystore.write_bytes(b"fake-keystore-bytes")
@@ -411,6 +427,66 @@ class TestExecuteGates:
         assert "target_symlink" in codes
         assert runner.calls == []
 
+    def test_execute_rejects_junctioned_parent_windows(self, tmp_path,
+                                                       monkeypatch):
+        """Real directory junction: is_symlink() is False for junctions on
+        Python 3.11 — the reparse-aware detector must still fail closed."""
+        _keystore, properties, runner, _, _ = inject_common(monkeypatch, tmp_path)
+        real_dir = tmp_path / "junction-real"
+        real_dir.mkdir()
+        link_dir = tmp_path / "junction-link"
+        if not make_junction(link_dir, real_dir):
+            pytest.skip("junction creation unavailable on this host")
+        target = link_dir / KEYSTORE_NAME
+        result, code = run_execute(
+            str(target), str(properties), confirm=CONFIRM_PHRASE
+        )
+        assert code == 1
+        codes = [f["code"] for f in result["failures"]]
+        assert "target_symlink" in codes
+        assert runner.calls == []          # keytool never invoked
+        assert not (real_dir / KEYSTORE_NAME).exists()
+
+    def test_plan_blocked_on_junctioned_parent_windows(self, tmp_path):
+        _keystore, properties = make_targets(tmp_path)
+        repo = fake_repo(tmp_path)
+        real_dir = tmp_path / "jr"
+        real_dir.mkdir()
+        link_dir = tmp_path / "jl"
+        if not make_junction(link_dir, real_dir):
+            pytest.skip("junction creation unavailable on this host")
+        result, code = run_plan(
+            str(link_dir / KEYSTORE_NAME), str(properties),
+            repo_root_finder=lambda: repo,
+        )
+        assert code == 1
+        codes = [f["code"] for f in result["failures"]]
+        assert "target_symlink" in codes
+        assert result["checks"]["keystore_symlink_free"] is False
+
+    def test_execute_rejects_component_flagged_by_detector_seam(
+        self, tmp_path, monkeypatch
+    ):
+        """Platform-independent wiring proof: any existing component the
+        detector flags (junction or otherwise) fails closed before keytool."""
+        _keystore, properties, runner, _, _ = inject_common(monkeypatch, tmp_path)
+        keystore, _props = make_targets(tmp_path)
+
+        def flag_material_dir(path):
+            return Path(path).name == "material"
+
+        monkeypatch.setattr(
+            "tools.android_release.material_bootstrapper._link_detector",
+            flag_material_dir,
+        )
+        result, code = run_execute(
+            str(keystore), str(properties), confirm=CONFIRM_PHRASE
+        )
+        assert code == 1
+        codes = [f["code"] for f in result["failures"]]
+        assert "target_symlink" in codes
+        assert runner.calls == []
+
 
 # ---------------------------------------------------------------------------
 # execute: success path
@@ -508,6 +584,66 @@ class TestExecuteSuccess:
 # ---------------------------------------------------------------------------
 # execute: failure cleanup
 # ---------------------------------------------------------------------------
+
+
+class TestWindowsPermissionAccount:
+    """icacls account selection is fail-closed (supervisor correction #2)."""
+
+    def _apply(self, monkeypatch, env):
+        from tools.android_release.material_bootstrapper import (
+            windows_permission_applier,
+        )
+
+        calls: list[list[str]] = []
+
+        def fake_run(argv, **_kwargs):
+            calls.append(list(argv))
+
+            class FakeProc:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+
+            return FakeProc()
+
+        monkeypatch.setattr(
+            "tools.android_release.material_bootstrapper.subprocess.run",
+            fake_run,
+        )
+        for name in ("USERNAME", "USERDOMAIN"):
+            if name in env:
+                monkeypatch.setenv(name, env[name])
+            else:
+                monkeypatch.delenv(name, raising=False)
+        return windows_permission_applier(Path("target.bin")), calls
+
+    def test_prefers_domain_backslash_username(self, tmp_path, monkeypatch):
+        outcome, calls = self._apply(
+            monkeypatch,
+            {"USERDOMAIN": "CORP", "USERNAME": "ops"},
+        )
+        assert outcome == (True, None)
+        assert len(calls) == 1
+        grant = calls[0][calls[0].index("/grant:r") + 1]
+        assert grant == "CORP\\ops:F"
+
+    def test_bare_username_without_domain(self, tmp_path, monkeypatch):
+        outcome, calls = self._apply(monkeypatch, {"USERNAME": "ops"})
+        assert outcome == (True, None)
+        grant = calls[0][calls[0].index("/grant:r") + 1]
+        assert grant == "ops:F"
+
+    def test_userdomain_alone_fails_closed_no_icacls_call(
+        self, tmp_path, monkeypatch
+    ):
+        outcome, calls = self._apply(monkeypatch, {"USERDOMAIN": "CORP"})
+        assert outcome == (False, "permission_owner_unknown")
+        assert calls == []          # a domain is not an account; grant nothing
+
+    def test_neither_variable_fails_closed(self, tmp_path, monkeypatch):
+        outcome, calls = self._apply(monkeypatch, {})
+        assert outcome == (False, "permission_owner_unknown")
+        assert calls == []
 
 
 class TestExecuteFailureCleanup:

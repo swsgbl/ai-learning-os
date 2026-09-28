@@ -10,8 +10,10 @@ operator (Codex) step outside this repository.
 Pipeline, fail-closed at every step — nothing is written unless every earlier
 gate passes:
 
-1. staging-root shape: an existing, non-symlink directory whose ``android``
-   child is either absent (created) or an existing non-symlink directory;
+1. staging-root shape: an existing directory that is not itself a
+   symlink/junction/reparse point, whose ``android`` child is either absent
+   (created) or an existing non-link directory (junctioned roots and
+   ``android`` children fail closed);
 2. the full M14-173 ``verify_artifact`` gate is **reused as-is** (same
    module, same seams): APK regular-file/SHA256/size vs manifest, signed
    entry with ``signature_scheme: v2+v3``, relative ``/android/`` URL
@@ -56,6 +58,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 if __package__ in (None, ""):  # direct script execution: put repo on sys.path
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from tools.android_release.path_safety import is_link_or_reparse
 from tools.android_release.verify_artifact import (
     MANIFEST_SCHEMA,
     load_manifest,
@@ -91,33 +94,40 @@ _reread_file = Path.read_bytes
 # staging-root shape and target validation
 # ---------------------------------------------------------------------------
 
-
-def _is_symlink_dir(path: Path) -> bool:
-    return path.is_symlink()
+# Detection seam: symlink **and** Windows junction/reparse points
+# (Path.is_symlink alone misses junctions on Python 3.11 — see
+# tools/android_release/path_safety.py). Injectable for tests.
+_link_detector = is_link_or_reparse
 
 
 def validate_staging_root(
     staging_root: Path,
 ) -> Tuple[Dict[str, object], List[dict]]:
-    """Staging root exists, is a directory, and is not a symlink."""
+    """Staging root exists, is a directory, and is not a link/reparse point.
+
+    The same link check (never following the link) applies to the ``android``
+    child: a junctioned staging root or ``android`` child fails closed.
+    """
+    root_is_link = _link_detector(staging_root)
     record: Dict[str, object] = {
         "exists": staging_root.exists(),
         "is_directory": staging_root.is_dir(),
-        "symlink": staging_root.is_symlink(),
+        "symlink": root_is_link,
     }
     failures: List[dict] = []
+    if root_is_link:
+        failures.append({"code": "staging_root_symlink"})
+        return record, failures
     if not staging_root.exists() or not staging_root.is_dir():
         failures.append({"code": "staging_root_invalid"})
         return record, failures
-    if staging_root.is_symlink():
-        failures.append({"code": "staging_root_symlink"})
-        return record, failures
     android = staging_root / ANDROID_SUBDIR
-    if android.exists():
+    if android.exists() or _link_detector(android):
+        android_is_link = _link_detector(android)
         record["android_exists"] = True
         record["android_is_directory"] = android.is_dir()
-        record["android_symlink"] = android.is_symlink()
-        if not android.is_dir() or android.is_symlink():
+        record["android_symlink"] = android_is_link
+        if not android.is_dir() or android_is_link:
             failures.append({"code": "staging_android_invalid"})
     else:
         record["android_exists"] = False
@@ -131,10 +141,6 @@ def validate_stage_target(entry_name: str) -> Optional[str]:
     if entry_name in (".", ".."):
         return "staging_target_invalid"
     return None
-
-
-def _symlink_free_child(path: Path) -> bool:
-    return not path.is_symlink()
 
 
 # ---------------------------------------------------------------------------
@@ -186,9 +192,10 @@ def _restore_manifest(target: Path, prior: Optional[bytes]) -> None:
 
 def _cleanup_new(path: Path) -> None:
     """Remove a file written by this run only (targets are pre-validated
-    absent, so anything present here was created by us)."""
+    absent, so anything present here was created by us). Links and reparse
+    points are never unlinked."""
     try:
-        if path.is_file() and not path.is_symlink():
+        if path.is_file() and not _link_detector(path):
             path.unlink()
     except OSError:
         pass
@@ -275,13 +282,13 @@ def run_stage(
     except OSError:
         failures.append({"code": "staging_android_create_failed"})
         return _stage_result(checks, failures, None)
-    if android_dir.is_symlink() or not android_dir.is_dir():
+    if _link_detector(android_dir) or not android_dir.is_dir():
         failures.append({"code": "staging_android_invalid"})
         return _stage_result(checks, failures, None)
 
     apk_target = android_dir / apk_name
     manifest_target = root_path / MANIFEST_BASENAME
-    if apk_target.exists() or apk_target.is_symlink():
+    if _link_detector(apk_target) or apk_target.exists():
         failures.append({"code": "staging_target_exists"})
         return _stage_result(checks, failures, None)
 

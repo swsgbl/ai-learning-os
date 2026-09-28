@@ -16,11 +16,13 @@ Subcommands:
 - ``execute`` — generates the keystore via ``keytool -genkeypair`` (RSA 2048,
   validity >= 10000 days, non-debug alias/dname) and the properties file with
   OS-random passwords. Requires the explicit confirmation phrase. Both
-  targets must live **outside the repository**, contain no symlinked path
-  component, and not exist beforehand. POSIX targets are tightened to 0600;
-  Windows targets have inheritance removed and access restricted to the
-  current user via ``icacls``. Any failure cleans up files created by this
-  run and never deletes pre-existing files.
+  targets must live **outside the repository**, contain no symlink/junction/
+  reparse-point path component (every existing component is checked without
+  following the link), and not exist beforehand. POSIX targets are tightened
+  to 0600; Windows targets have inheritance removed and access restricted to
+  the current user (``USERDOMAIN\\USERNAME`` when both exist) via ``icacls``.
+  Any failure cleans up files created by this run and never deletes
+  pre-existing files.
 - ``verify`` — re-checks existing material: presence, symlink-free paths,
   outside-repo placement, the four properties keys (values never echoed),
   the keystore.path target identity, tightened permissions (POSIX mode
@@ -58,6 +60,7 @@ from typing import Callable, Dict, List, Optional, Sequence, Tuple
 if __package__ in (None, ""):  # direct script execution: put repo on sys.path
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
+from tools.android_release.path_safety import is_link_or_reparse
 from tools.android_release.verify_artifact import (
     CommandOutcome,
     child_env,
@@ -131,11 +134,22 @@ def posix_permission_applier(path: Path) -> Tuple[bool, Optional[str]]:
 
 
 def windows_permission_applier(path: Path) -> Tuple[bool, Optional[str]]:
-    """Remove inheritance and grant full control to the current user only."""
-    user = os.environ.get("USERNAME") or os.environ.get("USERDOMAIN")
-    if not user:
+    """Remove inheritance and grant full control to the current user only.
+
+    Account selection (fail-closed): ``USERDOMAIN\\USERNAME`` when both are
+    present, bare ``USERNAME`` when the domain is absent, and a hard failure
+    when neither qualifies — ``USERDOMAIN`` alone names a domain, not an
+    account, and must never be granted anything.
+    """
+    username = (os.environ.get("USERNAME") or "").strip()
+    domain = (os.environ.get("USERDOMAIN") or "").strip()
+    if username and domain:
+        account = f"{domain}\\{username}"
+    elif username:
+        account = username
+    else:
         return False, "permission_owner_unknown"
-    argv = ["icacls", str(path), "/inheritance:r", "/grant:r", f"{user}:F"]
+    argv = ["icacls", str(path), "/inheritance:r", "/grant:r", f"{account}:F"]
     try:
         proc = subprocess.run(
             argv, capture_output=True, text=True,
@@ -267,15 +281,23 @@ def validity_state(
 
 
 # ---------------------------------------------------------------------------
-# target validation (outside repo, symlink-free, absent)
+# target validation (outside repo, link/reparse-free, absent)
 # ---------------------------------------------------------------------------
+
+# Detection seam: symlink **and** Windows junction/reparse points
+# (Path.is_symlink alone misses junctions on Python 3.11 — see
+# tools/android_release/path_safety.py). Injectable for tests.
+_link_detector = is_link_or_reparse
 
 
 def _symlink_free(path: Path) -> bool:
-    """No symlink (or junction) anywhere in the path's existing prefix."""
+    """No symlink/junction/reparse point anywhere in the path's prefix.
+
+    Every existing path component is checked without following the link.
+    """
     current = path
     while True:
-        if current.is_symlink():
+        if _link_detector(current):
             return False
         parent = current.parent
         if parent == current:
@@ -418,11 +440,16 @@ def _properties_bytes(keystore: Path, store_pw: str, alias: str, key_pw: str) ->
     return ("\n".join(lines) + "\n").encode("utf-8")
 
 
+def _plain_regular_file(path: Path) -> bool:
+    """A regular file that is not itself a link/junction/reparse point."""
+    return path.is_file() and not _link_detector(path)
+
+
 def _cleanup_new_files(paths: Sequence[Path]) -> None:
     """Remove only files created by this run; never touch pre-existing ones."""
     for path in paths:
         try:
-            if path.is_file() and not path.is_symlink():
+            if _plain_regular_file(path):
                 path.unlink()
         except OSError:
             pass
@@ -500,7 +527,10 @@ def run_execute(
         failures.append({"code": "tool_spawn_failed", "detail": {"tool": "keytool"}})
         return _execute_result(checks, failures, ks_path, props_path)
     gen_record["exit_code"] = outcome.returncode
-    if outcome.returncode != EXIT_OK or not ks_path.is_file() or ks_path.is_symlink():
+    if (
+        outcome.returncode != EXIT_OK
+        or not _plain_regular_file(ks_path)
+    ):
         failures.append({"code": "keytool_genkeypair_failed"})
         gen_record["ok"] = False
         checks["keytool_genpair"] = gen_record  # type: ignore[assignment]
@@ -698,14 +728,14 @@ def run_verify_material(
     if not ks_path.exists():
         keystore_state = "missing"
         failures.append({"code": "keystore_missing"})
-    elif not ks_path.is_file():
+    elif not _plain_regular_file(ks_path):
         keystore_state = "not_regular"
         failures.append({"code": "keystore_not_regular"})
     props_state = "ok"
     if not props_path.exists():
         props_state = "missing"
         failures.append({"code": "properties_missing"})
-    elif not props_path.is_file():
+    elif not _plain_regular_file(props_path):
         props_state = "not_regular"
         failures.append({"code": "properties_not_regular"})
 

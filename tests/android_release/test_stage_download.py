@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -158,6 +159,21 @@ def staging(tmp_path: Path) -> Path:
     return root
 
 
+def make_junction(link: Path, target: Path) -> bool:
+    """Create a real Windows directory junction; False when unavailable.
+
+    Output is captured as bytes (localized cmd output breaks utf-8 decode).
+    No network, no elevation: ``mklink /J`` needs no symlink privilege.
+    """
+    if os.name != "nt" or link.exists():
+        return False
+    proc = subprocess.run(
+        ["cmd", "/c", "mklink", "/J", str(link), str(target)],
+        capture_output=True,
+    )
+    return proc.returncode == 0 and link.exists()
+
+
 def previous_manifest(tmp_path: Path, version_code: int = PREVIOUS_VERSION_CODE,
                       name: str = "previous.json") -> Path:
     prev_dir = tmp_path / "prev"
@@ -219,6 +235,69 @@ class TestStagingValidation:
         result, code = stage(tmp_path, root=link)
         assert code == 1
         assert "staging_root_symlink" in codes_of(result)
+
+    def test_junctioned_staging_root_rejected_windows(self, tmp_path):
+        """Real directory junction as staging root: is_symlink() is False on
+        Python 3.11, the reparse-aware detector must still fail closed."""
+        real = staging(tmp_path)
+        link = tmp_path / "staging-junction"
+        if not make_junction(link, real):
+            pytest.skip("junction creation unavailable on this host")
+        result, code = stage(tmp_path, root=link)
+        assert code == 1
+        assert "staging_root_symlink" in codes_of(result)
+        # nothing landed inside the junction target
+        assert not any(real.iterdir())
+
+    def test_junctioned_android_child_rejected_windows(self, tmp_path):
+        """Junction named android/ under a real staging root: the staging
+        shape gate fails closed on the link-shaped child before staging."""
+        root = staging(tmp_path)
+        real_android = tmp_path / "real-android"
+        real_android.mkdir()
+        if not make_junction(root / "android", real_android):
+            pytest.skip("junction creation unavailable on this host")
+        result, code = stage(tmp_path, root=root)
+        assert code == 1
+        assert "staging_android_invalid" in codes_of(result)
+        # nothing was written through the junction
+        assert not any(real_android.iterdir())
+
+    def test_detector_seam_rejects_flagged_staging_root(self, tmp_path,
+                                                        monkeypatch):
+        """Platform-independent wiring proof: a flagged (e.g. junctioned)
+        staging root fails closed even where junctions cannot be created."""
+        real = staging(tmp_path)
+
+        def flag_staging(path):
+            return Path(path) == real
+
+        monkeypatch.setattr(
+            "tools.android_release.stage_download._link_detector",
+            flag_staging,
+        )
+        result, code = stage(tmp_path, root=real)
+        assert code == 1
+        assert "staging_root_symlink" in codes_of(result)
+
+    def test_detector_seam_rejects_flagged_android_child(self, tmp_path,
+                                                         monkeypatch):
+        root = staging(tmp_path)
+        android = root / "android"
+        android.mkdir()
+
+        def flag_android(path):
+            return Path(path) == android
+
+        monkeypatch.setattr(
+            "tools.android_release.stage_download._link_detector",
+            flag_android,
+        )
+        result, code = stage(tmp_path, root=root)
+        assert code == 1
+        assert "staging_android_invalid" in codes_of(result)
+        # the staging-shape gate fired before any write; android/ stays empty
+        assert not any(android.iterdir())
 
     def test_entry_name_with_path_separator_rejected(self):
         # defense in depth: a verify-passing entry name can never contain a
