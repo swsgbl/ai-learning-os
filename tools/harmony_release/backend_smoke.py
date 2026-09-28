@@ -190,6 +190,17 @@ API_BASE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# M14-169A1a: the one strictly-shaped public production base accepted in
+# addition to the loopback rule above. Scheme must be lowercase https;
+# the hostname is ASCII [A-Za-z0-9.-] only; the port is optional decimal;
+# at most ONE path prefix (e.g. /aios/) may follow; a trailing slash is
+# required. Public plain HTTP, userinfo, query, fragment, backslash,
+# whitespace and non-ASCII hosts all fail to match here and therefore
+# fail closed in validate_api_base below.
+PUBLIC_API_BASE_RE = re.compile(
+    r"^https://([A-Za-z0-9.-]+)(?::([0-9]{1,5}))?(/[^/?#\\]+)?/$"
+)
+
 
 def _port_is_valid(port_text: Optional[str]) -> bool:
     """0-65535 only; the regex alone accepts 5 digits like 99999."""
@@ -285,7 +296,15 @@ def real_http_get(url: str, timeout_seconds: float) -> Tuple[int, str]:
 
 
 def validate_api_base(raw: Optional[str]) -> Tuple[Optional[str], List[dict]]:
-    """Loopback-only validation of the preflight base URL."""
+    """Validate the preflight base URL.
+
+    Loopback bases behave exactly as before (M14-84). M14-169A1a adds
+    the one accepted public form: strict https, ASCII host, optional
+    port, at most one path prefix, trailing slash. Everything else -
+    public http, userinfo, query, fragment, backslashes, whitespace,
+    non-ASCII hosts, missing trailing slash, malformed ports - fails
+    closed with the same code the loopback rule has always used.
+    """
     if raw is None or not str(raw).strip():
         return None, [{
             "code": "api_base_required",
@@ -293,18 +312,34 @@ def validate_api_base(raw: Optional[str]) -> Tuple[Optional[str], List[dict]]:
         }]
     token = str(raw).strip()
     match = API_BASE_RE.match(token)
-    if token != str(raw) or not match or not _port_is_valid(
-        match.group(1)
-    ):
-        return None, [{
-            "code": "api_base_not_loopback",
-            "detail": {
-                "argument": "--api-base",
-                "rule": "scheme http/https, loopback host only, "
-                        "trailing slash, no path/query/userinfo",
-            },
-        }]
-    return token, []
+    if token == str(raw) and match and _port_is_valid(match.group(1)):
+        return token, []
+    public = PUBLIC_API_BASE_RE.match(token)
+    if (token == str(raw) and public
+            and _port_is_valid(public.group(2))):
+        return token, []
+    return None, [{
+        "code": "api_base_not_loopback",
+        "detail": {
+            "argument": "--api-base",
+            "rule": "loopback http/https (no path) or strict public "
+                    "https (ASCII host, optional port, at most one "
+                    "path prefix); trailing slash; no userinfo/query/"
+                    "fragment",
+        },
+    }]
+
+
+def api_base_mode(validated_base: str) -> str:
+    """``loopback`` or ``public_https`` for an accepted base.
+
+    Loopback is checked first: the loopback rule allows no path prefix,
+    so an accepted base matches exactly one of the two shapes.
+    """
+    loopback = API_BASE_RE.match(validated_base)
+    if loopback and _port_is_valid(loopback.group(1)):
+        return "loopback"
+    return "public_https"
 
 
 def _url_origin(base: str) -> str:
