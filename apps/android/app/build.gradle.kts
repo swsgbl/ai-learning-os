@@ -1,10 +1,74 @@
 // M12-01 Android App Shell：app 模块。
 // 第一切片只做壳与认证/API 基础；不接入考试、语音、检索、治理业务。
+import java.io.File
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
     alias(libs.plugins.kotlin.serialization)
+}
+
+// M14-171A：release 签名就绪（显式 opt-in，外部材料绝不落库/回退/打印）。
+// 契约见 docs/MOBILE_DISTRIBUTION.md §1 与 tools/android_release/preflight.py。
+// 四项外部输入（任一来源出现即视为 opt-in，逐项合并、env 优先于文件）：
+//   - 环境变量 AIOS_ANDROID_KEYSTORE_PATH / _STORE_PASSWORD / _KEY_ALIAS / _KEY_PASSWORD
+//   - 或 AIOS_ANDROID_SIGNING_PROPERTIES 指向的仓库外 properties 文件
+//     （键：keystore.path / keystore.storePassword / keystore.keyAlias / keystore.keyPassword）
+// opt-in 后四项必须齐全：缺失即在配置阶段直接失败（不回退 debug 签名、
+// 不静默降级）；完全无外部输入时 release 保持 unsigned（诚实默认，
+// 产物为 app-release-unsigned.apk，/download 渠道继续 pending）。
+// 错误信息只包含缺失的输入名，绝不包含任何值。
+val releaseSigningInputs: Map<String, String>? = run {
+    val signingEnvInputs = listOf(
+        "AIOS_ANDROID_KEYSTORE_PATH" to "keystore.path",
+        "AIOS_ANDROID_KEYSTORE_STORE_PASSWORD" to "keystore.storePassword",
+        "AIOS_ANDROID_KEYSTORE_KEY_ALIAS" to "keystore.keyAlias",
+        "AIOS_ANDROID_KEYSTORE_KEY_PASSWORD" to "keystore.keyPassword",
+    )
+    fun envOrNull(name: String): String? =
+        providers.environmentVariable(name).orNull?.trim()?.takeIf { it.isNotEmpty() }
+
+    val propsPath = envOrNull("AIOS_ANDROID_SIGNING_PROPERTIES")
+    val fileInputs: Map<String, String> = if (propsPath != null) {
+        val propsFile = File(propsPath)
+        if (!propsFile.isFile) {
+            throw GradleException(
+                "M14-171A：release 签名 opt-in 已触发，但 AIOS_ANDROID_SIGNING_PROPERTIES " +
+                    "指向的文件不存在或不可读（值不打印）。"
+            )
+        }
+        Properties().apply { propsFile.inputStream().use { load(it) } }
+            .entries.associate { (key, value) -> key.toString() to value.toString().trim() }
+            .filterValues { it.isNotEmpty() }
+    } else {
+        emptyMap()
+    }
+
+    val merged: Map<String, String?> = signingEnvInputs.associate { (envName, fileKey) ->
+        envName to (envOrNull(envName) ?: fileInputs[fileKey])
+    }
+    val optedIn = propsPath != null || merged.values.any { it != null }
+    if (!optedIn) {
+        null
+    } else {
+        val missing = merged.filterValues { it == null }.keys.sorted()
+        if (missing.isNotEmpty()) {
+            throw GradleException(
+                "M14-171A：release 签名输入不完整——四项外部输入必须同时存在" +
+                    "（缺失：${missing.joinToString(", ")}）。不会回退 debug 签名，也不会静默降级为 unsigned。"
+            )
+        }
+        val resolved = merged.mapValues { (_, value) -> value as String }
+        if (!File(resolved.getValue("AIOS_ANDROID_KEYSTORE_PATH")).isFile) {
+            throw GradleException(
+                "M14-171A：release 签名 opt-in 已触发，但 AIOS_ANDROID_KEYSTORE_PATH " +
+                    "指向的 keystore 文件不存在或不可读（值不打印）。"
+            )
+        }
+        resolved
+    }
 }
 
 android {
@@ -24,6 +88,20 @@ android {
         buildConfigField("boolean", "ALLOW_INSECURE_HTTP", "false")
     }
 
+    signingConfigs {
+        // M14-171A：仅当四项外部输入全部就绪时才创建 release 签名配置；
+        // 密码/路径一律来自上面解析的外部输入，本文件不出现任何字面量
+        // （tools/android_release/preflight.py 静态钉住该契约）。
+        if (releaseSigningInputs != null) {
+            create("release") {
+                storeFile = File(releaseSigningInputs.getValue("AIOS_ANDROID_KEYSTORE_PATH"))
+                storePassword = releaseSigningInputs.getValue("AIOS_ANDROID_KEYSTORE_STORE_PASSWORD")
+                keyAlias = releaseSigningInputs.getValue("AIOS_ANDROID_KEYSTORE_KEY_ALIAS")
+                keyPassword = releaseSigningInputs.getValue("AIOS_ANDROID_KEYSTORE_KEY_PASSWORD")
+            }
+        }
+    }
+
     buildTypes {
         debug {
             // debug 允许 loopback/局域网 HTTP（模拟器 10.0.2.2 / LAN 调试 API）。
@@ -33,6 +111,11 @@ android {
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            // M14-171A：无外部签名输入时不设 signingConfig（保持 unsigned 诚实默认）；
+            // 输入不完整的情形已在顶层解析处直接失败，走不到这里。
+            if (releaseSigningInputs != null) {
+                signingConfig = signingConfigs.getByName("release")
+            }
         }
     }
 

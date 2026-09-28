@@ -10,7 +10,10 @@
   debug 签名 APK、HarmonyOS 侧只有 unsigned HAP——`tools/harmony_release/preflight.py`
   默认 `--expect-unsigned` 契约如实钉住这一边界（非空 signingConfigs 反而 FAIL）。
   在 AGC 签名材料与 Android release keystore 落地前，任何文档、清单、状态页
-  都不得宣称移动端"生产可用/公开分发就绪"。
+  都不得宣称移动端"生产可用/公开分发就绪"。M14-171A 只让 release 构建管线
+  **能消费**外部管理的 keystore（opt-in、四项齐全或失败、无 debug 回退）；
+  keystore 本身仍未落地，release 产物与 `/download` 渠道状态不变
+  （unsigned / pending，见 `apps/web/src/lib/download.ts`）。
 - 清单（manifest）里 `signed=false` 的条目只能停留在 `pending_unsigned`，
   永不进入 `files` 分发数组；debug APK 永不进入公开下载目录。
 - 版本清单的每个 sha256 都必须在发布时**当场重算**，不得复制粘贴旧值。
@@ -21,8 +24,14 @@
 
 1. [ ] keystore 就绪（`AIOS_ANDROID_KEYSTORE_*` 部署变量/文件，600 权限，
        备份两处离线介质 + 保管记录）；
-2. [ ] `apps/android` 侧 release 构建配置接入（signingConfigs 引用外部
-       keystore，不把密码写进 build 文件/CI 明文）；
+2. [x] `apps/android` 侧 release 构建配置接入（M14-171A：`apps/android/app/
+       build.gradle.kts` 的显式 opt-in 签名配置——四项外部输入
+       `AIOS_ANDROID_KEYSTORE_PATH` / `_STORE_PASSWORD` / `_KEY_ALIAS` /
+       `_KEY_PASSWORD` 环境变量，或 `AIOS_ANDROID_SIGNING_PROPERTIES` 指向的
+       仓库外 properties 文件，env 优先；任一输入出现即 opt-in，四项必须
+       齐全否则构建直接失败，绝不回退 debug 签名；无外部输入时 release
+       保持 unsigned 诚实默认。密码绝不写入 build 文件/CI 明文，静态契约由
+       `tools/android_release/preflight.py` fail-closed 钉住）；
 3. [ ] 构建：`gradlew assembleRelease`（CI 或本地，产物
        `app-release-signed.apk`）；
 4. [ ] 校验签名方案（v2+v3）与 `versionCode`/`versionName` 递增；
