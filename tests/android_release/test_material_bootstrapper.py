@@ -988,7 +988,8 @@ class TestJdk17LeadingTabOutput:
             monkeypatch, tmp_path, list_stdout=JDK17_ENGLISH_LIST
         )
         result, code = run_execute(
-            str(keystore), str(properties), confirm=CONFIRM_PHRASE
+            str(keystore), str(properties), confirm=CONFIRM_PHRASE,
+            clock=lambda: NOW_IN_WINDOW,
         )
         assert code == 0
         assert result["status"] == "generated"
