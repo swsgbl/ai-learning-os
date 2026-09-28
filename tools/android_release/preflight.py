@@ -25,9 +25,18 @@ enter the repository):
    separator-boundary prefix compare, InvalidPathException-to-GradleException
    conversion, and the guard's GradleException throws. Missing or thinned-out
    guard tokens mean the boundary was deleted or weakened.
-3. The Gradle text must not contain debug-signing fallbacks, literal
+3. The release signing config must pin the signing schemes to the release
+   gate's contract (M14-175): v1 disabled (minSdk 26 needs no JAR signing),
+   v2 and v3 enabled — tools/android_release/verify_artifact.py requires
+   v2+v3, and AGP's defaults do not guarantee v3 (operator-confirmed
+   default output carried v2 only). Contradictory pins (v1 on, v2/v3 off)
+   fail closed. v3.1 and v4 are deliberately left AGP-default: v3.1 only
+   signs key-rotation lineages (single release key → nothing to sign, and
+   no AGP DSL knob exists), v4 only feeds ADB incremental installs via a
+   separate .idsig that never affects APK verification.
+4. The Gradle text must not contain debug-signing fallbacks, literal
    passwords, or literal in-repo keystore paths.
-4. No Android signing material files (.jks/.keystore/.p12/.p7b/.cer/.csr)
+5. No Android signing material files (.jks/.keystore/.p12/.p7b/.cer/.csr)
    may exist inside the repository (pruned local dirs excepted).
 
 Exit codes: 0 = ok (unsigned-ready honest default), 1 = fail-closed
@@ -45,7 +54,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 TOOL_NAME = "android_release_preflight"
 GRADLE_FILE_RELPATH = Path("apps/android/app/build.gradle.kts")
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -84,6 +93,19 @@ REQUIRED_BOUNDARY_GUARD: Dict[str, int] = {
     '".git"': 1,
 }
 
+# M14-175 signing-scheme pins the release signing config must carry,
+# mapped to minimum textual occurrences. The release gate
+# (verify_artifact.py) requires v2+v3; AGP defaults do not guarantee v3,
+# and the operator-confirmed default output carried v2 only. v1 is pure
+# pre-API-24 compatibility (minSdk 26), so it is pinned off. Only pin
+# names and occurrence counts appear in results — matched text is never
+# echoed. v3.1/v4 pins are deliberately absent (see module docstring #3).
+REQUIRED_SCHEME_PINS: Dict[str, int] = {
+    "enableV1Signing = false": 1,
+    "enableV2Signing = true": 1,
+    "enableV3Signing = true": 1,
+}
+
 # rule -> regexes. Matched text is never echoed into results.
 FORBIDDEN_PATTERNS: Dict[str, Tuple[str, ...]] = {
     "debug_signing_fallback": (
@@ -96,6 +118,13 @@ FORBIDDEN_PATTERNS: Dict[str, Tuple[str, ...]] = {
     ),
     "keystore_path_literal": (
         r'storeFile\s*=\s*file\(\s*["\']',
+    ),
+    # M14-175: a contradictory assignment next to a required pin would let
+    # the last assignment win and silently break the v2+v3 gate contract.
+    "scheme_pin_contradiction": (
+        r"enableV1Signing\s*=\s*true",
+        r"enableV2Signing\s*=\s*false",
+        r"enableV3Signing\s*=\s*false",
     ),
 }
 
@@ -132,6 +161,9 @@ def check_gradle_signing_contract(
         "boundary_guard": {
             token: 0 for token in sorted(REQUIRED_BOUNDARY_GUARD)
         },
+        "scheme_pins": {
+            pin: 0 for pin in sorted(REQUIRED_SCHEME_PINS)
+        },
         "forbidden_pattern_hits": [],
     }
     failures: List[dict] = []
@@ -156,6 +188,15 @@ def check_gradle_signing_contract(
             failures.append({
                 "code": "missing_boundary_guard",
                 "detail": {"token": token, "found": found, "required": required},
+            })
+
+    for pin, required in sorted(REQUIRED_SCHEME_PINS.items()):
+        found = text.count(pin)
+        result["scheme_pins"][pin] = found
+        if found < required:
+            failures.append({
+                "code": "missing_scheme_pin",
+                "detail": {"pin": pin, "found": found, "required": required},
             })
 
     for rule, patterns in sorted(FORBIDDEN_PATTERNS.items()):

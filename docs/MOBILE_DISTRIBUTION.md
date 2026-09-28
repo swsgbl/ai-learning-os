@@ -58,7 +58,12 @@
        `_KEY_PASSWORD` 环境变量，或 `AIOS_ANDROID_SIGNING_PROPERTIES` 指向的
        仓库外 properties 文件，env 优先；任一输入出现即 opt-in，四项必须
        齐全否则构建直接失败，绝不回退 debug 签名；无外部输入时 release
-       保持 unsigned 诚实默认。密码绝不写入 build 文件/CI 明文，静态契约由
+       保持 unsigned 诚实默认。签名方案与验收门禁钉死一致（M14-175：
+       v1 关——minSdk 26 无需 JAR 签名；v2/v3 显式开启——AGP 默认不
+       保证 v3，操作员实测默认产物 v3=false 过不了 verify 门禁；v3.1
+       仅服务密钥轮换谱系、v4 仅服务 ADB 增量安装的独立 .idsig，与
+       单发布密钥/整包分发无关，保持 AGP 默认）。密码绝不写入 build
+       文件/CI 明文，静态契约由
        `tools/android_release/preflight.py` fail-closed 钉住）；
 3. [ ] 构建：`gradlew assembleRelease`（CI 或本地，产物
        `app-release-signed.apk`）；
