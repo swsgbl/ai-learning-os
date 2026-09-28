@@ -346,8 +346,8 @@ allowlist 纪律追加 `https://ndtool.cn`。
 **边缘路由（Nginx 片段模板 `infra/edge/nginx.public-base-path.example.conf`）**：
 该文件是 **location 片段**（非独立 server 块），include 进 VPS 上既有
 公共 443 server（即承载 ndtool.cn 站点的那个 server；真实域名按仓库
-纪律不入模板，部署副本自填）。片段只含六个 location，结构上不可能
-遮蔽既有站点：
+纪律不入模板，部署副本自填）。片段只含八个 location（六个 AIOS 路由 +
+M14-176 两个下载静态路由，见 §3G），结构上不可能遮蔽既有站点：
 
 | location | 行为 |
 | --- | --- |
@@ -357,6 +357,8 @@ allowlist 纪律追加 `https://ndtool.cn`。
 | `= /aios/health`（M14-161） | 公共 API 健康端点精确路由：`proxy_pass http://127.0.0.1:8080/health;`（URI 显式 `/health`）+ Host 改写 `api.internal.aios`——转发 frps API vhost 与本地 API `/health`，`X-Forwarded-*` 与 API 前缀路由一致。精确匹配只接整串 `/aios/health`：不遮蔽 Web（`/aios/healthz`、`/aios/health/x` 仍走 `^~ /aios/`）、不遮蔽 `/aios/api/`（`/aios/api/health` 仍走 API 前缀）、不遮蔽既有站点 |
 | `^~ /aios/api/` | `proxy_pass http://127.0.0.1:8080/api/;`（尾斜杠 URI）+ Host 改写 `api.internal.aios`——仅剥 `/aios` 一段，`/aios/api/v1/foo` → `/api/v1/foo` |
 | `^~ /aios/` | `proxy_pass http://127.0.0.1:8080;`（无 URI）+ Host 改写 `app.internal.aios`——完整 `/aios/...` 路径原样交给 Next（basePath 构建） |
+| `= /aios/download-manifest.json`（M14-176） | **VPS 本地静态**（不经家机隧道，§3G）：`alias /var/www/aios-downloads/manifest.json;`——同源 download manifest（Web `/download` 页运行时取数），强制 `application/json`（`types{}` + `default_type`）、`Cache-Control: no-store` + 三安全头。精确匹配优先于 `^~ /aios/`（否则该 URI 落 Next 代理 404） |
+| `^~ /android/`（M14-176） | **VPS 本地静态**（不经家机隧道，§3G）：`alias /var/www/aios-downloads/android/;`——已发布 APK 的根相对下载前缀；nginx 层 .apk 门禁（`if ($uri !~* \.apk$) { return 404; }`——非 .apk 后缀一律 404，不依赖上传目录纪律）、强制 APK MIME、`autoindex off`（无目录暴露）、`Cache-Control: public, max-age=3600` + 三安全头；`^~` 阻止宿主正则/静态 location 抢占 `/android/*` |
 
 **公共 preflight base path 契约（M14-161）**：同源路径制拓扑下公共
 验收端点带 base path——`--app-url https://ndtool.cn/aios`（探测精确
@@ -552,6 +554,116 @@ preflight 端点接受受控 base path（精确 `/aios`），app 探测 canonica
 （使 `/aios/health` 生效）+ 按新版 §9 命令对 `https://ndtool.cn/aios`
 跑正式 preflight + 人工 4G/5G 清单——完成前「公网生产可用」口径
 维持不变。
+
+## 3G. Android 下载静态路由（443 `/aios/download-manifest.json` + `/android/`，M14-176）
+
+`/download` 页 Android 渠道的运行时事实来源是**同源** download manifest
+（`apps/web/src/lib/download-manifest.ts`，取
+`${NEXT_PUBLIC_BASE_PATH}/download-manifest.json`——公共拓扑下即
+`https://ndtool.cn/aios/download-manifest.json`，`fetch no-store`），
+可信条目的 APK URL 恒为根相对 `/android/<file>`。M14-176 在 §3E 片段
+模板追加两个 **VPS 本地静态路由**——下载流量终结在 VPS 磁盘，
+**不经 frp 家机隧道**（家机不承担 APK 分发带宽；家机停机不影响已
+发布 APK 的下载；发布新 APK 也无需重建家机 Web 镜像）：
+
+| location | 行为 |
+| --- | --- |
+| `= /aios/download-manifest.json` | alias `/var/www/aios-downloads/manifest.json`；强制 `application/json`（`types{}` 清空扩展映射 + `default_type` 兜底）；`Cache-Control: no-store`；M14-163 三安全头（`always`） |
+| `^~ /android/` | **第一道门禁在 nginx 层（R1）**：`if ($uri !~* \.apk$) { return 404; }`——规范化 URI 不以 `.apk` 结尾（大小写不敏感）一律 404（notes.txt / foo.apk.txt / foo.html、目录 URI、尾斜杠形态在进静态处理器前被拒，**不依赖上传目录纪律**；`.APK`/`.Apk` 变体放行）；alias `/var/www/aios-downloads/android/`；强制 `application/vnd.android.package-archive`；显式 `autoindex off` 且无 `index`/`try_files`（纵深防御：缺文件 404、磁盘意外目录无列表）；`Cache-Control: public, max-age=3600`（有界公共缓存——文件名带版本且 `stage_download.py` 拒绝覆盖已存在目标，URL 内容不可变）；三安全头（`always`） |
+
+匹配语义（模板注释与
+`services/api/tests/test_public_edge_nginx_base_path.py` M14-176 节
+逐条钉住）：清单路由是**精确匹配**——优先于 `^~ /aios/`（否则该 URI
+落进 Next 代理 404），邻近 URI（`/aios/download-manifest.jsonx` 等）
+仍走 Web 前缀；`/android/` 用 **`^~`** 前缀——普通前缀 location 会
+输给宿主 server 既有的正则/静态 location（如 `~ \.apk$`），`^~` 在
+最长前缀命中时阻止正则抢占，保证 `/android/*` 一定由本路由服务。
+`/android/` location 内部还有 **nginx 层 .apk 门禁（R1，Codex
+review）**：`if ($uri !~* \.apk$) { return 404; }`——规范化后的
+`$uri`（已解码、dot-segment 已合并、无 query 串）不以 `.apk` 结尾
+（大小写不敏感）在 rewrite 阶段即被确定性 404（`if` 内 `return` 是
+nginx 认可的安全用法，先于静态处理器）；`.APK`/`.Apk` 大小写变体
+照常放行。反向边界：裸 `/android`（无尾斜杠）、`/androidx`、大小写
+变体 `/Android/`、无 `/aios` 前缀的 `/download-manifest.json`、harmony
+频道的 `/harmony/*` 均不被片段接管（宿主路径不变）。若宿主站点已有
+同名/更长的 `/android/` 前缀 location，include 前先移除旧块
+（重复声明是配置错误，`nginx -t` 会拒绝）。
+
+**VPS 上传目录与路由契约**（`tools/android_release/stage_download.py`
+的 staging 形状 1:1 映射，上传目的地即部署路径）：
+
+| 公共 URL | VPS 文件（= staging 产物） |
+| --- | --- |
+| `https://ndtool.cn/aios/download-manifest.json` | `/var/www/aios-downloads/manifest.json`（← `<staging>/manifest.json`） |
+| `https://ndtool.cn/android/<file>.apk` | `/var/www/aios-downloads/android/<file>.apk`（← `<staging>/android/<file>.apk`） |
+
+staging 根由 stage_download.py 原子产出并独立复核（manifest schema +
+APK SHA256），上传只做 1:1 拷贝、不改内容；`/var/www/aios-downloads/`
+内不放任何清单/APK 以外的东西（§5 下载站纪律同源适用：无 keystore、
+无 debug APK、无构建日志）。
+
+**部署（Codex 运维步骤）**——首次或模板更新后。`<vps-ssh-alias>` 是
+运维本地 SSH config（仓库外）里指向 VPS 的**别名占位符**：必须解析到
+一个对 `/var/www/aios-downloads/` **有写权限**的账户——下文以 §2 的
+`aios` 运维账户为既定上传账户（第 1 步把目录属主交给它，写入权限与
+属主一致）；换用等价授权账户时，同步替换 `-o/-g` 与该别名，保持
+「目录属主 = 上传账户」。真实主机名/账户/凭据细节按仓库纪律不入库
+（密钥登录，禁密码）。
+
+```bash
+# 1) VPS 建目录（root 一次性执行）：属主交给 §2 的 aios 账户
+#    （= <vps-ssh-alias> 解析到的上传账户，可写）；0755 使 Nginx
+#    工作进程（www-data 等其他身份）只获得读 + 目录遍历——任何位置
+#    都没有给 nginx 进程身份的写位（Nginx 严格只读）
+install -d -m 0755 -o aios -g aios /var/www/aios-downloads /var/www/aios-downloads/android
+# （既有 VPS 若已按更早的 root 属主形态建过目录，root 一次性纠正属主：
+#    chown -R aios:aios /var/www/aios-downloads）
+
+# 2) 上传 stage_download.py 产物（staging 形状 → 部署路径 1:1；
+#    manifest 先落 .new 再 mv，避免半写窗口对公共读可见；
+#    chmod 0644 确保任意 umask 下 Nginx（其他身份）可读）
+scp <staging>/manifest.json <vps-ssh-alias>:/var/www/aios-downloads/manifest.json.new
+scp <staging>/android/<file>.apk <vps-ssh-alias>:/var/www/aios-downloads/android/
+ssh <vps-ssh-alias> 'mv /var/www/aios-downloads/manifest.json.new /var/www/aios-downloads/manifest.json; chmod 0644 /var/www/aios-downloads/manifest.json /var/www/aios-downloads/android/<file>.apk'
+
+# 3) 片段部署（§3E 既定流程）：拷 infra/edge/nginx.public-base-path.example.conf
+#    → /etc/nginx/aios-base-path.locations.conf（宿主 443 server 内
+#    include；先移除宿主自身 /android/ 冲突块，若有）
+nginx -t && systemctl reload nginx
+```
+
+**验证（外网视角，reload 后逐条）**：
+
+```bash
+curl -sSI https://ndtool.cn/aios/download-manifest.json
+#   期望 200 + Content-Type: application/json + Cache-Control: no-store
+#   + Strict-Transport-Security / X-Content-Type-Options / Referrer-Policy
+curl -sS https://ndtool.cn/aios/download-manifest.json \
+  | grep -c '"schema": "aios-download-manifest/1"'
+curl -sSI https://ndtool.cn/android/ai-learning-os-0.1.0-release-signed.apk
+#   期望 200 + Content-Type: application/vnd.android.package-archive
+#   + Cache-Control: public, max-age=3600 + 三安全头
+curl -sSI https://ndtool.cn/android/notes.txt   # 404——.apk 门禁（R1）
+curl -sSI https://ndtool.cn/android/foo.apk.txt # 404——.apk 门禁
+curl -sSI https://ndtool.cn/android/foo.html    # 404——.apk 门禁
+curl -sSI https://ndtool.cn/android/            # 404——目录 URI 被门禁拒绝
+curl -sSI https://ndtool.cn/android/nope.apk    # 404——门禁放行、缺文件
+curl -sSI https://ndtool.cn/aios | head -n 1    # 200——§3E 行为不变
+```
+
+**回滚边界**：注释/删除片段内 ⑦⑧ 两个 location（或整段回退
+`/etc/nginx/aios-base-path.locations.conf` 到上一版副本）+ `nginx -t`
++ reload，即恢复「下载路由不存在」状态——清单 URI 回落 `^~ /aios/`
+的 Next 404、`/android/*` 回落宿主 404，Web 端
+`download-manifest.ts` 对非 200 静默降级 pending（fail-closed，不显示
+错误链接）；`/var/www/aios-downloads/` 内文件保留不动，§3E 六个既有
+路由不受影响。回滚不需要动家机任何东西（下载面本就与家机解耦）。
+
+诚实边界：本节与模板/测试是**配置/docs/tests 对齐切片**——真实生产
+就绪以 **Codex 实际上传 + `nginx -t` + reload + 上表外网验证逐条通过
+并落档**为准；在那之前 `/download` 的 Android 渠道保持 pending（web
+端 fail-closed 降级），§0「不宣称公开分发就绪」口径（
+docs/MOBILE_DISTRIBUTION.md）维持不变。
 
 ## 4. DNS 与 Caddy ACME
 
