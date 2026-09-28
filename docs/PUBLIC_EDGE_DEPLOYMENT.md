@@ -678,6 +678,19 @@ SHA256 `b583ed9e…e9bf`，非 debug 证书）。生产配置副本 SHA256
 Harmony 公开分发（AGC 发布材料未落地）——关闭前不宣称移动端全量
 生产可用（docs/MOBILE_DISTRIBUTION.md §0 口径）。
 
+**M14-178 真浏览器验收（2026-09-29，verification/docs-only）**：对
+`https://ndtool.cn/aios/download` 以真实桌面 Chromium 双视口
+（1366×768 / 390×844）验收：文档 200、三卡齐备（PWA 可用+安装引导、
+Harmony 待发布零链接）、双视口无横向溢出、卡片零重叠、console/网络
+错误全部已识别零未解决、页面内 fetch 复核边缘 manifest 与 M14-177
+发布值逐字段一致、双视口截图经视觉模型复核非空白。**发现（blocker）**：
+生产 Web 镜像构建早于 M14-174——页面自发的 manifest 请求为 0、17 个
+已加载 chunk 零个含 download-manifest 接线、Android 卡恒「待发布」
+零链接；**边缘侧（本节路由）完全正确，仅 UI 包滞后**。修复 = 从
+M14-174 之后的 main 重建并滚动家机 Web 镜像（§8 流程），修复后重跑
+本验收。完整事实链与边界见
+`docs/evidence/m14-178-download-browser-evidence/README.md`。
+
 ## 4. DNS 与 Caddy ACME
 
 1. DNS 控制台添加五条 A 记录 → VPS 公网 IP（TTL 先 300 便于调试，稳定后调大）；
