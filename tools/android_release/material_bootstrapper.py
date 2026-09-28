@@ -28,7 +28,10 @@ Subcommands:
   the keystore.path target identity, tightened permissions (POSIX mode
   check; Windows ACL read-back is honestly ``not_evaluated``), and the
   certificate via ``keytool -list`` (SHA256 fingerprint, alias, validity
-  window judged against an injectable clock).
+  window judged against an injectable clock). Every keytool child runs
+  under a forced English JVM locale (``JAVA_TOOL_OPTIONS`` override, no
+  unsupported ``-J`` flags) and the parser tolerates JDK 17's leading-tab
+  fingerprint indentation, so inspection is deterministic on any host.
 
 Safety contract (mirrors tools/android_release/verify_artifact.py): output
 is deterministic value-free JSON — no password, no keystore content, no
@@ -96,8 +99,25 @@ STATUS_VERIFIED = "verified"
 EXIT_OK = 0
 EXIT_FAILURE = 1
 
-FINGERPRINT_RE = re.compile(r"^SHA256:[ \t]*([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){31})\s*$", re.MULTILINE)
-ALIAS_RE = re.compile(r"^Alias name:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
+# keytool output is locale-sensitive ("Alias name:" is localized) and JDK 17
+# ``-list -v`` indents the fingerprint lines with a leading tab. Force a
+# deterministic English JVM locale through JAVA_TOOL_OPTIONS — the only
+# supported lever, since current keytool accepts no ``-J`` passthrough. The
+# value *overrides* any inherited JAVA_TOOL_OPTIONS (never appended: an
+# inherited locale or heap flag must not win). The "Picked up
+# JAVA_TOOL_OPTIONS" banner the JVM then prints on stderr is harmless:
+# child stdout/stderr are never recorded in any JSON.
+KEYTOOL_JAVA_TOOL_OPTIONS = "-Duser.language=en -Duser.country=US"
+
+# Leading [ \t]* only (never \s, which would cross newlines in MULTILINE
+# mode): real JDK 17 Windows output prefixes SHA256 with a tab, while the
+# captured value keeps its exact shape (32 hex pairs, colon-separated) and
+# every match stays on a single line.
+FINGERPRINT_RE = re.compile(
+    r"^[ \t]*SHA256:[ \t]*([0-9A-Fa-f]{2}(?::[0-9A-Fa-f]{2}){31})[ \t]*$",
+    re.MULTILINE,
+)
+ALIAS_RE = re.compile(r"^[ \t]*Alias name:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
 VALIDITY_RE = re.compile(r"^Valid from:[ \t]*(.+?)[ \t]*until:[ \t]*(.+?)[ \t]*$", re.MULTILINE)
 JAVA_DATE_FORMATS = ("%a %b %d %H:%M:%S %Z %Y", "%a %b %d %H:%M:%S %z %Y")
 
@@ -115,6 +135,20 @@ def subprocess_runner(argv: Sequence[str], env: Dict[str, str]) -> CommandOutcom
         encoding="utf-8", errors="replace", env=env,
     )
     return CommandOutcome(proc.returncode, proc.stdout or "", proc.stderr or "")
+
+
+def keytool_env() -> Dict[str, str]:
+    """``child_env()`` plus the forced English JVM locale for keytool.
+
+    Both the ``-genkeypair`` and ``-list`` children run with this
+    environment so inspection is deterministic regardless of the host
+    locale (a Chinese Windows host localizes "Alias name:"). The value
+    overrides any inherited JAVA_TOOL_OPTIONS; see
+    KEYTOOL_JAVA_TOOL_OPTIONS above for why this is not a ``-J`` option.
+    """
+    env = child_env()
+    env["JAVA_TOOL_OPTIONS"] = KEYTOOL_JAVA_TOOL_OPTIONS
+    return env
 
 
 def secrets_entropy(length: int) -> str:
@@ -522,7 +556,7 @@ def run_execute(
         "-dname", KEYTOOL_DNAME,
     ]
     try:
-        outcome = run(argv, child_env())
+        outcome = run(argv, keytool_env())
     except OSError:
         failures.append({"code": "tool_spawn_failed", "detail": {"tool": "keytool"}})
         return _execute_result(checks, failures, ks_path, props_path)
@@ -606,7 +640,7 @@ def _inspect_certificate(
         "-keystore", str(ks_path), "-storepass", store_pw,
     ]
     try:
-        outcome = run(argv, child_env())
+        outcome = run(argv, keytool_env())
     except OSError:
         failures.append({"code": "tool_spawn_failed", "detail": {"tool": "keytool"}})
         return record, failures
