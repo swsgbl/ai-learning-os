@@ -17,12 +17,17 @@ identity match):
 1. the APK exists, is a regular file and is not a symlink;
 2. size and SHA256 match the manifest entry matched by file name;
 3. the manifest platform is android (``channels.android``), the entry is
-   ``signed: true``, and its declared ``signature_scheme`` is the accepted
-   ``v2+v3``;
+   ``signed: true``, it **must declare** ``signature_scheme: v2+v3``
+   (missing or different both fail closed), and its ``url`` is a relative,
+   HTTP(S)-safe ``/android/`` path whose final segment exactly equals the
+   entry file name (absolute URLs, query strings, fragments, backslashes,
+   percent-encoding, traversal, duplicate matching entries and mismatched
+   names are all rejected);
 4. ``apksigner verify --verbose --print-certs`` succeeds with both the v2 and
-   v3 schemes true (v1 may be false), and the signer certificate subject is
-   not a debug certificate (``androiddebugkey`` / ``CN=Android Debug`` →
-   fail-closed);
+   v3 schemes true (v1 may be false), the signer certificate subject **must
+   be present and parsable** (missing → ``signer_certificate_missing``), and
+   it is not a debug certificate (``androiddebugkey`` /
+   ``CN=Android Debug`` → fail-closed);
 5. ``aapt dump badging`` (aapt2 preferred, legacy aapt fallback) yields the
    actual package name / versionCode / versionName, matched exactly against
    the manifest;
@@ -85,12 +90,21 @@ DEBUG_DN_MARKERS = (
     ("cn=android debug", "cn_android_debug"),
 )
 SHA256_HEX_RE = re.compile(r"^[0-9a-f]{64}$")
+# Entry URL identity: a relative, HTTP(S)-safe /android/ path over printable
+# ASCII only (no scheme/host, query, fragment, backslash, percent-encoding,
+# whitespace, or empty segments). Dot segments are rejected separately.
+ENTRY_URL_RE = re.compile(r"^/android/[A-Za-z0-9._~+-]+(?:/[A-Za-z0-9._~+-]+)*$")
 SCHEME_RES = {
-    "v1": re.compile(r"Verified using v1 scheme \(JAR signing\):\s*(true|false)"),
-    "v2": re.compile(r"Verified using v2 scheme \(APK Signature Scheme v2\):\s*(true|false)"),
-    "v3": re.compile(r"Verified using v3 scheme \(APK Signature Scheme v3\):\s*(true|false)"),
+    "v1": re.compile(r"Verified using v1 scheme \(JAR signing\):[ \t]*(true|false)"),
+    "v2": re.compile(r"Verified using v2 scheme \(APK Signature Scheme v2\):[ \t]*(true|false)"),
+    "v3": re.compile(r"Verified using v3 scheme \(APK Signature Scheme v3\):[ \t]*(true|false)"),
 }
-SIGNER_DN_RE = re.compile(r"Signer #1 certificate DN:\s*(.+)")
+# Line-anchored with horizontal whitespace only: a DN line carrying nothing
+# but whitespace must NOT let "\s*" swallow the newline and capture the next
+# output line as a fake DN (which would bypass the missing-identity check).
+SIGNER_DN_RE = re.compile(
+    r"^Signer #1 certificate DN:[ \t]*(.+?)[ \t]*$", re.MULTILINE
+)
 BADGING_PACKAGE_RE = re.compile(
     r"^package:\s+name='([^']*)'\s+versionCode='(\d+)'\s+versionName='([^']*)'",
     re.MULTILINE,
@@ -298,6 +312,7 @@ def parse_manifest_contract(
         "entry_matched": False,
         "entry_signed": None,
         "signature_scheme_accepted": None,
+        "entry_url_valid": None,
         "package_name": None,
         "version_code": None,
         "version_name": None,
@@ -355,8 +370,12 @@ def _match_manifest_entry(
         for item in (files if isinstance(files, list) else [])
         if isinstance(item, dict) and item.get("name") == apk_filename
     ]
-    if len(entries) != 1:
+    if not entries:
         failures.append({"code": "manifest_entry_not_found"})
+        return None
+    if len(entries) > 1:
+        # Duplicate matching entries make the manifest ambiguous: fail closed.
+        failures.append({"code": "manifest_entry_duplicate"})
         return None
     entry = entries[0]
     record["entry_matched"] = True
@@ -366,12 +385,45 @@ def _match_manifest_entry(
     else:
         record["entry_signed"] = True
     scheme = entry.get("signature_scheme")
-    if scheme is not None:
-        accepted = scheme == ACCEPTED_SIGNATURE_SCHEME
-        record["signature_scheme_accepted"] = accepted
-        if not accepted:
-            failures.append({"code": "manifest_signature_scheme_mismatch"})
+    if scheme is None:
+        # signature_scheme is mandatory: the release contract is exactly
+        # v2+v3, so an undeclared scheme is a drift, not a pass.
+        record["signature_scheme_accepted"] = False
+        failures.append({"code": "manifest_signature_scheme_missing"})
+    elif scheme != ACCEPTED_SIGNATURE_SCHEME:
+        record["signature_scheme_accepted"] = False
+        failures.append({"code": "manifest_signature_scheme_mismatch"})
+    else:
+        record["signature_scheme_accepted"] = True
+    record["entry_url_valid"] = _validate_entry_url(
+        entry.get("url"), record["entry_name"], failures
+    )
     return _validate_entry_fields(entry, failures)
+
+
+def _validate_entry_url(url: object, filename: object, failures: List[dict]) -> bool:
+    """Entry URL identity: relative /android/ path ending in the file name.
+
+    Rejects absolute URLs, protocol-relative URLs, query strings, fragments,
+    backslashes, percent-encoding, whitespace, traversal/dot segments and
+    empty segments (via the ASCII allowlist plus dot-segment scan), and any
+    final path segment that differs from the validated file name. Failure
+    categories only — the URL value is never echoed.
+    """
+    if not isinstance(url, str) or not url:
+        failures.append({"code": "manifest_entry_url_missing"})
+        return False
+    if ENTRY_URL_RE.match(url) is None:
+        failures.append({"code": "manifest_entry_url_invalid"})
+        return False
+    segments = url.split("/")[1:]
+    if any(segment in (".", "..") for segment in segments):
+        failures.append({"code": "manifest_entry_url_invalid"})
+        return False
+    if filename is None or segments[-1] != filename:
+        failures.append({"code": "manifest_entry_url_name_mismatch"})
+        return False
+    return True
 
 
 def _validate_entry_fields(entry: dict, failures: List[dict]) -> Optional[dict]:
@@ -490,6 +542,12 @@ def _evaluate_apksigner_facts(
     if not facts["parsed"]:
         failures.append({"code": "apksigner_output_unparsed"})
         return record, failures
+    if not facts["signer_dn"]:
+        # Certificate identity is mandatory: without a parsable signer DN the
+        # debug-certificate check cannot run, so nothing is claimed and the
+        # verification fails closed (debug_certificate stays None, not false).
+        failures.append({"code": "signer_certificate_missing"})
+        return record, failures
     marker = debug_dn_marker(facts["signer_dn"])
     record["debug_certificate"] = marker is not None
     if marker is not None:
@@ -598,6 +656,16 @@ def check_version_code_monotonic(
         "strictly_greater": None,
     }
     failures: List[dict] = []
+    if previous_version_code is not None and (
+        isinstance(previous_version_code, bool)
+        or not isinstance(previous_version_code, int)
+        or previous_version_code < 0
+    ):
+        # Defensive: callers bypassing argparse get the same non-negative
+        # contract as the manifest versionCode. Fail closed, claim nothing.
+        failures.append({"code": "previous_version_code_invalid"})
+        record["status"] = "not_evaluated"
+        return record, failures
     from_manifest, parse_failures = _previous_version_code_from_manifest(
         previous_manifest
     )
@@ -641,7 +709,8 @@ def _not_run_check(name: str) -> dict:
         "manifest_contract": {"status": CHECK_NOT_RUN, "schema_recognized": False,
                               "android_channel": False, "entry_name": None,
                               "entry_matched": False, "entry_signed": None,
-                              "signature_scheme_accepted": None, "package_name": None,
+                              "signature_scheme_accepted": None,
+                              "entry_url_valid": None, "package_name": None,
                               "version_code": None, "version_name": None},
         "apk_digest": {"status": CHECK_NOT_RUN, "expected_sha256": None,
                        "actual_sha256": None, "expected_size_bytes": None,
@@ -773,6 +842,17 @@ def render_summary(result: dict) -> str:
     return " ".join(parts)
 
 
+def _nonnegative_int(value: str) -> int:
+    """argparse type rejecting negative values (versionCode contract)."""
+    try:
+        parsed = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError("must be an integer") from None
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("must be a non-negative integer")
+    return parsed
+
+
 def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="verify_artifact",
@@ -791,8 +871,9 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Previous download manifest supplying the previous versionCode.",
     )
     parser.add_argument(
-        "--previous-version-code", type=int, default=None,
-        help="Previous versionCode (must agree with --previous-manifest if both given).",
+        "--previous-version-code", type=_nonnegative_int, default=None,
+        help="Previous versionCode, non-negative (must agree with "
+             "--previous-manifest if both given).",
     )
     parser.add_argument(
         "--apksigner", default=None,

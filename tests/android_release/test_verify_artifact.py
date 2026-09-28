@@ -103,6 +103,7 @@ def make_manifest(
     sha256: str | None = None,
     size_bytes: int | None = None,
     entry_name: str = APK_NAME,
+    url: str | None = None,
     signed: bool = True,
     signature_scheme: str | None = ACCEPTED_SIGNATURE_SCHEME,
     package_name: str | None = PACKAGE_NAME,
@@ -110,6 +111,7 @@ def make_manifest(
     version_name: str | None = VERSION_NAME,
     schema: str = MANIFEST_SCHEMA,
     drop_android_channel: bool = False,
+    duplicate_entry: bool = False,
 ) -> Path:
     channel: dict = {
         "versionCode": version_code,
@@ -119,7 +121,7 @@ def make_manifest(
         channel["package_name"] = package_name
     entry: dict = {
         "name": entry_name,
-        "url": f"/android/{entry_name}",
+        "url": url if url is not None else f"/android/{entry_name}",
         "sha256": sha256 if sha256 is not None else apk_sha256(),
         "size_bytes": (
             size_bytes if size_bytes is not None else len(APK_BYTES)
@@ -128,7 +130,7 @@ def make_manifest(
     }
     if signature_scheme is not None:
         entry["signature_scheme"] = signature_scheme
-    channel["files"] = [entry]
+    channel["files"] = [entry, dict(entry)] if duplicate_entry else [entry]
     manifest = {
         "schema": schema,
         "version": version_name,
@@ -387,6 +389,19 @@ class TestManifestContract:
             f["code"] for f in result["failures"]
         ]
 
+    def test_signature_scheme_missing_fails_closed(self, tmp_path):
+        """signature_scheme 是必填契约：缺失必须 fail-closed，而不是跳过比对。"""
+        manifest = make_manifest(tmp_path, signature_scheme=None)
+        result, code = verify(tmp_path, manifest=manifest)
+        assert code == EXIT_FAILURE
+        codes = [f["code"] for f in result["failures"]]
+        assert "manifest_signature_scheme_missing" in codes
+        assert "manifest_signature_scheme_mismatch" not in codes
+        assert (
+            result["checks"]["manifest_contract"]["signature_scheme_accepted"]
+            is False
+        )
+
     def test_missing_package_name_fails(self, tmp_path):
         manifest = make_manifest(tmp_path, package_name=None)
         result, code = verify(tmp_path, manifest=manifest)
@@ -421,6 +436,79 @@ class TestManifestContract:
         result, code = verify(tmp_path, manifest=manifest)
         assert code == EXIT_FAILURE
         assert "manifest_size_invalid" in [f["code"] for f in result["failures"]]
+
+
+class TestEntryUrl:
+    """下载项 URL 身份：/android/ 相对路径且末段与文件名严格一致。"""
+
+    def test_url_field_missing_fails_closed(self, tmp_path):
+        manifest = make_manifest(tmp_path, url=None)
+        model = json.loads(manifest.read_text(encoding="utf-8"))
+        del model["channels"]["android"]["files"][0]["url"]
+        manifest.write_text(json.dumps(model), encoding="utf-8")
+        result, code = verify(tmp_path, manifest=manifest)
+        assert code == EXIT_FAILURE
+        assert "manifest_entry_url_missing" in [
+            f["code"] for f in result["failures"]
+        ]
+        assert result["checks"]["manifest_contract"]["entry_url_valid"] is False
+
+    @pytest.mark.parametrize(
+        "bad_url",
+        [
+            f"https://download.example.com/android/{APK_NAME}",  # absolute
+            f"//download.example.com/android/{APK_NAME}",  # protocol-relative
+            f"android/{APK_NAME}",  # not rooted
+            f"/harmony/{APK_NAME}",  # wrong channel directory
+            f"/android/{APK_NAME}?x=1",  # query string
+            f"/android/{APK_NAME}#frag",  # fragment
+            f"/android/{APK_NAME}\\evil",  # backslash
+            f"/android/../{APK_NAME}",  # traversal
+            f"/android/./{APK_NAME}",  # dot segment
+            f"/android//{APK_NAME}",  # empty segment
+            f"/android/%2e%2e/{APK_NAME}",  # percent-encoded traversal
+            f"/android/{APK_NAME} ",  # trailing space (not HTTP-safe)
+        ],
+        ids=[
+            "absolute", "protocol_relative", "not_rooted", "wrong_dir",
+            "query", "fragment", "backslash", "traversal", "dot_segment",
+            "empty_segment", "percent_traversal", "space",
+        ],
+    )
+    def test_structurally_invalid_url_fails_closed(self, tmp_path, bad_url):
+        manifest = make_manifest(tmp_path, url=bad_url)
+        result, code = verify(tmp_path, manifest=manifest)
+        assert code == EXIT_FAILURE
+        assert "manifest_entry_url_invalid" in [
+            f["code"] for f in result["failures"]
+        ]
+        # 失败 detail 保持 value-free：不回显 URL 内容
+        rendered = render_json(result)
+        assert "download.example.com" not in rendered
+        assert "%2e" not in rendered
+
+    def test_url_final_segment_name_mismatch_fails(self, tmp_path):
+        manifest = make_manifest(tmp_path, url=f"/android/some-other-file.apk")
+        result, code = verify(tmp_path, manifest=manifest)
+        assert code == EXIT_FAILURE
+        assert "manifest_entry_url_name_mismatch" in [
+            f["code"] for f in result["failures"]
+        ]
+
+    def test_duplicate_matching_entries_fail_closed(self, tmp_path):
+        manifest = make_manifest(tmp_path, duplicate_entry=True)
+        result, code = verify(tmp_path, manifest=manifest)
+        assert code == EXIT_FAILURE
+        assert "manifest_entry_duplicate" in [
+            f["code"] for f in result["failures"]
+        ]
+
+    def test_valid_subdirectory_url_passes(self, tmp_path):
+        """同频道子目录路径合法：末段一致即可。"""
+        manifest = make_manifest(tmp_path, url=f"/android/v2/{APK_NAME}")
+        result, code = verify(tmp_path, manifest=manifest)
+        assert code == EXIT_OK
+        assert result["checks"]["manifest_contract"]["entry_url_valid"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -469,6 +557,29 @@ class TestApksigner:
         failures = [f["code"] for f in result["failures"]]
         assert "debug_certificate" in failures
         assert result["checks"]["apksigner"]["debug_certificate"] is True
+
+    def test_missing_signer_dn_fails_closed(self, tmp_path):
+        """签名者证书主体缺失/不可解析时 fail-closed，且不得宣称 debug=false。"""
+        stdout = APKSIGNER_OK.replace(
+            f"Signer #1 certificate DN: {RELEASE_DN}\n", ""
+        )
+        result, code = verify(tmp_path, tools=with_apksigner(stdout))
+        assert code == EXIT_FAILURE
+        codes = [f["code"] for f in result["failures"]]
+        assert "signer_certificate_missing" in codes
+        assert result["checks"]["apksigner"]["debug_certificate"] is None
+
+    def test_whitespace_signer_dn_fails_closed(self, tmp_path):
+        """DN 行只剩空白字符：解析结果为空，同样按证书主体缺失 fail-closed。"""
+        stdout = APKSIGNER_OK.replace(
+            f"Signer #1 certificate DN: {RELEASE_DN}", "Signer #1 certificate DN: \t"
+        )
+        result, code = verify(tmp_path, tools=with_apksigner(stdout))
+        assert code == EXIT_FAILURE
+        assert "signer_certificate_missing" in [
+            f["code"] for f in result["failures"]
+        ]
+        assert result["checks"]["apksigner"]["debug_certificate"] is None
 
     def test_unparsable_verbose_output_fails_closed(self, tmp_path):
         result, code = verify(tmp_path, tools=with_apksigner("garbage output\n"))
@@ -605,6 +716,16 @@ class TestMonotonicity:
         result, code = verify(tmp_path, previous_manifest=bad)
         assert code == EXIT_FAILURE
         assert "previous_manifest_invalid" in [f["code"] for f in result["failures"]]
+
+    def test_negative_previous_version_code_fails_closed(self, tmp_path):
+        """防御：直接传负数给 run_verify 也必须 fail-closed（与 manifest 契约一致）。"""
+        result, code = verify(tmp_path, previous_version_code=-3)
+        assert code == EXIT_FAILURE
+        codes = [f["code"] for f in result["failures"]]
+        assert "previous_version_code_invalid" in codes
+        mono = result["checks"]["version_code_monotonic"]
+        assert mono["status"] == "not_evaluated"
+        assert mono["strictly_greater"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -837,6 +958,16 @@ class TestCliInProcess:
     def test_cli_requires_apk_and_manifest(self):
         with pytest.raises(SystemExit) as exc:
             main(["--apk", "x"])
+        assert exc.value.code == 2
+
+    def test_cli_negative_previous_version_code_rejected(self):
+        """argparse 层拒绝负数 --previous-version-code（SystemExit 2）。"""
+        with pytest.raises(SystemExit) as exc:
+            main([
+                "--apk", "x",
+                "--manifest", "y",
+                "--previous-version-code", "-1",
+            ])
         assert exc.value.code == 2
 
 
