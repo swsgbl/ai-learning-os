@@ -2,7 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Figtree, Newsreader } from "next/font/google";
 import { AppShell } from "@/components/app-shell";
 import { ServiceWorkerRegister } from "@/components/pwa/sw-register";
-import { APPLE_TOUCH_ICON } from "@/lib/pwa";
+import { APPLE_TOUCH_ICON, FAVICON_ICON } from "@/lib/pwa";
 import "./globals.css";
 
 const figtree = Figtree({
@@ -21,7 +21,10 @@ export const metadata: Metadata = {
   // M14-164：iOS 主屏图标（public/apple-touch-icon.png，180×180 不透明）。
   // Next 静态 metadata icons 不自动加 basePath——路径来自 pwa.ts basePath 契约。
   // manifest.webmanifest 由 app/manifest.ts metadata route 自动注入 <link>。
+  // M14-179：通用 favicon（复用 any-192 资产）——不提供 rel=icon 时浏览器
+  // 回退请求宿主根 /favicon.ico（404 噪音，M14-178 真浏览器验收发现）。
   icons: {
+    icon: [{ url: FAVICON_ICON, sizes: "192x192", type: "image/png" }],
     apple: [{ url: APPLE_TOUCH_ICON, sizes: "180x180", type: "image/png" }],
   },
 };

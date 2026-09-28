@@ -25,6 +25,7 @@ import { MOTION } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { API_BASE } from "@/lib/api";
 import { logout, probeAuth, type AuthState } from "@/lib/auth";
+import { isPublicRoute } from "@/lib/public-routes";
 import { PageTransition } from "./motion/page-transition";
 
 const BASE_NAV: Array<{ href: string; label: string; icon: LucideIcon }> = [
@@ -46,6 +47,10 @@ function useAuthState(): [AuthState | null, (next: AuthState | null) => void] {
   const pathname = usePathname();
   const [state, setState] = useState<AuthState | null>(null);
   useEffect(() => {
+    // M14-179：公开路由（/download）无需登录态——匿名访客的
+    // auth/status + auth/me 探测只会产出必然 401 的网络噪音（M14-178
+    // 真浏览器验收）。其余路由保持逐路由探测，认证行为不回归。
+    if (isPublicRoute(pathname)) return;
     // 路由变化时重新探测：登录页 saveSession 后 router.push 不会重挂 AppShell，
     // 用户徽章与治理入口需要在这里跟上新凭据（M9-03 遗留，M10-02 治理入口同样依赖）
     let active = true;

@@ -28,6 +28,12 @@ export const SW_REGISTER_SCOPE = `${BASE_PATH}/`;
 /** apple-touch-icon 地址（public/apple-touch-icon.png，iOS 主屏图标 180）。 */
 export const APPLE_TOUCH_ICON = `${BASE_PATH}/apple-touch-icon.png`;
 
+/** 通用 favicon 地址（public/icons/icon-192.png，复用既有 any-192 资产）。
+ *  M14-179：metadata 不提供 rel=icon 时浏览器会回退请求域根
+ *  /favicon.ico（宿主未提供 → 404 噪音，见 M14-178 真浏览器验收）；
+ *  显式 <link rel="icon"> 消除该回退，且路径同受 basePath 契约约束。 */
+export const FAVICON_ICON = `${BASE_PATH}/icons/icon-192.png`;
+
 export interface PwaManifestIcon {
   src: string;
   sizes: string;
