@@ -151,6 +151,17 @@ android {
                 storePassword = releaseSigningInputs.getValue("AIOS_ANDROID_KEYSTORE_STORE_PASSWORD")
                 keyAlias = releaseSigningInputs.getValue("AIOS_ANDROID_KEYSTORE_KEY_ALIAS")
                 keyPassword = releaseSigningInputs.getValue("AIOS_ANDROID_KEYSTORE_KEY_PASSWORD")
+                // M14-175：签名方案与发布门禁钉死一致（verify_artifact 要求
+                // v2+v3；操作员实测 AGP 默认产物 v3=false，无法过门禁）。
+                // v1 关闭——minSdk 26 ≥ 24，JAR 签名仅为 API 24 以下兼容存在；
+                // v2/v3 显式开启。v3.1（密钥轮换扩展块：仅当存在轮换谱系才
+                // 有内容可签，且 AGP 8.13 无对应 DSL 旋钮）与 v4（ADB 增量
+                // 安装用的独立 .idsig，不参与 APK 本体校验）与本仓库单发布
+                // 密钥、整包分发契约无关，保持 AGP 默认（不产出）。
+                // tools/android_release/preflight.py 静态钉住本三项不可删改。
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
             }
         }
     }

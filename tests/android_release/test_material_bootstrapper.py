@@ -23,12 +23,17 @@ from tools.android_release.material_bootstrapper import (
     CONFIRM_PHRASE,
     DEFAULT_ALIAS,
     FORBIDDEN_ALIASES,
+    KEYSTORE_TYPE,
     KEYTOOL_DNAME,
+    KEYTOOL_JAVA_TOOL_OPTIONS,
     MIN_KEY_SIZE,
     MIN_VALIDITY_DAYS,
+    PASSWORD_LENGTH,
+    PROPERTIES_KEYS,
     REQUIRED_KEY_ALG,
     SCHEMA_VERSION,
     TOOL_NAME,
+    keytool_env,
     main,
     parse_keytool_list,
     run_execute,
@@ -40,6 +45,8 @@ from tools.android_release.verify_artifact import CommandOutcome
 # Marker that must never reach any rendered JSON, whatever happens.
 PASSWORD_MARKER = "GENERATED-PASSWORD-VALUE-MUST-NEVER-APPEAR"
 ABS_PATH_MARKER = "abs-path-marker-must-never-appear"
+CHILD_STDOUT_MARKER = "CHILD-STDOUT-MARKER-MUST-NEVER-APPEAR"
+CHILD_STDERR_MARKER = "CHILD-STDERR-MARKER-MUST-NEVER-APPEAR"
 
 KEYSTORE_NAME = "aios-release.keystore"
 PROPERTIES_NAME = "aios-android-signing.properties"
@@ -60,6 +67,30 @@ FIXED_WINDOW_LIST = (
     f"Owner: {KEYTOOL_DNAME}\n"
     f"SHA256: {FAKE_FINGERPRINT_COLONS}\n"
     f"Valid from: {VALID_FROM} until: {VALID_UNTIL}\n"
+)
+
+# Real Windows JDK 17 ``keytool -list -v`` shape (English, forced via
+# JAVA_TOOL_OPTIONS): labels at column 0, fingerprint lines indented by a
+# leading tab, SHA1 printed before SHA256.
+JDK17_ENGLISH_LIST = (
+    "Keystore type: PKCS12\n"
+    "Keystore provider: SUN\n"
+    "\n"
+    "Your keystore contains 1 entry\n"
+    "\n"
+    "Alias name: aios-release\n"
+    "Creation date: Sep 28, 2026\n"
+    "Entry type: PrivateKeyEntry\n"
+    "Certificate chain length: 1\n"
+    "Certificate[1]:\n"
+    f"Owner: {KEYTOOL_DNAME}\n"
+    f"Issuer: {KEYTOOL_DNAME}\n"
+    "Serial number: 6a3f9c1e\n"
+    f"Valid from: {VALID_FROM} until: {VALID_UNTIL}\n"
+    "\n"
+    "Certificate fingerprints:\n"
+    "\tSHA1: " + ":".join(["BB"] * 20) + "\n"
+    f"\tSHA256: {FAKE_FINGERPRINT_COLONS}\n"
 )
 
 
@@ -110,9 +141,11 @@ class FakeKeytool:
             dynamic_window_list() if list_stdout is None else list_stdout
         )
         self.calls: list[list[str]] = []
+        self.envs: list[dict[str, str]] = []
 
     def __call__(self, argv, env):
         self.calls.append(list(argv))
+        self.envs.append(dict(env))
         if "-genkeypair" in argv:
             if self.gen_returncode == 0:
                 self.keystore.write_bytes(b"fake-keystore-bytes")
@@ -239,14 +272,16 @@ def make_junction(link: Path, target: Path) -> bool:
 
 
 def write_valid_material(keystore: Path, properties: Path,
-                         keystore_path_value: str | None = None) -> None:
+                         keystore_path_value: str | None = None,
+                         store_password: str = "stored-value",
+                         key_password: str = "stored-value") -> None:
     keystore.write_bytes(b"fake-keystore-bytes")
     properties.write_text(
         "keystore.path="
         + (keystore_path_value or str(keystore).replace("\\", "\\\\"))
-        + "\nkeystore.storePassword=stored-value\n"
+        + f"\nkeystore.storePassword={store_password}\n"
         + "keystore.keyAlias=aios-release\n"
-        + "keystore.keyPassword=stored-value\n",
+        + f"keystore.keyPassword={key_password}\n",
         encoding="utf-8",
     )
 
@@ -274,6 +309,7 @@ class TestPlan:
         assert result["tool"] == TOOL_NAME
         assert result["schema_version"] == SCHEMA_VERSION
         plan = result["plan"]
+        assert plan["keystore_type"] == KEYSTORE_TYPE
         assert plan["keyalg"] == REQUIRED_KEY_ALG
         assert plan["keysize"] == MIN_KEY_SIZE
         assert plan["validity_days"] == MIN_VALIDITY_DAYS
@@ -548,8 +584,8 @@ class TestExecuteSuccess:
         result = json.loads(rendered)
         rendered_again = json.dumps(result, sort_keys=True)
         assert PASSWORD_MARKER not in rendered_again
-        # two independent passwords requested (store + key)
-        assert entropy.lengths == [32, 32]
+        # ONE password requested per run (store == key, PKCS12 contract)
+        assert entropy.lengths == [PASSWORD_LENGTH]
 
     def test_execute_output_has_no_absolute_paths(self, tmp_path, monkeypatch,
                                                   capsys):
@@ -880,6 +916,263 @@ class TestParseKeytoolList:
 
     def test_missing_fingerprint_is_none(self):
         assert parse_keytool_list("Alias name: x\n")["sha256_fingerprint"] is None
+
+
+# ---------------------------------------------------------------------------
+# deterministic keytool environment + JDK 17 output compatibility (M14-175)
+# ---------------------------------------------------------------------------
+
+
+class TestKeytoolEnglishEnv:
+    """keytool children run under a forced English JVM locale."""
+
+    def test_env_forces_english_overriding_inherited_value(self, monkeypatch):
+        # an inherited JAVA_TOOL_OPTIONS (heap flag, foreign locale) must
+        # never win over the deterministic English override
+        monkeypatch.setenv("JAVA_TOOL_OPTIONS", "-Xmx1g -Duser.language=zh")
+        assert keytool_env()["JAVA_TOOL_OPTIONS"] == KEYTOOL_JAVA_TOOL_OPTIONS
+        assert KEYTOOL_JAVA_TOOL_OPTIONS == "-Duser.language=en -Duser.country=US"
+
+    def test_env_is_child_env_based_android_inputs_scrubbed(self, monkeypatch):
+        monkeypatch.setenv("AIOS_ANDROID_KEYSTORE_STORE_PASSWORD", "leak")
+        assert "AIOS_ANDROID_KEYSTORE_STORE_PASSWORD" not in keytool_env()
+
+    def test_env_does_not_mutate_process_environment(self, monkeypatch):
+        monkeypatch.setenv("JAVA_TOOL_OPTIONS", "-Xmx1g")
+        keytool_env()
+        assert os.environ["JAVA_TOOL_OPTIONS"] == "-Xmx1g"
+
+    def test_both_keytool_children_receive_forced_env(self, tmp_path,
+                                                      monkeypatch):
+        keystore, properties, runner, *_ = inject_common(monkeypatch, tmp_path)
+        _result, code = run_execute(
+            str(keystore), str(properties), confirm=CONFIRM_PHRASE
+        )
+        assert code == 0
+        assert len(runner.envs) == 2          # -genkeypair and -list
+        for env in runner.envs:
+            assert env["JAVA_TOOL_OPTIONS"] == KEYTOOL_JAVA_TOOL_OPTIONS
+
+
+class TestJdk17LeadingTabOutput:
+    """Windows JDK 17 ``-list -v`` prints fingerprints with a leading tab."""
+
+    def test_parse_accepts_leading_tab_sha256(self):
+        facts = parse_keytool_list("\tSHA256: " + FAKE_FINGERPRINT_COLONS + "\n")
+        assert facts["sha256_fingerprint"] == FAKE_FINGERPRINT_HEX
+
+    def test_parse_accepts_leading_tab_alias(self):
+        facts = parse_keytool_list("\tAlias name: aios-release\n")
+        assert facts["alias"] == "aios-release"
+
+    def test_tab_indented_sha1_line_is_not_mistaken_for_sha256(self):
+        text = "\tSHA1: " + ":".join(["BB"] * 20) + "\n"
+        assert parse_keytool_list(text)["sha256_fingerprint"] is None
+
+    def test_value_shape_stays_exact_32_pairs(self):
+        too_short = ":".join(["A1"] * 31)
+        too_long = ":".join(["A1"] * 33)
+        assert parse_keytool_list(f"SHA256: {too_short}\n")["sha256_fingerprint"] is None
+        assert parse_keytool_list(f"SHA256: {too_long}\n")["sha256_fingerprint"] is None
+
+    def test_fingerprint_never_matches_across_lines(self):
+        split = "SHA256: " + ":".join(["A1"] * 31) + "\n:A1\n"
+        assert parse_keytool_list(split)["sha256_fingerprint"] is None
+
+    def test_execute_succeeds_on_jdk17_tab_indented_english_output(
+        self, tmp_path, monkeypatch
+    ):
+        """The incident shape: without the fix this failed fingerprint_missing
+        and (correctly) cleaned the generated files; now it succeeds."""
+        keystore, properties, _runner, *_ = inject_common(
+            monkeypatch, tmp_path, list_stdout=JDK17_ENGLISH_LIST
+        )
+        result, code = run_execute(
+            str(keystore), str(properties), confirm=CONFIRM_PHRASE,
+            clock=lambda: NOW_IN_WINDOW,
+        )
+        assert code == 0
+        assert result["status"] == "generated"
+        cert = result["checks"]["certificate"]
+        assert cert["sha256_fingerprint"] == FAKE_FINGERPRINT_HEX
+        assert cert["alias_present"] is True
+        assert keystore.is_file()
+        assert properties.is_file()
+
+    def test_verify_succeeds_on_jdk17_tab_indented_english_output(
+        self, tmp_path, monkeypatch
+    ):
+        keystore, properties, runner, *_ = inject_common(
+            monkeypatch, tmp_path, list_stdout=JDK17_ENGLISH_LIST
+        )
+        write_valid_material(keystore, properties)
+        result, code = run_verify_material(
+            str(keystore), str(properties),
+            keytool=str(keytool_stub(keystore)),
+            runner=runner,
+            clock=lambda: NOW_IN_WINDOW,
+            repo_root_finder=lambda: fake_repo(tmp_path),
+        )
+        assert code == 0
+        cert = result["checks"]["certificate"]
+        assert cert["sha256_fingerprint"] == FAKE_FINGERPRINT_HEX
+        assert cert["alias_present"] is True
+
+
+class TestOutputHygiene:
+    """Child stdout/stderr and passwords never reach any rendered JSON."""
+
+    @staticmethod
+    def _with_stderr_marker(monkeypatch, runner):
+        original = runner.__call__
+
+        def adds_stderr(argv, env):
+            outcome = original(argv, env)
+            if "-list" in argv:
+                return CommandOutcome(
+                    outcome.returncode, outcome.stdout, CHILD_STDERR_MARKER
+                )
+            return outcome
+
+        monkeypatch.setattr(
+            "tools.android_release.material_bootstrapper.default_runner",
+            adds_stderr,
+        )
+
+    def test_execute_json_excludes_child_stdout_stderr_passwords(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        keystore, properties, runner, *_ = inject_common(
+            monkeypatch, tmp_path,
+            list_stdout=dynamic_window_list() + CHILD_STDOUT_MARKER + "\n",
+        )
+        self._with_stderr_marker(monkeypatch, runner)
+        code = main(execute_args(keystore, properties))
+        assert code == 0
+        rendered = capsys.readouterr().out
+        result = json.loads(rendered)
+        serialized = json.dumps(result, sort_keys=True)
+        for blob in (rendered, serialized):
+            for marker in (
+                CHILD_STDOUT_MARKER, CHILD_STDERR_MARKER, PASSWORD_MARKER,
+            ):
+                assert marker not in blob
+
+    def test_failure_json_excludes_child_stdout_stderr(self, tmp_path,
+                                                       monkeypatch, capsys):
+        """The incident path: -list fails after generation; the failure JSON
+        stays value-free and the generated files are still cleaned up."""
+        keystore, properties, runner, *_ = inject_common(
+            monkeypatch, tmp_path, list_rc=1,
+            list_stdout=CHILD_STDOUT_MARKER + "\n",
+        )
+        self._with_stderr_marker(monkeypatch, runner)
+        code = main(execute_args(keystore, properties))
+        assert code == 1
+        rendered = capsys.readouterr().out
+        assert CHILD_STDOUT_MARKER not in rendered
+        assert CHILD_STDERR_MARKER not in rendered
+        assert PASSWORD_MARKER not in rendered
+        assert not keystore.exists()
+        assert not properties.exists()
+
+
+# ---------------------------------------------------------------------------
+# single-password PKCS12 contract (M14-175 round 2)
+# ---------------------------------------------------------------------------
+
+
+def _property_values(text: str) -> dict[str, str]:
+    """Escape-free key=value pairs (fake passwords contain no backslashes)."""
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        if "=" in line:
+            key, _, raw = line.partition("=")
+            values[key.strip()] = raw.strip()
+    return values
+
+
+class TestSinglePasswordPkcs12Contract:
+    """PKCS12 keys are read with the store password (operator-confirmed:
+    diverging passwords fail packageRelease with "Given final block not
+    properly padded"); generation therefore uses ONE password for both."""
+
+    def test_entropy_requested_exactly_once(self, tmp_path, monkeypatch):
+        keystore, properties, _runner, entropy, _ = inject_common(
+            monkeypatch, tmp_path
+        )
+        _result, code = run_execute(
+            str(keystore), str(properties), confirm=CONFIRM_PHRASE
+        )
+        assert code == 0
+        assert entropy.lengths == [PASSWORD_LENGTH]  # ONE draw, store == key
+
+    def test_genkeypair_pins_pkcs12_and_one_password(self, tmp_path,
+                                                     monkeypatch):
+        keystore, properties, runner, _entropy, _ = inject_common(
+            monkeypatch, tmp_path
+        )
+        _result, code = run_execute(
+            str(keystore), str(properties), confirm=CONFIRM_PHRASE
+        )
+        assert code == 0
+        gen_argv = runner.calls[0]
+        assert gen_argv[gen_argv.index("-storetype") + 1] == KEYSTORE_TYPE
+        store_pw = gen_argv[gen_argv.index("-storepass") + 1]
+        key_pw = gen_argv[gen_argv.index("-keypass") + 1]
+        assert store_pw == key_pw
+        assert store_pw                # one non-empty OS-random value
+
+    def test_properties_carry_identical_password_values(self, tmp_path,
+                                                        monkeypatch):
+        keystore, properties, _runner, _entropy, _ = inject_common(
+            monkeypatch, tmp_path
+        )
+        _result, code = run_execute(
+            str(keystore), str(properties), confirm=CONFIRM_PHRASE
+        )
+        assert code == 0
+        values = _property_values(properties.read_text(encoding="utf-8"))
+        assert set(values) == set(PROPERTIES_KEYS)
+        assert values["keystore.storePassword"] == values["keystore.keyPassword"]
+
+    def test_verify_rejects_diverging_passwords_without_echoing(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        keystore, properties, _runner, *_ = inject_common(monkeypatch, tmp_path)
+        write_valid_material(
+            keystore, properties,
+            store_password="store-pw-must-not-appear",
+            key_password="key-pw-must-not-appear",
+        )
+        code = main(verify_args(keystore, properties))
+        assert code == 1
+        rendered = capsys.readouterr().out
+        result = json.loads(rendered)
+        codes = [f["code"] for f in result["failures"]]
+        assert "store_key_password_mismatch" in codes
+        assert (
+            result["checks"]["properties_keys"]["store_key_passwords_equal"]
+            is False
+        )
+        assert "store-pw-must-not-appear" not in rendered
+        assert "key-pw-must-not-appear" not in rendered
+
+    def test_verify_passes_and_records_equal_passwords(self, tmp_path,
+                                                       monkeypatch):
+        keystore, properties, runner, *_ = inject_common(monkeypatch, tmp_path)
+        write_valid_material(keystore, properties)
+        result, code = run_verify_material(
+            str(keystore), str(properties),
+            keytool=str(keytool_stub(keystore)),
+            runner=runner,
+            clock=lambda: NOW_IN_WINDOW,
+            repo_root_finder=lambda: fake_repo(tmp_path),
+        )
+        assert code == 0
+        keys_check = result["checks"]["properties_keys"]
+        assert keys_check["all_present"] is True
+        assert keys_check["store_key_passwords_equal"] is True
 
 
 # ---------------------------------------------------------------------------

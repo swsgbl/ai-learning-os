@@ -19,6 +19,7 @@ from tools.android_release.preflight import (
     DEFAULT_REPO_ROOT,
     REQUIRED_ENV_REFERENCES,
     REQUIRED_BOUNDARY_GUARD,
+    REQUIRED_SCHEME_PINS,
     GRADLE_FILE_RELPATH,
     run_preflight,
     render_json,
@@ -83,6 +84,9 @@ android {
                 storePassword = releaseSigningInputs.getValue("AIOS_ANDROID_KEYSTORE_STORE_PASSWORD")
                 keyAlias = releaseSigningInputs.getValue("AIOS_ANDROID_KEYSTORE_KEY_ALIAS")
                 keyPassword = releaseSigningInputs.getValue("AIOS_ANDROID_KEYSTORE_KEY_PASSWORD")
+                enableV1Signing = false
+                enableV2Signing = true
+                enableV3Signing = true
             }
         }
     }
@@ -271,6 +275,75 @@ class TestBoundaryGuard:
         for token, required in REQUIRED_BOUNDARY_GUARD.items():
             found = result["gradle_contract"]["boundary_guard"][token]
             assert found >= required, (token, found, required)
+
+
+class TestSchemePins:
+    """M14-175: signing-scheme pins (v1 off, v2/v3 on) must not be removed
+    or contradicted."""
+
+    def test_clean_fixture_counts_each_pin_once(self, tmp_path):
+        repo = make_repo(tmp_path)
+        result, code = run_preflight(repo_root=repo)
+        assert code == 0
+        assert result["gradle_contract"]["scheme_pins"] == {
+            pin: 1 for pin in sorted(REQUIRED_SCHEME_PINS)
+        }
+
+    @pytest.mark.parametrize("pin", sorted(REQUIRED_SCHEME_PINS))
+    def test_pin_removed_fails(self, tmp_path, pin):
+        text = MINIMAL_GRADLE.replace(pin, "enableVRemovedSigning = null")
+        repo = make_repo(tmp_path, gradle_text=text)
+        result, code = run_preflight(repo_root=repo)
+        assert code == 1
+        pins = [f for f in result["failures"] if f["code"] == "missing_scheme_pin"]
+        assert any(p["detail"]["pin"] == pin for p in pins)
+        assert result["gradle_contract"]["scheme_pins"][pin] == 0
+
+    @pytest.mark.parametrize(
+        "contradiction",
+        [
+            "enableV1Signing = true",
+            "enableV2Signing = false",
+            "enableV3Signing = false",
+            "enableV1Signing=true",
+        ],
+    )
+    def test_contradictory_pin_fails(self, tmp_path, contradiction):
+        """A contradictory assignment added next to a pin (last one wins)
+        must fail closed."""
+        repo = make_repo(
+            tmp_path, gradle_text=MINIMAL_GRADLE + "\n" + contradiction + "\n"
+        )
+        result, code = run_preflight(repo_root=repo)
+        assert code == 1
+        hits = result["gradle_contract"]["forbidden_pattern_hits"]
+        assert "scheme_pin_contradiction" in hits
+        rules = [
+            f["detail"]["rule"]
+            for f in result["failures"]
+            if f["code"] == "forbidden_pattern"
+        ]
+        assert "scheme_pin_contradiction" in rules
+
+    def test_pin_failures_never_echo_matched_text(self, tmp_path):
+        text = MINIMAL_GRADLE.replace(
+            "enableV2Signing = true", "enableV2Signing = removed"
+        )
+        repo = make_repo(tmp_path, gradle_text=text)
+        result, _code = run_preflight(repo_root=repo)
+        rendered = render_json(result)
+        assert "minimal fixture mirroring" not in rendered
+        for failure in result["failures"]:
+            if failure["code"] == "missing_scheme_pin":
+                assert set(failure["detail"]) == {"pin", "found", "required"}
+
+    def test_real_repo_scheme_pins_present(self):
+        """真实仓库的 Gradle 文本必须始终满足方案钉死契约。"""
+        result, code = run_preflight(repo_root=REPO_ROOT)
+        assert code == 0
+        for pin, required in REQUIRED_SCHEME_PINS.items():
+            found = result["gradle_contract"]["scheme_pins"][pin]
+            assert found >= required, (pin, found, required)
 
 
 class TestForbiddenPatterns:

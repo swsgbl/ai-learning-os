@@ -36,12 +36,16 @@
        备份两处离线介质 + 保管记录）。M14-174 readiness：
        `tools/android_release/material_bootstrapper.py` 提供
        `plan`（只读预检：目标在仓库外、无 symlink、不存在）/ `execute`
-       （显式确认短语 + keytool 生成 RSA 2048、validity ≥10000 天、
-       拒绝 debug alias/dname；密码用 OS 随机源生成、绝不输出到
+       （显式确认短语 + keytool 生成 PKCS12 keystore、RSA 2048、
+       validity ≥10000 天、拒绝 debug alias/dname；单一 OS 随机密码
+       同时保护 store 与 key——PKCS12 契约下 Android 签名以 store
+       密码读私钥，两密码分离会导致 packageRelease 报
+       "Given final block not properly padded"；密码绝不输出到
        stdout/报告/git；生成 keystore + `AIOS_ANDROID_SIGNING_PROPERTIES`
        可消费的 properties 文件；POSIX 0600 / Windows icacls ACL 收紧；
        失败清理本次新建文件、不误删既有文件）/ `verify`（复检存在性、
-       仓库外边界、properties 四键、权限、证书 SHA256 指纹与有效期窗口）
+       仓库外边界、properties 四键及 store/key 密码一致（不一致
+       fail-closed，仅报布尔/代码）、权限、证书 SHA256 指纹与有效期窗口）
        三个子命令，keytool/文件系统/时钟均可注入（零真实 keytool 的
        单测见 `tests/android_release/test_material_bootstrapper.py`；
        路径组件的链接检查覆盖 symlink 与 Windows junction/reparse
@@ -54,7 +58,12 @@
        `_KEY_PASSWORD` 环境变量，或 `AIOS_ANDROID_SIGNING_PROPERTIES` 指向的
        仓库外 properties 文件，env 优先；任一输入出现即 opt-in，四项必须
        齐全否则构建直接失败，绝不回退 debug 签名；无外部输入时 release
-       保持 unsigned 诚实默认。密码绝不写入 build 文件/CI 明文，静态契约由
+       保持 unsigned 诚实默认。签名方案与验收门禁钉死一致（M14-175：
+       v1 关——minSdk 26 无需 JAR 签名；v2/v3 显式开启——AGP 默认不
+       保证 v3，操作员实测默认产物 v3=false 过不了 verify 门禁；v3.1
+       仅服务密钥轮换谱系、v4 仅服务 ADB 增量安装的独立 .idsig，与
+       单发布密钥/整包分发无关，保持 AGP 默认）。密码绝不写入 build
+       文件/CI 明文，静态契约由
        `tools/android_release/preflight.py` fail-closed 钉住）；
 3. [ ] 构建：`gradlew assembleRelease`（CI 或本地，产物
        `app-release-signed.apk`）；
