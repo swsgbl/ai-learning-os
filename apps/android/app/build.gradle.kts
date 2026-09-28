@@ -2,6 +2,7 @@
 // 第一切片只做壳与认证/API 基础；不接入考试、语音、检索、治理业务。
 import java.io.File
 import java.io.IOException
+import java.nio.file.InvalidPathException
 import java.nio.file.Path
 import java.util.Properties
 
@@ -40,23 +41,34 @@ val releaseSigningInputs: Map<String, String>? = run {
     // worktree 内为文件），使仓库根（而非仅 apps/android）都被覆盖；找不到
     // .git 时退回 rootProject.rootDir。输入路径用 real path 解析（跟随符号
     // 链接、规范大小写与分隔符）后做带分隔符的前缀判断，防止绝对/相对路径、
-    // 大小写变体或符号链接把仓库内文件伪装成外部输入；任一侧解析失败同样
-    // 直接失败（fail-closed）。错误信息只含输入名，不含任何路径或密码值。
-    // tools/android_release/preflight.py 静态钉住本守卫不可被删除。
+    // 大小写变体或符号链接把仓库内文件伪装成外部输入；解析失败（IOException）
+    // 或非法路径（InvalidPathException，file.toPath() 可抛）均转换为不含路径
+    // 值的 GradleException 直接失败（fail-closed；正常流程 isFile 门会先拦下
+    // 不存在/非法的路径，此分支为纵深防御）。错误信息只含输入名，不含任何
+    // 路径或密码值。tools/android_release/preflight.py 静态钉住本守卫不可被删除。
     val signingRepoAnchor: File = generateSequence(rootProject.rootDir) { it.parentFile }
         .firstOrNull { dir -> File(dir, ".git").exists() }
         ?: rootProject.rootDir
     fun failClosedOutsideRepo(rawPath: String, inputName: String) {
-        fun realOrFail(file: File, what: String): Path = try {
-            file.toPath().toRealPath()
+        fun realOrReject(what: String, resolve: () -> Path): Path = try {
+            resolve()
         } catch (_: IOException) {
             throw GradleException(
                 "M14-171A：无法解析${what}的真实路径，release 签名的仓库边界无法验证，" +
                     "配置直接失败（fail-closed，路径值不打印）。"
             )
+        } catch (_: InvalidPathException) {
+            throw GradleException(
+                "M14-171A：${what}包含非法字符、无法转换为合法路径，release 签名的仓库边界" +
+                    "无法验证，配置直接失败（fail-closed，路径值不打印）。"
+            )
         }
-        val repoText = realOrFail(signingRepoAnchor, "仓库锚点").toString().lowercase()
-        val inputText = realOrFail(File(rawPath), inputName).toString().lowercase()
+        val repoText = realOrReject("仓库锚点") {
+            signingRepoAnchor.toPath().toRealPath()
+        }.toString().lowercase()
+        val inputText = realOrReject(inputName) {
+            File(rawPath).toPath().toRealPath()
+        }.toString().lowercase()
         if (inputText == repoText || inputText.startsWith(repoText + File.separator)) {
             throw GradleException(
                 "M14-171A：release 签名输入 $inputName 解析后位于仓库之内。" +

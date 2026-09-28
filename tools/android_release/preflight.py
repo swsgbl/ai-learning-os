@@ -21,8 +21,10 @@ enter the repository):
    (M14-171B) that rejects signing inputs resolving inside the repository:
    the guard function (definition plus both call sites — properties file
    and keystore), the repository anchor (nearest .git root with a
-   rootProject.rootDir fallback), and real-path resolution. Missing or
-   thinned-out guard tokens mean the boundary can be silently deleted.
+   rootProject.rootDir fallback), real-path resolution on both sides, the
+   separator-boundary prefix compare, InvalidPathException-to-GradleException
+   conversion, and the guard's GradleException throws. Missing or thinned-out
+   guard tokens mean the boundary was deleted or weakened.
 3. The Gradle text must not contain debug-signing fallbacks, literal
    passwords, or literal in-repo keystore paths.
 4. No Android signing material files (.jks/.keystore/.p12/.p7b/.cer/.csr)
@@ -60,15 +62,24 @@ REQUIRED_ENV_REFERENCES = frozenset({
 # M14-171B repository-boundary guard tokens the Gradle wiring must contain,
 # mapped to the minimum number of textual occurrences. This locks the
 # fail-closed "signing inputs must resolve outside the repository" check so
-# it cannot be silently deleted or thinned to a dead declaration. Only token
-# names and occurrence counts appear in results — matched text is never echoed.
+# it cannot be silently deleted, thinned to a dead declaration, or weakened
+# (single-side resolution / separator-less prefix / unhandled illegal paths /
+# non-GradleException failure). Only token names and occurrence counts appear
+# in results — matched text is never echoed.
 REQUIRED_BOUNDARY_GUARD: Dict[str, int] = {
     # guard function: 1 definition + 2 call sites (properties + keystore)
     "failClosedOutsideRepo": 3,
     # repository anchor: nearest .git root, rootProject.rootDir fallback
     "rootProject.rootDir": 1,
-    # symlink/case-canonical path resolution (real path on both sides)
-    "toRealPath": 1,
+    # real-path resolution on BOTH sides (repository anchor + signing input)
+    "toRealPath": 2,
+    # separator-boundary prefix compare (no naive string-prefix accept)
+    "startsWith(repoText + File.separator)": 1,
+    # illegal-path rejection: explicit import + catch of file.toPath() failure
+    "InvalidPathException": 2,
+    # fail-closed conversion: the guard's three GradleException throws
+    # (IOException / InvalidPathException / inside-repository)
+    "GradleException": 3,
     # VCS anchor discovery (worktrees carry .git as a file)
     '".git"': 1,
 }

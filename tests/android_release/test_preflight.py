@@ -28,9 +28,15 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Minimal Gradle text that mirrors the real opt-in wiring: every external
 # input is referenced by name, the boundary guard exists with both call
-# sites, no literal passwords, no debug fallback.
+# sites, both-side real-path resolution, the separator-boundary compare,
+# and the InvalidPathException/GradleException conversions. No literal
+# passwords, no debug fallback.
 MINIMAL_GRADLE = """\
 // M14-171A minimal fixture mirroring apps/android/app/build.gradle.kts
+import java.io.IOException
+import java.nio.file.InvalidPathException
+import java.nio.file.Path
+
 val releaseSigningInputs: Map<String, String>? = run {
     val envInputs = listOf(
         "AIOS_ANDROID_KEYSTORE_PATH" to "keystore.path",
@@ -42,8 +48,22 @@ val releaseSigningInputs: Map<String, String>? = run {
         .firstOrNull { dir -> File(dir, ".git").exists() }
         ?: rootProject.rootDir
     fun failClosedOutsideRepo(rawPath: String, inputName: String) {
-        val inputReal = File(rawPath).toPath().toRealPath()
-        // ... compare against signingRepoAnchor real path, fail closed ...
+        fun realOrReject(what: String, resolve: () -> Path): Path = try {
+            resolve()
+        } catch (_: IOException) {
+            throw GradleException("M14-171A: cannot resolve real path of ${what}")
+        } catch (_: InvalidPathException) {
+            throw GradleException("M14-171A: illegal path characters in ${what}")
+        }
+        val repoText = realOrReject("anchor") {
+            signingRepoAnchor.toPath().toRealPath()
+        }.toString().lowercase()
+        val inputText = realOrReject(inputName) {
+            File(rawPath).toPath().toRealPath()
+        }.toString().lowercase()
+        if (inputText == repoText || inputText.startsWith(repoText + File.separator)) {
+            throw GradleException("M14-171A: signing input resolves inside the repository")
+        }
     }
     val propsPath = envOrNull("AIOS_ANDROID_SIGNING_PROPERTIES")
     if (propsPath != null) {
@@ -160,11 +180,89 @@ class TestBoundaryGuard:
         result, _code = run_preflight(repo_root=repo)
         rendered = render_json(result)
         # detail 只允许 token 名与计数，绝不回显被扫描文件的任何内容行
-        assert "compare against signingRepoAnchor" not in rendered
+        assert "minimal fixture mirroring" not in rendered
+        assert "signing input resolves inside" not in rendered
         for failure in result["failures"]:
             if failure["code"] == "missing_boundary_guard":
                 assert set(failure["detail"]) == {"token", "found", "required"}
                 assert "matched_text" not in failure
+
+    def test_guard_single_side_real_path_fails(self, tmp_path):
+        """锚点侧 toRealPath 被弱化：只剩 1 次 < 2，必须 fail-closed。"""
+        text = MINIMAL_GRADLE.replace(
+            "signingRepoAnchor.toPath().toRealPath()",
+            "signingRepoAnchor.canonicalFile().toPath()",
+        )
+        repo = make_repo(tmp_path, gradle_text=text)
+        result, code = run_preflight(repo_root=repo)
+        assert code == 1
+        guards = [
+            f for f in result["failures"] if f["code"] == "missing_boundary_guard"
+        ]
+        assert guards[0]["detail"] == {"token": "toRealPath", "found": 1, "required": 2}
+        assert result["gradle_contract"]["boundary_guard"]["toRealPath"] == 1
+
+    def test_guard_invalid_path_catch_weakened_fails(self, tmp_path):
+        """InvalidPathException 捕获被改名（仅剩 import）：1 < 2，必须 fail-closed。"""
+        text = MINIMAL_GRADLE.replace(
+            "catch (_: InvalidPathException)",
+            "catch (_: IllegalArgumentException)",
+        )
+        repo = make_repo(tmp_path, gradle_text=text)
+        result, code = run_preflight(repo_root=repo)
+        assert code == 1
+        guards = [
+            f for f in result["failures"] if f["code"] == "missing_boundary_guard"
+        ]
+        assert guards[0]["detail"] == {
+            "token": "InvalidPathException",
+            "found": 1,
+            "required": 2,
+        }
+        assert result["gradle_contract"]["boundary_guard"]["InvalidPathException"] == 1
+
+    def test_guard_boundary_throw_dropped_fails(self, tmp_path):
+        """边界失败被换成非 GradleException 通路：2 < 3，必须 fail-closed。"""
+        text = MINIMAL_GRADLE.replace(
+            'throw GradleException("M14-171A: signing input resolves inside the repository")',
+            'println("boundary weakened")',
+        )
+        repo = make_repo(tmp_path, gradle_text=text)
+        result, code = run_preflight(repo_root=repo)
+        assert code == 1
+        guards = [
+            f for f in result["failures"] if f["code"] == "missing_boundary_guard"
+        ]
+        assert guards[0]["detail"] == {
+            "token": "GradleException",
+            "found": 2,
+            "required": 3,
+        }
+        assert result["gradle_contract"]["boundary_guard"]["GradleException"] == 2
+
+    def test_guard_separator_less_compare_fails(self, tmp_path):
+        """分隔符边界比较被弱化为裸前缀：token 计数归零，必须 fail-closed。"""
+        text = MINIMAL_GRADLE.replace(
+            "startsWith(repoText + File.separator)",
+            "startsWith(repoText)",
+        )
+        repo = make_repo(tmp_path, gradle_text=text)
+        result, code = run_preflight(repo_root=repo)
+        assert code == 1
+        guards = [
+            f for f in result["failures"] if f["code"] == "missing_boundary_guard"
+        ]
+        assert guards[0]["detail"] == {
+            "token": "startsWith(repoText + File.separator)",
+            "found": 0,
+            "required": 1,
+        }
+        assert (
+            result["gradle_contract"]["boundary_guard"][
+                "startsWith(repoText + File.separator)"
+            ]
+            == 0
+        )
 
     def test_real_repo_boundary_guard_present(self):
         """真实仓库的 Gradle 文本必须始终满足守卫契约。"""
