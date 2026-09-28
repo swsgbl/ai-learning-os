@@ -190,6 +190,31 @@ API_BASE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# M14-169A1a: the one strictly-shaped public production base accepted in
+# addition to the loopback rule above. Scheme must be lowercase https;
+# the hostname is ASCII [A-Za-z0-9.-] only; the port is optional decimal;
+# at most ONE path prefix (e.g. /aios/) may follow; a trailing slash is
+# required. Public plain HTTP, userinfo, query, fragment, backslash,
+# whitespace and non-ASCII hosts all fail to match here and therefore
+# fail closed in validate_api_base below.
+PUBLIC_API_BASE_RE = re.compile(
+    r"^https://([A-Za-z0-9.-]+)(?::([0-9]{1,5}))?(/[^/?#\\]+)?/$"
+)
+
+
+# M14-169A1b1: the device-side base URL rule. The app on the emulator
+# reaches the host only via the emulator's loopback alias with an
+# explicit port (the fixed device URL is exactly this shape); anything
+# else on the device side must be the strict public https production
+# shape PUBLIC_API_BASE_RE above already enforces. Loopback names,
+# private/LAN hosts other than the alias, public plain http, userinfo,
+# query, fragment, backslashes, whitespace padding, non-ASCII hosts,
+# malformed ports and a missing trailing slash all fail to match here
+# and therefore fail closed in validate_device_api_base below.
+DEVICE_API_BASE_RE = re.compile(
+    r"^http://10\.0\.2\.2:([0-9]{1,5})/$"
+)
+
 
 def _port_is_valid(port_text: Optional[str]) -> bool:
     """0-65535 only; the regex alone accepts 5 digits like 99999."""
@@ -285,7 +310,15 @@ def real_http_get(url: str, timeout_seconds: float) -> Tuple[int, str]:
 
 
 def validate_api_base(raw: Optional[str]) -> Tuple[Optional[str], List[dict]]:
-    """Loopback-only validation of the preflight base URL."""
+    """Validate the preflight base URL.
+
+    Loopback bases behave exactly as before (M14-84). M14-169A1a adds
+    the one accepted public form: strict https, ASCII host, optional
+    port, at most one path prefix, trailing slash. Everything else -
+    public http, userinfo, query, fragment, backslashes, whitespace,
+    non-ASCII hosts, missing trailing slash, malformed ports - fails
+    closed with the same code the loopback rule has always used.
+    """
     if raw is None or not str(raw).strip():
         return None, [{
             "code": "api_base_required",
@@ -293,18 +326,74 @@ def validate_api_base(raw: Optional[str]) -> Tuple[Optional[str], List[dict]]:
         }]
     token = str(raw).strip()
     match = API_BASE_RE.match(token)
-    if token != str(raw) or not match or not _port_is_valid(
-        match.group(1)
-    ):
+    if token == str(raw) and match and _port_is_valid(match.group(1)):
+        return token, []
+    public = PUBLIC_API_BASE_RE.match(token)
+    if (token == str(raw) and public
+            and _port_is_valid(public.group(2))):
+        return token, []
+    return None, [{
+        "code": "api_base_not_loopback",
+        "detail": {
+            "argument": "--api-base",
+            "rule": "loopback http/https (no path) or strict public "
+                    "https (ASCII host, optional port, at most one "
+                    "path prefix); trailing slash; no userinfo/query/"
+                    "fragment",
+        },
+    }]
+
+
+def api_base_mode(validated_base: str) -> str:
+    """``loopback`` or ``public_https`` for an accepted base.
+
+    Loopback is checked first: the loopback rule allows no path prefix,
+    so an accepted base matches exactly one of the two shapes.
+    """
+    loopback = API_BASE_RE.match(validated_base)
+    if loopback and _port_is_valid(loopback.group(1)):
+        return "loopback"
+    return "public_https"
+
+
+def validate_device_api_base(
+    raw: Optional[str],
+) -> Tuple[Optional[str], List[dict]]:
+    """Validate the device-side base URL (the app's Settings value).
+
+    Accepted (M14-169A1b1): exactly ``http://10.0.2.2:<port>/`` with
+    an explicit valid port (the fixed device URL is this shape), or any
+    base ``validate_api_base`` accepts as strict public https via
+    ``api_base_mode``. Everything else fails closed: blank or
+    whitespace-padded values, loopback names, private/LAN hosts other
+    than the emulator alias, public plain http, userinfo, query,
+    fragment, backslashes, non-ASCII hosts, malformed ports and a
+    missing trailing slash. Failures reference ``--device-api-base``
+    and never echo the raw value.
+    """
+    if raw is None or not str(raw).strip():
         return None, [{
-            "code": "api_base_not_loopback",
-            "detail": {
-                "argument": "--api-base",
-                "rule": "scheme http/https, loopback host only, "
-                        "trailing slash, no path/query/userinfo",
-            },
+            "code": "device_api_base_required",
+            "detail": {"argument": "--device-api-base"},
         }]
-    return token, []
+    token = str(raw).strip()
+    emulator = DEVICE_API_BASE_RE.match(token)
+    if token == str(raw) and emulator and _port_is_valid(emulator.group(1)):
+        return token, []
+    public, _ = validate_api_base(raw)
+    if public is not None and api_base_mode(public) == "public_https":
+        return public, []
+    return None, [{
+        "code": "device_api_base_not_allowed",
+        "detail": {
+            "argument": "--device-api-base",
+            "rule": "emulator alias http://10.0.2.2:<port>/ (explicit "
+                    "port, trailing slash) or strict public https (ASCII "
+                    "host, optional port, at most one path prefix); no "
+                    "userinfo/query/fragment/backslash; no whitespace "
+                    "padding",
+        },
+    }]
 
 
 def _url_origin(base: str) -> str:
@@ -524,6 +613,7 @@ class UiDriver:
 
 def _drive_settings_url(
     driver: UiDriver,
+    device_api_base: str,
 ) -> Tuple[bool, List[dict], List[dict]]:
     """Type the fixed device URL into Settings and save. Honest verification.
 
@@ -579,7 +669,7 @@ def _drive_settings_url(
         for _ in range(min(len(current) + 8, 64)):
             driver.key_backspace()
         time.sleep(UI_SETTLE_SECONDS)
-        driver.input_text(fx, fy, DEVICE_API_BASE_URL)
+        driver.input_text(fx, fy, device_api_base)
         time.sleep(UI_SETTLE_SECONDS)
 
         verify, verify_failures = driver.dump()
@@ -588,7 +678,7 @@ def _drive_settings_url(
                 {"code": "settings_verify_layout_unreadable"}]
             continue
         vfield = find_input_node(layout_typed_nodes(verify))
-        if vfield is None or DEVICE_API_BASE_URL not in vfield[2]:
+        if vfield is None or device_api_base not in vfield[2]:
             failures.append({
                 "code": "settings_input_mismatch",
                 "detail": {"attempt": attempt},
@@ -608,7 +698,7 @@ def _drive_settings_url(
             failures.append({"code": "settings_final_layout_unreadable"})
             continue
         joined = "\n".join(t for t, _b in layout_texts(final))
-        if SETTINGS_SAVED_PREFIX + DEVICE_API_BASE_URL in joined:
+        if SETTINGS_SAVED_PREFIX + device_api_base in joined:
             return True, [], notes
         failures.append({
             "code": "settings_save_not_confirmed",
@@ -715,6 +805,7 @@ def run_backend_smoke(
     ability: str = DEFAULT_ABILITY,
     hdc: str = DEFAULT_HDC,
     api_base: Optional[str] = DEFAULT_API_BASE,
+    device_api_base: str = DEVICE_API_BASE_URL,
     confirm_mutation: bool = False,
     known_targets: Optional[Sequence[str]] = None,
     evidence_dir: Optional[Path] = None,
@@ -752,7 +843,10 @@ def run_backend_smoke(
     request_failures += target_failures
     base, base_failures = validate_api_base(api_base)
     request_failures += base_failures
-    if not target_failures:
+    device_base, device_base_failures = validate_device_api_base(
+        device_api_base)
+    request_failures += device_base_failures
+    if not request_failures:
         hap_record, hap_failures = _inspect_hap_device_smoke(root, hap)
         request_failures += hap_failures
     if not request_failures:
@@ -919,11 +1013,11 @@ def run_backend_smoke(
                     )
                     if name == STEP_SETTINGS_UI:
                         ok, ui_failures, retry_notes = (
-                            _drive_settings_url(driver))
+                            _drive_settings_url(driver, device_base))
                         step_failures += ui_failures
                         digest = driver.digest() if ok else None
                         settings_record = {
-                            "device_url_typed": DEVICE_API_BASE_URL
+                            "device_url_typed": device_base
                             if ok else None,
                             "saved_confirmed": ok,
                             "layout": digest,
@@ -1081,8 +1175,11 @@ def run_backend_smoke(
             "raw_recorded": False,
         } if resolved_target is not None else None),
         "api_base_origin": _url_origin(base) if base else None,
-        "api_base_loopback_only": True,
-        "device_url": DEVICE_API_BASE_URL,
+        "api_base_mode": api_base_mode(base) if base else None,
+        "api_base_loopback_only": (
+            api_base_mode(base) == "loopback" if base else False
+        ),
+        "device_url": device_base,
         "device_url_requested_by_wrapper": False,
         "hap": hap_record,
         "bundle_name": bundle_name,
@@ -1172,6 +1269,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--api-base", default=DEFAULT_API_BASE,
         help=f"Loopback-only preflight base URL (default {DEFAULT_API_BASE}).")
     parser.add_argument(
+        "--device-api-base", default=DEVICE_API_BASE_URL,
+        help=f"Device-side base URL validated then typed into the app's "
+             f"Settings UI (default {DEVICE_API_BASE_URL}).")
+    parser.add_argument(
         "--device-id", action="append", default=None,
         help="Operator-known device id (repeatable) to cross-check --target.")
     parser.add_argument(MUTATION_CONFIRMATION_FLAG, action="store_true",
@@ -1196,6 +1297,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         ability=args.ability,
         hdc=args.hdc,
         api_base=args.api_base,
+        device_api_base=args.device_api_base,
         confirm_mutation=args.confirm_mutation,
         known_targets=args.device_id,
         evidence_dir=args.evidence_dir,
