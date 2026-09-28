@@ -11,7 +11,10 @@
  *     带状态机和 URL 订阅刷新);
  *   - 语音 Tab 展示 components/VoicePane(只读占位,不访问麦克风,
  *     不启动语音识别或合成,不发起任何 API 请求,内部自行铺满可用区域);
- *   - 设置 Tab 展示 components/SettingsPane(地址编辑/保存/连接测试);
+ *   - 设置 Tab 展示 components/SettingsPane(地址编辑/保存/连接测试)
+ *     + components/AuthPane(M14-89 认证会话)+ components/DownloadPane
+ *     (M14-174 下载与安装只读面板:渠道状态/服务版本/下载页入口,
+ *     六 Tab 结构零改动,仅设置 Tab 内追加第三个面板);
  *   - 治理 Tab 展示 components/GovernancePane(M13-11,版本/运维快照/审计日志
  *     三区只读,仅 getVersion/getOpsSnapshot/getAudit 三个 GET,带状态机与
  *     URL 订阅刷新;既有五 Tab 行为保持不变)。
@@ -24,6 +27,7 @@ import { SettingsPane } from '../components/SettingsPane';
 import { StudyPane } from '../components/StudyPane';
 import { VoicePane } from '../components/VoicePane';
 import { AuthPane } from '../components/AuthPane';
+import { DownloadPane } from '../components/DownloadPane';
 
 @Entry
 @Component
@@ -61,6 +65,7 @@ struct Index {
               Column({ space: 16 }) {
                 SettingsPane()
                 AuthPane()
+                DownloadPane()
               }
               .width('100%')
             }
