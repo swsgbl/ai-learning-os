@@ -1,5 +1,43 @@
 # Changelog
 
+## M14-177 — Android 下载边缘生产部署证据收口（docs-only，非代码）
+
+- 背景：PR **#266**（state MERGED，title "Android download edge
+  routing"，merge commit `eda6659`，PR checks **5/5 SUCCESS**：
+  Android/API/Web/Docker/Release tools；merge-post main CI
+  **5/5 SUCCESS**）合入 M14-176 下载静态路由（
+  `= /aios/download-manifest.json` + `^~ /android/` + R1 nginx 层
+  `.apk` 门禁）。Codex 随后在生产 VPS 完成部署与外网验证——本切片
+  只把结果落档。
+- 生产配置事实：nginx 配置 SHA256
+  `3788358bcffa985e24dcafd3fb0cf3bb9e6da534b37c6917f15d7ad9bd749ec5`、
+  变更前回滚备份 SHA256
+  `21d593cc490527dee653862df9aa3e69a2a48ac01b164ecbee2783595cdaa660`；
+  `nginx -t` 通过、reload 后服务 active。已发布产物
+  （/var/www/aios-downloads/，stage_download.py 形状 1:1）：manifest
+  SHA256 `1e2ebb33cc6eeb1919ab35db922cdc88121f4fad3829bbda79df121d613ef3b5`；
+  APK `ai-learning-os-0.1.0-release-signed.apk` SHA256
+  `1246c3efb5da5732088dd95dffecf6f84fc1f14617eed45d38f701e28dd4634d`
+  （8,029,570 bytes）。
+- 外网验证（https://ndtool.cn 时点）：manifest **200**
+  `application/json` + `Cache-Control: no-store`；APK **200**
+  `application/vnd.android.package-archive` +
+  `Cache-Control: public, max-age=3600`；公网下载字节重算哈希与发布
+  值一致；`/android/notes.txt`、`/android/foo.apk.txt`、
+  `/android/foo.html`、`/android/`、`/android/nope.apk` 全部 **404**
+  （R1 门禁 + 缺文件）；`/aios`、`/aios/health`、`/aios/download`
+  全部 **200**。公网 APK 经 apksigner 复核 **v2=true / v3=true**、
+  签名证书 SHA256
+  `b583ed9e75840ff4b3c019398c6ad7e3ee4e0d90f6b4d56ef4466c3d8e58e9bf`。
+- 诚实边界：**docs-only 证据收口——零代码/模板/测试/compose/env/
+  infra/生产变更，零 secret 读写**；`adb devices` 为空 → **Android
+  真机安装冒烟未执行**（公网下载 + apksigner 复核不替代真机冒烟）；
+  Harmony 公开分发仍被 AGC 发布材料阻塞；外网检查为时点证据。
+  回滚 = 还原本 commit。证据：
+  `docs/evidence/m14-177-android-download-edge-evidence/README.md`
+  （唯一入库证据文件）。PR 创建即止；合并决策归 supervisor 审查
+  （supervisor 审查与 remote 发布在其后进行）。
+
 ## M14-172 — Harmony install-gate 回归证据收口（docs-only，非代码）
 
 - 背景：PR **#259**（state MERGED，title "Harden Harmony smoke

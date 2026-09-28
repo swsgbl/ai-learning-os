@@ -9,6 +9,30 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-177 Android 下载边缘生产部署证据收口（docs-only 切片）**：
+worktree `ai-learning-os-worktrees/m14-174-android-release-channel`
+（复用），分支 `ops/m14-177-android-download-edge-evidence`，基于
+main `eda6659`（PR #266 merge = M14-176 下载边缘路由合入，精确
+基点；PR checks 与 merge-post main CI 均 **5/5 SUCCESS**）。Codex
+生产部署事实（本切片只落档）：nginx 配置 SHA256
+`3788358b…49ec5`、变更前回滚备份 SHA256 `21d593cc…a660`；
+`nginx -t` 通过、reload 后服务 active。已发布
+（/var/www/aios-downloads/）：manifest SHA256 `1e2ebb33…f3b5`、
+APK `ai-learning-os-0.1.0-release-signed.apk` SHA256
+`1246c3ef…634d`（8,029,570 bytes）。外网验证（ndtool.cn 时点）：
+manifest **200** application/json + no-store；APK **200**
+application/vnd.android.package-archive + public,max-age=3600；
+公网下载哈希复核一致；`/android/notes.txt`、`/android/foo.apk.txt`、
+`/android/foo.html`、`/android/`、`/android/nope.apk` 全部 **404**
+（R1 门禁）；`/aios`、`/aios/health`、`/aios/download` 全部
+**200**；公网 APK apksigner 复核 **v2/v3 均 true**、证书 SHA256
+`b583ed9e…e9bf`。未关闭（诚实边界）：`adb devices` 为空 →
+**Android 真机安装冒烟未执行**；Harmony 公开分发仍被 AGC 发布
+材料阻塞；外网检查为时点证据。回滚 = 还原本 commit。证据：
+`docs/evidence/m14-177-android-download-edge-evidence/README.md`
+（唯一入库证据文件）。PR 创建即止；合并决策归 supervisor 审查
+（supervisor 审查与 remote 发布在其后进行）。
+
 **M14-172 Harmony install-gate 回归证据收口（docs-only 切片）**：
 worktree `ai-learning-os-worktrees/m14-172-harmony-install-gate-evidence`，
 分支 `m14-172-harmony-install-gate-evidence`，基于 main `ea1f1cdd`
