@@ -39,6 +39,12 @@ apps/harmony/entry/build/
 *.csr
 *.jks
 
+# M14-171A Android release keystore 防护:keystore 及 Android 特有 .keystore
+# 后缀材料禁止入库(材料只能在仓库外保管,经 AIOS_ANDROID_KEYSTORE_* 环境变量
+# 或 AIOS_ANDROID_SIGNING_PROPERTIES 指向的仓库外 properties 文件引用,
+# 并用 tools/android_release/preflight.py 做静态前置校验)
+*.keystore
+
 # M14-06 生产恢复编排 env 文件（含部署 secret，仅本机存在；模板见
 # infra/env.production-recovery.example，恢复编排 pin check 强制其存在与一致）
 infra/env.production-recovery
