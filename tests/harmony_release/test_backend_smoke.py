@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 from tools.harmony_release.backend_smoke import (
     EXIT_BLOCKED,
@@ -158,8 +159,18 @@ def make_fake_getter(
 
     def getter(url: str, timeout: float):
         calls.append(url)
-        path = url.split("8000", 1)[-1] if "8000" in url else url
-        path = path if path.startswith("/") else "/" + path
+        # urlsplit-based parsing: keep path + query so both loopback
+        # bases (http://127.0.0.1:8000/health) and public bases with a
+        # path prefix (https://ndtool.cn/aios/health) resolve to the
+        # existing fake answer keys (unique-suffix match).
+        parts = urlsplit(url)
+        path = parts.path or "/"
+        if parts.query:
+            path = f"{path}?{parts.query}"
+        if path not in answers:
+            suffix_matches = [k for k in answers if path.endswith(k)]
+            if len(suffix_matches) == 1:
+                path = suffix_matches[0]
         if any(r in url for r in raise_for):
             raise OSError("connection refused")
         status, body = answers[path]
@@ -759,6 +770,60 @@ def _failing_install_runner():
 
 
 dump_exit_failure = EXIT_FAILURE
+
+# --------------------------- M14-169A2b2 public https integration ----------
+
+PUBLIC_BASE = "https://ndtool.cn/aios/"
+
+
+class TestPublicHttpsIntegration:
+    """One deterministic public-HTTPS full-chain run: host preflight
+    probes the public base with its path prefix, Settings types and
+    confirms the same public URL, Home asserts it, and the wrapper
+    itself never issues a device-side request for that URL (the app is
+    the only party that talks to the server)."""
+
+    def test_public_https_full_chain_ok(self, tmp_path, monkeypatch):
+        # Speed: no real sleeps in unit tests.
+        monkeypatch.setattr("tools.harmony_release.backend_smoke.time.sleep",
+                            lambda _s: None)
+        saved = settings_layout(input_url="http://10.0.2.2:8000/")
+        typed = settings_layout(input_url=PUBLIC_BASE)
+        confirmed = settings_layout(input_url=PUBLIC_BASE, saved=PUBLIC_BASE)
+        home = home_layout(PUBLIC_BASE)
+        # First dump already shows Settings (TextInput present): no tab
+        # click needed; three settings dumps + one Home dump.
+        hap = make_hap(tmp_path)
+        tr, to, br = fake_resolvers()
+        runner, calls = make_fake_hdc([saved, typed, confirmed, home])
+        getter, get_calls = make_fake_getter()
+        result, code = run_backend_smoke(
+            tmp_path, target="127.0.0.1:5555", hap=str(hap),
+            api_base=PUBLIC_BASE, device_api_base=PUBLIC_BASE,
+            confirm_mutation=True,
+            runner=runner, http_get=getter,
+            target_resolver=tr, tool_resolver=to, bundle_resolver=br,
+        )
+        assert code == EXIT_OK, json.dumps(result["failures"],
+                                           ensure_ascii=False)
+        assert result["status"] == "ok"
+        # every preflight probe went to the public base (prefix intact,
+        # so the urlsplit-based fake parsing is really exercised)
+        assert get_calls and all(c.startswith(PUBLIC_BASE)
+                                 for c in get_calls)
+        # Settings typed, saved and confirmed the public URL
+        assert result["settings"]["saved_confirmed"] is True
+        assert result["settings"]["device_url_typed"] == PUBLIC_BASE
+        # Home showed the same URL and the honest answers
+        assert result["home"]["counts"]["请求失败 (HTTP 401)"] == 3
+        assert result["home"]["counts"]["0.1.0"] == 1
+        # the resolved device-side URL is the public base itself, taken
+        # from the validated request (never probed off the device)
+        assert result["device_url"] == PUBLIC_BASE
+        assert result["device_url_requested_by_wrapper"] is False
+        # cleanup uninstalled as the final hdc command
+        assert result["cleanup"]["status"] == "ok"
+        assert calls[-1][3] == "uninstall"
 
 # ----------------------------------------- M14-142 convergence regressions --
 
