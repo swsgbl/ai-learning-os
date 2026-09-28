@@ -34,6 +34,8 @@ argv, never the target string, never an absolute path)::
     hdc -t <TARGET> install <HAP>
     hdc -t <TARGET> shell bm dump -n <BUNDLE>  (post-install presence proof)
     hdc -t <TARGET> shell aa start -a <ABILITY> -b <BUNDLE>
+    hdc -t <TARGET> shell hidumper -s WindowManagerService -a '-a'
+    hdc -t <TARGET> shell ps -ef
     hdc -t <TARGET> shell uitest dumpLayout -p <REMOTE_LAYOUT_PATH>
     hdc -t <TARGET> file recv <REMOTE_LAYOUT_PATH> <LOCAL_LAYOUT_PATH>
     hdc -t <TARGET> shell uitest uiInput click <X> <Y>
@@ -51,7 +53,13 @@ Steps and their phases (executed in this order)::
                                report an error (e.g. "no signature
                                file"), and bm dump -n <BUNDLE> must then
                                prove the bundle is present before start
-    start          foreground  starts the ability (aa start)
+    start          foreground  starts the ability (aa start); rc 0
+                               alone is never proof - a one-shot
+                               foreground proof (hidumper window
+                               table + ps -ef bundle map) must
+                               confirm the requested bundle holds
+                               the top full-screen app window,
+                               else start_foreground_not_confirmed
     settings_ui    foreground  drives the Settings UI: clear the base-URL
                                field, type the fixed device URL, tap 保存,
                                verify the honest 已保存 confirmation
@@ -142,6 +150,9 @@ try:  # package import (pytest, python -m)
     from tools.harmony_release.device_smoke import (
         child_env as _child_env_device_smoke,
     )
+    from tools.harmony_release.foreground_guard import (
+        evaluate_foreground,
+    )
 except ImportError:  # direct script: python tools/harmony_release/backend_smoke.py
     from device_smoke import (  # type: ignore[no-redef]
         CommandResult,
@@ -162,6 +173,7 @@ except ImportError:  # direct script: python tools/harmony_release/backend_smoke
     )
     from device_smoke import inspect_hap as _inspect_hap_device_smoke  # type: ignore[no-redef]
     from device_smoke import child_env as _child_env_device_smoke  # type: ignore[no-redef]
+    from foreground_guard import evaluate_foreground  # type: ignore[no-redef]
 SCHEMA_VERSION = 1
 TOOL_NAME = "harmony_backend_smoke"
 
@@ -287,6 +299,16 @@ INSTALL_OUTPUT_ERROR_SIGNATURES: Tuple[str, ...] = (
 )
 FAILURE_INSTALL_OUTPUT_ERROR = "install_output_error"
 FAILURE_BUNDLE_NOT_INSTALLED = "bundle_not_installed"
+
+# M14-170 R2b start gate: rc 0 from aa start is not proof the
+# requested bundle holds the foreground. One shot of read-only
+# evidence (hidumper window table + ps -ef bundle map) must
+# confirm it before Settings may run; every failure is fail-closed
+# under one code with one closed-set reason. Raw guard output and
+# identifiers are never serialized.
+FAILURE_START_FOREGROUND_NOT_CONFIRMED = "start_foreground_not_confirmed"
+GUARD_HIDUMPER_TIMEOUT = "hidumper_timeout"
+GUARD_HIDUMPER_SPAWN_FAILED = "hidumper_spawn_failed"
 
 STATUS_PLANNED = "planned"
 STATUS_OK = "ok"
@@ -809,6 +831,52 @@ def bm_dump_proves_presence(
     return True, None
 
 
+def _prove_start_foreground(
+    run: CommandRunner,
+    program: str,
+    target: str,
+    bundle: str,
+    root: Path,
+    env: Dict[str, str],
+) -> Tuple[Optional[bool], List[dict], int]:
+    """One-shot foreground proof for the just-started bundle.
+
+    Two read-only probes - the WindowManagerService window table
+    and a ps -ef bundle map - feed the pure foreground_guard
+    verdict. A timeout, a spawn failure or any non-ok verdict
+    fails closed as start_foreground_not_confirmed with exactly
+    one closed-set reason; raw guard output and identifiers never
+    leave this function.
+
+    Returns (foreground_confirmed, failures, commands_executed).
+    """
+    code = FAILURE_START_FOREGROUND_NOT_CONFIRMED
+
+    def _closed(reason: str, ran: int) -> Tuple[bool, List[dict], int]:
+        return False, [{"code": code, "detail": {"reason": reason}}], ran
+
+    try:
+        hid = run([program, "-t", target, "shell", "hidumper",
+                   "-s", "WindowManagerService", "-a", "'-a'"],
+                  root, env)
+    except subprocess.TimeoutExpired:
+        return _closed(GUARD_HIDUMPER_TIMEOUT, 1)
+    except OSError:
+        return _closed(GUARD_HIDUMPER_SPAWN_FAILED, 0)
+    try:
+        ps = run([program, "-t", target, "shell", "ps", "-ef"],
+                 root, env)
+    except subprocess.TimeoutExpired:
+        return _closed("ps_timeout", 2)
+    except OSError:
+        return _closed("ps_spawn_failed", 1)
+    verdict, _exit = evaluate_foreground(
+        bundle, hid.stdout or "", ps.stdout or "", int(hid.returncode))
+    if verdict["status"] != STATUS_OK:
+        return False, [{"code": code, "detail": {"reason": verdict["primary_reason"]}}], 2
+    return True, [], 2
+
+
 PLANNED_SHAPES: Dict[str, List[dict]] = {
     STEP_HOST_PREFLIGHT: [{
         "program": "http", "subcommand": "GET",
@@ -817,7 +885,9 @@ PLANNED_SHAPES: Dict[str, List[dict]] = {
     }],
     STEP_INSTALL: [_shape("install", ["hap"]),
                    _shape("shell bm dump", ["bundle"])],
-    STEP_START: [_shape("shell aa start", ["ability", "bundle"])],
+    STEP_START: [_shape("shell aa start", ["ability", "bundle"]),
+                 _shape("shell hidumper", ["service", "args"]),
+                 _shape("shell ps", ["flags"])],
     STEP_SETTINGS_UI: [
         _shape("shell uitest dumpLayout", ["remote_layout_path"]),
         _shape("shell uitest uiInput click", ["x", "y"]),
@@ -1056,6 +1126,16 @@ def run_backend_smoke(
                         [program, "-t", resolved_target.raw, "shell", "aa",
                          "start", "-a", ability, "-b", str(bundle_name)],
                         root, env)
+                    start_foreground_confirmed: Optional[bool] = None
+                    if int(outcome.returncode) == 0:
+                        confirmed, guard_failures, guard_runs = (
+                            _prove_start_foreground(
+                                run, program, resolved_target.raw,
+                                str(bundle_name), root, env))
+                        step_failures += guard_failures
+                        start_foreground_confirmed = confirmed
+                        commands_executed += guard_runs
+                        hardware_touched = True
                 elif name in (STEP_SETTINGS_UI, STEP_HOME_VIEW):
                     local = Path(tempfile_default()) / (
                         LAYOUT_FILENAME_SETTINGS
@@ -1210,6 +1290,8 @@ def run_backend_smoke(
                 "failures": step_failures,
                 **({"verified_installed": verified_installed}
                    if name == STEP_INSTALL else {}),
+                **({"foreground_confirmed": start_foreground_confirmed}
+                   if name == STEP_START else {}),
             })
             execution_failures += step_failures
             if step_failures:
