@@ -1017,7 +1017,7 @@ def run_backend_smoke(
                         step_failures += ui_failures
                         digest = driver.digest() if ok else None
                         settings_record = {
-                            "device_url_typed": DEVICE_API_BASE_URL
+                            "device_url_typed": device_base
                             if ok else None,
                             "saved_confirmed": ok,
                             "layout": digest,
@@ -1175,8 +1175,11 @@ def run_backend_smoke(
             "raw_recorded": False,
         } if resolved_target is not None else None),
         "api_base_origin": _url_origin(base) if base else None,
-        "api_base_loopback_only": True,
-        "device_url": DEVICE_API_BASE_URL,
+        "api_base_mode": api_base_mode(base) if base else None,
+        "api_base_loopback_only": (
+            api_base_mode(base) == "loopback" if base else False
+        ),
+        "device_url": device_base,
         "device_url_requested_by_wrapper": False,
         "hap": hap_record,
         "bundle_name": bundle_name,
@@ -1266,6 +1269,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         "--api-base", default=DEFAULT_API_BASE,
         help=f"Loopback-only preflight base URL (default {DEFAULT_API_BASE}).")
     parser.add_argument(
+        "--device-api-base", default=DEVICE_API_BASE_URL,
+        help=f"Device-side base URL validated then typed into the app's "
+             f"Settings UI (default {DEVICE_API_BASE_URL}).")
+    parser.add_argument(
         "--device-id", action="append", default=None,
         help="Operator-known device id (repeatable) to cross-check --target.")
     parser.add_argument(MUTATION_CONFIRMATION_FLAG, action="store_true",
@@ -1290,6 +1297,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         ability=args.ability,
         hdc=args.hdc,
         api_base=args.api_base,
+        device_api_base=args.device_api_base,
         confirm_mutation=args.confirm_mutation,
         known_targets=args.device_id,
         evidence_dir=args.evidence_dir,
