@@ -90,9 +90,13 @@
        schema）；任何失败恢复 previous manifest 字节、不删除既有
        previous APK；单测覆盖半写/中断/目录替换/previous schema 错误，
        见 `tests/android_release/test_stage_download.py`）；
-7. [ ] 上传 APK + manifest 到 `download.example.com` 的 `/android/`
-       （Codex 运维步骤；同源 web 侧的 manifest 命名为
-       `download-manifest.json`，见第 3 节）；
+7. [ ] 上传 APK + manifest（Codex 运维步骤）：同源公共拓扑（M14-176，
+       生产形态）上传到 VPS `/var/www/aios-downloads/`
+       （`manifest.json` → 根、`<file>.apk` → `android/`），由边缘
+       Nginx 片段的 `= /aios/download-manifest.json` 与 `^~ /android/`
+       两个 VPS 本地静态路由对外服务（不经家机隧道；部署/验证/回滚
+       契约见 docs/PUBLIC_EDGE_DEPLOYMENT.md §3G）；独立下载站形态
+       （`download.example.com` 的 `/android/`）为备选，纪律同第 5 节；
 8. [ ] 真机安装冒烟（沿用 `tools/android_smoke/` 套件对公网 API 端点跑一遍）；
 9. [ ] preflight 人工清单 `mobile-android-apk` 项签认。
 
@@ -169,9 +173,12 @@ Web 应用自带通用安装入口（`/download` 路由），不再单独依赖�
 
 模板：`infra/edge/download-manifest.example.json`（schema
 `aios-download-manifest/1`）。发布时复制到下载目录改名为 `manifest.json`
-（独立下载站形态）；同源 web 形态下部署为 `apps/web/public/`
-下的 `download-manifest.json`（`/download` 页运行时读取，见第 3 节），
-由 Codex 上传——本仓库不提交真实 manifest：
+（独立下载站形态）；同源公共拓扑（M14-176 生产形态）由 **VPS 边缘
+静态路由**直接服务——部署到 `/var/www/aios-downloads/manifest.json`，
+公共 URL 为 `/aios/download-manifest.json`（`/download` 页运行时读取，
+见第 3 节；**不放入 `apps/web/public/`**——那会让每次发布新 APK 都要
+重建家机 Web 镜像，且下载流量绕回家机隧道）。两种形态都由 Codex
+上传——本仓库不提交真实 manifest：
 
 - `version` 与仓库 `VERSION` 一致；android `versionCode` 单调递增；
 - 每个文件条目必填 `sha256`（64 位十六进制，发布时重算）、`size_bytes`、
@@ -190,3 +197,16 @@ Web 应用自带通用安装入口（`/download` 路由），不再单独依赖�
   引导页版本号。上传前的本地 staging 用 `tools/android_release/
   stage_download.py`（见第 1 节第 6 步）；公网上传本身由 Codex 执行，
   不在本仓库自动化范围内。
+- 同源公共拓扑（M14-176）：下载面由 VPS Nginx 片段的两个**本地静态
+  路由**承担——`= /aios/download-manifest.json` →
+  `/var/www/aios-downloads/manifest.json`（强制 `application/json`、
+  `Cache-Control: no-store`）、`^~ /android/` →
+  `/var/www/aios-downloads/android/`（**nginx 层 .apk 门禁**
+  `if ($uri !~* \.apk$) { return 404; }`——非 .apk 后缀（大小写
+  不敏感）一律 404，不依赖上传目录纪律；强制 APK MIME、显式
+  `autoindex off` 无目录暴露、`Cache-Control: public, max-age=3600`
+  有界公共缓存），两者都带 M14-163 恒定三安全头、不经家机隧道。
+  上传目录纪律与上表一致：目录里只有 staging 产出的 manifest 与
+  已验签 APK（无 debug 产物、无 keystore/证书、无构建日志）。
+  精确路由契约、部署/验证/回滚步骤见
+  docs/PUBLIC_EDGE_DEPLOYMENT.md §3G。

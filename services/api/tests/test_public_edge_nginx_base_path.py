@@ -1,4 +1,4 @@
-"""M14-159/M14-161/M14-163 公共 Web base path —— Nginx 边缘片段模板 fail-closed 校验。
+r"""M14-159/M14-161/M14-163/M14-176 公共 Web base path —— Nginx 边缘片段模板 fail-closed 校验。
 
 覆盖矩阵（任务书第 4/3/5 条 + M14-161 健康路由 + M14-163 安全头）：
 1. 片段形态：只含 location 块（无 server/listen/server_name/root/alias/
@@ -32,6 +32,26 @@
    frp 隧道入口不加；**边缘零 CORS**（无任何 Access-Control-*）且
    不引入 CSP/框架策略头；runbook 落档 AIOS_CORS_ORIGINS 显式包含
    公共 origin（边缘只透传）与受控 credentials file 纪律。
+7. M14-176 VPS 本地下载静态路由：`= /aios/download-manifest.json`
+   （Web 端 download-manifest.ts 的同源取数 URL）与 `^~ /android/`
+   （清单可信条目的根相对 APK URL 前缀）在 VPS 本地
+   `/var/www/aios-downloads/` 磁盘终结（alias，无 proxy_pass——不经
+   frp 家机隧道；stage_download.py 产物的上传目的地）；强制内容类型
+   （types{} 清空扩展映射 + default_type：manifest 一律 application/json、
+   /android/ 一律 APK MIME——混入杂散文件也以下载面而非可渲染页面）、
+   manifest `no-store`、APK 有界公共缓存 `public, max-age=3600`（缓存
+   头只允许出现在这两个 location）、显式 `autoindex off` 且无 index/
+   try_files（无目录暴露：缺文件 404、目录 URI 拒绝，绝无列表）、恒定
+   三安全头；alias 只允许出现在这两个 location（其余六个 location 仍
+   禁静态指令）；`/android/` 还有 **nginx 层 .apk 门禁**（R1，Codex
+   review：`if ($uri !~* \.apk$) { return 404; }`——return 是 if 内的
+   安全用法，rewrite 阶段终结先于静态处理）——规范化 URI 不以 .apk
+   结尾（大小写不敏感）一律 404（notes.txt/foo.apk.txt/foo.html/目录
+   URI 在进静态处理器前被拒，不依赖上传目录纪律；.APK/.Apk 大小写
+   变体放行）；匹配边界：清单 URI 精确命中（不落 `^~ /aios/` 的
+   Next 代理 404）、`/android/` 用 ^~ 阻止宿主正则/静态 location 抢占
+   /android/*（普通前缀会输给宿主 regex）、裸 `/android`（无尾斜杠）/
+   `/androidx`/`/download-manifest.json`（无 /aios 前缀）不被片段接管。
 
 边界：本文件只读模板/文档，不发任何网络请求、不启动任何容器、不渲染
 真实站点配置。
@@ -133,15 +153,17 @@ def test_template_file_exists_in_edge_dir() -> None:
 
 
 def test_fragment_is_location_only_cannot_shadow_host_site() -> None:
-    """只允许 location 块：无 server/listen/server_name/静态指令/正则——
-    include 进既有 443 server 后不可能接管站点根、既有 API 或静态资源。"""
+    """只允许 location 块：无 server/listen/server_name/root/try_files/
+    rewrite/正则——include 进既有 443 server 后不可能接管站点根、既有
+    API 或静态资源。M14-176 唯一例外：alias 允许且仅允许出现在两个
+    下载静态 location（其余 location 仍禁，静态目录暴露面被钉死在
+    /var/www/aios-downloads/ 的两个精确路由内）。"""
     stripped = _stripped(_text())
     for banned in (
         "server_name",
         "listen ",
         "server {",
         "root ",
-        "alias ",
         "try_files",
         "rewrite ",
     ):
@@ -152,12 +174,18 @@ def test_fragment_is_location_only_cannot_shadow_host_site() -> None:
             "/", "/api", "/api/", "/api/v1", "/api/v1/",
             "/static", "/static/", "/favicon.ico",
         ), f"location {block['path']} 会遮蔽既有站点路径"
+        if (block["modifier"], block["path"]) in M14_176_DOWNLOAD_LOCATIONS:
+            continue
+        assert "alias " not in block["body"], (
+            f"{block['path']} 不得含 alias（静态服务只允许在 M14-176 下载 location 内）"
+        )
 
 
 def test_fragment_location_inventory_and_order() -> None:
-    """声明面恰为六个 location，顺序与 R3/M14-161 任务书一致（= /~!frp →
-    = /aios → = /aios/ → = /aios/health → ^~ /aios/api/ → ^~ /aios/；
-    语义上精确/最长前缀本就无歧义，锁顺序便于审查）。"""
+    """声明面恰为八个 location，顺序与 R3/M14-161/M14-176 任务书一致
+    （= /~!frp → = /aios → = /aios/ → = /aios/health → ^~ /aios/api/ →
+    ^~ /aios/ → = /aios/download-manifest.json → ^~ /android/；语义上
+    精确/最长前缀本就无歧义，锁顺序便于审查）。"""
     signatures = [
         (b["modifier"], b["path"]) for b in _parse_locations(_stripped(_text()))
     ]
@@ -168,6 +196,8 @@ def test_fragment_location_inventory_and_order() -> None:
         ("=", "/aios/health"),
         ("^~", "/aios/api/"),
         ("^~", "/aios/"),
+        ("=", "/aios/download-manifest.json"),
+        ("^~", "/android/"),
     ]
 
 
@@ -229,8 +259,12 @@ def test_no_mutually_inverse_redirects() -> None:
         if match:
             redirects[block["path"]] = match.group(2)
         else:
-            assert "proxy_pass" in block["body"], (
+            assert "proxy_pass" in block["body"] or (
+                (block["modifier"], block["path"]) in M14_176_DOWNLOAD_LOCATIONS
+                and "alias " in block["body"]
+            ), (
                 f"{block['path']} 非重定向块就必须 proxy_pass"
+                "（唯一例外：M14-176 下载清单静态 alias 路由）"
             )
     assert redirects == {"/aios/": "/aios"}, "唯一允许的重定向是 /aios/ 301 归一化到 /aios"
     for source, target in redirects.items():
@@ -360,26 +394,36 @@ M14_163_PUBLIC_LOCATIONS = {
     ("^~", "/aios/"),
 }
 
+# M14-176：两个下载静态 location 同属公共浏览器面（/download 页与
+# 下载器直接命中），同享 M14-163 恒定三安全头纪律。
+M14_176_DOWNLOAD_LOCATIONS = {
+    ("=", "/aios/download-manifest.json"),
+    ("^~", "/android/"),
+}
+
+ALL_PUBLIC_BROWSER_LOCATIONS = M14_163_PUBLIC_LOCATIONS | M14_176_DOWNLOAD_LOCATIONS
+
 
 def test_public_locations_carry_constant_security_headers_always() -> None:
-    """M14-163：五个公共浏览器面 location 各显式恒定三安全头——
-    `always` 保证 301/4xx 等非 2xx 响应同样携带（preflight 对任何状态码
-    判定）；逐 location 显式不依赖宿主 server 级继承（nginx 规则：
-    location 内出现任何 add_header 即令 server 级全部失效）；HSTS
+    """M14-163/M14-176：七个公共浏览器面 location（五路由 + 两下载静态
+    路由）各显式恒定三安全头——`always` 保证 301/4xx 等非 2xx 响应
+    同样携带（preflight 对任何状态码判定，下载面 404 也不例外）；
+    逐 location 显式不依赖宿主 server 级继承（nginx 规则：location 内
+    出现任何 add_header 即令 server 级全部失效）；HSTS
     max-age=31536000 ≥ preflight 门槛 15552000。"""
     blocks = _parse_locations(_stripped(_text()))
     seen: set[tuple[str, str]] = set()
     for block in blocks:
         signature = (block["modifier"], block["path"])
-        if signature not in M14_163_PUBLIC_LOCATIONS:
+        if signature not in ALL_PUBLIC_BROWSER_LOCATIONS:
             continue
         seen.add(signature)
         for directive in SECURITY_HEADER_DIRECTIVES:
             assert directive in block["body"], (
                 f"{block['path']} 缺安全头指令: {directive}"
             )
-    assert seen == M14_163_PUBLIC_LOCATIONS, (
-        "五个公共浏览器面 location 必须全部携带三安全头（缺一即 preflight FAIL 面）"
+    assert seen == ALL_PUBLIC_BROWSER_LOCATIONS, (
+        "七个公共浏览器面 location 必须全部携带三安全头（缺一即 preflight FAIL 面）"
     )
 
 
@@ -424,6 +468,193 @@ def test_every_add_header_carries_always_flag() -> None:
                 assert directive.endswith("always;"), (
                     f"{block['path']} 的 add_header 缺 always 标志: {directive}"
                 )
+
+
+# ------------------------------------- M14-176 VPS 本地下载静态路由
+
+DOWNLOADS_FS_ROOT = "/var/www/aios-downloads"
+APK_MIME = "application/vnd.android.package-archive"
+
+
+def _download_block(uri: str) -> dict[str, str]:
+    """取 uri 命中的下载 location（并断言它确属 M14-176 两个路由之一）。"""
+    block = _match_location(_parse_locations(_stripped(_text())), uri)
+    assert block is not None, f"{uri} 未被片段路由（M14-176 下载路由缺失）"
+    assert (block["modifier"], block["path"]) in M14_176_DOWNLOAD_LOCATIONS, (
+        f"{uri} 必须命中 M14-176 下载路由，实际命中 {block['path']}"
+    )
+    return block
+
+
+def test_download_manifest_route_serves_staged_manifest_from_vps_disk() -> None:
+    """M14-176：`= /aios/download-manifest.json` 是 Web 端
+    download-manifest.ts 的同源取数 URL（basePath 前缀拼接），在 VPS
+    本地磁盘终结：alias 精确指向 stage_download.py 产出的
+    `<staging>/manifest.json` 的上传位 `<root>/manifest.json`；无
+    proxy_pass（不经 frp 家机隧道——清单更新不需要家机/Web 镜像参与）、
+    无 return（直接静态服务）；types{} 清空扩展映射 + default_type
+    强制 application/json；Cache-Control no-store（运行时事实来源
+    绝不缓存——web 端 fetch 亦 no-store，双侧一致）。"""
+    block = _download_block("/aios/download-manifest.json")
+    assert block["modifier"] == "=", "清单路由必须精确匹配（否则落 ^~ /aios/ 的 Next 代理 404）"
+    assert "proxy_pass" not in block["body"], "清单必须 VPS 本地静态服务，不经家机隧道"
+    assert "return" not in block["body"], "清单路由直接静态服务，不重定向"
+    alias = re.search(r"alias\s+(\S+);", block["body"])
+    assert alias is not None, "缺 alias"
+    assert alias.group(1) == f"{DOWNLOADS_FS_ROOT}/manifest.json", (
+        "alias 必须钉死 stage_download.py manifest 的上传目的地"
+    )
+    assert re.search(r"types\s*\{\s*\}", block["body"]), "必须清空扩展映射（types{}）"
+    assert "default_type application/json;" in block["body"]
+    assert 'add_header Cache-Control "no-store" always;' in block["body"]
+
+
+def test_android_prefix_serves_only_staged_apks_from_vps_disk() -> None:
+    """M14-176：`^~ /android/` 只服务 stage_download.py staged APK 的
+    上传目录 `<root>/android/`（manifest 可信条目 URL 恒为根相对
+    /android/<file>，与 verify_artifact/web 端 ENTRY_URL_RE 同语义）；
+    无 proxy_pass；types{} + default_type 强制 APK MIME——即便混入
+    杂散文件也以不可渲染的下载面呈现（fail-closed）。"""
+    block = _download_block("/android/ai-learning-os-0.1.0-release-signed.apk")
+    assert block["modifier"] == "^~", (
+        "必须 ^~ 前缀：普通前缀 location 会输给宿主正则/静态 location"
+        "（如 ~ \\.apk$）；^~ 在最长前缀命中时阻止正则抢占，"
+        "/android/* 保证由本路由服务"
+    )
+    assert "proxy_pass" not in block["body"], "APK 必须 VPS 本地静态服务，不经家机隧道"
+    alias = re.search(r"alias\s+(\S+);", block["body"])
+    assert alias is not None, "缺 alias"
+    assert alias.group(1) == f"{DOWNLOADS_FS_ROOT}/android/", (
+        "alias 必须钉死 staged APK 上传目录（目录形态带尾斜杠与 location 配对）"
+    )
+    assert re.search(r"types\s*\{\s*\}", block["body"]), "必须清空扩展映射（types{}）"
+    assert f"default_type {APK_MIME};" in block["body"]
+
+
+def test_download_routes_match_semantics_and_boundaries() -> None:
+    """匹配语义与边界：清单 URI 精确命中（优先于 `^~ /aios/`），邻近
+    URI（多一个字符/多一段）仍走 Web 前缀不受影响；`/android/<file>`
+    命中下载前缀；反向边界——裸 /android（无尾斜杠）、/androidx、
+    大小写变体 /Android/、无 /aios 前缀的 /download-manifest.json、
+    清单 harmony 频道的 /harmony/* URL 一律不被片段接管（宿主路径
+    不变；harmony 不在本切片服务面内，web 端也不会信任其条目）。"""
+    blocks = _parse_locations(_stripped(_text()))
+    assert _match_location(blocks, "/aios/download-manifest.json")["path"] == (
+        "/aios/download-manifest.json"
+    ), "清单 URI 必须被精确路由抢先（否则落 Web 前缀 404）"
+    for uri in ("/aios/download-manifest.jsonx", "/aios/download-manifest.json/"):
+        assert _match_location(blocks, uri)["path"] == "/aios/", (
+            f"{uri} 应仍走 Web 前缀（精确匹配只接整串）"
+        )
+    assert _match_location(
+        blocks, "/android/ai-learning-os-0.1.0-release-signed.apk"
+    )["path"] == "/android/"
+    for uri in (
+        "/android",
+        "/androidx",
+        "/Android/",
+        "/download-manifest.json",
+        "/harmony/ai-learning-os-0.1.0-signed.hap",
+    ):
+        assert _match_location(blocks, uri) is None, f"{uri} 被片段遮蔽"
+
+
+def test_cache_policy_confined_to_download_locations() -> None:
+    """缓存策略只存在于两个下载 location：manifest 恰为 no-store、
+    APK 恰为 public, max-age=3600（有界公共缓存——文件名带版本且
+    stage_download.py 拒绝覆盖已存在目标，URL 内容不可变）；既有
+    五路由与 frp 入口保持零 Cache-Control（上游/宿主语义权威，边缘
+    不越权改代理路由的缓存行为）。"""
+    for block in _parse_locations(_stripped(_text())):
+        policies = re.findall(
+            r'add_header\s+Cache-Control\s+"([^"]+)"\s+always;', block["body"]
+        )
+        if (block["modifier"], block["path"]) in M14_176_DOWNLOAD_LOCATIONS:
+            expected = (
+                "no-store"
+                if block["path"] == "/aios/download-manifest.json"
+                else "public, max-age=3600"
+            )
+            assert policies == [expected], (
+                f"{block['path']} 缓存策略必须恰为 {expected}: {policies}"
+            )
+        else:
+            assert not policies, f"{block['path']} 不得引入 Cache-Control"
+
+
+def test_no_autoindex_no_index_no_directory_exposure() -> None:
+    """无目录暴露（纵深防御）：目录 URI 已由 .apk 门禁在 rewrite 阶段
+    确定性 404（见上一测试），autoindex off + 无 index 是第二道——防
+    宿主 server 级 autoindex on 继承、防磁盘上意外出现的目录（如恰好
+    命名 x.apk 的目录）在静态处理器里给出列表/索引；无 try_files 兜底，
+    缺文件 404，下载目录结构不可枚举。"""
+    android = _download_block("/android/ai-learning-os-0.1.0-release-signed.apk")
+    assert "autoindex off;" in android["body"], "下载前缀必须显式 autoindex off"
+    for block in _parse_locations(_stripped(_text())):
+        assert not re.search(r"^\s*index\s", block["body"], re.MULTILINE), (
+            f"{block['path']} 不得有 index 指令（目录 URI 必须拒绝）"
+        )
+        assert not re.search(r"^\s*autoindex\s+on", block["body"], re.MULTILINE), (
+            f"{block['path']} 不得开 autoindex"
+        )
+
+
+def test_android_prefix_apk_gate_pinned_and_fail_closed() -> None:
+    r"""R1（Codex review）：/android/ 在 **nginx 层**强制只服务 .apk
+    常规路径——`if ($uri !~* \.apk$) { return 404; }`（if 内 return 是
+    nginx 认可的安全用法：rewrite 阶段终结请求，先于静态处理器，不触碰
+    "if is evil" 的内容处理面）。规范化后的 $uri 不以 .apk 结尾（大小写
+    不敏感）一律 404：上传目录纪律不再是唯一防线；目录 URI（含裸
+    /android/）与尾斜杠形态也在此被拒（确定性 404）。本测试钉住指令
+    形态 + 用模板里的同一正则做语义仿真。"""
+    block = _download_block("/android/ai-learning-os-0.1.0-release-signed.apk")
+    gate = re.search(
+        r'if \(\$uri !~\* (?P<pattern>[^)\s]+)\)\s*\{\s*return\s+404;\s*\}',
+        block["body"],
+    )
+    assert gate is not None, (
+        "location /android/ 缺 .apk 门禁（if ($uri !~* ...) { return 404; }）"
+    )
+    assert gate.group("pattern") == r"\.apk$", (
+        "门禁正则必须锚定 .apk 后缀（$），不得放宽为子串匹配"
+    )
+    apk_gate = re.compile(gate.group("pattern"), re.IGNORECASE)  # ~* = 大小写不敏感
+    # 非法形态：rewrite 阶段 404，绝不到静态处理器（不依赖上传目录纪律）
+    for uri in (
+        "/android/notes.txt",       # Codex review 点名：非 .apk 文本
+        "/android/foo.apk.txt",     # Codex review 点名：.apk 只在中间
+        "/android/foo.html",        # Codex review 点名：可渲染页面形态
+        "/android/",                # 裸前缀（目录 URI）
+        "/android/foo.apk/",        # 尾斜杠（目录形态）
+        "/android/manifest.json",   # 清单文件名也不得经此路由泄露
+    ):
+        assert apk_gate.search(uri) is None, f"{uri} 必须被 .apk 门禁 404"
+    # 合法形态：.apk 大小写不敏感放行（随后由静态处理器按文件存在性 200/404）
+    for uri in (
+        "/android/ai-learning-os-0.1.0-release-signed.apk",
+        "/android/foo.APK",
+        "/android/foo.Apk",
+    ):
+        assert apk_gate.search(uri) is not None, (
+            f"{uri} 的 .apk 大小写不敏感形态必须放行（~* 语义）"
+        )
+
+
+def test_download_locations_no_cors_no_credentials_no_tunnel() -> None:
+    """下载静态路由零 CORS（同源取数——页面与 /android/<file> 同
+    origin，边缘绝不代答 Access-Control-*）、零认证（无 auth_basic——
+    公共下载就是匿名静态文件）、零隧道（无任何 proxy_ 指令——VPS
+    本地磁盘终结，家机不承担下载流量）。"""
+    for block in _parse_locations(_stripped(_text())):
+        if (block["modifier"], block["path"]) not in M14_176_DOWNLOAD_LOCATIONS:
+            continue
+        assert "Access-Control" not in block["body"], "下载路由不得代答 CORS"
+        assert not re.search(r"^\s*auth_basic", block["body"], re.MULTILINE), (
+            "下载路由不得引入认证（公共匿名下载）"
+        )
+        assert not re.search(r"^\s*proxy_\w+", block["body"], re.MULTILINE), (
+            "下载路由不得有任何 proxy 指令（VPS 本地终结，不经隧道）"
+        )
 
 
 # ---------------------------------------------------------------- 跨工件契约
