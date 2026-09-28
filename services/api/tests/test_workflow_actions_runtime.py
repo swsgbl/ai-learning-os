@@ -223,6 +223,56 @@ def test_android_job_runs_full_gate_without_lint_baseline() -> None:
     assert "updateLintBaseline" not in joined
 
 
+# --- 1c. M14-173 release-tools job 契约（两套 release 工具套件都进 CI）----------
+
+RELEASE_TOOLS_JOB_NAME = "release-tools"
+RELEASE_TOOLS_SUITES = ("harmony_release", "android_release")
+# 诚实边界：release-tools 是纯 Python 静态/单测 job，绝不安装 SDK/证书/
+# keystore，也绝不执行真实签名或构建命令。
+RELEASE_TOOLS_FORBIDDEN_TOKENS = (
+    "sdkmanager", "android-sdk", "deveco", "hdc ", "keystore", "keytool",
+    "apksigner", "aapt", "assemblerelease", "assembledebug", "gradlew",
+)
+
+
+def _ci_release_tools_job() -> dict:
+    data = _load_workflow(CI_WORKFLOW)
+    job = data.get("jobs", {}).get(RELEASE_TOOLS_JOB_NAME)
+    assert isinstance(job, dict), "ci.yml 必须有 release-tools job"
+    return job
+
+
+def _release_tools_run_text() -> str:
+    runs = [
+        str(step.get("run", ""))
+        for step in _ci_release_tools_job()["steps"]
+        if isinstance(step, dict)
+    ]
+    assert runs, "release-tools job 必须有 run 步骤"
+    return "\n".join(runs)
+
+
+def test_release_tools_job_gates_both_release_suites() -> None:
+    """compileall + pytest 必须同时覆盖 harmony 与 android 两套工具套件。"""
+    joined = _release_tools_run_text()
+    for suite in RELEASE_TOOLS_SUITES:
+        assert f"python -m compileall tools/{suite}" in joined, (
+            f"release-tools 必须字节编译 tools/{suite}: {joined}"
+        )
+        assert f"python -m pytest tests/{suite}" in joined, (
+            f"release-tools 必须运行 tests/{suite}: {joined}"
+        )
+
+
+def test_release_tools_job_stays_tooling_only() -> None:
+    """诚实边界：不装 SDK/证书/keystore，不跑签名/构建命令，不碰真实 APK。"""
+    lowered = _release_tools_run_text().lower()
+    for token in RELEASE_TOOLS_FORBIDDEN_TOKENS:
+        assert token not in lowered, (
+            f"release-tools 是纯 Python 检查 job，不得出现 {token!r}: {lowered}"
+        )
+
+
 # --- 2. upload-artifact 不随本切片升级 -------------------------------------------
 
 

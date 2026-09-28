@@ -107,9 +107,11 @@ jobs:
 
   release-tools:
     name: Release tools (Python tests)
-    # M13-12: 仅验证 tools/harmony_release 的 Python fail-closed 签名前置
-    # 检查逻辑(compileall + pytest)。这不是 HarmonyOS 构建/设备/签名/运行时
-    # 验证 job —— 不安装 API 依赖、Android/DevEco SDK、证书或签名材料。
+    # M13-12/M14-173: 仅验证 tools/harmony_release 与 tools/android_release
+    # 两套 release 工具套件的 Python fail-closed 检查逻辑(compileall +
+    # pytest)。这不是 HarmonyOS/Android 构建/设备/签名/运行时验证 job ——
+    # 不安装 API 依赖、Android/DevEco SDK、证书、keystore 或签名材料,
+    # 也不需要真实 APK/签名产物。
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -120,5 +122,9 @@ jobs:
         run: pip install "pytest>=9,<10"
       - name: Byte-compile tools/harmony_release
         run: python -m compileall tools/harmony_release
+      - name: Byte-compile tools/android_release
+        run: python -m compileall tools/android_release
       - name: Pytest tests/harmony_release
         run: python -m pytest tests/harmony_release
+      - name: Pytest tests/android_release
+        run: python -m pytest tests/android_release
