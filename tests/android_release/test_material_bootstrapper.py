@@ -23,10 +23,13 @@ from tools.android_release.material_bootstrapper import (
     CONFIRM_PHRASE,
     DEFAULT_ALIAS,
     FORBIDDEN_ALIASES,
+    KEYSTORE_TYPE,
     KEYTOOL_DNAME,
     KEYTOOL_JAVA_TOOL_OPTIONS,
     MIN_KEY_SIZE,
     MIN_VALIDITY_DAYS,
+    PASSWORD_LENGTH,
+    PROPERTIES_KEYS,
     REQUIRED_KEY_ALG,
     SCHEMA_VERSION,
     TOOL_NAME,
@@ -269,14 +272,16 @@ def make_junction(link: Path, target: Path) -> bool:
 
 
 def write_valid_material(keystore: Path, properties: Path,
-                         keystore_path_value: str | None = None) -> None:
+                         keystore_path_value: str | None = None,
+                         store_password: str = "stored-value",
+                         key_password: str = "stored-value") -> None:
     keystore.write_bytes(b"fake-keystore-bytes")
     properties.write_text(
         "keystore.path="
         + (keystore_path_value or str(keystore).replace("\\", "\\\\"))
-        + "\nkeystore.storePassword=stored-value\n"
+        + f"\nkeystore.storePassword={store_password}\n"
         + "keystore.keyAlias=aios-release\n"
-        + "keystore.keyPassword=stored-value\n",
+        + f"keystore.keyPassword={key_password}\n",
         encoding="utf-8",
     )
 
@@ -304,6 +309,7 @@ class TestPlan:
         assert result["tool"] == TOOL_NAME
         assert result["schema_version"] == SCHEMA_VERSION
         plan = result["plan"]
+        assert plan["keystore_type"] == KEYSTORE_TYPE
         assert plan["keyalg"] == REQUIRED_KEY_ALG
         assert plan["keysize"] == MIN_KEY_SIZE
         assert plan["validity_days"] == MIN_VALIDITY_DAYS
@@ -578,8 +584,8 @@ class TestExecuteSuccess:
         result = json.loads(rendered)
         rendered_again = json.dumps(result, sort_keys=True)
         assert PASSWORD_MARKER not in rendered_again
-        # two independent passwords requested (store + key)
-        assert entropy.lengths == [32, 32]
+        # ONE password requested per run (store == key, PKCS12 contract)
+        assert entropy.lengths == [PASSWORD_LENGTH]
 
     def test_execute_output_has_no_absolute_paths(self, tmp_path, monkeypatch,
                                                   capsys):
@@ -1068,6 +1074,104 @@ class TestOutputHygiene:
         assert PASSWORD_MARKER not in rendered
         assert not keystore.exists()
         assert not properties.exists()
+
+
+# ---------------------------------------------------------------------------
+# single-password PKCS12 contract (M14-175 round 2)
+# ---------------------------------------------------------------------------
+
+
+def _property_values(text: str) -> dict[str, str]:
+    """Escape-free key=value pairs (fake passwords contain no backslashes)."""
+    values: dict[str, str] = {}
+    for line in text.splitlines():
+        if "=" in line:
+            key, _, raw = line.partition("=")
+            values[key.strip()] = raw.strip()
+    return values
+
+
+class TestSinglePasswordPkcs12Contract:
+    """PKCS12 keys are read with the store password (operator-confirmed:
+    diverging passwords fail packageRelease with "Given final block not
+    properly padded"); generation therefore uses ONE password for both."""
+
+    def test_entropy_requested_exactly_once(self, tmp_path, monkeypatch):
+        keystore, properties, _runner, entropy, _ = inject_common(
+            monkeypatch, tmp_path
+        )
+        _result, code = run_execute(
+            str(keystore), str(properties), confirm=CONFIRM_PHRASE
+        )
+        assert code == 0
+        assert entropy.lengths == [PASSWORD_LENGTH]  # ONE draw, store == key
+
+    def test_genkeypair_pins_pkcs12_and_one_password(self, tmp_path,
+                                                     monkeypatch):
+        keystore, properties, runner, _entropy, _ = inject_common(
+            monkeypatch, tmp_path
+        )
+        _result, code = run_execute(
+            str(keystore), str(properties), confirm=CONFIRM_PHRASE
+        )
+        assert code == 0
+        gen_argv = runner.calls[0]
+        assert gen_argv[gen_argv.index("-storetype") + 1] == KEYSTORE_TYPE
+        store_pw = gen_argv[gen_argv.index("-storepass") + 1]
+        key_pw = gen_argv[gen_argv.index("-keypass") + 1]
+        assert store_pw == key_pw
+        assert store_pw                # one non-empty OS-random value
+
+    def test_properties_carry_identical_password_values(self, tmp_path,
+                                                        monkeypatch):
+        keystore, properties, _runner, _entropy, _ = inject_common(
+            monkeypatch, tmp_path
+        )
+        _result, code = run_execute(
+            str(keystore), str(properties), confirm=CONFIRM_PHRASE
+        )
+        assert code == 0
+        values = _property_values(properties.read_text(encoding="utf-8"))
+        assert set(values) == set(PROPERTIES_KEYS)
+        assert values["keystore.storePassword"] == values["keystore.keyPassword"]
+
+    def test_verify_rejects_diverging_passwords_without_echoing(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        keystore, properties, _runner, *_ = inject_common(monkeypatch, tmp_path)
+        write_valid_material(
+            keystore, properties,
+            store_password="store-pw-must-not-appear",
+            key_password="key-pw-must-not-appear",
+        )
+        code = main(verify_args(keystore, properties))
+        assert code == 1
+        rendered = capsys.readouterr().out
+        result = json.loads(rendered)
+        codes = [f["code"] for f in result["failures"]]
+        assert "store_key_password_mismatch" in codes
+        assert (
+            result["checks"]["properties_keys"]["store_key_passwords_equal"]
+            is False
+        )
+        assert "store-pw-must-not-appear" not in rendered
+        assert "key-pw-must-not-appear" not in rendered
+
+    def test_verify_passes_and_records_equal_passwords(self, tmp_path,
+                                                       monkeypatch):
+        keystore, properties, runner, *_ = inject_common(monkeypatch, tmp_path)
+        write_valid_material(keystore, properties)
+        result, code = run_verify_material(
+            str(keystore), str(properties),
+            keytool=str(keytool_stub(keystore)),
+            runner=runner,
+            clock=lambda: NOW_IN_WINDOW,
+            repo_root_finder=lambda: fake_repo(tmp_path),
+        )
+        assert code == 0
+        keys_check = result["checks"]["properties_keys"]
+        assert keys_check["all_present"] is True
+        assert keys_check["store_key_passwords_equal"] is True
 
 
 # ---------------------------------------------------------------------------

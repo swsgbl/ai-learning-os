@@ -36,12 +36,16 @@
        备份两处离线介质 + 保管记录）。M14-174 readiness：
        `tools/android_release/material_bootstrapper.py` 提供
        `plan`（只读预检：目标在仓库外、无 symlink、不存在）/ `execute`
-       （显式确认短语 + keytool 生成 RSA 2048、validity ≥10000 天、
-       拒绝 debug alias/dname；密码用 OS 随机源生成、绝不输出到
+       （显式确认短语 + keytool 生成 PKCS12 keystore、RSA 2048、
+       validity ≥10000 天、拒绝 debug alias/dname；单一 OS 随机密码
+       同时保护 store 与 key——PKCS12 契约下 Android 签名以 store
+       密码读私钥，两密码分离会导致 packageRelease 报
+       "Given final block not properly padded"；密码绝不输出到
        stdout/报告/git；生成 keystore + `AIOS_ANDROID_SIGNING_PROPERTIES`
        可消费的 properties 文件；POSIX 0600 / Windows icacls ACL 收紧；
        失败清理本次新建文件、不误删既有文件）/ `verify`（复检存在性、
-       仓库外边界、properties 四键、权限、证书 SHA256 指纹与有效期窗口）
+       仓库外边界、properties 四键及 store/key 密码一致（不一致
+       fail-closed，仅报布尔/代码）、权限、证书 SHA256 指纹与有效期窗口）
        三个子命令，keytool/文件系统/时钟均可注入（零真实 keytool 的
        单测见 `tests/android_release/test_material_bootstrapper.py`；
        路径组件的链接检查覆盖 symlink 与 Windows junction/reparse

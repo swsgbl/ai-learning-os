@@ -13,9 +13,12 @@ Subcommands:
 
 - ``plan`` — read-only preview: reports the exact keytool key parameters,
   target basenames and pre-flight target checks. Creates nothing.
-- ``execute`` — generates the keystore via ``keytool -genkeypair`` (RSA 2048,
-  validity >= 10000 days, non-debug alias/dname) and the properties file with
-  OS-random passwords. Requires the explicit confirmation phrase. Both
+- ``execute`` — generates the keystore via ``keytool -genkeypair`` (PKCS12
+  store, RSA 2048, validity >= 10000 days, non-debug alias/dname) and the
+  properties file. ONE OS-random password protects both the store and the
+  key — the PKCS12 contract Android signing reads under — and is written to
+  both password keys, never printed. Requires the explicit confirmation
+  phrase. Both
   targets must live **outside the repository**, contain no symlink/junction/
   reparse-point path component (every existing component is checked without
   following the link), and not exist beforehand. POSIX targets are tightened
@@ -25,7 +28,9 @@ Subcommands:
   pre-existing files.
 - ``verify`` — re-checks existing material: presence, symlink-free paths,
   outside-repo placement, the four properties keys (values never echoed),
-  the keystore.path target identity, tightened permissions (POSIX mode
+  store/key password equality (value-free boolean; unequal fails closed —
+  the PKCS12 key is read with the store password), the keystore.path target
+  identity, tightened permissions (POSIX mode
   check; Windows ACL read-back is honestly ``not_evaluated``), and the
   certificate via ``keytool -list`` (SHA256 fingerprint, alias, validity
   window judged against an injectable clock). Every keytool child runs
@@ -36,8 +41,9 @@ Subcommands:
 Safety contract (mirrors tools/android_release/verify_artifact.py): output
 is deterministic value-free JSON — no password, no keystore content, no
 local absolute path, no child stdout/stderr is ever recorded; failures carry
-a category plus safe fields only. Passwords come from ``secrets`` (OS random
-source) at runtime and are replaceable by an injectable entropy seam for
+a category plus safe fields only. The run password comes from ``secrets``
+(OS random source) at runtime — one value per run protecting both the store
+and the key — and is replaceable by an injectable entropy seam for
 tests; keytool, the filesystem permission applier, the clock, and the
 repository-root finder are all injectable so the test suite runs with zero
 real keytool invocations and zero network.
@@ -75,6 +81,12 @@ TOOL_NAME = "android_release_material_bootstrapper"
 REQUIRED_KEY_ALG = "RSA"
 MIN_KEY_SIZE = 2048
 MIN_VALIDITY_DAYS = 10000
+# Pinning the store type matters for the password contract below: PKCS12
+# protects the private key with the *store* password in practice (that is
+# how Android Gradle Plugin / apksigner read it), so the key password must
+# equal the store password or packageRelease fails with
+# "Given final block not properly padded".
+KEYSTORE_TYPE = "PKCS12"
 DEFAULT_ALIAS = "aios-release"
 # Whole-token, lower-cased comparison: debug-convention alias values that
 # must never name a release key.
@@ -388,6 +400,7 @@ def validate_targets(
 
 def _plan_block(keystore: Path, properties: Path, alias: str, validity_days: int) -> dict:
     return {
+        "keystore_type": KEYSTORE_TYPE,
         "keyalg": REQUIRED_KEY_ALG,
         "keysize": MIN_KEY_SIZE,
         "validity_days": validity_days,
@@ -464,12 +477,13 @@ def _escape_properties_value(value: str) -> str:
     )
 
 
-def _properties_bytes(keystore: Path, store_pw: str, alias: str, key_pw: str) -> bytes:
+def _properties_bytes(keystore: Path, password: str, alias: str) -> bytes:
+    """One password value fills both password keys (PKCS12 contract)."""
     lines = [
         f"keystore.path={_escape_properties_value(str(keystore.resolve()))}",
-        f"keystore.storePassword={_escape_properties_value(store_pw)}",
+        f"keystore.storePassword={_escape_properties_value(password)}",
         f"keystore.keyAlias={_escape_properties_value(alias)}",
-        f"keystore.keyPassword={_escape_properties_value(key_pw)}",
+        f"keystore.keyPassword={_escape_properties_value(password)}",
     ]
     return ("\n".join(lines) + "\n").encode("utf-8")
 
@@ -540,19 +554,22 @@ def run_execute(
         failures.append({"code": "tool_missing", "detail": {"tool": "keytool"}})
         return _execute_result(checks, failures, ks_path, props_path)
 
-    store_pw = gen(PASSWORD_LENGTH)
-    key_pw = gen(PASSWORD_LENGTH)
+    # ONE OS-random password for the store and the key: PKCS12 keys are
+    # read with the store password by Android tooling, so a diverging key
+    # password breaks packageRelease (operator-confirmed M14-175 round 2).
+    password = gen(PASSWORD_LENGTH)
     gen_record: Dict[str, object] = {"exit_code": None, "ok": False}
     argv = [
         str(tool_path),
         "-genkeypair",
         "-keystore", str(ks_path),
+        "-storetype", KEYSTORE_TYPE,
         "-alias", alias,
         "-keyalg", REQUIRED_KEY_ALG,
         "-keysize", str(MIN_KEY_SIZE),
         "-validity", str(validity_days),
-        "-storepass", store_pw,
-        "-keypass", key_pw,
+        "-storepass", password,
+        "-keypass", password,
         "-dname", KEYTOOL_DNAME,
     ]
     try:
@@ -582,7 +599,7 @@ def run_execute(
         return _execute_result(checks, failures, ks_path, props_path)
 
     try:
-        props_bytes = _properties_bytes(ks_path, store_pw, alias, key_pw)
+        props_bytes = _properties_bytes(ks_path, password, alias)
         with open(props_path, "xb") as stream:
             stream.write(props_bytes)
             stream.flush()
@@ -602,7 +619,7 @@ def run_execute(
         return _execute_result(checks, failures, ks_path, props_path)
 
     cert_record, cert_failures = _inspect_certificate(
-        tool_path, ks_path, store_pw, alias, run, now()
+        tool_path, ks_path, password, alias, run, now()
     )
     checks["certificate"] = cert_record  # type: ignore[assignment]
     if cert_failures:
@@ -788,6 +805,15 @@ def run_verify_material(
                 props_state = "incomplete"
                 failures.append({"code": "properties_incomplete"})
             else:
+                # PKCS12 contract: the key is read with the store password,
+                # so diverging passwords fail closed (value-free report).
+                equal = (
+                    values["keystore.storePassword"]
+                    == values["keystore.keyPassword"]
+                )
+                checks["properties_keys"]["store_key_passwords_equal"] = equal  # type: ignore[index]
+                if not equal:
+                    failures.append({"code": "store_key_password_mismatch"})
                 declared = Path(values["keystore.path"])
                 if Path(os.path.realpath(declared)) != Path(os.path.realpath(ks_path)):
                     props_state = "keystore_path_mismatch"
