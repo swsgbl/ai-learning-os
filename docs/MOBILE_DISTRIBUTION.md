@@ -12,7 +12,9 @@
   在 AGC 签名材料与 Android release keystore 落地前，任何文档、清单、状态页
   都不得宣称移动端"生产可用/公开分发就绪"。M14-171A 只让 release 构建管线
   **能消费**外部管理的 keystore（opt-in、四项齐全或失败、无 debug 回退）；
-  keystore 本身仍未落地，release 产物与 `/download` 渠道状态不变
+  M14-173 补的 `tools/android_release/verify_artifact.py` 只是**验收 readiness
+  工具**（对未来的 `assembleRelease` 签名产物做可重复 fail-closed 校验）；
+  keystore 与签名 APK 本身仍未落地，release 产物与 `/download` 渠道状态不变
   （unsigned / pending，见 `apps/web/src/lib/download.ts`）。
 - 清单（manifest）里 `signed=false` 的条目只能停留在 `pending_unsigned`，
   永不进入 `files` 分发数组；debug APK 永不进入公开下载目录。
@@ -34,7 +36,17 @@
        `tools/android_release/preflight.py` fail-closed 钉住）；
 3. [ ] 构建：`gradlew assembleRelease`（CI 或本地，产物
        `app-release-signed.apk`）；
-4. [ ] 校验签名方案（v2+v3）与 `versionCode`/`versionName` 递增；
+4. [ ] 校验签名方案（v2+v3）与 `versionCode`/`versionName` 递增
+       （M14-173 readiness：`tools/android_release/verify_artifact.py`
+       fail-closed 验收——APK 常规文件/SHA256/尺寸与 manifest 一致、
+       `apksigner verify` v2+v3 均为 true 且拒绝 debug 证书
+       （`androiddebugkey` / `CN=Android Debug`）、`aapt dump badging`
+       实际包名/`versionCode`/`versionName` 与 manifest 精确一致（manifest
+       android 频道已最小扩展 `package_name` 字段）、`versionCode` 相对
+       previous 严格递增（无 previous 输入时如实输出 `not_provided`）；
+       apksigner/aapt 按 Android SDK build-tools 约定发现，缺失即
+       fail-closed，绝不下载安装；输出确定性 value-free JSON，不回显
+       证书主体/密钥/环境变量值/本地绝对路径）；
 5. [ ] 计算 SHA256（`sha256sum`）+ 尺寸，填入 `manifest.json` 对应条目
        （`signed: true`）；
 6. [ ] 上传 APK + manifest 到 `download.example.com` 的 `/android/`；

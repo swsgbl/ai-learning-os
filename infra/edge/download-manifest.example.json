@@ -1,10 +1,11 @@
 {
   "schema": "aios-download-manifest/1",
-  "notes": "M14-153 移动分发清单模板（example）：部署 download.example.com 时复制为 download/manifest.json 并填真实值。所有 sha256 为占位文本（不是 64 位十六进制真值）；上线前必须逐文件重算并经 SHA256SUMS 复核。诚实边界：只有签名产物才允许标注 signed=true；未签名产物保持 signed=false 并留在 pending 列表——unsigned ≠ production-ready（docs/MOBILE_DISTRIBUTION.md）。",
+  "notes": "M14-153 移动分发清单模板（example）：部署 download.example.com 时复制为 download/manifest.json 并填真实值。所有 sha256 为占位文本（不是 64 位十六进制真值）；上线前必须逐文件重算并经 SHA256SUMS 复核。诚实边界：只有签名产物才允许标注 signed=true；未签名产物保持 signed=false 并留在 pending 列表——unsigned ≠ production-ready（docs/MOBILE_DISTRIBUTION.md）。android 频道的 package_name 为 M14-173 最小加法扩展（向后兼容），供 tools/android_release/verify_artifact.py 做 APK 实际包名/版本与清单的精确一致性比对。",
   "version": "<与应用 VERSION 一致，例如 0.14.0>",
   "generated_at": "<ISO8601，清单生成时刻>",
   "channels": {
     "android": {
+      "package_name": "<Android applicationId，与 apps/android 的 applicationId 一致，此处不留点分域名样例>",
       "versionCode": "<Android versionCode 整数，例如 14>",
       "versionName": "<Android versionName，例如 0.14.0>",
       "min_api_level": "<最低 Android API，例如 26>",
