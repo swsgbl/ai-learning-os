@@ -665,6 +665,19 @@ curl -sSI https://ndtool.cn/aios | head -n 1    # 200——§3E 行为不变
 端 fail-closed 降级），§0「不宣称公开分发就绪」口径（
 docs/MOBILE_DISTRIBUTION.md）维持不变。
 
+**M14-177 收口（2026-09-29，生产部署证据落档）**：上述部署与验证已
+由 Codex 执行完毕——`nginx -t` 通过、reload 后服务 active；上表外网
+验证逐条通过（清单/APK 200 与内容类型/缓存头、五个 `/android/` 边界
+URI 全 404、`/aios` 三端点 200；公网下载的 manifest/APK 字节重算哈希
+与发布值一致），公网 APK 经 apksigner 复核 v2/v3 均为 true（证书
+SHA256 `b583ed9e…e9bf`，非 debug 证书）。生产配置副本 SHA256
+`3788358b…49ec5`、变更前回滚备份 SHA256 `21d593cc…a660`（回滚锚
+点即本节回滚边界）。完整事实链与哈希全值见
+`docs/evidence/m14-177-android-download-edge-evidence/README.md`。
+仍未关闭：Android 真机安装冒烟（`adb devices` 为空，未执行）、
+Harmony 公开分发（AGC 发布材料未落地）——关闭前不宣称移动端全量
+生产可用（docs/MOBILE_DISTRIBUTION.md §0 口径）。
+
 ## 4. DNS 与 Caddy ACME
 
 1. DNS 控制台添加五条 A 记录 → VPS 公网 IP（TTL 先 300 便于调试，稳定后调大）；
