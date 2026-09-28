@@ -59,6 +59,20 @@ describe("/download 页面契约", () => {
     expect(PANEL_SOURCE).toMatch(/status\s*===?\s*["']available["']/);
     expect(PANEL_SOURCE).toMatch(/reason/);
   });
+
+  it("Android 渠道状态经同源 download manifest 运行时判定（不写死进组件）", () => {
+    // 读取与判定全部来自 lib/download-manifest，组件只消费状态
+    expect(PANEL_SOURCE).toContain("fetchAndroidChannelState");
+    expect(PANEL_SOURCE).toContain("download-manifest");
+    // 无 manifest / 校验失败时的诚实默认：初始 pending
+    expect(PANEL_SOURCE).toMatch(/useState<AndroidChannelState>\(\{\s*status: "pending"/);
+  });
+
+  it("Android 下载链接仅在运行时状态 available 时渲染", () => {
+    // 下载 <a> 的渲染以 androidOverride（available 分支）为门
+    expect(PANEL_SOURCE).toMatch(/androidOverride\s*\?\s*/);
+    expect(PANEL_SOURCE).toMatch(/href=\{androidOverride\.href\}/);
+  });
 });
 
 describe("AppShell 入口契约", () => {

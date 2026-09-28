@@ -4,11 +4,19 @@
 // - PWA 卡：beforeinstallprompt 触发时给「安装到本机」按钮；iOS Safari
 //   （无该事件）显示「添加到主屏幕」分步指引；已安装（standalone 模式）
 //   如实显示已安装；其余环境显示通用指引。安装能力探测失败静默降级。
-// - Android / Harmony 卡：状态来自 src/lib/download.ts（单一事实来源），
-//   签名材料落地前恒为 pending——只展示原因文案，不存在任何下载链接。
+// - Android 卡：静态默认来自 src/lib/download.ts（无 manifest 时恒
+//   pending、无链接——诚实默认）；运行时读取同源 download manifest
+//   （src/lib/download-manifest.ts），仅当 android 频道恰好一个
+//   signed=true 且结构可信的条目时升级为可下载。获取/校验失败静默
+//   降级 pending，绝不显示错误链接。manifest 内容不写死在本组件。
+// - Harmony 卡：状态来自 src/lib/download.ts，AGC 签名未落地前恒 pending。
 import { useEffect, useState } from "react";
-import { CheckCircle2, Clock, Share, Smartphone } from "lucide-react";
+import { CheckCircle2, Clock, Download, Share, Smartphone } from "lucide-react";
 import { DOWNLOAD_CHANNELS, PWA_INSTALL_HINTS } from "@/lib/download";
+import {
+  fetchAndroidChannelState,
+  type AndroidChannelState,
+} from "@/lib/download-manifest";
 import { Card } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
@@ -133,8 +141,29 @@ function ChannelStatusIcon({ status }: { status: "available" | "pending" }) {
   );
 }
 
+/** Android 渠道运行时状态：初始 pending（诚实默认），manifest 可信才 available。 */
+function useAndroidChannelState(): AndroidChannelState {
+  const [state, setState] = useState<AndroidChannelState>({
+    status: "pending",
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    // 任何失败都在 lib 内静默降级 pending——这里只负责呈现。
+    fetchAndroidChannelState().then((resolved) => {
+      if (!cancelled) setState(resolved);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  return state;
+}
+
 export function DownloadPanel() {
   const pwaState = usePwaInstallState();
+  const androidState = useAndroidChannelState();
   const channels = DOWNLOAD_CHANNELS;
   const pwa = channels.find((c) => c.id === "pwa")!;
   const native = channels.filter((c) => c.id !== "pwa");
@@ -168,28 +197,75 @@ export function DownloadPanel() {
         </div>
       </Card>
 
-      {/* 原生渠道：pending 状态如实展示，无任何下载链接 */}
+      {/* 原生渠道：默认 pending 如实展示；Android 经可信 manifest 升级可下载 */}
       <section
         aria-label="原生应用状态"
         className={cn("grid gap-3", native.length > 1 && "sm:grid-cols-2")}
       >
-        {native.map((channel) => (
-          <Card key={channel.id} className="p-5" data-testid={`channel-${channel.id}`}>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <h2 className="font-display text-lg">{channel.title}</h2>
-              <span className="inline-flex items-center gap-1.5 rounded-md bg-warn-soft px-2 py-1 text-xs text-warn">
-                <ChannelStatusIcon status={channel.status} />
-                {channel.statusLabel}
-              </span>
-            </div>
-            <p className="mt-3 text-sm leading-relaxed text-muted">{channel.description}</p>
-            {channel.reason && (
-              <p className="mt-3 border-t border-border pt-3 text-xs leading-relaxed text-subtle">
-                原因：{channel.reason}
-              </p>
-            )}
-          </Card>
-        ))}
+        {native.map((channel) => {
+          const androidOverride =
+            channel.id === "android" && androidState.status === "available"
+              ? androidState
+              : null;
+          const status = androidOverride ? "available" : channel.status;
+          const statusLabel = androidOverride
+            ? "可下载"
+            : channel.statusLabel;
+          const badgeTone = androidOverride
+            ? "bg-good-soft text-good"
+            : "bg-warn-soft text-warn";
+          return (
+            <Card
+              key={channel.id}
+              className="p-5"
+              data-testid={`channel-${channel.id}`}
+            >
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <h2 className="font-display text-lg">{channel.title}</h2>
+                <span
+                  className={cn(
+                    "inline-flex items-center gap-1.5 rounded-md px-2 py-1 text-xs",
+                    badgeTone,
+                  )}
+                >
+                  <ChannelStatusIcon status={status} />
+                  {statusLabel}
+                </span>
+              </div>
+              {androidOverride ? (
+                <>
+                  <p className="mt-3 text-sm leading-relaxed text-muted">
+                    Android 原生应用签名安装包已发布，可从下方下载安装。
+                  </p>
+                  <div className="mt-4">
+                    <a
+                      href={androidOverride.href}
+                      download
+                      className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg transition-opacity duration-150 hover:opacity-90"
+                    >
+                      <Download className="size-4" aria-hidden="true" />
+                      下载安装包
+                      {androidOverride.versionName
+                        ? `（v${androidOverride.versionName}）`
+                        : ""}
+                    </a>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <p className="mt-3 text-sm leading-relaxed text-muted">
+                    {channel.description}
+                  </p>
+                  {channel.reason && (
+                    <p className="mt-3 border-t border-border pt-3 text-xs leading-relaxed text-subtle">
+                      原因：{channel.reason}
+                    </p>
+                  )}
+                </>
+              )}
+            </Card>
+          );
+        })}
       </section>
     </div>
   );
