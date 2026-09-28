@@ -396,6 +396,95 @@ class TestParseArgsDeviceApiBase:
         assert args.device_api_base == "https://ndtool.cn/aios/"
 
 
+# ------------------- M14-169A2b1 plan serialization + device-base gate -----
+
+class TestApiBaseSerializationAndGate:
+    """Plan mode must serialize the api-base decision (mode, loopback
+    narrowing, resolved device URL) without side effects, and a rejected
+    device-side base must block the run before any probe, hdc command,
+    or evidence write."""
+
+    def test_default_loopback_plan_serializes_mode_and_device_url(
+            self, tmp_path):
+        hap = make_hap(tmp_path)
+        tr, to, br = fake_resolvers()
+        getter, get_calls = make_fake_getter()
+        runner, hdc_calls = make_fake_hdc([])
+        result, code = run_backend_smoke(
+            tmp_path, target="127.0.0.1:5555", hap=str(hap),
+            confirm_mutation=False,
+            runner=runner, http_get=getter,
+            target_resolver=tr, tool_resolver=to, bundle_resolver=br,
+        )
+        assert code == EXIT_OK
+        assert result["status"] == "planned"
+        assert result["api_base_mode"] == "loopback"
+        assert result["api_base_loopback_only"] is True
+        # the default device-side base is the emulator alias
+        assert result["device_url"] == "http://10.0.2.2:8000/"
+        assert get_calls == []          # no HTTP request
+        assert hdc_calls == []          # no hdc command
+
+    def test_public_https_plan_serializes_mode_and_device_url(
+            self, tmp_path):
+        hap = make_hap(tmp_path)
+        tr, to, br = fake_resolvers()
+        getter, get_calls = make_fake_getter()
+        runner, hdc_calls = make_fake_hdc([])
+        result, code = run_backend_smoke(
+            tmp_path, target="127.0.0.1:5555", hap=str(hap),
+            api_base="https://ndtool.cn/aios/",
+            device_api_base="https://ndtool.cn/aios/",
+            confirm_mutation=False,
+            runner=runner, http_get=getter,
+            target_resolver=tr, tool_resolver=to, bundle_resolver=br,
+        )
+        assert code == EXIT_OK
+        assert result["status"] == "planned"
+        assert result["api_base_mode"] == "public_https"
+        assert result["api_base_loopback_only"] is False
+        assert result["device_url"] == "https://ndtool.cn/aios/"
+        assert get_calls == []          # no HTTP request
+        assert hdc_calls == []          # no hdc command
+
+    def test_rejected_device_base_blocks_before_any_probe_or_command(
+            self, tmp_path):
+        hap = make_hap(tmp_path)
+        tr, _to, br = fake_resolvers()
+        evidence_dir = tmp_path / "evidence"
+
+        def _must_not_run(*_args, **_kwargs):
+            raise AssertionError("must not run on a blocked request")
+
+        result, code = run_backend_smoke(
+            tmp_path, target="127.0.0.1:5555", hap=str(hap),
+            device_api_base="http://192.168.1.5:8000/",
+            confirm_mutation=True,
+            evidence_dir=evidence_dir,
+            runner=_must_not_run, http_get=_must_not_run,
+            target_resolver=tr, tool_resolver=_must_not_run,
+            bundle_resolver=br,
+        )
+        assert code == EXIT_BLOCKED
+        assert result["status"] == "blocked"
+        codes = {f["code"] for f in result["failures"]}
+        assert "device_api_base_not_allowed" in codes
+        # nothing resolved, nothing probed, nothing executed
+        assert result["device_url"] is None
+        assert result["toolchain"]["probed"] is False
+        assert result["device_access"]["commands_executed"] == 0
+        assert result["device_access"]["hardware_touched"] is False
+        # every step stayed not_run with the request-invalid reason
+        for step in result["steps"]:
+            assert step["status"] == "not_run"
+            assert step["reason"] == "request_invalid"
+        # no evidence directory was created and the rejected raw value
+        # never leaks into the serialized JSON
+        assert not evidence_dir.exists()
+        blob = json.dumps(result, ensure_ascii=False)
+        assert "192.168.1.5" not in blob
+
+
 # ---------------------------------------------------------------- plan ------
 
 class TestPlanMode:
