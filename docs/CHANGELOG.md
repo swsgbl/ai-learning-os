@@ -1,5 +1,31 @@
 # Changelog
 
+## M14-178 — /download 公共下载页真浏览器验收证据（verification/docs-only，非代码）
+
+- 背景：M14-176/M14-177 已完成下载边缘部署与证据收口后，本切片对
+  `https://ndtool.cn/aios/download` 做**真实浏览器验收**（Playwright
+  MCP 桌面 Chromium；桌面 1366×768、移动 390×844 两视口），只记录
+  事实、零代码/零部署/零 secret。
+- 通过：文档 **200**；三张渠道卡齐备；PWA 卡「可用」+ 安装引导；
+  Harmony 卡「待发布（AGC 签名未就绪）」且**零下载链接**；两视口
+  **无横向溢出**、卡片包围盒**零重叠**；console/网络错误全部已识别
+  （宿主根 favicon 404、匿名 auth/me 401——既有/预期，零未解决）；
+  桌面/移动截图均经真实视觉模型复核非空白（原始工件在 gitignored
+  `.verify/`）。
+- 边缘复核：页面内 fetch `/aios/download-manifest.json` **200**
+  no-store、schema/唯一 signed 条目/size 8029570/sha256 `1246c3ef…`
+  与 M14-177 发布值一致；本切片未下载 APK/未重算哈希/未做真机冒烟。
+- **核心发现（blocker，如实落档）**：生产 **Web 镜像构建早于
+  M14-174**——页面自发的 manifest 请求为 0、17 个已加载 chunk 全部
+  不含 download-manifest 接线、Android 卡两视口恒「待发布」零链接
+  （三重独立证据）。边缘侧完全正确，只等 UI 消费；修复 = 重建并滚动
+  家机 Web 镜像（超出本切片禁令，移交 supervisor/Codex）。修复前
+  不宣称 Android 渠道公开可下载。
+- 回滚 = 还原本 commit。证据：
+  `docs/evidence/m14-178-download-browser-evidence/README.md`
+  （唯一入库证据文件）。PR 创建即止；合并决策归 supervisor 审查
+  （supervisor 审查与 remote 发布在其后进行）。
+
 ## M14-177 — Android 下载边缘生产部署证据收口（docs-only，非代码）
 
 - 背景：PR **#266**（state MERGED，title "Android download edge
