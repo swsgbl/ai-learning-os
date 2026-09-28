@@ -613,6 +613,7 @@ class UiDriver:
 
 def _drive_settings_url(
     driver: UiDriver,
+    device_api_base: str,
 ) -> Tuple[bool, List[dict], List[dict]]:
     """Type the fixed device URL into Settings and save. Honest verification.
 
@@ -668,7 +669,7 @@ def _drive_settings_url(
         for _ in range(min(len(current) + 8, 64)):
             driver.key_backspace()
         time.sleep(UI_SETTLE_SECONDS)
-        driver.input_text(fx, fy, DEVICE_API_BASE_URL)
+        driver.input_text(fx, fy, device_api_base)
         time.sleep(UI_SETTLE_SECONDS)
 
         verify, verify_failures = driver.dump()
@@ -677,7 +678,7 @@ def _drive_settings_url(
                 {"code": "settings_verify_layout_unreadable"}]
             continue
         vfield = find_input_node(layout_typed_nodes(verify))
-        if vfield is None or DEVICE_API_BASE_URL not in vfield[2]:
+        if vfield is None or device_api_base not in vfield[2]:
             failures.append({
                 "code": "settings_input_mismatch",
                 "detail": {"attempt": attempt},
@@ -697,7 +698,7 @@ def _drive_settings_url(
             failures.append({"code": "settings_final_layout_unreadable"})
             continue
         joined = "\n".join(t for t, _b in layout_texts(final))
-        if SETTINGS_SAVED_PREFIX + DEVICE_API_BASE_URL in joined:
+        if SETTINGS_SAVED_PREFIX + device_api_base in joined:
             return True, [], notes
         failures.append({
             "code": "settings_save_not_confirmed",
@@ -804,6 +805,7 @@ def run_backend_smoke(
     ability: str = DEFAULT_ABILITY,
     hdc: str = DEFAULT_HDC,
     api_base: Optional[str] = DEFAULT_API_BASE,
+    device_api_base: str = DEVICE_API_BASE_URL,
     confirm_mutation: bool = False,
     known_targets: Optional[Sequence[str]] = None,
     evidence_dir: Optional[Path] = None,
@@ -841,7 +843,10 @@ def run_backend_smoke(
     request_failures += target_failures
     base, base_failures = validate_api_base(api_base)
     request_failures += base_failures
-    if not target_failures:
+    device_base, device_base_failures = validate_device_api_base(
+        device_api_base)
+    request_failures += device_base_failures
+    if not request_failures:
         hap_record, hap_failures = _inspect_hap_device_smoke(root, hap)
         request_failures += hap_failures
     if not request_failures:
@@ -1008,7 +1013,7 @@ def run_backend_smoke(
                     )
                     if name == STEP_SETTINGS_UI:
                         ok, ui_failures, retry_notes = (
-                            _drive_settings_url(driver))
+                            _drive_settings_url(driver, device_base))
                         step_failures += ui_failures
                         digest = driver.digest() if ok else None
                         settings_record = {
