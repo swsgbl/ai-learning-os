@@ -1,6 +1,8 @@
 // M12-01 Android App Shell：app 模块。
 // 第一切片只做壳与认证/API 基础；不接入考试、语音、检索、治理业务。
 import java.io.File
+import java.io.IOException
+import java.nio.file.Path
 import java.util.Properties
 
 plugins {
@@ -16,6 +18,8 @@ plugins {
 //   - 环境变量 AIOS_ANDROID_KEYSTORE_PATH / _STORE_PASSWORD / _KEY_ALIAS / _KEY_PASSWORD
 //   - 或 AIOS_ANDROID_SIGNING_PROPERTIES 指向的仓库外 properties 文件
 //     （键：keystore.path / keystore.storePassword / keystore.keyAlias / keystore.keyPassword）
+//     两个路径输入（properties 文件与 keystore）解析后必须位于仓库之外；
+//     落入仓库内即 failClosedOutsideRepo 直接失败（M14-171B）。
 // opt-in 后四项必须齐全：缺失即在配置阶段直接失败（不回退 debug 签名、
 // 不静默降级）；完全无外部输入时 release 保持 unsigned（诚实默认，
 // 产物为 app-release-unsigned.apk，/download 渠道继续 pending）。
@@ -30,6 +34,38 @@ val releaseSigningInputs: Map<String, String>? = run {
     fun envOrNull(name: String): String? =
         providers.environmentVariable(name).orNull?.trim()?.takeIf { it.isNotEmpty() }
 
+    // M14-171B：fail-closed 仓库边界守卫。文档契约（MOBILE_DISTRIBUTION.md §1）
+    // 要求含密码的 properties 与 keystore 一律存放于仓库之外；本守卫把该要求
+    // 变成配置期硬约束。锚点取 Gradle 根向上最近的 VCS 根（.git 文件或目录，
+    // worktree 内为文件），使仓库根（而非仅 apps/android）都被覆盖；找不到
+    // .git 时退回 rootProject.rootDir。输入路径用 real path 解析（跟随符号
+    // 链接、规范大小写与分隔符）后做带分隔符的前缀判断，防止绝对/相对路径、
+    // 大小写变体或符号链接把仓库内文件伪装成外部输入；任一侧解析失败同样
+    // 直接失败（fail-closed）。错误信息只含输入名，不含任何路径或密码值。
+    // tools/android_release/preflight.py 静态钉住本守卫不可被删除。
+    val signingRepoAnchor: File = generateSequence(rootProject.rootDir) { it.parentFile }
+        .firstOrNull { dir -> File(dir, ".git").exists() }
+        ?: rootProject.rootDir
+    fun failClosedOutsideRepo(rawPath: String, inputName: String) {
+        fun realOrFail(file: File, what: String): Path = try {
+            file.toPath().toRealPath()
+        } catch (_: IOException) {
+            throw GradleException(
+                "M14-171A：无法解析${what}的真实路径，release 签名的仓库边界无法验证，" +
+                    "配置直接失败（fail-closed，路径值不打印）。"
+            )
+        }
+        val repoText = realOrFail(signingRepoAnchor, "仓库锚点").toString().lowercase()
+        val inputText = realOrFail(File(rawPath), inputName).toString().lowercase()
+        if (inputText == repoText || inputText.startsWith(repoText + File.separator)) {
+            throw GradleException(
+                "M14-171A：release 签名输入 $inputName 解析后位于仓库之内。" +
+                    "外部签名材料（含密码的 properties 文件与 keystore）必须存放于仓库之外" +
+                    "（路径值不打印）。"
+            )
+        }
+    }
+
     val propsPath = envOrNull("AIOS_ANDROID_SIGNING_PROPERTIES")
     val fileInputs: Map<String, String> = if (propsPath != null) {
         val propsFile = File(propsPath)
@@ -39,6 +75,7 @@ val releaseSigningInputs: Map<String, String>? = run {
                     "指向的文件不存在或不可读（值不打印）。"
             )
         }
+        failClosedOutsideRepo(propsPath, "AIOS_ANDROID_SIGNING_PROPERTIES")
         Properties().apply { propsFile.inputStream().use { load(it) } }
             .entries.associate { (key, value) -> key.toString() to value.toString().trim() }
             .filterValues { it.isNotEmpty() }
@@ -67,6 +104,10 @@ val releaseSigningInputs: Map<String, String>? = run {
                     "指向的 keystore 文件不存在或不可读（值不打印）。"
             )
         }
+        failClosedOutsideRepo(
+            resolved.getValue("AIOS_ANDROID_KEYSTORE_PATH"),
+            "AIOS_ANDROID_KEYSTORE_PATH",
+        )
         resolved
     }
 }

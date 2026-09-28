@@ -17,9 +17,15 @@ enter the repository):
    names (four AIOS_ANDROID_KEYSTORE_* variables plus the optional
    AIOS_ANDROID_SIGNING_PROPERTIES pointer to a repo-external properties
    file). Missing references mean the opt-in wiring drifted.
-2. The Gradle text must not contain debug-signing fallbacks, literal
+2. The Gradle text must contain the fail-closed repository-boundary guard
+   (M14-171B) that rejects signing inputs resolving inside the repository:
+   the guard function (definition plus both call sites — properties file
+   and keystore), the repository anchor (nearest .git root with a
+   rootProject.rootDir fallback), and real-path resolution. Missing or
+   thinned-out guard tokens mean the boundary can be silently deleted.
+3. The Gradle text must not contain debug-signing fallbacks, literal
    passwords, or literal in-repo keystore paths.
-3. No Android signing material files (.jks/.keystore/.p12/.p7b/.cer/.csr)
+4. No Android signing material files (.jks/.keystore/.p12/.p7b/.cer/.csr)
    may exist inside the repository (pruned local dirs excepted).
 
 Exit codes: 0 = ok (unsigned-ready honest default), 1 = fail-closed
@@ -37,7 +43,7 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 TOOL_NAME = "android_release_preflight"
 GRADLE_FILE_RELPATH = Path("apps/android/app/build.gradle.kts")
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -50,6 +56,22 @@ REQUIRED_ENV_REFERENCES = frozenset({
     "AIOS_ANDROID_KEYSTORE_KEY_PASSWORD",
     "AIOS_ANDROID_SIGNING_PROPERTIES",
 })
+
+# M14-171B repository-boundary guard tokens the Gradle wiring must contain,
+# mapped to the minimum number of textual occurrences. This locks the
+# fail-closed "signing inputs must resolve outside the repository" check so
+# it cannot be silently deleted or thinned to a dead declaration. Only token
+# names and occurrence counts appear in results — matched text is never echoed.
+REQUIRED_BOUNDARY_GUARD: Dict[str, int] = {
+    # guard function: 1 definition + 2 call sites (properties + keystore)
+    "failClosedOutsideRepo": 3,
+    # repository anchor: nearest .git root, rootProject.rootDir fallback
+    "rootProject.rootDir": 1,
+    # symlink/case-canonical path resolution (real path on both sides)
+    "toRealPath": 1,
+    # VCS anchor discovery (worktrees carry .git as a file)
+    '".git"': 1,
+}
 
 # rule -> regexes. Matched text is never echoed into results.
 FORBIDDEN_PATTERNS: Dict[str, Tuple[str, ...]] = {
@@ -96,6 +118,9 @@ def check_gradle_signing_contract(
         "required_env_references": {
             name: False for name in sorted(REQUIRED_ENV_REFERENCES)
         },
+        "boundary_guard": {
+            token: 0 for token in sorted(REQUIRED_BOUNDARY_GUARD)
+        },
         "forbidden_pattern_hits": [],
     }
     failures: List[dict] = []
@@ -111,6 +136,15 @@ def check_gradle_signing_contract(
             failures.append({
                 "code": "missing_env_reference",
                 "detail": {"env": name},
+            })
+
+    for token, required in sorted(REQUIRED_BOUNDARY_GUARD.items()):
+        found = text.count(token)
+        result["boundary_guard"][token] = found
+        if found < required:
+            failures.append({
+                "code": "missing_boundary_guard",
+                "detail": {"token": token, "found": found, "required": required},
             })
 
     for rule, patterns in sorted(FORBIDDEN_PATTERNS.items()):
