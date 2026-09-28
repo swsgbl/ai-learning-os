@@ -1,6 +1,6 @@
 """M13-02 / M13-05 / M13-06 / M13-07 / M13-08 HarmonyOS mock 后端契约测试脚本。
 
-在宿主机上启动 mock 服务器并验证（契约测试共 54 项）：
+在宿主机上启动 mock 服务器并验证（契约测试共 58 项）：
 - 6 个 Home GET 端点返回 200 与关键字段（M13-02）
 - 1 个论文 GET 端点返回 200 与关键字段（M13-05 新增）
 - 1 个检索 providers GET 端点返回 200 与固定形状（M13-06 新增：
@@ -50,6 +50,10 @@
 - audit 错误 query 返回 404
 - GET /api/v1/audit?limit=100&foo=bar 与 GET /api/v1/audit?limit=100& 返回 404
   （audit 整串须精确为 ?limit=100,任何多余参数或尾随 & 均拒绝）
+- GET/POST /download（含 /download/ 与 /download?foo=bar 变体）返回 404
+  （M14-174 新增负断言:/download 是网页入口而非 API 端点,
+  不进入 Harmony API mock 允许清单;DownloadPane 仅纯文本推导展示,
+  绝不向其发起请求）
 
 不依赖模拟器,纯 Python 标准库;可重复执行。
 退出码:0=全通过,1=有失败。
@@ -222,6 +226,13 @@ ENDPOINTS_404 = [
     ("POST", "/api/v1/papers/paper-001/exams"),    # M13-08: 开考写端点对 Harmony 关闭
     ("GET", "/api/v1/exams/exam-m13-08-001?foo=bar"),  # M13-08: 拒绝一切查询串
     ("GET", "/api/v1/exams/exam-m13-08-001?"),         # M13-08: 空查询串同样拒绝 (fail-closed)
+    # M14-174 负断言:/download 是网页入口而非 API 端点,
+    # 不进入 Harmony API mock 允许清单(DownloadPane 仅纯文本推导展示,
+    # 绝不向其发起请求);含尾随斜杠与查询串变体同样 404
+    ("GET", "/download"),               # M14-174: 网页入口不在 API 允许清单
+    ("GET", "/download/"),              # M14-174: 尾随斜杠变体同样拒绝
+    ("GET", "/download?foo=bar"),       # M14-174: 查询串变体同样拒绝
+    ("POST", "/download"),              # M14-174: 非 GET 形式同样关闭
 ]
 
 
