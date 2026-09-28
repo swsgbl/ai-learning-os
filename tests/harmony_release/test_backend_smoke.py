@@ -22,7 +22,9 @@ from tools.harmony_release.backend_smoke import (
     EXIT_OK,
     SETTINGS_MAX_ATTEMPTS,
     api_base_mode,
+    bm_dump_proves_presence,
     find_input_node,
+    install_output_error_signature,
     is_settings_layout,
     layout_typed_nodes,
     parse_args,
@@ -98,8 +100,26 @@ def make_fake_hdc(
     layouts: list[dict],
     *,
     exit_codes: list[int] | None = None,
+    install_stdout: str = "Install Successfully!",
+    bm_dump_stdout: str | None = None,
+    guard_hidumper_stdout: str | None = None,
+    guard_ps_stdout: str | None = None,
 ) -> tuple:
-    """A fake runner that answers layout dumps with canned trees."""
+    """A fake runner that answers layout dumps with canned trees.
+
+    M14-170: install commands answer with the install_stdout line
+    (default a clean success line) and 'shell bm dump -n <bundle>'
+    answers with bm_dump_stdout or, by default, bundle-bearing dump
+    JSON so the post-install presence proof passes; tests inject lies
+    explicitly.
+
+    M14-170 R2b: the start foreground guard probes answer with
+    guard_hidumper_stdout / guard_ps_stdout or, by default, a
+    window table whose top full-screen app window (pid 4711) maps
+    via ps to the default requested bundle, so the normal chain
+    passes; tests inject foreign/launcher mappings or unreadable
+    (empty) hidumper output explicitly.
+    """
     calls: list[tuple[str, ...]] = []
 
     @dataclass(frozen=True)
@@ -110,6 +130,22 @@ def make_fake_hdc(
 
     state = {"layout_index": 0, "exit_index": 0}
 
+    default_hid = (
+        "WindowName displayId pid winId type mode flag zord"
+        " orientation [ x y w h ]\n"
+        "SCB0 0 900 3 2 0 0 19 0 [ 0 0 1268 72 ]\n"
+        "app0 0 4711 8 2 0 0 17 0 [ 0 0 1268 2720 ]\n"
+        "Focus window: 8\n"
+    )
+    default_ps = (
+        "UID PID PPID C STIME TTY TIME CMD\n"
+        "10100 4711 1 0 12:00 ? 00:00:01 com.example.app\n"
+    )
+    hid_text = (guard_hidumper_stdout if guard_hidumper_stdout
+                is not None else default_hid)
+    ps_text = (guard_ps_stdout if guard_ps_stdout is not None
+               else default_ps)
+
     def runner(argv, cwd, env):
         calls.append(tuple(argv))
         rc = 0
@@ -118,6 +154,20 @@ def make_fake_hdc(
                 min(state["exit_index"], len(exit_codes) - 1)]
             state["exit_index"] += 1
         subcommand = argv[3] if len(argv) > 3 else ""
+        if subcommand == "install":
+            return _Result(returncode=rc, stdout=install_stdout)
+        if subcommand == "shell" and "bm" in argv and "dump" in argv:
+            text = bm_dump_stdout
+            if text is None:
+                bundle = (argv[argv.index("-n") + 1]
+                          if "-n" in argv else "")
+                text = json.dumps(
+                    {"bundle": bundle, "applicationInfo": []})
+            return _Result(returncode=rc, stdout=text)
+        if subcommand == "shell" and "hidumper" in argv:
+            return _Result(returncode=rc, stdout=hid_text)
+        if subcommand == "shell" and "ps" in argv:
+            return _Result(returncode=rc, stdout=ps_text)
         if subcommand in ("uitest", "file", "shell"):
             if "dumpLayout" in argv:
                 index = min(state["layout_index"], len(layouts) - 1)
@@ -937,3 +987,251 @@ class TestStructuralInputSelection:
             ("TextInput", "other", "[0,0][20,20]"),
         ]
         assert find_input_node(typed) == (5, 5, "http://127.0.0.1:8000/")
+
+
+# ----------------------- M14-170 install output + presence gate -----------
+
+class TestInstallOutputErrorSignature:
+    """Unit checks for the rc-0-lie detector (fixed signatures only)."""
+
+    def test_matches_no_signature_file_case_insensitive(self):
+        assert install_output_error_signature(
+            "Failure[ERR_INSTALL_PARSE_FAILED] No Signature File", ""
+        ) == "no signature file"
+
+    def test_matches_failure_shape_and_install_failed(self):
+        assert install_output_error_signature(
+            "", "Failure[ERR_INSTALL_FAILED]") == "failure["
+        assert install_output_error_signature(
+            "Install failed! [code]:9568289", "") == "install failed"
+
+    def test_clean_success_output_is_not_an_error(self):
+        assert install_output_error_signature(
+            "AppMod finish Install Successfully!", "") is None
+
+    def test_none_and_empty_output_are_safe(self):
+        assert install_output_error_signature(None, None) is None
+
+
+class TestBmDumpProvesPresence:
+    """Unit checks for the post-install presence proof rule."""
+
+    @dataclass(frozen=True)
+    class _Outcome:
+        returncode: int = 0
+        stdout: str = ""
+        stderr: str = ""
+
+    def test_bundle_name_in_nonempty_output_proves_presence(self):
+        proved, reason = bm_dump_proves_presence(
+            self._Outcome(stdout='{"bundle": "com.example.app"}'),
+            "com.example.app")
+        assert proved is True
+        assert reason is None
+
+    def test_missing_bundle_name_disproves(self):
+        proved, reason = bm_dump_proves_presence(
+            self._Outcome(stdout="[]"), "com.example.app")
+        assert proved is False
+        assert reason == "bm_dump_bundle_absent"
+
+    def test_empty_output_disproves(self):
+        proved, reason = bm_dump_proves_presence(
+            self._Outcome(stdout="   "), "com.example.app")
+        assert proved is False
+        assert reason == "bm_dump_empty_output"
+
+    def test_nonzero_exit_code_disproves(self):
+        proved, reason = bm_dump_proves_presence(
+            self._Outcome(returncode=1, stdout='{"bundle": "x"}'),
+            "com.example.app")
+        assert proved is False
+        assert reason == "bm_dump_exit_code"
+
+
+class TestInstallOutputGate:
+    """The M14-170 gate: rc 0 from hdc install is never trusted on its
+    own - the output must not clearly report an error, and bm dump -n
+    <bundle> must prove presence on the selected target before aa start."""
+
+    def _make(self, tmp_path, **hdc_kwargs):
+        hap = make_hap(tmp_path)
+        tr, to, br = fake_resolvers()
+        runner, calls = make_fake_hdc([], **hdc_kwargs)
+        getter, _ = make_fake_getter()
+        return hap, tr, to, br, runner, getter, calls
+
+    def test_rc0_with_no_signature_output_fails_closed(self, tmp_path):
+        # The observed lie: subprocess exit code 0 while the output
+        # clearly reports "no signature file".
+        _hap, tr, to, br, runner, getter, calls = self._make(
+            tmp_path,
+            install_stdout=("Failure[ERR_INSTALL_PARSE_FAILED] "
+                            "no signature file, failed to install"),
+        )
+        result, code = run_backend_smoke(
+            tmp_path, target="127.0.0.1:5555", hap=str(_hap),
+            confirm_mutation=True,
+            runner=runner, http_get=getter,
+            target_resolver=tr, tool_resolver=to, bundle_resolver=br,
+        )
+        assert code == EXIT_FAILURE
+        steps = {s["name"]: s for s in result["steps"]}
+        assert steps["install"]["status"] == "failure"
+        assert steps["start"]["status"] == "not_run"
+        codes = {f["code"] for f in result["failures"]}
+        assert "install_output_error" in codes
+        # the lie was not trusted: no mutation claim, no cleanup
+        # required, no presence probe, no aa start ever issued
+        assert result["mutation_performed"] is False
+        assert result["cleanup"]["required"] is False
+        assert not any("bm" in c for c in calls)
+        assert not any(c[3:6] == ("shell", "aa", "start") for c in calls)
+
+    def test_clean_install_output_but_bundle_missing_fails_closed(
+            self, tmp_path):
+        # rc 0 with clean success output, but bm dump cannot prove the
+        # bundle is present on the selected target.
+        _hap, tr, to, br, runner, getter, calls = self._make(
+            tmp_path,
+            install_stdout="Install Successfully!",
+            bm_dump_stdout="[]",
+        )
+        result, code = run_backend_smoke(
+            tmp_path, target="127.0.0.1:5555", hap=str(_hap),
+            confirm_mutation=True,
+            runner=runner, http_get=getter,
+            target_resolver=tr, tool_resolver=to, bundle_resolver=br,
+        )
+        assert code == EXIT_FAILURE
+        steps = {s["name"]: s for s in result["steps"]}
+        assert steps["install"]["status"] == "failure"
+        assert steps["install"]["verified_installed"] is False
+        assert steps["start"]["status"] == "not_run"
+        codes = {f["code"] for f in result["failures"]}
+        assert "bundle_not_installed" in codes
+        assert "install_output_error" not in codes
+        # bm dump really ran exactly once on the explicitly selected
+        # target, before any aa start
+        bm_calls = [c for c in calls if "bm" in c and "dump" in c]
+        assert len(bm_calls) == 1
+        assert bm_calls[0][1:3] == ("-t", "127.0.0.1:5555")
+        assert not any(c[3:6] == ("shell", "aa", "start") for c in calls)
+        # the install may have half-succeeded: the mutation claim stands
+        # and cleanup still uninstalls
+        assert result["mutation_performed"] is True
+        assert result["cleanup"]["attempted"] is True
+        assert calls[-1][3] == "uninstall"
+
+
+class TestStartForegroundGate:
+    """M14-170 R2b: rc 0 from aa start is never proof - the one-shot
+    foreground guard (hidumper window table + ps -ef bundle map)
+    must confirm the requested bundle holds the top full-screen
+    app window before Settings may run; every failure fails closed
+    under start_foreground_not_confirmed, later foreground/UI steps
+    are not_run, and cleanup still uninstalls."""
+
+    DEVICE_URL = "http://10.0.2.2:8000/"
+
+    def _run(self, tmp_path, monkeypatch, **hdc_kwargs):
+        monkeypatch.setattr(
+            "tools.harmony_release.backend_smoke.time.sleep",
+            lambda _s: None)
+        hap = make_hap(tmp_path)
+        tr, to, br = fake_resolvers()
+        layouts = [
+            settings_layout(self.DEVICE_URL),
+            settings_layout(self.DEVICE_URL),
+            settings_layout(self.DEVICE_URL, saved=self.DEVICE_URL),
+            home_layout(self.DEVICE_URL),
+        ]
+        runner, calls = make_fake_hdc(layouts, **hdc_kwargs)
+        getter, _ = make_fake_getter()
+        result, code = run_backend_smoke(
+            tmp_path, target="127.0.0.1:5555", hap=str(hap),
+            confirm_mutation=True,
+            runner=runner, http_get=getter,
+            target_resolver=tr, tool_resolver=to, bundle_resolver=br,
+        )
+        return result, code, calls
+
+    def _assert_closed(self, result, code, calls):
+        assert code == EXIT_FAILURE
+        steps = {s["name"]: s for s in result["steps"]}
+        assert steps["start"]["status"] == "failure"
+        assert steps["start"]["foreground_confirmed"] is False
+        assert steps["settings_ui"]["status"] == "not_run"
+        assert steps["home_view"]["status"] == "not_run"
+        assert steps["background"]["status"] == "not_run"
+        codes = {f["code"] for f in result["failures"]}
+        assert "start_foreground_not_confirmed" in codes
+        assert "settings_tab_not_found" not in codes
+        # install was verified: cleanup must still uninstall
+        assert result["mutation_performed"] is True
+        assert result["cleanup"]["attempted"] is True
+        assert calls[-1][3] == "uninstall"
+        return steps
+
+    def test_rc0_foreign_foreground_fails_closed(self, tmp_path,
+                                                  monkeypatch):
+        # aa start exited 0, but ps maps the top app window's pid
+        # to a foreign bundle.
+        result, code, calls = self._run(
+            tmp_path, monkeypatch,
+            guard_ps_stdout="UID PID PPID C STIME TTY TIME CMD\n"
+                          "10100 4711 1 0 12:00 ? 00:00:01 "
+                          "com.other.foreign\n",
+        )
+        steps = self._assert_closed(result, code, calls)
+        detail = next(
+            f["detail"] for f in steps["start"]["failures"]
+            if f["code"] == "start_foreground_not_confirmed")
+        assert detail["reason"] == "foreign_foreground"
+
+    def test_rc0_launcher_foreground_fails_closed(self, tmp_path,
+                                                   monkeypatch):
+        # The launcher holds the top full-screen app window: the
+        # ability never came to the foreground despite rc 0.
+        result, code, calls = self._run(
+            tmp_path, monkeypatch,
+            guard_ps_stdout="UID PID PPID C STIME TTY TIME CMD\n"
+                          "10100 4711 1 0 12:00 ? 00:00:01 "
+                          "com.ohos.launcher\n",
+        )
+        steps = self._assert_closed(result, code, calls)
+        detail = next(
+            f["detail"] for f in steps["start"]["failures"]
+            if f["code"] == "start_foreground_not_confirmed")
+        assert detail["reason"] == "foreign_foreground"
+
+    def test_unreadable_hidumper_fails_closed(self, tmp_path,
+                                               monkeypatch):
+        # Empty hidumper output (even with rc 0): gate 1 rejects
+        # the probe before any window is interpreted.
+        result, code, calls = self._run(
+            tmp_path, monkeypatch, guard_hidumper_stdout="",
+        )
+        steps = self._assert_closed(result, code, calls)
+        detail = next(
+            f["detail"] for f in steps["start"]["failures"]
+            if f["code"] == "start_foreground_not_confirmed")
+        assert detail["reason"] == "hidumper_unreadable"
+
+    def test_normal_success_chain_remains_ok(self, tmp_path,
+                                              monkeypatch):
+        # Default guard evidence (our bundle on top): all seven
+        # steps run and pass, start records the confirmation.
+        result, code, _calls = self._run(tmp_path, monkeypatch)
+        assert code == EXIT_OK, json.dumps(result["failures"],
+                                           ensure_ascii=False)
+        assert result["status"] == "ok"
+        assert [s["name"] for s in result["steps"]] == [
+            "host_preflight", "install", "start", "settings_ui",
+            "home_view", "background", "uninstall",
+        ]
+        assert all(s["status"] == "ok"
+                   for s in result["steps"])
+        steps = {s["name"]: s for s in result["steps"]}
+        assert steps["start"]["foreground_confirmed"] is True
+        assert result["not_run"] == []

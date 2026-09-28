@@ -32,7 +32,10 @@ argv, never the target string, never an absolute path)::
 
     <HTTP GET> <LOOPBACK_URL><ENDPOINT>            (host preflight, injectable)
     hdc -t <TARGET> install <HAP>
+    hdc -t <TARGET> shell bm dump -n <BUNDLE>  (post-install presence proof)
     hdc -t <TARGET> shell aa start -a <ABILITY> -b <BUNDLE>
+    hdc -t <TARGET> shell hidumper -s WindowManagerService -a '-a'
+    hdc -t <TARGET> shell ps -ef
     hdc -t <TARGET> shell uitest dumpLayout -p <REMOTE_LAYOUT_PATH>
     hdc -t <TARGET> file recv <REMOTE_LAYOUT_PATH> <LOCAL_LAYOUT_PATH>
     hdc -t <TARGET> shell uitest uiInput click <X> <Y>
@@ -45,8 +48,18 @@ Steps and their phases (executed in this order)::
 
     host_preflight read_only   anonymous loopback GETs; any mismatch blocks
                                everything below
-    install        mutation    installs the HAP
-    start          foreground  starts the ability (aa start)
+    install        mutation    installs the HAP; rc 0 alone is never
+                               trusted - the output must not clearly
+                               report an error (e.g. "no signature
+                               file"), and bm dump -n <BUNDLE> must then
+                               prove the bundle is present before start
+    start          foreground  starts the ability (aa start); rc 0
+                               alone is never proof - a one-shot
+                               foreground proof (hidumper window
+                               table + ps -ef bundle map) must
+                               confirm the requested bundle holds
+                               the top full-screen app window,
+                               else start_foreground_not_confirmed
     settings_ui    foreground  drives the Settings UI: clear the base-URL
                                field, type the fixed device URL, tap 保存,
                                verify the honest 已保存 confirmation
@@ -137,6 +150,9 @@ try:  # package import (pytest, python -m)
     from tools.harmony_release.device_smoke import (
         child_env as _child_env_device_smoke,
     )
+    from tools.harmony_release.foreground_guard import (
+        evaluate_foreground,
+    )
 except ImportError:  # direct script: python tools/harmony_release/backend_smoke.py
     from device_smoke import (  # type: ignore[no-redef]
         CommandResult,
@@ -157,6 +173,7 @@ except ImportError:  # direct script: python tools/harmony_release/backend_smoke
     )
     from device_smoke import inspect_hap as _inspect_hap_device_smoke  # type: ignore[no-redef]
     from device_smoke import child_env as _child_env_device_smoke  # type: ignore[no-redef]
+    from foreground_guard import evaluate_foreground  # type: ignore[no-redef]
 SCHEMA_VERSION = 1
 TOOL_NAME = "harmony_backend_smoke"
 
@@ -268,6 +285,30 @@ REASON_REQUEST_INVALID = "request_invalid"
 REASON_TOOLCHAIN_UNAVAILABLE = "toolchain_unavailable"
 REASON_PREVIOUS_STEP_FAILED = "previous_step_failed"
 REASON_INSTALL_NOT_SUCCESSFUL = "install_not_successful"
+
+# M14-170 install gate: hdc install sometimes exits 0 while its output
+# clearly reports an error (observed on an unsigned HAP: exit code 0 with
+# a "no signature file" message). rc 0 alone is therefore never trusted;
+# the child output is scanned (lowercase substring) for explicit error
+# signatures. Only the fixed signature itself is ever reported - raw
+# child output is never propagated or serialized.
+INSTALL_OUTPUT_ERROR_SIGNATURES: Tuple[str, ...] = (
+    "no signature file",       # unsigned HAP rejected by the installer
+    "install failed",          # explicit installer failure text
+    "failure[",                # hdc Failure[ERR_...] output shape
+)
+FAILURE_INSTALL_OUTPUT_ERROR = "install_output_error"
+FAILURE_BUNDLE_NOT_INSTALLED = "bundle_not_installed"
+
+# M14-170 R2b start gate: rc 0 from aa start is not proof the
+# requested bundle holds the foreground. One shot of read-only
+# evidence (hidumper window table + ps -ef bundle map) must
+# confirm it before Settings may run; every failure is fail-closed
+# under one code with one closed-set reason. Raw guard output and
+# identifiers are never serialized.
+FAILURE_START_FOREGROUND_NOT_CONFIRMED = "start_foreground_not_confirmed"
+GUARD_HIDUMPER_TIMEOUT = "hidumper_timeout"
+GUARD_HIDUMPER_SPAWN_FAILED = "hidumper_spawn_failed"
 
 STATUS_PLANNED = "planned"
 STATUS_OK = "ok"
@@ -754,14 +795,99 @@ def _shape(subcommand: str, operand_names: Sequence[str]) -> dict:
     }
 
 
+def install_output_error_signature(
+    stdout: Optional[str], stderr: Optional[str]
+) -> Optional[str]:
+    """The matched error signature when install output clearly reports
+    an error, else None (rc 0 is not proof of success on its own).
+
+    Only the fixed signature from INSTALL_OUTPUT_ERROR_SIGNATURES is
+    returned; raw child output never leaves this function.
+    """
+    blob = f"{stdout or ''}\n{stderr or ''}".lower()
+    for signature in INSTALL_OUTPUT_ERROR_SIGNATURES:
+        if signature in blob:
+            return signature
+    return None
+
+
+def bm_dump_proves_presence(
+    outcome: "CommandResult", bundle: str
+) -> Tuple[bool, Optional[str]]:
+    """Does a bm dump -n <bundle> outcome prove the bundle is installed?
+
+    Proof requires rc 0 AND non-empty output naming the bundle. Anything
+    else (nonzero rc, empty output, name absent) is a disproof carrying
+    a closed-set reason - never raw child output.
+    """
+    rc = int(outcome.returncode)
+    stdout = outcome.stdout or ""
+    if rc != 0:
+        return False, "bm_dump_exit_code"
+    if not stdout.strip():
+        return False, "bm_dump_empty_output"
+    if str(bundle) not in stdout:
+        return False, "bm_dump_bundle_absent"
+    return True, None
+
+
+def _prove_start_foreground(
+    run: CommandRunner,
+    program: str,
+    target: str,
+    bundle: str,
+    root: Path,
+    env: Dict[str, str],
+) -> Tuple[Optional[bool], List[dict], int]:
+    """One-shot foreground proof for the just-started bundle.
+
+    Two read-only probes - the WindowManagerService window table
+    and a ps -ef bundle map - feed the pure foreground_guard
+    verdict. A timeout, a spawn failure or any non-ok verdict
+    fails closed as start_foreground_not_confirmed with exactly
+    one closed-set reason; raw guard output and identifiers never
+    leave this function.
+
+    Returns (foreground_confirmed, failures, commands_executed).
+    """
+    code = FAILURE_START_FOREGROUND_NOT_CONFIRMED
+
+    def _closed(reason: str, ran: int) -> Tuple[bool, List[dict], int]:
+        return False, [{"code": code, "detail": {"reason": reason}}], ran
+
+    try:
+        hid = run([program, "-t", target, "shell", "hidumper",
+                   "-s", "WindowManagerService", "-a", "'-a'"],
+                  root, env)
+    except subprocess.TimeoutExpired:
+        return _closed(GUARD_HIDUMPER_TIMEOUT, 1)
+    except OSError:
+        return _closed(GUARD_HIDUMPER_SPAWN_FAILED, 0)
+    try:
+        ps = run([program, "-t", target, "shell", "ps", "-ef"],
+                 root, env)
+    except subprocess.TimeoutExpired:
+        return _closed("ps_timeout", 2)
+    except OSError:
+        return _closed("ps_spawn_failed", 1)
+    verdict, _exit = evaluate_foreground(
+        bundle, hid.stdout or "", ps.stdout or "", int(hid.returncode))
+    if verdict["status"] != STATUS_OK:
+        return False, [{"code": code, "detail": {"reason": verdict["primary_reason"]}}], 2
+    return True, [], 2
+
+
 PLANNED_SHAPES: Dict[str, List[dict]] = {
     STEP_HOST_PREFLIGHT: [{
         "program": "http", "subcommand": "GET",
         "url_recorded": "origin_only_loopback",
         "endpoints": [name for name, _p, _s, _f in HOST_ENDPOINTS],
     }],
-    STEP_INSTALL: [_shape("install", ["hap"])],
-    STEP_START: [_shape("shell aa start", ["ability", "bundle"])],
+    STEP_INSTALL: [_shape("install", ["hap"]),
+                   _shape("shell bm dump", ["bundle"])],
+    STEP_START: [_shape("shell aa start", ["ability", "bundle"]),
+                 _shape("shell hidumper", ["service", "args"]),
+                 _shape("shell ps", ["flags"])],
     STEP_SETTINGS_UI: [
         _shape("shell uitest dumpLayout", ["remote_layout_path"]),
         _shape("shell uitest uiInput click", ["x", "y"]),
@@ -1000,6 +1126,16 @@ def run_backend_smoke(
                         [program, "-t", resolved_target.raw, "shell", "aa",
                          "start", "-a", ability, "-b", str(bundle_name)],
                         root, env)
+                    start_foreground_confirmed: Optional[bool] = None
+                    if int(outcome.returncode) == 0:
+                        confirmed, guard_failures, guard_runs = (
+                            _prove_start_foreground(
+                                run, program, resolved_target.raw,
+                                str(bundle_name), root, env))
+                        step_failures += guard_failures
+                        start_foreground_confirmed = confirmed
+                        commands_executed += guard_runs
+                        hardware_touched = True
                 elif name in (STEP_SETTINGS_UI, STEP_HOME_VIEW):
                     local = Path(tempfile_default()) / (
                         LAYOUT_FILENAME_SETTINGS
@@ -1097,8 +1233,54 @@ def run_backend_smoke(
                     "code": f"{name}_failed",
                     "detail": {"exit_code": rc},
                 })
+            verified_installed: Optional[bool] = None
             if name == STEP_INSTALL and rc == 0:
-                mutation_performed = True
+                signature = install_output_error_signature(
+                    outcome.stdout, outcome.stderr)
+                if signature is not None:
+                    # rc 0 lied: the child output clearly reports an
+                    # error (e.g. an unsigned HAP "no signature file").
+                    # Nothing usable was installed: no mutation claim,
+                    # so no uninstall cleanup is required either.
+                    step_failures.append({
+                        "code": FAILURE_INSTALL_OUTPUT_ERROR,
+                        "detail": {"signature": signature},
+                    })
+                else:
+                    mutation_performed = True
+                    # Clean rc-0 output is still not proof: prove the
+                    # bundle is really present on the explicitly
+                    # selected target before aa start may run.
+                    try:
+                        dump_outcome = run(
+                            [program, "-t", resolved_target.raw, "shell",
+                             "bm", "dump", "-n", str(bundle_name)],
+                            root, env)
+                    except subprocess.TimeoutExpired:
+                        verified_installed = False
+                        step_failures.append({
+                            "code": FAILURE_BUNDLE_NOT_INSTALLED,
+                            "detail": {"proof": "bm_dump_timeout"},
+                        })
+                    except OSError:
+                        verified_installed = False
+                        step_failures.append({
+                            "code": FAILURE_BUNDLE_NOT_INSTALLED,
+                            "detail": {"proof": "bm_dump_spawn_failed"},
+                        })
+                    else:
+                        commands_executed += 1
+                        proved, proof_reason = bm_dump_proves_presence(
+                            dump_outcome, str(bundle_name))
+                        verified_installed = proved
+                        if not proved:
+                            # The install may have half-succeeded, so
+                            # the mutation claim stands and cleanup
+                            # still uninstalls; aa start stays blocked.
+                            step_failures.append({
+                                "code": FAILURE_BUNDLE_NOT_INSTALLED,
+                                "detail": {"proof": proof_reason},
+                            })
             steps.append({
                 "name": name, "phase": phase,
                 "status": STEP_STATUS_FAILURE if step_failures
@@ -1106,6 +1288,10 @@ def run_backend_smoke(
                 "reason": None,
                 "exit_code": rc,
                 "failures": step_failures,
+                **({"verified_installed": verified_installed}
+                   if name == STEP_INSTALL else {}),
+                **({"foreground_confirmed": start_foreground_confirmed}
+                   if name == STEP_START else {}),
             })
             execution_failures += step_failures
             if step_failures:
