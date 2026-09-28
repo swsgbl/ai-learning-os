@@ -20,11 +20,14 @@ from tools.harmony_release.backend_smoke import (
     EXIT_FAILURE,
     EXIT_OK,
     SETTINGS_MAX_ATTEMPTS,
+    api_base_mode,
     find_input_node,
     is_settings_layout,
     layout_typed_nodes,
+    parse_args,
     run_backend_smoke,
     validate_api_base,
+    validate_device_api_base,
 )
 
 # ------------------------------------------------------------------ fakes ---
@@ -238,6 +241,159 @@ class TestValidateApiBase:
         for raw in ("http://user@127.0.0.1:8000/", "http://127.0.0.1:99999/"):
             base, _f = validate_api_base(raw)
             assert base is None
+
+
+# ------------------------------------- M14-169A2a strict public https ------
+
+class TestValidateApiBaseStrictPublic:
+    """M14-169A1a: the strict public https host-base shape."""
+
+    def test_accepts_public_https_root(self):
+        base, failures = validate_api_base("https://example.com/")
+        assert base == "https://example.com/"
+        assert failures == []
+
+    def test_accepts_public_https_with_path_prefix(self):
+        base, failures = validate_api_base("https://ndtool.cn/aios/")
+        assert base == "https://ndtool.cn/aios/"
+        assert failures == []
+
+    def test_accepts_public_https_with_explicit_port(self):
+        base, failures = validate_api_base("https://example.com:8443/")
+        assert failures == []
+
+    def test_accepts_ascii_punycode_host(self):
+        base, failures = validate_api_base("https://xn--r8jz45g.jp/")
+        assert base == "https://xn--r8jz45g.jp/"
+        assert failures == []
+
+    def test_rejects_public_plain_http(self):
+        for raw in ("http://example.com/", "http://ndtool.cn/aios/"):
+            base, failures = validate_api_base(raw)
+            assert base is None
+            assert failures[0]["code"] == "api_base_not_loopback"
+
+    def test_rejects_missing_trailing_slash(self):
+        for raw in ("https://example.com", "https://ndtool.cn/aios",
+                    "https://example.com:8443"):
+            base, _f = validate_api_base(raw)
+            assert base is None
+
+    def test_rejects_query_fragment_userinfo_backslash(self):
+        for raw in ("https://example.com/?q=1",
+                    "https://example.com/#sec",
+                    "https://user:pw@example.com/",
+                    "https://example.com\\/aios/"):
+            base, _f = validate_api_base(raw)
+            assert base is None
+
+    def test_rejects_invalid_public_port(self):
+        base, failures = validate_api_base("https://example.com:99999/")
+        assert base is None
+        assert failures[0]["code"] == "api_base_not_loopback"
+
+    def test_rejects_non_ascii_or_unsafe_hosts(self):
+        for raw in ("https://例え.jp/",          # non-ASCII host
+                    "https://exa_mple.com/",     # underscore in host
+                    "  https://example.com/"):   # whitespace padding
+            base, _f = validate_api_base(raw)
+            assert base is None
+
+
+class TestApiBaseMode:
+    """Accepted bases classify into exactly one mode."""
+
+    def test_loopback_bases_classify_loopback(self):
+        assert api_base_mode("http://127.0.0.1:8000/") == "loopback"
+        assert api_base_mode("https://localhost:8443/") == "loopback"
+
+    def test_public_bases_classify_public_https(self):
+        assert api_base_mode("https://example.com/") == "public_https"
+        assert api_base_mode("https://example.com:8443/") == "public_https"
+
+    def test_public_base_with_prefix_classifies_public_https(self):
+        assert api_base_mode("https://ndtool.cn/aios/") == "public_https"
+
+
+# ------------------------------------------ M14-169A1b1 device-side base ---
+
+class TestValidateDeviceApiBase:
+    """The app's Settings value: emulator alias or strict public https."""
+
+    def test_accepts_emulator_alias_default_port(self):
+        base, failures = validate_device_api_base("http://10.0.2.2:8000/")
+        assert base == "http://10.0.2.2:8000/"
+        assert failures == []
+
+    def test_accepts_emulator_alias_other_explicit_port(self):
+        base, failures = validate_device_api_base("http://10.0.2.2:9000/")
+        assert base == "http://10.0.2.2:9000/"
+        assert failures == []
+
+    def test_accepts_strict_public_https(self):
+        base, failures = validate_device_api_base("https://ndtool.cn/aios/")
+        assert base == "https://ndtool.cn/aios/"
+        assert failures == []
+
+    def test_rejects_missing_value(self):
+        for raw in (None, "", "   "):
+            base, failures = validate_device_api_base(raw)
+            assert base is None
+            assert failures[0]["code"] == "device_api_base_required"
+
+    def test_rejects_loopback_names_other_than_alias(self):
+        for raw in ("http://127.0.0.1:8000/", "http://localhost:8000/",
+                    "https://localhost:8443/"):
+            base, failures = validate_device_api_base(raw)
+            assert base is None
+            assert failures[0]["code"] == "device_api_base_not_allowed"
+
+    def test_rejects_lan_and_private_hosts(self):
+        for raw in ("http://192.168.1.5:8000/", "http://172.16.0.1:8000/",
+                    "http://10.0.0.1:8000/"):
+            base, _f = validate_device_api_base(raw)
+            assert base is None
+
+    def test_rejects_public_plain_http(self):
+        base, failures = validate_device_api_base("http://example.com/")
+        assert base is None
+        assert failures[0]["code"] == "device_api_base_not_allowed"
+
+    def test_rejects_malformed_values(self):
+        for raw in ("http://10.0.2.2:8000",        # missing trailing slash
+                    "http://10.0.2.2:99999/",      # port out of range
+                    "http://10.0.2.2:8000/?q=1",   # query on the alias
+                    "http://user@10.0.2.2:8000/",  # userinfo
+                    "  http://10.0.2.2:8000/  ",   # whitespace padding
+                    "://broken"):                  # not a URL at all
+            base, _f = validate_device_api_base(raw)
+            assert base is None
+
+    def test_rejects_non_ascii_or_unsafe_input(self):
+        for raw in ("https://例え.jp/",             # non-ASCII host
+                    "https://exa_mple.com/",        # unsafe host character
+                    "http://10.0.2.2:8000/中文"):    # non-ASCII on the alias
+            base, _f = validate_device_api_base(raw)
+            assert base is None
+
+    def test_failures_never_echo_raw_value(self):
+        _base, failures = validate_device_api_base("http://10.0.2.2:9000/?x=9")
+        blob = json.dumps(failures, ensure_ascii=False)
+        assert "10.0.2.2:9000" not in blob
+        assert "?x=9" not in blob
+
+
+class TestParseArgsDeviceApiBase:
+    """--device-api-base: fixed emulator-alias default, explicit override."""
+
+    def test_default_device_api_base_is_emulator_alias(self):
+        args = parse_args(["--target", "127.0.0.1:5555"])
+        assert args.device_api_base == "http://10.0.2.2:8000/"
+
+    def test_explicit_device_api_base_overrides_default(self):
+        args = parse_args(["--target", "127.0.0.1:5555",
+                           "--device-api-base", "https://ndtool.cn/aios/"])
+        assert args.device_api_base == "https://ndtool.cn/aios/"
 
 
 # ---------------------------------------------------------------- plan ------
