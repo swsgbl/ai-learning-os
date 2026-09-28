@@ -22,7 +22,9 @@ from tools.harmony_release.backend_smoke import (
     EXIT_OK,
     SETTINGS_MAX_ATTEMPTS,
     api_base_mode,
+    bm_dump_proves_presence,
     find_input_node,
+    install_output_error_signature,
     is_settings_layout,
     layout_typed_nodes,
     parse_args,
@@ -98,8 +100,17 @@ def make_fake_hdc(
     layouts: list[dict],
     *,
     exit_codes: list[int] | None = None,
+    install_stdout: str = "Install Successfully!",
+    bm_dump_stdout: str | None = None,
 ) -> tuple:
-    """A fake runner that answers layout dumps with canned trees."""
+    """A fake runner that answers layout dumps with canned trees.
+
+    M14-170: install commands answer with the install_stdout line
+    (default a clean success line) and 'shell bm dump -n <bundle>'
+    answers with bm_dump_stdout or, by default, bundle-bearing dump
+    JSON so the post-install presence proof passes; tests inject lies
+    explicitly.
+    """
     calls: list[tuple[str, ...]] = []
 
     @dataclass(frozen=True)
@@ -118,6 +129,16 @@ def make_fake_hdc(
                 min(state["exit_index"], len(exit_codes) - 1)]
             state["exit_index"] += 1
         subcommand = argv[3] if len(argv) > 3 else ""
+        if subcommand == "install":
+            return _Result(returncode=rc, stdout=install_stdout)
+        if subcommand == "shell" and "bm" in argv and "dump" in argv:
+            text = bm_dump_stdout
+            if text is None:
+                bundle = (argv[argv.index("-n") + 1]
+                          if "-n" in argv else "")
+                text = json.dumps(
+                    {"bundle": bundle, "applicationInfo": []})
+            return _Result(returncode=rc, stdout=text)
         if subcommand in ("uitest", "file", "shell"):
             if "dumpLayout" in argv:
                 index = min(state["layout_index"], len(layouts) - 1)
@@ -937,3 +958,138 @@ class TestStructuralInputSelection:
             ("TextInput", "other", "[0,0][20,20]"),
         ]
         assert find_input_node(typed) == (5, 5, "http://127.0.0.1:8000/")
+
+
+# ----------------------- M14-170 install output + presence gate -----------
+
+class TestInstallOutputErrorSignature:
+    """Unit checks for the rc-0-lie detector (fixed signatures only)."""
+
+    def test_matches_no_signature_file_case_insensitive(self):
+        assert install_output_error_signature(
+            "Failure[ERR_INSTALL_PARSE_FAILED] No Signature File", ""
+        ) == "no signature file"
+
+    def test_matches_failure_shape_and_install_failed(self):
+        assert install_output_error_signature(
+            "", "Failure[ERR_INSTALL_FAILED]") == "failure["
+        assert install_output_error_signature(
+            "Install failed! [code]:9568289", "") == "install failed"
+
+    def test_clean_success_output_is_not_an_error(self):
+        assert install_output_error_signature(
+            "AppMod finish Install Successfully!", "") is None
+
+    def test_none_and_empty_output_are_safe(self):
+        assert install_output_error_signature(None, None) is None
+
+
+class TestBmDumpProvesPresence:
+    """Unit checks for the post-install presence proof rule."""
+
+    @dataclass(frozen=True)
+    class _Outcome:
+        returncode: int = 0
+        stdout: str = ""
+        stderr: str = ""
+
+    def test_bundle_name_in_nonempty_output_proves_presence(self):
+        proved, reason = bm_dump_proves_presence(
+            self._Outcome(stdout='{"bundle": "com.example.app"}'),
+            "com.example.app")
+        assert proved is True
+        assert reason is None
+
+    def test_missing_bundle_name_disproves(self):
+        proved, reason = bm_dump_proves_presence(
+            self._Outcome(stdout="[]"), "com.example.app")
+        assert proved is False
+        assert reason == "bm_dump_bundle_absent"
+
+    def test_empty_output_disproves(self):
+        proved, reason = bm_dump_proves_presence(
+            self._Outcome(stdout="   "), "com.example.app")
+        assert proved is False
+        assert reason == "bm_dump_empty_output"
+
+    def test_nonzero_exit_code_disproves(self):
+        proved, reason = bm_dump_proves_presence(
+            self._Outcome(returncode=1, stdout='{"bundle": "x"}'),
+            "com.example.app")
+        assert proved is False
+        assert reason == "bm_dump_exit_code"
+
+
+class TestInstallOutputGate:
+    """The M14-170 gate: rc 0 from hdc install is never trusted on its
+    own - the output must not clearly report an error, and bm dump -n
+    <bundle> must prove presence on the selected target before aa start."""
+
+    def _make(self, tmp_path, **hdc_kwargs):
+        hap = make_hap(tmp_path)
+        tr, to, br = fake_resolvers()
+        runner, calls = make_fake_hdc([], **hdc_kwargs)
+        getter, _ = make_fake_getter()
+        return hap, tr, to, br, runner, getter, calls
+
+    def test_rc0_with_no_signature_output_fails_closed(self, tmp_path):
+        # The observed lie: subprocess exit code 0 while the output
+        # clearly reports "no signature file".
+        _hap, tr, to, br, runner, getter, calls = self._make(
+            tmp_path,
+            install_stdout=("Failure[ERR_INSTALL_PARSE_FAILED] "
+                            "no signature file, failed to install"),
+        )
+        result, code = run_backend_smoke(
+            tmp_path, target="127.0.0.1:5555", hap=str(_hap),
+            confirm_mutation=True,
+            runner=runner, http_get=getter,
+            target_resolver=tr, tool_resolver=to, bundle_resolver=br,
+        )
+        assert code == EXIT_FAILURE
+        steps = {s["name"]: s for s in result["steps"]}
+        assert steps["install"]["status"] == "failure"
+        assert steps["start"]["status"] == "not_run"
+        codes = {f["code"] for f in result["failures"]}
+        assert "install_output_error" in codes
+        # the lie was not trusted: no mutation claim, no cleanup
+        # required, no presence probe, no aa start ever issued
+        assert result["mutation_performed"] is False
+        assert result["cleanup"]["required"] is False
+        assert not any("bm" in c for c in calls)
+        assert not any(c[3:6] == ("shell", "aa", "start") for c in calls)
+
+    def test_clean_install_output_but_bundle_missing_fails_closed(
+            self, tmp_path):
+        # rc 0 with clean success output, but bm dump cannot prove the
+        # bundle is present on the selected target.
+        _hap, tr, to, br, runner, getter, calls = self._make(
+            tmp_path,
+            install_stdout="Install Successfully!",
+            bm_dump_stdout="[]",
+        )
+        result, code = run_backend_smoke(
+            tmp_path, target="127.0.0.1:5555", hap=str(_hap),
+            confirm_mutation=True,
+            runner=runner, http_get=getter,
+            target_resolver=tr, tool_resolver=to, bundle_resolver=br,
+        )
+        assert code == EXIT_FAILURE
+        steps = {s["name"]: s for s in result["steps"]}
+        assert steps["install"]["status"] == "failure"
+        assert steps["install"]["verified_installed"] is False
+        assert steps["start"]["status"] == "not_run"
+        codes = {f["code"] for f in result["failures"]}
+        assert "bundle_not_installed" in codes
+        assert "install_output_error" not in codes
+        # bm dump really ran exactly once on the explicitly selected
+        # target, before any aa start
+        bm_calls = [c for c in calls if "bm" in c and "dump" in c]
+        assert len(bm_calls) == 1
+        assert bm_calls[0][1:3] == ("-t", "127.0.0.1:5555")
+        assert not any(c[3:6] == ("shell", "aa", "start") for c in calls)
+        # the install may have half-succeeded: the mutation claim stands
+        # and cleanup still uninstalls
+        assert result["mutation_performed"] is True
+        assert result["cleanup"]["attempted"] is True
+        assert calls[-1][3] == "uninstall"
