@@ -1,5 +1,42 @@
 # Changelog
 
+## M14-167 — 生产重启自愈证据回填（docs-only，非代码）
+
+- 背景：M14-166 证据收口（PR #256 merge `9bbda837`）留下最大
+  开放项「reboot 自愈尚未验证」；2026-09-28 04:14 本地时间
+  supervisor 受控重启本机生产栈后全链自愈成立——本切片只把
+  supervisor 已验证事实落档，零生产触碰。
+- 重启与恢复事实：LastBootUpTime `2026-09-28 04:14:10`；恢复
+  任务 `AIOS-Production-Recovery` BootTrigger 自动触发，
+  LastRunTime `04:14:27`、LastTaskResult `0`；恢复日志
+  `artifacts/recovery/recovery-20260928-041625.log` 记录镜像
+  pin **9/9**、`compose up -d --no-build` 幂等、**6/6** profile
+  服务 healthy、清理 stale voice manifest 并受控启动
+  FunASR/CosyVoice、结果 OK（原文 gitignored 不入库）。
+- 重启后健康：compose 项目 `aios-m14-03-production-rehearsal`
+  **7 服务 healthy**（api/web/livekit/minio/postgres/redis/
+  searxng）；`127.0.0.1:8010/health` 与 `8011/health` 均 200。
+- 边缘自愈（M14-166 开放项关闭证据）：计划任务 `AIOS-Edge-FRPC`
+  LastRunTime `04:14:55`、State `Running`、LastTaskResult
+  `267009`（`0x41301` 任务正在运行——长驻任务预期状态码，非
+  失败）；frpc PID `17324`（CreationDate `04:14:55`）全机**恰好
+  1 实例**且由计划任务持有；controller status `installed`。
+  对照 M14-166 关闭条件（受控重启 + 恰好一个控制器持有实例 +
+  公网恢复）三项全满足——reboot 自愈验证**本项关闭**。
+- 公网回归（全部 HTTP 200，字节数与 M14-166 逐一一致无漂移）：
+  `/aios/download` 20488 bytes、`/aios/manifest.webmanifest`
+  669 bytes、`/aios/sw.js` 7284 bytes、`/aios/health` 46 bytes。
+- 诚实边界：**docs-only 证据回填——零代码/模板/测试/compose/env/
+  infra/远端变更，零 secret 读写，不重启/启动/停止任何生产服务**；
+  reboot 自愈为**单次受控重启**实证，非对未来每次重启的持续保证；
+  公网/健康检查为时点证据；**production_ready=false 不变**——
+  真实 4G/5G 手机清单、TURN/TLS+真实语音 E2E、Android 签名 APK、
+  Harmony AGC 签名 HAP、持续监控告警、长 soak 仍开放。回滚 =
+  还原本 commit。证据：
+  `docs/evidence/m14-167-reboot-selfheal/README.md`（唯一入库
+  证据文件）。PR 创建即止；合并决策归 supervisor 审查（supervisor
+  审查与 remote 发布在其后进行）。
+
 ## M14-166 — 公共 PWA + FRPC WSS 生产证据收口（docs-only，非代码）
 
 - 背景：M14-164 通用 PWA 下载/安装入口（PR #254，state MERGED，
