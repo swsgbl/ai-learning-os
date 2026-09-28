@@ -202,6 +202,20 @@ PUBLIC_API_BASE_RE = re.compile(
 )
 
 
+# M14-169A1b1: the device-side base URL rule. The app on the emulator
+# reaches the host only via the emulator's loopback alias with an
+# explicit port (the fixed device URL is exactly this shape); anything
+# else on the device side must be the strict public https production
+# shape PUBLIC_API_BASE_RE above already enforces. Loopback names,
+# private/LAN hosts other than the alias, public plain http, userinfo,
+# query, fragment, backslashes, whitespace padding, non-ASCII hosts,
+# malformed ports and a missing trailing slash all fail to match here
+# and therefore fail closed in validate_device_api_base below.
+DEVICE_API_BASE_RE = re.compile(
+    r"^http://10\.0\.2\.2:([0-9]{1,5})/$"
+)
+
+
 def _port_is_valid(port_text: Optional[str]) -> bool:
     """0-65535 only; the regex alone accepts 5 digits like 99999."""
     return port_text is None or 0 <= int(port_text) <= 65535
@@ -340,6 +354,46 @@ def api_base_mode(validated_base: str) -> str:
     if loopback and _port_is_valid(loopback.group(1)):
         return "loopback"
     return "public_https"
+
+
+def validate_device_api_base(
+    raw: Optional[str],
+) -> Tuple[Optional[str], List[dict]]:
+    """Validate the device-side base URL (the app's Settings value).
+
+    Accepted (M14-169A1b1): exactly ``http://10.0.2.2:<port>/`` with
+    an explicit valid port (the fixed device URL is this shape), or any
+    base ``validate_api_base`` accepts as strict public https via
+    ``api_base_mode``. Everything else fails closed: blank or
+    whitespace-padded values, loopback names, private/LAN hosts other
+    than the emulator alias, public plain http, userinfo, query,
+    fragment, backslashes, non-ASCII hosts, malformed ports and a
+    missing trailing slash. Failures reference ``--device-api-base``
+    and never echo the raw value.
+    """
+    if raw is None or not str(raw).strip():
+        return None, [{
+            "code": "device_api_base_required",
+            "detail": {"argument": "--device-api-base"},
+        }]
+    token = str(raw).strip()
+    emulator = DEVICE_API_BASE_RE.match(token)
+    if token == str(raw) and emulator and _port_is_valid(emulator.group(1)):
+        return token, []
+    public, _ = validate_api_base(raw)
+    if public is not None and api_base_mode(public) == "public_https":
+        return public, []
+    return None, [{
+        "code": "device_api_base_not_allowed",
+        "detail": {
+            "argument": "--device-api-base",
+            "rule": "emulator alias http://10.0.2.2:<port>/ (explicit "
+                    "port, trailing slash) or strict public https (ASCII "
+                    "host, optional port, at most one path prefix); no "
+                    "userinfo/query/fragment/backslash; no whitespace "
+                    "padding",
+        },
+    }]
 
 
 def _url_origin(base: str) -> str:
