@@ -717,6 +717,32 @@ class TestMonotonicity:
         assert code == EXIT_FAILURE
         assert "previous_manifest_invalid" in [f["code"] for f in result["failures"]]
 
+    def test_previous_manifest_missing_schema_fails_closed(self, tmp_path):
+        """伪装对象：合法形态 versionCode 但无 schema —— 不是 download manifest，拒绝。"""
+        imposter = tmp_path / "prev-imposter.json"
+        imposter.write_text(
+            json.dumps({"channels": {"android": {"versionCode": PREVIOUS_VERSION_CODE}}}),
+            encoding="utf-8",
+        )
+        result, code = verify(tmp_path, previous_manifest=imposter)
+        assert code == EXIT_FAILURE
+        assert "previous_manifest_invalid" in [
+            f["code"] for f in result["failures"]
+        ]
+
+    def test_previous_manifest_wrong_schema_fails_closed(self, tmp_path):
+        """schema 不是 aios-download-manifest/1 的 previous manifest 拒绝。"""
+        prev_dir = tmp_path / "prev"
+        prev_dir.mkdir()
+        prev = make_manifest(
+            prev_dir, version_code=PREVIOUS_VERSION_CODE, schema="other-schema/9"
+        )
+        result, code = verify(tmp_path, previous_manifest=prev)
+        assert code == EXIT_FAILURE
+        assert "previous_manifest_invalid" in [
+            f["code"] for f in result["failures"]
+        ]
+
     def test_negative_previous_version_code_fails_closed(self, tmp_path):
         """防御：直接传负数给 run_verify 也必须 fail-closed（与 manifest 契约一致）。"""
         result, code = verify(tmp_path, previous_version_code=-3)

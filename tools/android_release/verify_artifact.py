@@ -32,7 +32,9 @@ identity match):
    actual package name / versionCode / versionName, matched exactly against
    the manifest;
 6. when a previous manifest or previous versionCode is supplied, the actual
-   versionCode is strictly greater; without previous input the monotonicity
+   versionCode is strictly greater (a previous manifest must itself carry
+   schema ``aios-download-manifest/1`` — anything else is rejected as
+   ``previous_manifest_invalid``); without previous input the monotonicity
    check honestly reports ``not_provided`` and never claims a pass.
 
 Tool discovery follows the Android SDK build-tools convention
@@ -629,6 +631,11 @@ def _previous_version_code_from_manifest(
         return None, []
     model, error = load_manifest(previous_manifest)
     if error is not None:
+        return None, [{"code": "previous_manifest_invalid"}]
+    # Authority gap closed: the previous manifest must be a download manifest
+    # of the same schema — a bare JSON dict with a plausible android
+    # versionCode is an imposter and is rejected without reading further.
+    if model.get("schema") != MANIFEST_SCHEMA:
         return None, [{"code": "previous_manifest_invalid"}]
     channels = model.get("channels")
     channel = channels.get("android") if isinstance(channels, dict) else None
