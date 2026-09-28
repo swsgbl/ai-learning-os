@@ -1,5 +1,43 @@
 # Changelog
 
+## M14-172 — Harmony install-gate 回归证据收口（docs-only，非代码）
+
+- 背景：PR **#259**（state MERGED，title "Harden Harmony smoke
+  install and foreground gates"，merge commit `ea1f1cdd`，merge-post
+  main CI **5/5 SUCCESS**：Android/API/Web/Docker/Release tools）
+  合入 `backend_smoke.py` install-gate 加固——install 输出 fail-closed
+  解析（rc 0 一律不可信，未签名 `no signature file` 命中
+  `install_output_error`）、post-install `bm dump` 存在性证明、
+  纯前台守卫（feature head `ea9e2ef`，含 `f424e7a`/`cb7ab5e`/
+  `ea9e2ef` 三提交）。supervisor 随后在 M14-170B 分支
+  `verify/m14-170b-install-gate-regression`（**精确基于 merge
+  commit `ea1f1cd`**）执行受控失败回归——本切片只把结果落档。
+- 回归设置：目标 `127.0.0.1:15566` 运行前后在线；未签名 HAP
+  `apps/harmony/entry/build/default/outputs/default/entry-default-unsigned.hap`
+  **220,008 bytes**，SHA256
+  `402464CA37D2F697F9C043B5A6ACF863D2DCAAB4A016BAE0D197B8ADE59BA59F`；
+  公共 API base `https://ndtool.cn/aios/`，host preflight **6/6
+  matched**（health/auth_status/version 200，privacy/ops_snapshot/
+  audit 401）。
+- 受控失败验收：真实退出码 **1**、`status=failure`、failures 恰好
+  一个 `install_output_error` detail
+  `{signature: "no signature file"}`；`mutation_performed=false`、
+  `verified_installed=null`、cleanup `not_required`；start/
+  settings_ui/home_view/background/uninstall 全部 not_run
+  （previous_step_failed 或 install_not_successful）；无
+  `settings_tab_not_found` 警告——未签名 HAP 被安装门禁 fail-closed
+  拦截，无伪造安装/启动成功。
+- Post-run 证明：`bm dump -n com.ailearningos.app` 报 bundle
+  缺失（与拦截结论互证）；tracked files 运行后 clean。
+- 诚实边界：**docs-only 证据收口——零代码/模板/测试/compose/env/
+  infra/远端变更，零生产/设备操作，零 secret 读写**；本次只验证
+  smoke 门禁本身，**不创建 AGC 签名材料、不产出签名 HAP、不声称
+  Harmony 生产分发就绪**（签名 HAP 分发仍开放）；单次受控失败回归
+  为时点证据。回滚 = 还原本 commit。证据：
+  `docs/evidence/m14-170-harmony-install-gate/README.md`（唯一入库
+  证据文件）。PR 创建即止；合并决策归 supervisor 审查（supervisor
+  审查与 remote 发布在其后进行）。
+
 ## M14-167 — 生产重启自愈证据回填（docs-only，非代码）
 
 - 背景：M14-166 证据收口（PR #256 merge `9bbda837`）留下最大
