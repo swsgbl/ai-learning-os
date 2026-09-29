@@ -9,6 +9,29 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-183 Harmony current-main 回归证据收口（docs-only 切片）**：worktree
+`ai-learning-os-worktrees/m14-180-harmony-current-main-regression`，分支
+`harmony/m14-183-current-main-regression-evidence`，基于 main `7b1e683`
+（PR #272 merge，精确基点）。原始执行基点 `3844162`（PR #270 merge，
+该 worktree 初始 HEAD）；两基点间 diff 仅 `tools/ops/`、`tests/ops/`、
+CI 工作流与 docs——零 Harmony 应用/工具代码变更，但本切片**不声称**
+在当前头部做过任何运行时重跑。已执行时点证据（引用 gitignored
+`.verify/m14-180-harmony-current-main-regression/` 工件）：release 构建
+exit 0，unsigned HAP 235,172 字节，SHA256
+`EC058A607726A8EBC83A48167E2B73AB59D3F6A7348F9857AE8D9F6743BA23B1`；
+聚焦 release 测试 679 passed / 1 skipped；mock 契约 85/85；公共只读
+preflight 6/6（health/auth_status/version 200，privacy/ops_snapshot/
+audit 401）；install gate 受控失败（fail-closed，如设计）：恰一个
+`install_output_error`，detail `{signature: "no signature file"}`，
+`verified_installed=null`、`mutation_performed=false`、cleanup
+`not_required`；装后运行时/UI 证据保持 not_run，不作任何已验证设备
+回归声明；签名 debug identity 或 AGC 发布材料缺失仍是硬阻塞。本切片
+零重跑、零设备操作、零网络请求、零生产触碰；验证 = 两 docs 守卫
+（version sync + R1 措辞 sweep）、`git diff --check`、新增行 secret/
+本地路径/U+FFFD 扫描 0 真实命中（仅自指性关键词命中）。证据：
+`docs/evidence/m14-183-harmony-current-main-regression/README.md`（唯一
+入库文件）。supervisor 审查与 remote 发布（push/PR/合并）在其后进行。
+
 **M14-181 公网边缘优化设计（design-only 切片）**：worktree
 `ai-learning-os-worktrees/m14-180-public-edge-stability-probe`，分支
 `ops/m14-181-public-edge-optimization-design`，基于 main `7bc9334`
