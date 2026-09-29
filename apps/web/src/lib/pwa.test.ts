@@ -2,6 +2,8 @@
 // 契约：start_url / scope / id / SW 注册地址 / apple-touch-icon / manifest
 // 图标全部由 NEXT_PUBLIC_BASE_PATH 推导——空 = 根路径构建行为完全不变；
 // "/aios" = 所有路径带且仅带一层前缀（无双重前缀、无遗漏前缀）。
+// M14-179：favicon（FAVICON_ICON）纳入同一契约——metadata 不提供
+// rel=icon 时浏览器回退请求域根 /favicon.ico（宿主 404 噪音，M14-178）。
 // scope 必须以斜杠结尾（W3C 规范：scope 是 URL 前缀），start_url 必须落在
 // scope 内；非 GET-bypass 等运行时行为见 sw-contract.test.ts。
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -23,6 +25,8 @@ describe("pwa 路径契约（随 basePath 正确变化）", () => {
     expect(pwa.PWA_ID).toBe("/");
     expect(pwa.SW_REGISTER_SRC).toBe("/sw.js");
     expect(pwa.APPLE_TOUCH_ICON).toBe("/apple-touch-icon.png");
+    // M14-179：favicon 复用既有 any-192 图标资产，root 构建为根相对路径
+    expect(pwa.FAVICON_ICON).toBe("/icons/icon-192.png");
     expect(pwa.PWA_MANIFEST_ICONS).toHaveLength(4);
     for (const icon of pwa.PWA_MANIFEST_ICONS) {
       expect(icon.src.startsWith("/icons/")).toBe(true);
@@ -38,6 +42,9 @@ describe("pwa 路径契约（随 basePath 正确变化）", () => {
     expect(pwa.PWA_ID).toBe("/aios/");
     expect(pwa.SW_REGISTER_SRC).toBe("/aios/sw.js");
     expect(pwa.APPLE_TOUCH_ICON).toBe("/aios/apple-touch-icon.png");
+    // M14-179：favicon 与其他公共路径同受 basePath 契约约束
+    expect(pwa.FAVICON_ICON).toBe("/aios/icons/icon-192.png");
+    expect(pwa.FAVICON_ICON.startsWith("/aios/icons/")).toBe(true);
     for (const icon of pwa.PWA_MANIFEST_ICONS) {
       expect(icon.src.startsWith("/aios/icons/")).toBe(true);
       expect(icon.src).not.toContain("/aios/aios");

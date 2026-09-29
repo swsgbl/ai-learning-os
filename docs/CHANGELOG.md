@@ -1,5 +1,34 @@
 # Changelog
 
+## M14-179 — 公开 /download 页浏览器噪音源消除（favicon 404 + 匿名 auth/me 401）
+
+- 背景：M14-178 真浏览器验收把两项 console/网络错误判为「已识别、
+  非阻断」——宿主根 `/favicon.ico` 404（metadata 未提供 rel=icon 时
+  浏览器自动回退）与匿名访客 `/aios/api/v1/auth/me` 401（AppShell
+  无条件探测登录态）。本切片在生产 Web 镜像重建前移除这两处噪音。
+- 实现：① `pwa.ts` 新增 `FAVICON_ICON` basePath 契约（复用既有
+  any-192 图标资产，root=`/icons/icon-192.png`、`/aios` 构建带且仅带
+  一层前缀，源码零 `/aios` 硬编码），root metadata `icons.icon` 与
+  apple-touch-icon 并列注入；② 新增 `lib/public-routes.ts`
+  `isPublicRoute` 单一事实来源（usePathname 为不含 basePath 的规范
+  路径，精确匹配 `/download`），AppShell 仅在公开路由跳过匿名
+  auth 探测——其余路由的探测/登录/退出/治理入口行为零变化；
+  `download-manifest.ts` / `download-panel.tsx` 未动（manifest 驱动
+  的 Android 可用性行为不变）。
+- 验证：apps/web vitest **10 文件 / 123 测试全过**（基线 116，+7：
+  FAVICON_ICON root/basePath 推导、isPublicRoute 四象限、favicon
+  metadata 与探测门接线源码契约）；typecheck 干净；lint **0 errors /
+  14 warnings 与基线完全一致（零新增）**；生产 basePath 构建成功，
+  产物 `download.html` 实测 `<link rel="icon" href="/aios/icons/
+  icon-192.png">`（root 构建 `/icons/icon-192.png`），产物零
+  favicon.ico 回退引用；`git diff --check` 干净，新增行 secret /
+  本地路径 / IP / U+FFFD 扫描零命中。
+- 边界（如实）：未做生产部署、镜像重建或浏览器重新验收（归
+  supervisor/Codex；重建后可重跑 M14-178 §1/§4 断言复核）；「/download
+  零 auth/me 调用」为源码契约 + 单元契约 + 构建产物级验证，非真
+  浏览器时点证据。
+- 回滚 = 还原本 commit。
+
 ## M14-178 — /download 公共下载页真浏览器验收证据（verification/docs-only，非代码）
 
 - 背景：M14-176/M14-177 已完成下载边缘部署与证据收口后，本切片对

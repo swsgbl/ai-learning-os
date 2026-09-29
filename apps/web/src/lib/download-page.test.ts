@@ -7,6 +7,10 @@
 //   3. 必须包含 iOS Safari「添加到主屏幕」指引；
 //   4. 绝不出现 APK / HAP 链接或文件引用（debug/unsigned 均不得出现）；
 //   5. AppShell 提供不占移动底栏的 /download 入口。
+// M14-179 追加：公开 /download 页浏览器噪音消除的接线契约——
+// root metadata 提供 basePath 感知的通用 favicon（消除宿主根
+// /favicon.ico 404 回退），AppShell 仅在公开路由跳过匿名 auth 探测
+// （消除必然 401 的 auth/me 噪音），认证路由探测行为不回归。
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -21,6 +25,10 @@ const PANEL_SOURCE = readFileSync(
 );
 const SHELL_SOURCE = readFileSync(
   join(__dirname, "../components/app-shell.tsx"),
+  "utf8",
+);
+const LAYOUT_SOURCE = readFileSync(
+  join(__dirname, "../app/layout.tsx"),
   "utf8",
 );
 
@@ -86,5 +94,30 @@ describe("AppShell 入口契约", () => {
 
   it("入口是图标按钮且有可访问名称（aria-label）", () => {
     expect(SHELL_SOURCE).toMatch(/aria-label="[^"]*下载[^"]*"/);
+  });
+});
+
+describe("M14-179 公开 /download 页浏览器噪音消除契约", () => {
+  it("root metadata 提供 basePath 感知的通用 favicon（与 apple-touch-icon 并列）", () => {
+    // Next 不为 metadata icons 自动加 basePath——URL 必须来自 pwa.ts
+    // 契约常量（root=/icons/...、/aios=/aios/icons/...，见 pwa.test.ts），
+    // 提供 rel=icon 后浏览器不再回退请求宿主根 /favicon.ico（404 噪音）
+    expect(LAYOUT_SOURCE).toMatch(/icon:\s*\[\{\s*url:\s*FAVICON_ICON/);
+    expect(LAYOUT_SOURCE).toMatch(/apple:\s*\[\{\s*url:\s*APPLE_TOUCH_ICON/);
+  });
+
+  it("AppShell 仅在公开路由跳过 auth 探测：isPublicRoute 门在 probeAuth 之前", () => {
+    expect(SHELL_SOURCE).toContain("isPublicRoute(pathname)");
+    const gateIndex = SHELL_SOURCE.indexOf("isPublicRoute(pathname)");
+    const probeIndex = SHELL_SOURCE.indexOf("probeAuth(API_BASE)");
+    expect(probeIndex).toBeGreaterThan(-1);
+    expect(gateIndex).toBeLessThan(probeIndex);
+  });
+
+  it("认证探测未被全局禁用：probeAuth 调用仍由 AppShell 持有", () => {
+    expect(SHELL_SOURCE).toContain("probeAuth(API_BASE)");
+    // 门只作用于公开路由判定，不触碰 logout / 徽章 / 治理入口逻辑
+    expect(SHELL_SOURCE).toContain("logout(API_BASE)");
+    expect(SHELL_SOURCE).toContain("AuthBadge");
   });
 });

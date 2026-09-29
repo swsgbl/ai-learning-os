@@ -9,6 +9,28 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-179 公开 /download 页浏览器噪音源消除（fix 切片）**：worktree
+`ai-learning-os-worktrees/m14-179-public-download-noise`，分支
+`fix/m14-179-public-download-noise`，基于 main `b8bba43`（PR #268
+merge = M14-178 验收证据合入，精确基点）。移除 M14-178 识别的两处
+公开页噪音：① `pwa.ts` 新增 `FAVICON_ICON` basePath 契约（复用
+any-192 资产，源码零 `/aios` 硬编码），root metadata `icons.icon`
+注入，消除浏览器对宿主根 `/favicon.ico` 的 404 回退；② 新增
+`lib/public-routes.ts` `isPublicRoute`（usePathname 不含 basePath，
+精确匹配 `/download`），AppShell 仅公开路由跳过匿名 auth 探测，
+其余路由认证行为零变化；`download-manifest.ts` / `download-panel.tsx`
+未动（Android manifest 行为不变）。验证：vitest **10 文件 / 123
+测试全过**（基线 116 +7）；typecheck 干净；lint 0 errors / 14
+warnings 与基线一致（零新增）；生产 basePath 构建产物 `download.html`
+实测 favicon link `/aios/icons/icon-192.png`（root 构建
+`/icons/icon-192.png`）、零 favicon.ico 回退引用；`git diff --check`
+干净，新增行 secret/本地路径/IP/U+FFFD 扫描零命中。边界：未部署、
+未重建镜像、未做浏览器重新验收（归 supervisor/Codex，重建后重跑
+M14-178 §1/§4 断言）；「零 auth/me 调用」为源码/单元/构建产物级
+验证，非真浏览器时点证据。回滚 = 还原本 commit。PR 创建即止；
+合并决策归 supervisor 审查（supervisor 审查与 remote 发布在其后
+进行）。
+
 **M14-178 /download 公共下载页真浏览器验收证据（verification/docs-only
 切片）**：worktree
 `ai-learning-os-worktrees/m14-178-download-browser-evidence`，分支
