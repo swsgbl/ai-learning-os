@@ -66,7 +66,11 @@ DAILY_BUDGET = 24
 MIN_INTERVAL_S = 1.0
 MAX_INTERVAL_S = 60.0
 MAX_TIMEOUT_S = 15.0
-PROBE_TIMEOUT_GRACE_S = 120.0  # subprocess 兜底超时：8 样本 × (15s+1s) + 余量
+# 探针时序模型常量（与 public_edge_stability_probe 实码对齐，M14-184）：
+# 探针启动即跑 `curl --version`（内联 subprocess timeout=30s）；每样本
+# subprocess 超时 = timeout + SUBPROCESS_GRACE_S(10)。
+CURL_VERSION_TIMEOUT_S = 30.0
+PROBE_LAUNCH_GRACE_S = 30.0  # 本工具侧余量：解释器启动 + 报告落盘 + 全目录复检
 SLOW_TTFB_MS = 2500.0
 
 WINDOW_SCHEMA = _edge_probe.SCHEMA  # aios-public-edge-stability-probe/1
@@ -380,6 +384,28 @@ class WindowPlan:
         return self.evidence_dir / self.output_name
 
 
+def probe_subprocess_timeout_s(plan: WindowPlan) -> float:
+    """外层 subprocess 兜底超时（**窗计划派生**的 fail-safe 上界，M14-184）。
+
+    探针一次合法运行的墙钟最坏耗时（M14-180 实码时序模型）：
+
+        curl --version（≤30s）                        —— 启动必跑，h2 能力门
+        + samples × (timeout_s + SUBPROCESS_GRACE_S)  —— 每样本 subprocess 超时
+        + (samples-1) × interval_s                    —— 样本间强制睡眠
+
+    默认窗 = 30 + 8×25 + 7×1 = 237s；interval=60 上限窗 = 650s —— 旧的
+    固定 120s（M14-182 缺陷）会在合法慢窗上误杀探针进程。上界再叠加
+    本工具侧余量（解释器启动/报告落盘/全目录复检）。这是"绝不误杀
+    合法运行"的兜底，不是调度承诺：真正的请求级超时由探针内部强制。
+    """
+    return (
+        CURL_VERSION_TIMEOUT_S
+        + plan.samples * (plan.timeout_s + _edge_probe.SUBPROCESS_GRACE_S)
+        + (plan.samples - 1) * plan.interval_s
+        + PROBE_LAUNCH_GRACE_S
+    )
+
+
 def plan_window(
     *,
     url: str,
@@ -457,7 +483,7 @@ def execute_window(plan: WindowPlan, invoker: ProbeInvoker, probe_script: Path) 
         proxy_display=plan.proxy_display,
         output_path=plan.output_path,
     )
-    code, stdout, _stderr = invoker.run(argv, timeout=PROBE_TIMEOUT_GRACE_S)
+    code, stdout, _stderr = invoker.run(argv, timeout=probe_subprocess_timeout_s(plan))
     if code >= 2:
         # 探针自身失败（参数/能力门/运行器）：报告大概率未写出——零重试、
         # 保留预约（同路径不可复用），明确告知操作者该窗未入账。

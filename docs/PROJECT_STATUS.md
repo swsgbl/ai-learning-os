@@ -9,6 +9,26 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-184 Phase 0 编排器探针子进程超时派生（缺陷修复切片）**：worktree
+`ai-learning-os-worktrees/m14-180-public-edge-stability-probe`，分支
+`ops/m14-184-phase0-subprocess-timeout`，基于 `7a7ef5b`（M14-182 单
+提交，rebase 到 `aaf74b5` 之上后的精确基点）。supervisor 审查发现
+M14-182 缺陷：RealProbeInvoker 外层 subprocess 超时固定 120s，而探针
+合法最坏耗时 = curl --version（≤30s）+ samples×(timeout+10) +
+(samples−1)×interval——默认窗 237s、interval=60 窗 650s 均超固定值，
+合法慢窗会被误杀。修复 = 窗计划派生上界 `probe_subprocess_timeout_s
+(plan)`（30 + samples×(timeout+10) + (samples−1)×interval + 30 工具
+余量；SUBPROCESS_GRACE_S 引用探针实码；默认窗 267s、上限窗 680s），
+TDD 先红后绿：两个聚焦回归测试（默认界/上限界，钉住 267.0/680.0 且
+≥237/650）先对固定 120 失败再实现通过。聚焦 **39 passed**、全量
+tests/ops **140 passed**；ruff/compileall 干净；docs 守卫（VERSION
+未触碰 + 无未运行证据声明）、`git diff --check`、新增行 secret/本地
+路径/U+FFFD 扫描 0 真实命中。文档：CHANGELOG/PROJECT_STATUS M14-184
+条目、tools/ops/README M14-182 章节新增外层超时要点 + H1 枚举、
+M14-182 evidence README 契约表新增"外层子进程超时"行。**零网络请求、
+零真实采样、零生产操作**；回滚 = 还原本 commit。PR 创建即止；合并
+决策归 supervisor 审查（supervisor 审查与 remote 发布在其后进行）。
+
 **M14-182 公网边缘 Phase 0 基线采样编排器（ops 工具切片）**：worktree
 `ai-learning-os-worktrees/m14-180-public-edge-stability-probe`，分支
 `ops/m14-182-public-edge-phase0-baseline`，基于 `aaf74b5`（M14-183

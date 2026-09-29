@@ -104,11 +104,13 @@ class FakeProbeInvoker:
 
     def __init__(self, *, exit_code: int = 0, report_factory=window_report) -> None:
         self.calls: list[list[str]] = []
+        self.timeouts: list[float] = []
         self.exit_code = exit_code
         self.report_factory = report_factory
 
     def run(self, argv: list[str], *, timeout: float) -> tuple[int, str, str]:
         self.calls.append(list(argv))
+        self.timeouts.append(timeout)
         if self.exit_code >= 2:
             return self.exit_code, "[probe] FAIL: fake tool failure", ""
         output = argv[argv.index("--output") + 1]
@@ -278,6 +280,38 @@ def test_execute_success_arguments_and_accounting(tmp_path: Path, capsys) -> Non
         invoker=fake,
     ) == 0
     assert "budget: total 16/72" in capsys.readouterr().out
+
+
+def test_execute_outer_timeout_covers_default_worst_case(tmp_path: Path) -> None:
+    # M14-184 回归：外层 subprocess 兜底超时必须由窗计划派生，覆盖探针
+    # 合法最坏耗时 —— 启动 curl --version（≤30s）+ 8 样本 × (15s 超时 +
+    # 探针 SUBPROCESS_GRACE_S=10) + 7 次 interval=1s 睡眠 = 237s。旧的
+    # 固定 120s（PROBE_TIMEOUT_GRACE_S）会在合法慢窗上误杀探针进程。
+    fake = FakeProbeInvoker()
+    code = p0.main(
+        ["--url", MANIFEST_URL, "--evidence-dir", str(tmp_path / "phase0"),
+         "--execute", "--confirm-phrase", CONFIRM],
+        invoker=fake,
+    )
+    assert code == 0 and len(fake.timeouts) == 1
+    # 探针合法最坏耗时（上界必须 ≥ 它）……
+    assert fake.timeouts[0] >= 30.0 + 8 * (15.0 + 10.0) + 7 * 1.0
+    # ……且数值可钉住（30 version + 200 采样 + 7 睡眠 + 30 启动/落盘余量）
+    assert fake.timeouts[0] == 267.0
+
+
+def test_execute_outer_timeout_covers_max_interval_worst_case(tmp_path: Path) -> None:
+    # M14-184 回归：interval=60 上限窗的合法最坏耗时 = 30 + 8×(15+10) +
+    # 7×60 = 650s —— 固定 120s（乃至任何 <650 的常数）都会误杀。
+    fake = FakeProbeInvoker()
+    code = p0.main(
+        ["--url", MANIFEST_URL, "--evidence-dir", str(tmp_path / "phase0"),
+         "--execute", "--confirm-phrase", CONFIRM, "--interval", "60"],
+        invoker=fake,
+    )
+    assert code == 0 and len(fake.timeouts) == 1
+    assert fake.timeouts[0] >= 30.0 + 8 * (15.0 + 10.0) + 7 * 60.0
+    assert fake.timeouts[0] == 680.0
 
 
 def test_execute_proxy_window_passes_proxy_flag(tmp_path: Path) -> None:
