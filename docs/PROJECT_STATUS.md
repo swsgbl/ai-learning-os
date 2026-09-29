@@ -9,6 +9,36 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-181 公网边缘优化设计（design-only 切片）**：worktree
+`ai-learning-os-worktrees/m14-180-public-edge-stability-probe`，分支
+`ops/m14-181-public-edge-optimization-design`，基于 main `7bc9334`
+（PR #271 merge = M14-180 探针合入，精确基点）。纯设计/决策文档：
+`docs/evidence/m14-181-public-edge-optimization-design/README.md` 把
+M14-180 观测转化为优化决策框架——事实（F1-F9）与假设（H1-H5）严格
+分离；六选项比较（基线采样 / VPS 参照采样 / Cloudflare·CDN / Nginx
+TLS·session·keepalive / 静态资产缓存 / DNS·边缘路径）；四阶段计划
+（Phase 0 基线 → Phase 1 VPS 归因（采样在 Phase 0 go 后启动，只读
+配置/事实收集可提前）→ Phase 2 Nginx 调优（首个配置变更阶段）→
+Phase 3 结构性备选）配 go/no-go 门、分阶段请求预算（Phase 0 总 ≤72
+且每日 ≤24 manifest 请求（直连+代理合计）；后续单轮 A/B/配置验证
+每轮 ≤40；APK ≤2/阶段独立路径与 60s 独立超时）、SLO 提案阈值与
+统计口径（Phase 0 明确**描述性**：p50/p95、max、失败计数、慢窗口
+频率；p99 ≤2.5s 与成功率 ≥99.5% 仅为未来稳态 SLO 提案，门禁化
+需统计充分样本或生产遥测，提案值归 supervisor 批准）、回滚触发器
+与证据工件；生产变更前置证明六条 + 确切配置面清单
+（VPS 宿主 server 块=仓库外 supervisor 面、边缘 location 片段=仓库内
+模板、DNS/CDN=独立立项）；VPS 本地终结采样精确模式 =
+`curl --resolve ndtool.cn:443:127.0.0.1 https://ndtool.cn/...`
+（保留 SNI 与证书验证，绝不 `-k`）与 `openssl s_time -servername`。**零生产操作、零新增公网请求、无代码
+变更**——manifest `no-store` 与 APK `max-age=3600` 维持有意契约，
+缓存调优列为低优先级产品选项。边界：样本量极小（≤9 直连样本、单日
+时点），SLO 阈值是提案不是结论；H1（公网入站路径）与 H2（VPS 处理
+面）归因全部未证明，归 Phase 0/1 检验；Phase 1 起的一切 VPS/配置
+操作归 supervisor 执行；HTTP/2 维度本机不可验证。回滚 = 还原本
+commit。证据：`docs/evidence/m14-181-public-edge-optimization-design/
+README.md`（唯一入库文件）。PR 创建即止；合并决策归 supervisor 审查
+（supervisor 审查与 remote 发布在其后进行）。
+
 **M14-180 公网边缘稳定性探针（只读诊断工具切片）**：worktree
 `ai-learning-os-worktrees/m14-180-public-edge-stability-probe`，分支
 `ops/m14-180-public-edge-stability-probe`，基于 main `3844162`

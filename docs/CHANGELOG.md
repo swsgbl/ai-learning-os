@@ -1,5 +1,42 @@
 # Changelog
 
+## M14-181 — 公网边缘优化设计（design-only 切片）
+
+- 背景：M14-180 探针把 M14-179 的两个"未采纳"现象结构化——慢窗口
+  TTFB 5.1-10.2s 分解为 TLS 握手段 2.36-6.16s + 握手后等待段
+  2.55-4.83s（DNS/TCP 正常、同 IP 同 sha），APK 单次下载超时在带宽。
+  本切片把观测转化为决策框架，**零生产操作、零新增公网请求**。
+- 产出：`docs/evidence/m14-181-public-edge-optimization-design/README.md`
+  ——事实（F1-F9，全部引用 M14-180 落档证据）与假设（H1-H5，全部
+  未证明）严格分离；六选项比较（受控基线采样 / VPS 侧参照采样 /
+  Cloudflare·近旁 CDN / Nginx TLS·session·keepalive 调优 / 公共静态
+  资产缓存 / DNS·边缘路径变化）逐项给出机制、成本/风险与判定；
+  四阶段计划（Phase 0 基线采样 → Phase 1 VPS 参照归因（**采样在
+  Phase 0 go 之后启动，只读配置/事实收集可提前**）→ Phase 2 Nginx
+  调优（首个配置变更阶段）→ Phase 3 结构性备选）配显式 go/no-go
+  门、分阶段请求预算（**Phase 0 总 ≤72 且每日 ≤24 manifest 请求
+  （直连+代理合计）；后续单轮 A/B/配置验证每轮 ≤40；APK ≤2/阶段
+  独立路径与 60s 独立超时**）、SLO 提案阈值与统计口径（Phase 0
+  **明确描述性**：p50/p95、max、失败计数、慢窗口频率——p99 ≤2.5s
+  与成功率 ≥99.5% 仅作为**未来稳态 SLO 提案**保留，门禁化前提是
+  统计充分样本量或生产遥测，提案值归 supervisor 批准）、回滚
+  触发器与证据工件；生产变更前置证明六条 + 确切配置面清单（VPS
+  宿主 server 块=仓库外、边缘 location 片段=仓库内模板、DNS/CDN=
+  独立项）；VPS 本地终结采样以 `curl --resolve ndtool.cn:443:127.0.0.1
+  https://ndtool.cn/...`（保留 SNI 与证书验证，**绝不 `-k`**）与
+  `openssl s_time -servername` 为精确模式。
+- 关键设计立场：manifest `no-store`（M14-176 契约）与 APK
+  `max-age=3600` 是有意设计而非待修缺陷——缓存调优列为低优先级
+  产品选项；结构性选项（Cloudflare/多入口）仅在 Nginx 调优无效后
+  单独立项。
+- 边界（如实）：样本量极小（≤9 直连样本、单日时点），SLO 阈值是
+  提案不是结论；H1/H2 归因全部未证明；Phase 1 起的一切 VPS/配置
+  操作归 supervisor 执行；HTTP/2 维度本机不可验证。
+- 证据：`docs/evidence/m14-181-public-edge-optimization-design/README.md`
+  （唯一入库文件；docs/design-only，无代码变更）。PR 创建即止；
+  合并决策归 supervisor 审查（supervisor 审查与 remote 发布在其后
+  进行）。
+
 ## M14-180 — 公网边缘稳定性探针（只读诊断工具 + 时点探测证据）
 
 - 背景：M14-179 最终公共浏览器验收全绿，但更早经系统代理的本地探针
