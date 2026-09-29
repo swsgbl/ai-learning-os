@@ -78,9 +78,9 @@ self.addEventListener("install", function (event) {
           var cache = await caches.open(SHELL_CACHE);
           await cache.put(SHELL_URL, response);
         }
-      } catch (err) {
+      } catch {
         // 预缓存失败不阻塞 install：离线壳由后续成功导航回填，
-        // 且仍有内嵌兜底页。
+        // 且仍有内嵌兜底页。（M14-188: optional binding，err 未使用）
       }
     })(),
   );
@@ -126,7 +126,7 @@ async function handleNavigate(request) {
       cache.put(request, response.clone()); // 回填离线壳（异步，不阻塞响应）
     }
     return response;
-  } catch (err) {
+  } catch {
     var cached =
       (await caches.match(request)) || (await caches.match(SHELL_URL));
     if (cached) return cached;

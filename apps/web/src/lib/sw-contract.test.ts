@@ -8,7 +8,8 @@
 //   4. 导航 network-first，离线回退缓存壳；
 //   5. 路径基于 self.registration.scope 推导（同一份 sw.js 在根路径与
 //      /aios 两种构建下都正确）；
-//   6. 注册组件用 SW_REGISTER_SRC（basePath 契约），root 行为不回归。
+//   6. 注册组件用 SW_REGISTER_SRC（basePath 契约），root 行为不回归；
+//   7. （M14-188）catch 一律 optional binding，无未使用 err 绑定。
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -86,6 +87,28 @@ describe("sw.js 离线策略", () => {
     expect(SW_SOURCE).toContain("self.registration.scope");
     // 不得硬编码 /aios（否则 root 构建行为回归）
     expect(SW_SOURCE).not.toMatch(/["']\/aios/);
+  });
+});
+
+// M14-188：warning 卫生契约 —— sw.js 的 catch 一律 optional binding
+// （不带未使用的 err 绑定，CI no-unused-vars 清零）；同时钉住两个
+// catch 守卫本体与离线回退链不被顺手删掉（行为零变更）。
+describe("sw.js warning 卫生（M14-188）", () => {
+  it("不再出现带绑定的 catch（no-unused-vars 清零，也不留 eslint-disable）", () => {
+    expect(SW_SOURCE).not.toMatch(/catch\s*\(/);
+    expect(SW_SOURCE).not.toContain("eslint-disable");
+  });
+
+  it("两处 catch 守卫仍以 optional binding 形态存在（行为不变）", () => {
+    const optionalCatches = SW_SOURCE.match(/catch\s*\{/g) ?? [];
+    expect(optionalCatches.length).toBe(2);
+  });
+
+  it("导航离线回退链完整保留（请求缓存 → 壳缓存 → 内嵌兜底页）", () => {
+    expect(SW_SOURCE).toMatch(
+      /caches\.match\(request\)[\s\S]*?\|\|[\s\S]*?caches\.match\(SHELL_URL\)/,
+    );
+    expect(SW_SOURCE).toMatch(/new Response\(offlineFallbackHtml/);
   });
 });
 
