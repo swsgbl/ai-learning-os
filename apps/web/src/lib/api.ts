@@ -51,7 +51,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     // M9-02/M9-03: 认证开启后 401 = 未登录或凭据失效 —— 引导到登录页
     // M14-159: 登录页地址随 BASE_PATH（/aios 构建下为 /aios/login）
     if (response.status === 401 && typeof window !== "undefined" && !window.location.pathname.startsWith(LOGIN_PATH)) {
-      window.location.href = LOGIN_PATH;
+      // M14-188: 相对目的地直接赋 href 会被 Next 规则
+      // no-location-assign-relative-destination 拦截（且 assign(相对)
+      // 同样被拦）。显式绝对化到当前 origin：LOGIN_PATH 已含 BASE_PATH
+      // 前缀，仍是 window.location.href 整页跳转 —— 清空客户端状态的
+      // 安全语义不变，防登录页自身循环的 pathname 守卫亦不动。
+      window.location.href = new URL(LOGIN_PATH, window.location.origin).href;
     }
     const detail = await response.json().catch(() => ({ detail: response.statusText }));
     const message = typeof detail.detail === "string" ? detail.detail : "请求失败";
