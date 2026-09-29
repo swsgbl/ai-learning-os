@@ -9,6 +9,43 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-180 公网边缘稳定性探针（只读诊断工具切片）**：worktree
+`ai-learning-os-worktrees/m14-180-public-edge-stability-probe`，分支
+`ops/m14-180-public-edge-stability-probe`，基于 main `3844162`
+（PR #270 merge = M14-179 生产滚动证据合入，精确基点）。新增
+`tools/ops/public_edge_stability_probe.py`：curl 子进程传输的只读
+公开静态资产采样探针——每样本记录状态/实际 HTTP 版本/**相减派生的
+DNS/TCP/TLS/握手后等待阶段时长（curl 累计计时绝不冒充阶段值，乱序
+fail-closed）**/累计 elapsed 与 TTFB/字节数/SHA256/Content-Type/
+失败类别/探针模式；零重试、样本/间隔/超时三重有界、大资产（APK）
+至多下载一次、**非零退出部分传输字节记账（size/sha/body_complete，
+失败类别仍以传输错误为准）**、URL 与代理入口 fail-closed 校验、
+HTTP 版本能力门（本机 curl 无 HTTP2 特性时 h2 请求采样前 exit 2，
+不产生 curl-exit-2 假样本）、curl 版本行不可识别 fail-closed（exit 2
+零请求）、`--ssl-no-revoke` 显式 Schannel 诊断模式（默认关、逐样本
+记录、只诊断不验收）、报告白名单脱敏原子写。测试 `tests/ops/`
+（fake subprocess，零外部网络）**96 passed**；ruff / compileall /
+CLI help 干净；`.github/workflows/ci.yml` release-tools job 纳入
+本工具（compileall + pytest tests/ops，CI 门禁）。真实时点探测
+（2026-09-29，公网边缘总请求 15 次，原始报告在 gitignored
+`.verify/m14-180-public-edge-stability-probe/`）：直连 manifest
+9 样本 + 代理 5 样本全部 **200/HTTP1.1/1392B/SHA256 与发布值一致/
+application/json**；**核心发现（派生阶段口径）**：run2 直连 TTFB
+5.1-10.2s 分解为 **TLS 握手段 2.36-6.16s + 握手后等待段 2.55-4.83s**，
+DNS/TCP 正常、同 IP 同 sha——M14-179 记录的"水合超 5s"被量化为
+瞬态现象且不止 TLS 一段；代理路径本次零失败（全程 HTTP/1.1，不具
+备复现 HTTP/2 瞬态错误的传输条件）；APK 单次校验下载 15s 超时（记
+timeout 未重试，checksum 未闭环，引用 M14-179 已落档复核值）。
+supervisor review 修正：初版把累计 time_appconnect 误标 TLS 段，
+工具改派生后既有报告原始累计值原地重算（零新公网请求）。边界：
+时点证据；HTTP/2 真实采样因本机两套 curl 构建均无 HTTP2 特性缺失；
+TLS/等待段慢未定根因；`--ssl-no-revoke` 真实诊断效果未验证；run1
+APK 部分 body 字节数未被 v1 工具记录（如实保留，不回填）。
+回滚 = 还原本 commit。证据：
+`docs/evidence/m14-180-public-edge-stability-probe/README.md`（唯一
+入库证据文件）。PR 创建即止；合并决策归 supervisor 审查
+（supervisor 审查与 remote 发布在其后进行）。
+
 **M14-179 公开 /download 页生产滚动与公共浏览器验收证据（docs-only
 切片）**：worktree
 `ai-learning-os-worktrees/m14-179-production-rollout-evidence`，分支

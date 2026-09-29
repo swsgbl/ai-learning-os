@@ -1,5 +1,41 @@
 # Changelog
 
+## M14-180 — 公网边缘稳定性探针（只读诊断工具 + 时点探测证据）
+
+- 背景：M14-179 最终公共浏览器验收全绿，但更早经系统代理的本地探针
+  出现过瞬态 HTTP/2 / MIME 资源错误、公共 manifest 水合可超 5 秒
+  （§6，当时"未采纳"细节丢失）。本切片把每一次尝试的事实结构化。
+- 工具：新增 `tools/ops/public_edge_stability_probe.py`（curl 子进程
+  传输；只读 GET、零重试、样本/间隔/超时三重有界、大资产至多下载一次、
+  URL 与代理入口 fail-closed 校验、HTTP 版本能力门——本机 curl 无
+  HTTP2 特性时 h2 请求采样前 exit 2、`--ssl-no-revoke` 显式诊断模式、
+  **累计计时→相减派生阶段时长（dns/tcp/tls/server_wait，乱序
+  fail-closed）**、**非零退出部分传输字节记账（size/sha/body_complete，
+  失败类别仍以传输错误为准）**、**curl 版本行不可识别 fail-closed
+  （exit 2 零请求）**、报告白名单脱敏原子写）+ `tests/ops/`
+  fake-subprocess 测试套件（**96 passed**，零外部网络；ruff /
+  compileall 干净）；`.github/workflows/ci.yml` release-tools job 纳入
+  本工具的 compileall + pytest（CI 门禁）。
+- 真实时点探测（2026-09-29，对公网边缘总请求 15 次，报告在
+  gitignored `.verify/`）：直连 manifest 9 样本 + 代理 5 样本
+  **全部 200/HTTP1.1/1392B/SHA256 与发布值一致/application/json**；
+  **核心发现（派生阶段口径）**：run2 直连 TTFB 5.1-10.2s 分解为
+  **TLS 握手段 2.36-6.16s + 握手后等待段 2.55-4.83s**（DNS/TCP 正常，
+  同 IP 同 sha，与两分钟前相差约一个数量级，瞬态）；代理路径本次零
+  失败但全程 HTTP/1.1，不具备复现 HTTP/2 瞬态错误的传输条件；APK
+  单次校验下载 15s 超时未完成（记 timeout、未重试，checksum 未在本
+  切片闭环——引用 M14-179 已落档复核值）。
+- 修正记录（supervisor review）：初版把累计 time_appconnect 误标为
+  TLS 段——工具改为相减派生后，既有 `.verify` 报告用原始累计值原地
+  重算（零新公网请求），重算揭示等待段同为慢段大头。
+- 边界（如实）：全部为时点证据；HTTP/2 真实采样因本机两套 curl 构建
+  均无 HTTP2 特性而缺失（能力门 exit 2 实证）；TLS/等待段慢只定位到
+  阶段未定根因；`--ssl-no-revoke` 真实诊断效果未验证；run1 APK 部分
+  body 字节数未被 v1 工具记录（如实保留，不回填）。
+- 证据：`docs/evidence/m14-180-public-edge-stability-probe/README.md`
+  （唯一入库证据文件）。PR 创建即止；合并决策归 supervisor 审查
+  （supervisor 审查与 remote 发布在其后进行）。
+
 ## M14-179 — 公开 /download 页生产滚动与公共浏览器验收证据（docs-only，非代码）
 
 - 背景：M14-179 噪音修复（PR #269）合入后，supervisor 完成生产
