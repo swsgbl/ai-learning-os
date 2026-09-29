@@ -1,5 +1,5 @@
 # tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）+ 监控告警外发分发（M14-119）+ 告警分发回环运行时闭环（M14-121）+ production drift watch（M14-127）+ production drift watch 独立周期任务 readiness（M14-129） + production drift watch 历史审计（M14-133）+ production drift watch 告警分发（M14-135）
-+ production drift watch 告警分发回环运行时闭环（M14-136，测试切片）+ production drift watch 告警分发调度桥 readiness（M14-137）+ production drift watch 告警任务桥真实子进程运行时闭环（M14-140，测试切片）+ production drift watch 告警周期任务 readiness（M14-141）+ 告警 secret 模板与占位守卫/九键 pin 文档同步（M14-144）+ 公网边缘 Phase 0 基线采样编排（M14-182）
++ production drift watch 告警分发回环运行时闭环（M14-136，测试切片）+ production drift watch 告警分发调度桥 readiness（M14-137）+ production drift watch 告警任务桥真实子进程运行时闭环（M14-140，测试切片）+ production drift watch 告警周期任务 readiness（M14-141）+ 告警 secret 模板与占位守卫/九键 pin 文档同步（M14-144）+ 公网边缘 Phase 0 基线采样编排（M14-182）+ 公网边缘 Phase 0 探针子进程超时派生（M14-184）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -2059,6 +2059,12 @@ python tools/ops/production_drift_watch_alert_scheduler.py uninstall --confirm "
 - 输出碰撞保护：`O_CREAT|O_EXCL` 独占预约 `<output>.reserve`——已有
   报告或预约残留都零请求拒绝；**失败保留预约**（同路径不可复用），
   成功删除；stamp 精度到微秒，连续窗天然不同路径；
+- 外层子进程超时（M14-184）：**窗计划派生**的 fail-safe 上界
+  `probe_subprocess_timeout_s(plan)` = 30（探针启动 `curl --version`）
+  + samples × (timeout + 探针 SUBPROCESS_GRACE_S=10) + (samples−1) ×
+  interval + 30（本工具启动/落盘/复检余量）——默认窗 267s、
+  interval=60 上限窗 680s；替代 M14-182 的固定 120s（会在合法慢窗上
+  误杀探针进程：默认窗合法最坏 237s、上限窗 650s 均超固定值）；
 - aggregate 口径（M14-181 统计诚实边界）：样本数/失败数/慢窗频率
   （TTFB > 2500ms）/p50/p95/max（nearest-rank，单一事实源 =
   monitoring_history.percentile），按 overall/direct/proxy/本地日期

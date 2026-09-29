@@ -19,6 +19,7 @@
 | 有界窗 | 每窗 manifest 样本默认且上限 8、interval ≥1s、timeout ≤15s、恒 HTTP/1.1；零重试；绝不 `--large-asset-*`（APK 独立预算路径）、绝不 `--ssl-no-revoke` |
 | 预算门 | 历史窗报告逐字段域校验（bool/NaN/inf 冒充数值 = 畸形拒绝，零探针调用）；**总 ≤72 且同本地日期 ≤24**（直连+代理合计） |
 | 缺目录语义 | plan/execute：目录不存在 = 零历史（首个窗合法起点）；aggregate：拒绝不存在目录（不编造空聚合） |
+| 外层子进程超时 | 窗计划派生 fail-safe 上界（M14-184）：30（`curl --version`）+ samples×(timeout+10) + (samples−1)×interval + 30 工具余量；默认窗 267s、interval=60 窗 680s（原 M14-182 固定 120s 会误杀合法慢窗——默认窗合法最坏 237s、上限窗 650s） |
 | 碰撞保护 | `O_CREAT|O_EXCL` 独占预约 `<output>.reserve`；已有报告/预约残留零请求拒绝；失败保留预约（同路径不可复用），成功删除；stamp 微秒级 |
 | 统计口径 | 描述性：样本数/失败数/慢窗（TTFB>2500ms）频率/p50/p95/max（nearest-rank，单一事实源 = monitoring_history.percentile），overall + direct/proxy + 本地日期分组；**不设 p99/99.5% 成功率门**（键域不存在，note 显式声明） |
 | 输出 | 原子写 JSON 到调用者指定 gitignored 目录；无本机绝对路径、无 secret；聚合报告独立 schema 留目录内不入预算账 |

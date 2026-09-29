@@ -1,5 +1,31 @@
 # Changelog
 
+## M14-184 — Phase 0 编排器探针子进程超时派生（缺陷修复切片）
+
+- 背景：supervisor 审查在真实 Phase 0 运行前发现 M14-182 缺陷——
+  `RealProbeInvoker` 外层 subprocess 兜底超时是固定 `120s`，但探针一次
+  合法运行的最坏墙钟耗时 = 启动 `curl --version`（≤30s，探针启动必跑）
+  + samples × (timeout + 探针 `SUBPROCESS_GRACE_S=10`) + (samples−1) ×
+  interval 睡眠：默认窗（8 样本 × 15s、interval 1s）= **237s 已超
+  120**；interval=60 上限窗 = **650s 超 300**——固定值会在合法慢窗上
+  误杀探针进程，把仍在合法运行的探针当成工具失败处理。
+- 修复：删除固定常量，改为**窗计划派生**的 fail-safe 上界
+  `probe_subprocess_timeout_s(plan)` = 30（version）+ samples×(timeout+10)
+  + (samples−1)×interval + 30（本工具启动/落盘/复检余量）；其中
+  `SUBPROCESS_GRACE_S` 直接引用探针模块实码定义，version 30s 对齐探针
+  内联值。默认窗上界 267s、interval=60 窗 680s。该上界只兜底"绝不
+  误杀合法运行"，不是调度承诺——请求级超时仍由探针内部强制。
+- 回归覆盖：新增两个聚焦测试（默认界与 interval=60 上限界），断言
+  传给 invoker 的外层超时 ≥ 探针合法最坏耗时（237/650）且逐字钉住
+  派生值（267.0/680.0）；`FakeProbeInvoker` 增加超时记录。聚焦
+  **39 passed**、全量 tests/ops **140 passed**；ruff/compileall 干净。
+- 边界（如实）：**零网络请求、零真实采样、零生产操作**——行为证据
+  全部来自 fake ProbeInvoker 契约测试；真实 transport 行为仍以
+  M14-180 落档证据为参照。
+- 证据：docs/evidence/m14-182-public-edge-phase0-baseline/README.md
+  契约表新增"外层子进程超时"行；tools/ops/README.md M14-182 章节同步。
+  PR 创建即止；supervisor 审查与 remote 发布在其后进行。
+
 ## M14-182 — 公网边缘 Phase 0 基线采样编排器（ops 工具切片）
 
 - 背景：M14-181 设计定版四阶段计划；本切片落地 Phase 0 的执行工具
