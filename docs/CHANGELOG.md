@@ -1,5 +1,43 @@
 # Changelog
 
+## M14-182 — 公网边缘 Phase 0 基线采样编排器（ops 工具切片）
+
+- 背景：M14-181 设计定版四阶段计划；本切片落地 Phase 0 的执行工具
+  ——**零真实采样、零网络请求、零生产操作**（plan/execute/aggregate
+  均未真实运行；supervisor 反馈七项修正全部落地）。
+- 工具：新增 `tools/ops/public_edge_phase0_baseline.py`，编排（不重复
+  实现）M14-180 探针完成单窗采样：plan 默认零请求；execute 需
+  `--execute` + 逐字符精确短语 `EXECUTE PUBLIC EDGE PHASE0 WINDOW`；
+  每窗 manifest 样本默认且上限 8、interval ≥1s、timeout ≤15s、恒
+  HTTP/1.1、零重试、绝不 `--large-asset-*`（APK 独立预算路径）与
+  `--ssl-no-revoke`；预算门**总 ≤72 且同本地日期 ≤24**（直连+代理
+  合计，按样本 started_at 本地日期入账），历史窗报告逐字段域校验
+  （bool 冒充数值与 NaN/±inf 一律畸形拒绝，零探针调用）；缺目录
+  双语义（plan/execute=零历史合法起点，aggregate 拒绝不编造空聚合）；
+  输出碰撞保护（`O_CREAT|O_EXCL` 独占预约 `.reserve`，已有报告/预约
+  残留零请求拒绝，**失败保留预约**同路径不可复用，成功释放，stamp
+  微秒级）；aggregate 只读描述性统计（样本数/失败数/慢窗 TTFB>2500ms
+  频率/p50/p95/max，nearest-rank 单一事实源 = monitoring_history；
+  overall + direct/proxy + 本地日期分组；**不设 p99/99.5% 成功率门**，
+  键域不存在且 note 显式声明）。
+- 测试：`tests/ops/test_public_edge_phase0_baseline.py` **37 项**（fake
+  ProbeInvoker 零网络）：plan/错短语/预算越界/畸形历史/数值域全部零
+  探针调用、成功 execute argv 域、reserve 碰撞保护四象限、缺目录双
+  语义、聚合数学 + 递归无门键断言、CLI help 四必需选项、输出卫生；
+  全量 `tests/ops` **138 passed**；ruff/compileall 干净；CI 由
+  release-tools job 继续把关（tools/ops compileall + pytest tests/ops）。
+- 文档：`tools/ops/README.md` 新增 M14-182 章节；
+  `docs/evidence/m14-182-public-edge-phase0-baseline/README.md`（本切片
+  验证 + Phase 0 真实运行后的证据落档模板：原始窗/聚合报告永不入库，
+  仅描述性摘要与预算消耗结论回填）。
+- 边界（如实）：真实 transport 行为未在本切片验证（以 M14-180 落档
+  证据为参照）；无调度（节奏人工保证）；预算账依赖窗报告可入账
+  （写出失败的窗保留预约、人工核查、如实入档）；本地日期按操作者
+  本机时区归账。
+- 证据：`docs/evidence/m14-182-public-edge-phase0-baseline/README.md`
+  （唯一入库证据文件）。PR 创建即止；合并决策归 supervisor 审查
+  （supervisor 审查与 remote 发布在其后进行）。
+
 ## M14-183 — Harmony current-main 回归证据收口（docs-only）
 
 - 背景：M14-180（Harmony current-main 回归）已在原始 worktree 执行
