@@ -1,5 +1,55 @@
 # Changelog
 
+## M14-186 — Phase 0 完成度与 go/no-go 决策门（只读本地工具切片）
+
+- 背景：M14-181 设计的 Phase 0 只有采样编排器（M14-182）没有收口
+  判定工具——Phase 1 采样是否可授权缺乏可复核的机械判据。本切片交付
+  `tools/ops/public_edge_phase0_decision.py`：读取既有证据目录中的
+  `phase0-window-*.json` 窗报告（聚合报告跳过、`.reserve` 忽略），
+  **零网络请求、零探针执行、零子进程**，输出确定性 JSON 决策。
+- 完成度检查：恰 3 本地日期 × 每日恰 3 窗 × 每窗恰 8 样本（= 每日
+  24、总计 72）且逐日 ≤24、总计 ≤72；数量不足 = incomplete，窗数/
+  日期数超计划或预算越界 = violation——都落 `phase0_inconclusive`
+  绝不 go。质量检查：零畸形（复用 M14-182 `parse_window_report` 域
+  校验，bool/NaN/inf 拒绝）、零失败样本、零缺失 TTFB；分布成型 =
+  成功 TTFB 样本 ≥24。
+- 决策规则（M14-181 §3，thresholds 常量 CLI 不可覆写）：`phase0_go`
+  ⇔ 完整 ∧ 零缺陷 ∧ 分布成型 ∧ 慢窗频率 ≥5%；`phase0_no_go_close`
+  ⇔ 完整 ∧ 零失败/零缺失 ∧ 慢窗频率 <1% ∧ TTFB p95 ≤2500ms；两者
+  之间或任何数据缺陷 = `phase0_inconclusive` + 显式 reason codes
+  （固定词表，逐文件/逐项展开）。`phase1_sampling_authorized` 恒等于
+  go。统计口径继承 M14-181 诚实边界：nearest-rank p50/p95/max +
+  慢样本/慢窗（TTFB > 2500ms）频率，**不设 p99 / 99.5% 成功率门**
+  （键域恒不存在）；完成数据恰 9 窗时慢窗频率量化为 0% 或 ≥11.1%，
+  [1%,5%) 中间带经文件不可达——纯函数 `decide()` 独立单元测试钉住。
+- 输出：默认 stdout 单个可解析 JSON 文档（信息行走 stderr），报告含
+  schema/generated_at/输入文件名/counts/metrics/thresholds/completion
+  checks/decision/reason codes/honest boundaries；`--output` 按
+  M14-182 同款碰撞保护原子落盘（O_EXCL `.reserve` 预约，已有报告/
+  残留预约拒绝，写出失败保留预约，成功释放）。缺目录 = 可判定的
+  inconclusive（`evidence_directory_missing`）而非运行错误。
+- 验证（真实执行，零网络）：聚焦新套件 **24 passed**（TDD 先红后绿，
+  全 fake 文件：单日两窗 fixture 不完整形态/完整 go/完整 no-go/中间带纯函数/畸形/
+  预算越界/重复窗/跨午夜窗/碰撞/CLI help/socket 拆除零网络/确定性/
+  输出卫生）；全量 `tests/ops` **164 passed**（零回归）；ruff/compileall 干净；
+  CLI 冒烟（gitignored fake 证据）exit 0 且决策 inconclusive 不授权；
+  `git diff --check` 干净；新增行 secret/本地路径/U+FFFD 扫描 0 命中。
+- 诚实声明：实现收口时点 canonical 证据已含 supervisor 执行的**真实
+  Phase 0 数据：6 个完成窗 / 48 个样本、恰两个本地日期**（2026-09-29
+  三窗 24 样本 0 失败 0 缺失 0 慢样本；2026-09-30 三窗 24 样本
+  0 失败 0 缺失 6 慢样本、TTFB p95 5146.616ms；overall 48/72、
+  0 失败 0 缺失、p95 5044.404ms；最新聚合
+  `phase0-aggregate-20260930-025412.json`）——不完整（2 日期 <3 且
+  48/72），本工具对这组证据必报 `phase0_inconclusive` 且不授权
+  Phase 1（本切片对该目录做过一次只读复核，实测一致：另见 6 慢样本
+  集中于 1 个慢窗、p50 309.668ms、max 5793.434ms）；`phase0_go`
+  只是 Phase 1 的必要条件（仍需 supervisor 批准与预算计划）。
+- 证据：docs/evidence/m14-186-phase0-decision-gate/README.md（唯一
+  入库证据文件；冒烟 fake 工件 gitignored 于 worktree
+  `.verify/m14-186-phase0-decision-gate/`）。单 local commit，不
+  push、不开 PR；零生产/VPS/Nginx/frp/Docker/语音操作，零 secrets
+  接触，`production_ready=false` 不变。
+
 ## M14-185 — current-main 发布证据刷新（证据刷新切片）
 
 - 背景：M14-152 的代码绑定门证据绑定执行基点 `7438227`，其后

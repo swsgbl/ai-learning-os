@@ -9,6 +9,44 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-186 Phase 0 完成度与 go/no-go 决策门（只读本地工具切片）**：
+worktree `ai-learning-os-worktrees/m14-186-phase0-decision-gate`，分支
+`ops/m14-186-phase0-decision-gate`，基于 main `97e7fd1`（M14-185
+docs-only 提交；remote main merge `e6b6023` 的祖先，同一 tree）。
+交付 `tools/ops/public_edge_phase0_decision.py`：M14-181 Phase 0 的
+收口判定工具——只读本地证据目录（`phase0-window-*.json` 窗报告；
+聚合报告跳过、`.reserve` 忽略），零网络请求/零探针/零子进程，复用
+M14-182 `parse_window_report` 域校验与 `monitoring_history.percentile`
+（nearest-rank）单一事实源。完成度 = 恰 3 本地日期 × 每日 3 窗 ×
+每窗 8 样本（每日 24、总计 72）且逐日 ≤24、总计 ≤72（不足 =
+incomplete、超计划/越界 = violation，都绝不 go）；质量 = 零畸形/零
+失败/零缺失 TTFB + 分布成型（成功 TTFB ≥24）。决策：`phase0_go` ⇔
+完整零缺陷 ∧ 慢窗频率 ≥5%；`phase0_no_go_close` ⇔ 完整 ∧ 频率 <1%
+∧ p95 ≤2500ms；其余（含 1%≤频率<5% 中间带——9 窗量化下经文件
+不可达，纯函数 `decide()` 钉住）= `phase0_inconclusive` + 显式
+reason codes；`phase1_sampling_authorized` 恒等于 go；**不设 p99 /
+99.5% 成功率门**（键域恒不存在）。输出 = stdout 单个可解析 JSON
+（schema/文件名/counts/metrics/thresholds/checks/decision/reasons/
+honest boundaries），`--output` 走 M14-182 同款 O_EXCL 预约 + 原子
+写；缺目录 = 可判定 inconclusive。验证：聚焦 **24 passed**（TDD 先
+红后绿，全 fake：不完整/go/no-go/中间带/畸形/预算/重复窗/跨午夜窗/
+碰撞/socket 拆除/确定性/卫生），全量 `tests/ops` **164 passed** 零回归，
+ruff/compileall 干净，CLI 冒烟（gitignored fake 证据）exit 0 不授权，
+`git diff --check` 干净，新增行 secret/本地路径/U+FFFD 扫描 0 命中。
+**如实声明：实现收口时点 canonical 证据已含 supervisor 执行的真实
+Phase 0 数据——6 窗 / 48 样本、恰两个本地日期（09-29 三窗 24 样本
+0 慢；09-30 三窗 24 样本 6 慢、p95 5146.616ms；overall 48/72、
+0 失败 0 缺失、p95 5044.404ms；最新聚合
+phase0-aggregate-20260930-025412.json）——不完整（2 日期 <3 且
+48/72），本工具必报 inconclusive、不授权 Phase 1（对 canonical
+目录只读复核实测一致：另实测 6 慢样本集中于 1 慢窗、p50
+309.668ms、max 5793.434ms）**；go 也只是 Phase 1 的必要条件
+（supervisor 批准另需）。证据：docs/evidence/
+m14-186-phase0-decision-gate/README.md。**零网络请求、零真实采样、
+零生产/VPS/Nginx/frp/Docker/语音操作，零 secrets 接触**；
+`production_ready=false` 不变。单 local commit，不 push、不开 PR；
+合并决策归 supervisor。
+
 **M14-185 current-main 发布证据刷新（证据刷新切片）**：worktree
 `ai-learning-os-worktrees/m14-180-public-edge-stability-probe`，分支
 `ops/m14-185-current-main-release-evidence`，基于 main `8d52f00`（PR

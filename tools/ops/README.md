@@ -1,5 +1,5 @@
 # tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）+ 监控告警外发分发（M14-119）+ 告警分发回环运行时闭环（M14-121）+ production drift watch（M14-127）+ production drift watch 独立周期任务 readiness（M14-129） + production drift watch 历史审计（M14-133）+ production drift watch 告警分发（M14-135）
-+ production drift watch 告警分发回环运行时闭环（M14-136，测试切片）+ production drift watch 告警分发调度桥 readiness（M14-137）+ production drift watch 告警任务桥真实子进程运行时闭环（M14-140，测试切片）+ production drift watch 告警周期任务 readiness（M14-141）+ 告警 secret 模板与占位守卫/九键 pin 文档同步（M14-144）+ 公网边缘 Phase 0 基线采样编排（M14-182）+ 公网边缘 Phase 0 探针子进程超时派生（M14-184）
++ production drift watch 告警分发回环运行时闭环（M14-136，测试切片）+ production drift watch 告警分发调度桥 readiness（M14-137）+ production drift watch 告警任务桥真实子进程运行时闭环（M14-140，测试切片）+ production drift watch 告警周期任务 readiness（M14-141）+ 告警 secret 模板与占位守卫/九键 pin 文档同步（M14-144）+ 公网边缘 Phase 0 基线采样编排（M14-182）+ 公网边缘 Phase 0 探针子进程超时派生（M14-184）+ Phase 0 完成度与 go/no-go 决策门（M14-186）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -2077,3 +2077,49 @@ python tools/ops/production_drift_watch_alert_scheduler.py uninstall --confirm "
   （tools/ops compileall + pytest tests/ops）；
 - 边界：**本工具是采样编排器，不是调度器**——不注册计划任务、不自动
   连跑；每个窗由操作者显式执行。`production_ready=false` 不变。
+
+
+## public_edge_phase0_decision.py（M14-186）
+
+公网边缘 **Phase 0 完成度与 go/no-go 决策门**（M14-181 §3 Phase 0
+收口判定，只读本地工具）：读取证据目录中 M14-182 编排器产出的
+`phase0-window-*.json` 窗报告，校验完成度与数据质量，输出确定性
+JSON 决策——Phase 1 采样在 `phase0_go` 之前不可授权。
+
+- 只读本地：零网络请求、零探针执行、零子进程、不改动证据目录；
+  `*.json` 按内容分类（窗报告入账 / 聚合报告跳过 / 其余计畸形），
+  `.reserve` 预约残留显式忽略（只计数）；
+- 复用 M14-182 语义：窗报告域校验 = `parse_window_report`（bool/
+  NaN/inf/域外 config = 畸形）、本地日期归账 = 同一 `_local_date`、
+  分位数 = `monitoring_history.percentile`（nearest-rank）、输出
+  碰撞保护 = 同款 O_EXCL `.reserve` 预约 + 探针原子写；
+- 完成度：恰 3 本地日期 × 每日恰 3 窗 × 每窗恰 8 样本（= 每日 24、
+  总计 72）且逐日 ≤24、总计 ≤72——数量不足 = incomplete，窗数/
+  日期数超计划或预算越界 = violation，都落 `phase0_inconclusive`
+  绝不 go；"每窗 8 个成功样本" = 结构完成度 ∧ 零失败 ∧ 零缺失 TTFB
+  组合等价；分布成型 = 成功 TTFB 样本 ≥24；
+- 决策规则（thresholds 常量，CLI 不可覆写）：`phase0_go` ⇔ 完整 ∧
+  零缺陷 ∧ 分布成型 ∧ 慢窗频率 ≥5%；`phase0_no_go_close` ⇔ 完整 ∧
+  零失败/零缺失 ∧ 慢窗频率 <1% ∧ TTFB p95 ≤2500ms；两者之间或任何
+  数据缺陷 = `phase0_inconclusive` + 显式 reason codes；
+  `phase1_sampling_authorized` 恒等于 go。完成数据恰 9 窗时频率量化
+  为 0% 或 ≥1/9≈11.1%（[1%,5%) 中间带经文件不可达，纯函数 `decide()`
+  独立钉住）；
+- 统计诚实边界（M14-181）：仅描述性 p50/p95/max、失败/缺失 TTFB、
+  慢样本（TTFB > 2500ms）与慢窗频率；**不设 p99 / 99.5% 成功率门**
+  （键域恒不存在）；
+- 缺目录 = 可判定的 inconclusive（`evidence_directory_missing`，
+  尚未开始采样的诚实回答）；路径非目录 = exit 2；
+- 输出：默认 stdout 单个可解析 JSON 文档（信息行走 stderr）；
+  `--output` 碰撞保护原子落盘（已有报告/预约残留拒绝，写出失败保留
+  预约，成功释放）；报告含 schema/generated_at/输入文件名/counts/
+  metrics/thresholds/completion checks/decision/reason codes/honest
+  boundaries，无本机绝对路径无 secret；
+- 测试 `tests/ops/test_public_edge_phase0_decision.py`（fake 文件，
+  零网络零子进程，含 socket 拆除行为级断言）；CI 由 release-tools
+  job 把关（tools/ops compileall + pytest tests/ops）；
+- 边界：实现收口时点 canonical 证据 = supervisor 执行的真实 Phase 0
+  数据（6 窗 / 48 样本、恰两个本地日期，不完整——见 evidence
+  README §4），工具报 `phase0_inconclusive`、**不授权 Phase 1**；
+  真实收口按 docs/evidence/m14-186-phase0-decision-gate/README.md
+  §5 落档。`production_ready=false` 不变。
