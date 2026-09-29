@@ -691,6 +691,27 @@ M14-174 之后的 main 重建并滚动家机 Web 镜像（§8 流程），修复
 本验收。完整事实链与边界见
 `docs/evidence/m14-178-download-browser-evidence/README.md`。
 
+**M14-179 生产滚动与公共浏览器验收（2026-09-29，docs-only 落档）**：
+按 §8 流程完成 **Web-only** 滚动——新镜像
+`aios/web:m14-179-public-download-production`（digest
+`sha256:9650fa57…baaa5`，源 PR #269，CI 5/5），recreate 成功于
+`2026-09-29T02:35:40Z`，容器 `e55de8fcb409…` `running|healthy`；
+仅改 `AIOS_WEB_IMAGE_TAG`（变更前 env 备份
+`infra/env.production-recovery.before-m14-179`，不入库）；回滚锚
+`aios/web:m14-164-public-pwa-production`；API/DB/Redis/MinIO/LiveKit/
+SearXNG/frp/voice/proxy/gateway 全部未动。公共验收（直连 Chrome
+`--no-proxy-server`，1366×768 + 390×844 两视口一致）：§3G 路由
+manifest/APK 200，且验收时**全新下载公网工件并重算**——manifest
+1392 bytes / SHA256 `1e2ebb33…`、APK 8029570 bytes / SHA256
+`1246c3ef…`，与 M14-177 发布值逐字段一致（独立下载复核，非引用；
+本 docs-only 落档不重复执行下载）；manifest 请求恰 1、
+匿名 auth/me 0、宿主根 favicon 0、basePath favicon 200、Android 卡
+available 恰一链接、console/资源错误全 0、无横向溢出——**M14-178
+记录的「生产 Web 包滞后」blocker 闭环**；根 `/favicon.ico` 与
+`/android/not-exist.apk` 404（预期）。边界：浏览器仿真验收非真机
+安装冒烟；两次系统代理探针的瞬态 HTTP/2/MIME 错误未采纳。完整
+事实链见 `docs/evidence/m14-179-production-rollout-evidence/README.md`。
+
 ## 4. DNS 与 Caddy ACME
 
 1. DNS 控制台添加五条 A 记录 → VPS 公网 IP（TTL 先 300 便于调试，稳定后调大）；

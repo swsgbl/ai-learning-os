@@ -1,5 +1,35 @@
 # Changelog
 
+## M14-179 — 公开 /download 页生产滚动与公共浏览器验收证据（docs-only，非代码）
+
+- 背景：M14-179 噪音修复（PR #269）合入后，supervisor 完成生产
+  Web-only 滚动、公共工件全新下载复核与公共浏览器验收；本切片只把
+  事实落档（零代码、零生产操作）。
+- 生产滚动：新镜像 `aios/web:m14-179-public-download-production`
+  （digest `sha256:9650fa57…baaa5`），Web-only recreate 成功于
+  `2026-09-29T02:35:40Z`，容器 `e55de8fcb409…` `running|healthy`；
+  API 保持 `aios/api:m14-124-production` 未动，DB/Redis/MinIO/LiveKit/
+  SearXNG/frp/voice/proxy/gateway 全部未重启；变更前仅备份 env 并只改
+  `AIOS_WEB_IMAGE_TAG`；回滚锚 `aios/web:m14-164-public-pwa-production`。
+- 验收（直连 Chrome `--no-proxy-server` 全新配置文件，桌面 1366×768
+  + 移动仿真 390×844，两视口一致）：manifest 请求恰 1、匿名 auth/me
+  **0**、宿主根 favicon **0**（两处噪音源消除）、basePath favicon
+  200、Android 卡 available 且恰一个下载链接
+  `/android/ai-learning-os-0.1.0-release-signed.apk`、console/page/
+  资源错误全 0、无横向溢出、截图非空白——**M14-178 记录的「生产
+  Web 包滞后」blocker 就此闭环**。生产验收时**全新下载公网 manifest/
+  APK 并重算**：1392 bytes / SHA256 `1e2ebb33…`、8029570 bytes /
+  SHA256 `1246c3ef…`，与 M14-177 发布值逐字段一致（独立下载复核
+  闭环，非引用旧值；本 docs-only 落档切片不重复执行下载）。
+- 边界（如实）：两次更早的系统代理本地探针出现瞬态 HTTP/2/MIME
+  资源错误，未采纳；公共 manifest 水合可超 5 秒，最终探针等 Android
+  卡 available 后采数；这是浏览器仿真验收，**非 Android/Harmony 真机
+  安装冒烟**；生产观察均为时点证据。
+- 回滚 = 还原本 commit。证据：
+  `docs/evidence/m14-179-production-rollout-evidence/README.md`
+  （唯一入库证据文件）。PR 创建即止；合并决策归 supervisor 审查
+  （supervisor 审查与 remote 发布在其后进行）。
+
 ## M14-179 — 公开 /download 页浏览器噪音源消除（favicon 404 + 匿名 auth/me 401）
 
 - 背景：M14-178 真浏览器验收把两项 console/网络错误判为「已识别、

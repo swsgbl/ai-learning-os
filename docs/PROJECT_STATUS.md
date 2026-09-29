@@ -9,6 +9,41 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-179 公开 /download 页生产滚动与公共浏览器验收证据（docs-only
+切片）**：worktree
+`ai-learning-os-worktrees/m14-179-production-rollout-evidence`，分支
+`ops/m14-179-production-rollout-evidence`，基于 main `6fdb1f0`
+（PR #269 merge = M14-179 噪音修复合入，精确基点；PR CI run
+`36511364099` 与 merge 后 main CI run `36511744231` 均 **5/5
+passed**）。supervisor 生产滚动与验收事实（本切片只落档）：新镜像
+`aios/web:m14-179-public-download-production`（digest
+`sha256:9650fa57…baaa5`），Web-only recreate 成功于
+`2026-09-29T02:35:40Z`，容器 `e55de8fcb409…` `running|healthy`；API
+保持 `aios/api:m14-124-production` 未 recreate，DB/Redis/MinIO/LiveKit/
+SearXNG/frp/voice/proxy/gateway 全部未重启；变更前做 env 备份
+（`infra/env.production-recovery.before-m14-179`，不入库）且仅改
+`AIOS_WEB_IMAGE_TAG`；回滚锚 `aios/web:m14-164-public-pwa-production`。
+公共验收（直连 Chrome `--no-proxy-server` 全新配置文件；桌面 1366×768
+`PRODUCTION_DESKTOP_RUN6` + 移动仿真 390×844 `PRODUCTION_MOBILE_RUN3`，
+两视口一致）：本地与公网入口/下载页/basePath favicon/manifest 全
+**200**，根 `/favicon.ico` 与 `/android/not-exist.apk` **404**（预期）；
+manifest 请求恰 1、匿名 auth/me **0**、宿主根 favicon **0**（两处
+噪音源消除）、Android 卡 **available** 且恰一个下载链接
+`/android/ai-learning-os-0.1.0-release-signed.apk`、console/page/资源
+错误全 0、无横向溢出、截图非空白——**M14-178「生产 Web 包滞后」
+blocker 闭环**；生产验收时**全新下载公网 manifest/APK 并重算**：
+manifest 1392 bytes / SHA256 `1e2ebb33…`、APK 8029570 bytes /
+SHA256 `1246c3ef…`，与 M14-177 发布值逐字段一致（独立下载复核
+闭环，非引用旧值）。诚实边界：
+两次更早系统代理本地探针有瞬态 HTTP/2/MIME 资源错误未采纳（最终证据
+均直连）；manifest 水合可超 5 秒，最终探针等 Android 卡 available 后
+采数；浏览器仿真验收，**非 Android/Harmony 真机安装冒烟**；时点证据。
+回滚 = 还原本 commit。证据：
+`docs/evidence/m14-179-production-rollout-evidence/README.md`（唯一
+入库证据文件；原始工件在 gitignored `.verify/m14-179-public-download-noise/`）。
+PR 创建即止；合并决策归 supervisor 审查（supervisor 审查与 remote
+发布在其后进行）。
+
 **M14-179 公开 /download 页浏览器噪音源消除（fix 切片）**：worktree
 `ai-learning-os-worktrees/m14-179-public-download-noise`，分支
 `fix/m14-179-public-download-noise`，基于 main `b8bba43`（PR #268
