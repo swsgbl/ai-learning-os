@@ -9,6 +9,35 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-182 公网边缘 Phase 0 基线采样编排器（ops 工具切片）**：worktree
+`ai-learning-os-worktrees/m14-180-public-edge-stability-probe`，分支
+`ops/m14-182-public-edge-phase0-baseline`，基于 `aaf74b5`（M14-183
+docs-only 提交，rebase 后精确基点；原始开发基点 main `7b1e683` =
+PR #272 merge）。新增
+`tools/ops/public_edge_phase0_baseline.py`：M14-181 Phase 0 的执行
+工具——plan（默认零请求）/ execute（`--execute` + 逐字符精确短语
+`EXECUTE PUBLIC EDGE PHASE0 WINDOW`）/ aggregate（只读描述性统计）
+三模式；单窗有界（manifest 样本 ≤8、interval ≥1s、timeout ≤15s、恒
+HTTP/1.1、零重试、无 APK、无 ssl-no-revoke）；预算门总 ≤72 且同本地
+日期 ≤24（直连+代理合计），历史窗报告逐字段域校验（bool/NaN/±inf
+畸形拒绝零探针调用）；缺目录双语义（plan/execute=空历史起点，
+aggregate 拒绝）；输出碰撞保护（O_EXCL 独占 `.reserve` 预约，失败
+保留同路径不可复用，成功释放）；聚合口径 nearest-rank（单一事实源 =
+monitoring_history），慢窗 = TTFB>2500ms，overall + 模式/日期分组，
+**不设 p99/99.5% 成功率门**。测试 `tests/ops/`
+test_public_edge_phase0_baseline.py **37 项**（fake ProbeInvoker 零
+网络），全量 `tests/ops` **138 passed**；ruff/compileall 干净；
+tools/ops/README 新章节；evidence README 含真实运行后的落档模板
+（原始报告永不入库，仅摘要与预算消耗回填）。**零真实采样、零网络
+请求、零生产操作**；supervisor 反馈七项修正（缺目录语义/预约保护/
+数值域/help 测试/递归无门键/文档四件套/全套验证）全部落地。边界：
+真实 transport 未在本切片验证（M14-180 落档为参照）；无调度（节奏
+人工保证）；窗报告写出失败的窗保留预约、人工核查、如实入档；本地
+日期按本机时区归账。回滚 = 还原本 commit。证据：
+`docs/evidence/m14-182-public-edge-phase0-baseline/README.md`（唯一
+入库证据文件）。PR 创建即止；合并决策归 supervisor 审查
+（supervisor 审查与 remote 发布在其后进行）。
+
 **M14-183 Harmony current-main 回归证据收口（docs-only 切片）**：worktree
 `ai-learning-os-worktrees/m14-180-harmony-current-main-regression`，分支
 `harmony/m14-183-current-main-regression-evidence`，基于 main `7b1e683`

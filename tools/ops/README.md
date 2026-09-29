@@ -1,5 +1,5 @@
 # tools/ops —— 生产恢复编排（M14-06）+ soak/并发彩排 harness（M14-11）+ 生产监控 readiness（M14-12）+ 监控历史（M14-13）+ 监控管道/调度 readiness（M14-14）+ 监控历史洞察（M14-15）+ MinIO 镜像采纳预检（M14-40）+ MinIO 卷属主采纳（M14-41）+ 审计锚点 WORM 归档（M14-43/M14-44）+ 审计锚点 WORM 离线第二副本（M14-49）+ 审计归档调度与就绪报告（M14-50/M14-51）+ 审计归档调度面 readiness（M14-53）+ 长稳到期审计/导出 runner（M14-93）+ RC 本地彩排冒烟 runner（M14-96）+ 监控历史时序查询（M14-108）+ 监控阈值标定/评估（M14-109）+ 监控阈值标定管道集成（M14-110）+ post-cutover evidence watch（M14-118）+ 监控告警外发分发（M14-119）+ 告警分发回环运行时闭环（M14-121）+ production drift watch（M14-127）+ production drift watch 独立周期任务 readiness（M14-129） + production drift watch 历史审计（M14-133）+ production drift watch 告警分发（M14-135）
-+ production drift watch 告警分发回环运行时闭环（M14-136，测试切片）+ production drift watch 告警分发调度桥 readiness（M14-137）+ production drift watch 告警任务桥真实子进程运行时闭环（M14-140，测试切片）+ production drift watch 告警周期任务 readiness（M14-141）+ 告警 secret 模板与占位守卫/九键 pin 文档同步（M14-144）
++ production drift watch 告警分发回环运行时闭环（M14-136，测试切片）+ production drift watch 告警分发调度桥 readiness（M14-137）+ production drift watch 告警任务桥真实子进程运行时闭环（M14-140，测试切片）+ production drift watch 告警周期任务 readiness（M14-141）+ 告警 secret 模板与占位守卫/九键 pin 文档同步（M14-144）+ 公网边缘 Phase 0 基线采样编排（M14-182）
 
 本机 Windows 生产彩排栈（Docker Desktop + WSL 语音引擎）的自愈编排与
 只读负载彩排。容器面兜底由 `infra/docker-compose.yml` 的
@@ -2035,3 +2035,39 @@ python tools/ops/production_drift_watch_alert_scheduler.py uninstall --confirm "
 - readiness ≠ 任务已安装 ≠ 告警自动触发已上线：本切片零 schtasks 执行、
   零注册、零自然调度、零真实 webhook；实际注册 supervisor-only。
   `production_ready=false` 不变，release-approval 仍是 human-only 门。
+
+
+## public_edge_phase0_baseline.py（M14-182）
+
+公网边缘 **Phase 0 基线采样编排器**（M14-181 设计的 Phase 0 落地）：
+编排（不重复实现）`public_edge_stability_probe.py`（M14-180，探针契约
+见 docs/evidence/m14-180-public-edge-stability-probe/README.md）完成
+单窗采样，并在执行前后强制预算与统计口径。
+
+- 三模式：`plan`（默认，零请求零写入，打印探针 argv 与预算预检）/
+  `execute`（需 `--execute` + 逐字符精确确认短语
+  `EXECUTE PUBLIC EDGE PHASE0 WINDOW`）+ `--aggregate`（只读描述性
+  统计，与其他模式互斥）；
+- 有界窗契约：每窗 manifest 样本默认且上限 8、interval ≥1s、
+  timeout ≤15s、恒 HTTP/1.1；绝不传 `--large-asset-*`（APK 是独立
+  预算路径）与 `--ssl-no-revoke`（诊断模式不入基线）；零重试；
+- 预算门：窗报告逐字段域校验（schema/config/samples；bool 冒充数值
+  与 NaN/inf 一律畸形拒绝）后强制 **总 ≤72 且同本地日期 ≤24**（直连+
+  代理合计，按每样本 started_at 的本地日期入账）；plan/execute 允许
+  证据目录尚不存在（零历史=首个窗），**aggregate 拒绝不存在的目录**
+  （不编造空聚合）；
+- 输出碰撞保护：`O_CREAT|O_EXCL` 独占预约 `<output>.reserve`——已有
+  报告或预约残留都零请求拒绝；**失败保留预约**（同路径不可复用），
+  成功删除；stamp 精度到微秒，连续窗天然不同路径；
+- aggregate 口径（M14-181 统计诚实边界）：样本数/失败数/慢窗频率
+  （TTFB > 2500ms）/p50/p95/max（nearest-rank，单一事实源 =
+  monitoring_history.percentile），按 overall/direct/proxy/本地日期
+  分组；**不设 p99 或 99.5% 成功率门**（键域不存在，note 显式声明）；
+- 输出：窗/聚合报告原子写到调用者指定的 gitignored 证据目录；落盘
+  JSON 无本机绝对路径、无 secret；聚合报告（独立 schema）留在目录内
+  但不入预算账；
+- 测试 `tests/ops/test_public_edge_phase0_baseline.py`（fake
+  ProbeInvoker，零网络零真实子进程）；CI 由 release-tools job 把关
+  （tools/ops compileall + pytest tests/ops）；
+- 边界：**本工具是采样编排器，不是调度器**——不注册计划任务、不自动
+  连跑；每个窗由操作者显式执行。`production_ready=false` 不变。
