@@ -1,5 +1,55 @@
 # Changelog
 
+## M14-185 — current-main 发布证据刷新（证据刷新切片）
+
+- 背景：M14-152 的代码绑定门证据绑定执行基点 `7438227`，其后
+  `7438227..8d52f00` 区间 = **101 commits**（PR #240–#275，m14-153 至
+  m14-184 各切片全部合并）——含真实运行时代码与测试面
+  `services/api/tests/` 11 文件 **+6159/−2**（public-edge/web-gateway/
+  frpc/healthcheck 九个新套件），按既有刷新契约在当前 main `8d52f00`
+  （PR #275 merge）上**真实重执行** ci-main 与 release-check 两门；
+  绝不复用 M14-152 的 run 36219558569 或其 release-check 产物。区间
+  关键不变量：`services/api/app/` 全树 + requirements + alembic 零
+  变更（evaluator/编排器合同与 M14-152 时点逐字节一致）。
+- ci-main：GitHub Actions run **36570439902**（run_number 686，
+  push@main，created 2026-09-29T12:47:02Z）raw 双查询（runs?head_sha
+  + jobs）直连归档 + 断言驱动程序化派生 canonical `ci-main.json`
+  （1324 bytes）：runs total_count=1 恰该 run、jobs **5/5 success**、
+  五 job 名集合与 M14-116 起契约精确匹配、每 job head_sha==8d52f00。
+- release-check：worktree 从零环境（uv venv CPython 3.12.14 + uv pip
+  install requirements{-dev,} + npm ci 411 packages）隔离 full 重跑
+  `release-check-isolated`（前置核验 HEAD==8d52f00 且 tracked-clean）：
+  **all_green 10/10**——pytest **5631 passed / 36 skipped**（302.10s；
+  较 M14-152 的 5121/33 恰 **+510/+3**，净增 collected 513 = 9 个新
+  测试文件 511 + 2 个修改文件净增 2 的精确对账）、migration head
+  `0027_audit_chain` 不变、backup tables:30 files:1、voice local
+  17324 bytes、license 15/ok/7/6、e2e 5 步 1970ms。
+- provider-smoke / long-soak 零重跑、零生产接触：哈希锁定只读复用
+  （provider-smoke `d589181e…` 20260926T0106 聚合三输入三失败 attempt
+  逐份核验；long-soak `d939c652…` 同哈希链）。provider-smoke 复用
+  有效性 = 区间零 provider 执行三支柱（app 树零变更 + 区间 16 个 PR
+  无 provider 生命周期变更 + M14-179 web-only 重建零 provider 接触）；
+  **聚合时点证据龄约 3 天 14 小时，如实披露不伪称新鲜**。
+- evidence-cockpit 聚合（10 gate sources + anchor companion +
+  declared-head flag）：**cockpit_ready=true、blockers=[]、
+  required_not_staged=[]、exit 0**；evaluator pass=9 / missing=2
+  （not_pass_required 恰 [release-approval] human-only、
+  not_pass_optional 恰 [turn-tls]）；**release_ready=false /
+  production_ready=false 不变**；ci-main stale=current（embedded）、
+  release-check stale=current（flag）；staged 10 文件 10/10
+  IDENTICAL（内建 + 外部复核）、production-state 六源完整 sha256
+  staging 前复核 6/6 MATCH。
+- 验证：聚焦九套件 **444 passed**（与 M14-152 恰同——九套件区间零
+  变更实证）；ruff check services/api 全过（tracked Python 零改动
+  基线复核）；契约断言 **38 项全过**；秘密扫描 canonical 26 文件
+  **0 命中**；git diff --check 干净 + 新增行 secret/本地路径/U+FFFD
+  扫描 0 命中。
+- 证据：docs/evidence/m14-185-current-main-release-evidence/README.md
+  （唯一入库证据文件；canonical 原始证据 gitignored 于 worktree
+  `.verify/artifacts/m14-185-current-main-release-evidence/`，
+  SHA256SUMS 索引 29 文件）。单 local commit，不 push、不开 PR；
+  零生产/VPS/Nginx/frp/Docker/语音操作。
+
 ## M14-184 — Phase 0 编排器探针子进程超时派生（缺陷修复切片）
 
 - 背景：supervisor 审查在真实 Phase 0 运行前发现 M14-182 缺陷——

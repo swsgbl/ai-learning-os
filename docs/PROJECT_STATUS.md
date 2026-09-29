@@ -9,6 +9,35 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-185 current-main 发布证据刷新（证据刷新切片）**：worktree
+`ai-learning-os-worktrees/m14-180-public-edge-stability-probe`，分支
+`ops/m14-185-current-main-release-evidence`，基于 main `8d52f00`（PR
+#275 merge = M14-184 工具合入；origin/main 直连核验 = 任务书要求基点）。
+动因：M14-152 代码绑定门证据绑定 `7438227`，其后 101 commits（PR
+#240–#275）含真实运行时代码与测试面 +6159 行（9 个新测试套件），
+按契约真实重执行两门。ci-main：run **36570439902**（run_number 686，
+push@main，5/5 success，五 job 契约精确匹配）raw 双查询归档 + 断言
+驱动派生 `ci-main.json`（1324 bytes `c309323e…`）。release-check：
+从零环境（CPython 3.12.14 uv venv + npm ci 411 包）隔离 full 重跑
+（前置 HEAD==8d52f00 tracked-clean 核验）**all_green 10/10**：pytest
+**5631 passed / 36 skipped**（较 M14-152 5121/33 恰 +510/+3，净增
+513 = 9 新文件 511 + 2 修改净增 2 精确对账）、migration `0027_audit_chain`
+不变、voice local、license、e2e 5 步。provider-smoke（`d589181e…`
+20260926T0106，龄约 3 天 14 小时如实披露，区间零 provider 执行三支柱：
+app 树零变更 + 16 PR 无 provider 生命周期变更 + M14-179 web-only 重建
+零接触）/long-soak（`d939c652…`）哈希锁定只读复用，零重跑零生产
+接触。cockpit：**cockpit_ready=true、blockers=[]、pass=9/missing=2**、
+ci-main/release-check 均 stale=current（embedded/flag）、staged 10/10
+IDENTICAL、六源 6/6 完整哈希 MATCH；**release_ready=false /
+production_ready=false 不变**（release-approval human-only 缺席，不
+代拟）。验证：聚焦九套件 **444 passed**（恰同 M14-152）、ruff 基线
+干净、契约断言 **38 项**全过、秘密扫描 26 文件 0 命中、git diff
+--check 干净、新增行扫描 0 命中。证据：docs/evidence/
+m14-185-current-main-release-evidence/README.md（唯一入库证据文件；
+canonical gitignored，SHA256SUMS 索引 29 文件）。**零生产/VPS/Nginx/
+frp/Docker/语音操作，零 secrets 接触**。单 local commit，不 push、
+不开 PR；合并决策归 supervisor。
+
 **M14-184 Phase 0 编排器探针子进程超时派生（缺陷修复切片）**：worktree
 `ai-learning-os-worktrees/m14-180-public-edge-stability-probe`，分支
 `ops/m14-184-phase0-subprocess-timeout`，基于 `7a7ef5b`（M14-182 单
