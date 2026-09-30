@@ -9,6 +9,37 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-202 Phase 1 Round B 干净执行收口与 H1 判定（docs-only，零新
+采样）**：worktree `ai-learning-os-worktrees/m14-199-phase1-budget`，
+分支 `docs/m14-200-phase1-incident`，基于 M14-200 `2e893c0`。执行
+事实（gitignored raw log 审计核实）：M14-201 制备脚本（SHA256
+`6DDC9423…B90FAD2`）静态门全过（`bash -n`、1 处 curl 调用点、
+3×8=24 条执行路径、每 curl 恰 1 URL、零字面 `%s`、LF、零禁用
+命令）后 supervisor **恰执行 1 次、零重试**，UTC 窗 2026-09-30
+T22:52:12Z–22:52:39Z，SSH `rc=0` 正常收尾（`END_ROUND_B` 在案），
+B1 idx=1 canary 通过。审计：`SAMPLE_START`/`CURL_RC`=24/24（全
+`rc=0`）、窗 3 始 3 终各 8/8、`CANARY_FAIL`/`ROUND_B_ABORTED`=0。
+样本 24/24 全过（`code=200`/`verify=0`/`ip=127.0.0.1`/
+`bytes=1392`/`ctype=application/json`）；失败/畸形/慢样本（>2500ms）
+均 0；两处温和离群（B2 idx1、B3 idx2）原样计入。统计（ms，
+nearest-rank p50/p95/max）：TTFB 26.783/35.793/51.281；TLS 段
+26.362/35.350/50.815；等待段 0.290/0.343/0.347；总时长
+26.815/35.834/51.318。预算：Round A 9（无效不退）+ Round B 24 =
+**33/40**，余 7 未授权；`nginx -T`/`dig`/`s_time` 均 0。**决策矩阵
+结果 H1**（本地 TTFB p95 35.793 ≤ 300、TLS 段 p95 35.350 < 300、
+等待段 p95 0.343 < 300，对照 Phase 0 公网慢基线 p50 286.648/p95
+5793.434/max 12283.814）：**慢在公网入站路径，非 VPS 处理面**——
+跳过 Phase 2 Nginx 调优，Phase 3（多入口/Cloudflare）评估另立切片
+（本切片不启动不授权）。协议 caveat：本地 h2（`ver=2` 被动）vs
+公网 HTTP/1.1，不做 h2 因果结论，h2 参照组未授权未运行。清理：
+stdin 投递、VPS 零文件写入、零服务/配置变更，无需清理；raw 工件
+保持 gitignored。本切片 docs-only（证据 README + 两处台账）；
+验证：version-sync 守卫、`git diff --check`、新增行 secret/本地
+路径/U+FFFD 扫描 0 真实命中。证据：
+`docs/evidence/m14-202-phase1-round-b-closeout/README.md`。单 local
+commit，不推送、不开 PR；supervisor 审查与 remote 发布在其后
+进行。
+
 **M14-200 Phase 1 Round A 事故落档与 Round B 修正任务书（docs-only，
 零新采样）**：worktree `ai-learning-os-worktrees/m14-199-phase1-budget`，
 分支 `docs/m14-200-phase1-incident`，基于 main `12e31ad`

@@ -1,5 +1,45 @@
 # Changelog
 
+## M14-202 — Phase 1 Round B 干净执行收口与 H1 判定（docs-only，非代码，零新采样）
+
+- Round B 执行事实（gitignored raw log 标记级审计核实）：M14-201
+  制备脚本（SHA256 `6DDC9423…B90FAD2`，制备侧重算与 raw log 首行
+  锚一致）静态门全过（`bash -n`、恰 1 处 curl 调用点、3×8=恰 24
+  条执行路径、每 curl 恰 1 URL、零字面 `%s`、LF、零禁用命令）后由
+  supervisor **恰执行 1 次**（零重试），UTC 窗
+  `2026-09-30T22:52:12Z`–`22:52:39Z`，SSH `rc=0` 正常收尾
+  （`END_ROUND_B` 锚在案，与 Round A 中断形态对照）；B1 idx=1 窗首
+  canary 通过。审计：`SAMPLE_START`/`CURL_RC` = 24/24（`rc=0` × 24）、
+  窗 3 始 3 终（各 8/8）、`CANARY_FAIL`/`ROUND_B_ABORTED` = 0。
+- 样本 24/24 全过（`code=200`、`verify=0`、`ip=127.0.0.1`、
+  `bytes=1392`、`ctype=application/json`、计时字段全非零）；失败/
+  畸形/慢样本（>2500ms）均 **0**；两处温和离群（B2 idx1、B3 idx2）
+  按零重试契约原样计入，由 p95/max 承载。
+- 统计（nearest-rank，n=24，制备无关的本地重算与交接值逐项一致，
+  单位 ms）：TTFB 26.783/35.793/51.281；TLS 段 26.362/35.350/
+  50.815；握手后等待段 0.290/0.343/0.347；总时长 26.815/35.834/
+  51.318（p50/p95/max）。
+- 预算账：Round A 已耗 9（无效不退）+ Round B 干净 24 = **33/40**，
+  余 7 未授权；辅助命令 `nginx -T`/`dig`/`s_time` 均 0（TLS 段远低
+  于慢阈值，M14-200 §8.4 条件不满足，s_time 既有授权继续留置）。
+- **决策矩阵结果 H1**（M14-199 §7 第一行逐门通过：本地 TTFB p95
+  35.793 ≤ 300、TLS 段 p95 35.350 < 300、等待段 p95 0.343 < 300，
+  对照 Phase 0 公网慢基线 p50 286.648/p95 5793.434/max 12283.814、
+  慢窗 3/9）：**慢在公网入站路径，非 VPS 处理面**——跳过 Phase 2
+  Nginx 调优，Phase 3（多入口/Cloudflare）评估另立切片。判定输入
+  仅 Round B 24 样本（Round A 9 行永不参与）。
+- 协议 caveat：本地 curl 协商 h2（`ver=2` 被动记录）vs Phase 0 公网
+  恒 HTTP/1.1——差值含协议因素，不做 h2 因果结论；h2 强制参照组
+  从未授权、未运行。
+- 清理与脱敏：脚本经 stdin 管道投递，VPS 侧零文件写入、零服务/
+  配置变更（未触碰 `/etc/nginx`），无需清理；raw log/脚本副本只留
+  gitignored `.verify/`，VPS 细节/本地路径/凭据永不入库。本切片
+  docs-only（证据 README + 两处台账）；验证：version-sync 守卫、
+  `git diff --check`、新增行 secret/本地路径/U+FFFD 扫描 0 真实
+  命中。证据：`docs/evidence/m14-202-phase1-round-b-closeout/README.md`。
+  单 local commit，不推送、不开 PR；supervisor 审查与 remote 发布
+  在其后进行。
+
 ## M14-200 — Phase 1 Round A 仪表缺陷事故落档与 Round B 修正任务书（docs-only，非代码，零新采样）
 
 - Round A 事实（如实落档）：PR #288 合并且 main CI 5/5 后，supervisor
