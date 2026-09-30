@@ -291,9 +291,18 @@ ok=34/warn=0/critical=0，`overall_status=ok`、`monitoring_ready=true`
 
 ```
 python tools/ops/production_monitor.py                # plan（默认：零 subprocess/零网络/零生产读取）
+python tools/ops/production_monitor.py --web-base-path /aios
 python tools/ops/production_monitor.py --execute \
     --confirm "EXECUTE READ-ONLY PRODUCTION MONITORING"   # execute（旗标+精确短语齐备才放行）
 ```
+
+**状态（M14-194 Web gateway/basePath 对齐）**：Web 探测目标从 stale
+3011 host 映射改为 canonical gateway `127.0.0.1:3012`；新增
+`--web-base-path` 仅接受空串（root：`/`、`/login`）或精确 `/aios`
+（`/aios`、`/aios/login`），尾斜杠/query/fragment/深路径一律在报告写入
+与采集之前拒绝且不回显原值。root 是显式默认，不假设所有部署都有
+`/aios`；sidecar 来源仅替换语音端点，保留当前 Web basePath。报告
+`config.web_base_path` 记录实际形态。
 
 **状态（M14-79 日志错误时间界，2026-09-21）**：`log-errors` 阈值判定由
 `docker logs --tail` **全尾无时间界计数**改为**当前区间计数**（root
@@ -371,8 +380,9 @@ schema/service/正整数 PID/固定 18010/18011 端口/RFC1918 字面 IPv4 bind�
 - **只读采集面**（固定画像）：compose project
   `aios-m14-03-production-rehearsal`（--profile local）——compose ps
   （六受管服务 health/state）、六容器 docker inspect（state/health/
-  RestartCount/image/started）、五默认端点 GET（Web 3011 `/`+`/login`、
-  API 8000 `/health`、FunASR 8010/CosyVoice 8011 `/health`）状态+延迟、
+  RestartCount/image/started）、五默认端点 GET（Web 3012 root `/`+`/login`
+  或 `/aios`+`/aios/login`（CLI 显式选择）、API 8000 `/health`、FunASR
+  8010/CosyVoice 8011 `/health`）状态+延迟、
   容器日志安全错误摘要（`docker logs --tail`——只记匹配计数/级别/安全
   类别，**原文绝不持久化**）。
 - **子进程白名单门（结构性）**：一切 docker 命令经 `ReadonlyRunner` 的
@@ -548,6 +558,11 @@ M14-27 契约测试 35 passed、监控家族六套件最终回归 635 passed（�
 启动与生产监控切换尚未执行（留 M14-28 受控验收），`production_ready=
 false` 不变**。
 
+**状态（M14-194 monitor argv 固定 `/aios`）**：管道固定命令白名单中的
+monitor 精确形态追加 `--web-base-path /aios`，报告 config 同步记录
+`monitor_web_base_path=/aios`。root 形态仍由 standalone monitor 的空串
+默认保留；管道不暴露 basePath 覆写，避免把计划任务切回错误 root 目标。
+
 **状态（M14-110 calibration 第四步接入，2026-09-23，supervisor Round 1
 修正后收口）**：管道序列升级为 monitor → history → insights →
 calibration 四步——第四步为 M14-109 阈值标定/评估工具的固定形态
@@ -589,7 +604,9 @@ python tools/ops/monitoring_pipeline.py --execute \
   非有限浮点/超硬顶同样拒绝（plan 同样校验）。
 - **固定命令白名单门（结构性）**：仅四个精确固定形态——
   `<python> production_monitor.py --execute --confirm "EXECUTE READ-ONLY
-  PRODUCTION MONITORING"`（与 monitor 自身短语逐字一致，回归测试锁定）、
+  PRODUCTION MONITORING" --web-base-path /aios --voice-health-source
+  sidecar`（与 monitor 自身短语逐字一致；Web/语音形态均固定，回归测试
+  锁定）、
   `<python> monitoring_history.py`（全默认参数）、
   `<python> monitoring_insights.py --execute --confirm "EXECUTE READ-ONLY
   MONITORING INSIGHTS"`（与 insights 自身短语逐字一致；**恒不带

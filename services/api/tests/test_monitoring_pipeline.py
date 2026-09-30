@@ -272,6 +272,7 @@ def test_plan_mode_zero_side_effects(monkeypatch, tmp_path) -> None:
     assert report["overall_status"] == "planned"
     assert report["config"]["sequence"] == ["monitor", "history", "insights",
                                             "calibration"]
+    assert report["config"]["monitor_web_base_path"] == "/aios"
     for step in ("monitor", "history", "insights", "calibration"):
         assert report["stages"][step]["status"] == "planned"
     # plan 零锁 + 零 calibration 产物
@@ -359,6 +360,7 @@ def test_allowed_forms_exact() -> None:
     assert set(forms) == {"monitor", "history", "insights", "calibration"}
     assert forms["monitor"] == (FAKE_PY, str(mp.MONITOR_SCRIPT),
                                 "--execute", "--confirm", mp.MONITOR_CONFIRM_PHRASE,
+                                "--web-base-path", "/aios",
                                 "--voice-health-source", "sidecar")
     assert forms["history"] == (FAKE_PY, str(mp.HISTORY_SCRIPT))
     assert forms["insights"] == (FAKE_PY, str(mp.INSIGHTS_SCRIPT),
@@ -379,12 +381,28 @@ def test_allowed_forms_exact() -> None:
         assert mp.is_allowed_step_command(form, FAKE_PY)
 
 
+def test_monitor_command_identity_and_config_pin_aios_base_path() -> None:
+    identity = mp.command_identity("monitor")
+    assert identity[-2:] == ["--web-base-path", mp.MONITOR_WEB_BASE_PATH]
+    assert mp.MONITOR_WEB_BASE_PATH == pm.WEB_BASE_PATH_AIOS
+    config = mp.build_config(monitor_timeout=480.0, history_timeout=90.0,
+                             insights_timeout=30.0, calibration_timeout=5.0)
+    assert config["monitor_web_base_path"] == mp.MONITOR_WEB_BASE_PATH
+
+
 @pytest.mark.parametrize("argv", [
     (FAKE_PY, str(mp.MONITOR_SCRIPT)),                                # 缺 --execute
     (FAKE_PY, str(mp.MONITOR_SCRIPT), "--execute"),                   # 缺 confirm
     (FAKE_PY, str(mp.MONITOR_SCRIPT), "--execute", "--confirm", "WRONG"),
     (FAKE_PY, str(mp.MONITOR_SCRIPT), "--execute", "--confirm",
      mp.MONITOR_CONFIRM_PHRASE, "--extra"),                           # 追加旗标
+    # M14-194：monitor Web basePath 固定为 /aios，缺失/root/尾斜杠均拒绝
+    (FAKE_PY, str(mp.MONITOR_SCRIPT), "--execute", "--confirm",
+     mp.MONITOR_CONFIRM_PHRASE, "--voice-health-source", "sidecar"),
+    (FAKE_PY, str(mp.MONITOR_SCRIPT), "--execute", "--confirm",
+     mp.MONITOR_CONFIRM_PHRASE, "--web-base-path", ""),
+    (FAKE_PY, str(mp.MONITOR_SCRIPT), "--execute", "--confirm",
+     mp.MONITOR_CONFIRM_PHRASE, "--web-base-path", "/aios/"),
     (FAKE_PY, str(mp.MONITOR_SCRIPT), "--confirm", mp.MONITOR_CONFIRM_PHRASE, "--execute"),
     # M14-27：monitor 语音来源恒为 sidecar——loopback/缺值形态一律拒绝
     (FAKE_PY, str(mp.MONITOR_SCRIPT), "--execute", "--confirm",
@@ -464,6 +482,9 @@ def test_sequence_monitor_history_insights_calibration_ok(monkeypatch, tmp_path)
     report = _report(tmp_path / "out")
     assert report["config"]["sequence"] == ["monitor", "history", "insights",
                                             "calibration"]
+    assert report["config"]["monitor_web_base_path"] == "/aios"
+    monitor_argv = fake.calls[0][0]
+    assert monitor_argv[-4:-2] == ("--web-base-path", "/aios")
     for step in ("monitor", "history", "insights", "calibration"):
         assert report["stages"][step]["status"] == "ok"
         assert report["stages"][step]["exit_code"] == 0
