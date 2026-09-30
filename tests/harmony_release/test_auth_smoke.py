@@ -877,3 +877,649 @@ def test_find_url_input_ignores_url_text_after_textinput():
     field = auth_smoke.find_url_input(auth_smoke.layout_typed(layout))
     assert field is not None
     assert field[2] == "http://10.0.2.2:8765/"
+
+
+# -------------------- M14-196 R6: caret-menu URL clear + focused text ----
+
+import ast as _ast
+
+
+def _func_source(name, cls=None):
+    """Verbatim source of a module function (or method of UiDriver)."""
+    src = Path(auth_smoke.__file__).read_text(encoding="utf-8")
+    tree = _ast.parse(src)
+    scopes = [tree]
+    if cls is not None:
+        scopes = [
+            n for n in tree.body
+            if isinstance(n, _ast.ClassDef) and n.name == cls]
+    for scope in scopes:
+        for node in scope.body:
+            if isinstance(node, _ast.FunctionDef) and node.name == name:
+                seg = _ast.get_source_segment(src, node)
+                assert seg is not None
+                return seg
+    raise AssertionError("function not found: " + str(name))
+
+
+def test_r6_type_url_field_removed_and_no_coordinate_inputtext_in_flow():
+    """R5 root cause locked out: the coordinate-inputText typing path
+    is gone from the module and from every function of the Settings
+    URL flow."""
+    assert not hasattr(auth_smoke.UiDriver, "type_url_field")
+    for func in (
+        ("_drive_settings_url", None),
+        ("_clear_url_field_via_menu", None),
+        ("focused_text", "UiDriver"),
+        ("clear_url_field_via_menu", "UiDriver"),
+    ):
+        src = _func_source(*func)
+        assert '"inputText"' not in src, func
+
+
+def test_r6_verify_requires_exact_equality_not_substring():
+    """The verify gate must demand byte-for-byte equality; the old
+    substring acceptance that let the R5 corrupted value through
+    is banned from the flow."""
+    src = _func_source("_drive_settings_url")
+    assert "vfield[2] != device_base" in src
+    assert "device_base not in vfield[2]" not in src
+    assert "exact_match_required" in src
+
+
+def test_r6_focused_text_uses_coordinate_free_uiinput_text():
+    """Focused entry routes through uiInput text with NO x/y args."""
+    runner = FakeRunner()
+    driver = auth_smoke.UiDriver(
+        runner=runner, program="hdc", target="127.0.0.1:5555",
+        bundle="com.example.fake", ability="EntryAbility",
+        timeout=1.0, local_layout=Path("layout.json"))
+    url = "http://10.0.2.2:8765/"
+    driver.focused_text(url)
+    assert len(runner.calls) == 1
+    argv = runner.calls[0]
+    assert argv[-5:] == ("shell", "uitest", "uiInput", "text", url)
+    assert "inputText" not in argv
+
+
+def test_r6_focused_text_chunks_long_input():
+    """>64 chars: chunked shell calls, concatenation exact, still no
+    coordinates anywhere in any chunk argv."""
+    runner = FakeRunner()
+    driver = auth_smoke.UiDriver(
+        runner=runner, program="hdc", target="127.0.0.1:5555",
+        bundle="com.example.fake", ability="EntryAbility",
+        timeout=1.0, local_layout=Path("layout.json"))
+    text = "http://10.0.2.2:" + "9" * 150 + "/"
+    driver.focused_text(text)
+    chunks = [a[-1] for a in runner.calls]
+    assert "".join(chunks) == text
+    assert all(len(c) <= auth_smoke.TEXT_INPUT_CHUNK for c in chunks)
+    for argv in runner.calls:
+        assert argv[-5:-1] == ("shell", "uitest", "uiInput", "text")
+        assert "inputText" not in argv
+
+
+def test_r6_clear_url_field_longclick_command():
+    """Stage-1 command is exactly a longClick at the field center."""
+    runner = FakeRunner()
+    driver = auth_smoke.UiDriver(
+        runner=runner, program="hdc", target="127.0.0.1:5555",
+        bundle="com.example.fake", ability="EntryAbility",
+        timeout=1.0, local_layout=Path("layout.json"))
+    driver.clear_url_field_via_menu(660, 469)
+    argv = runner.calls[0]
+    assert argv[-6:] == ("shell", "uitest", "uiInput",
+                         "longClick", "660", "469")
+
+
+class _FakeSettingsDriver:
+    """UiDriver stand-in scripted by a dump queue; records every
+    driving action so tests can prove the executed flow."""
+
+    def __init__(self, dumps):
+        self._queue = list(dumps)
+        self._last = dumps[-1] if dumps else None
+        self.actions: list[tuple[str, object]] = []
+
+    def dump(self):
+        if self._queue:
+            self._last = self._queue.pop(0)
+        return self._last, []
+
+    def _act(self, name, arg=None):
+        self.actions.append((name, arg))
+
+    def click(self, x, y):
+        self._act("click", (x, y))
+
+    def clear_url_field_via_menu(self, x, y):
+        self._act("longClick", (x, y))
+
+    def focused_text(self, text):
+        self._act("focused_text", text)
+
+    def dismiss_ime(self):
+        self._act("dismiss_ime")
+
+    def restart_ability(self):
+        self._act("restart_ability")
+
+    def ensure_foreground(self):
+        return []
+
+    def window_snapshot(self):
+        return {}
+
+    def digest(self):
+        return {"filename": "l.json", "size_bytes": 1,
+                "sha256": "A" * 8, "content_recorded": False}
+
+
+def _r6_layout(nodes):
+    return {"attributes": {"type": "Root"},
+            "children": [_settings_node(*n) for n in nodes]}
+
+
+URL_FIELD = ("TextInput", "http://10.0.2.2:60880/",
+             "[36,1136][1008,1224]")
+SETTINGS_TAB = ("Text", "设置", "[912,1322][1008,1358]")
+# R10/R11: menu-stage dumps must carry STRONG Settings pane
+# evidence (header + action button) alongside the IME menu
+# action itself.
+SETTINGS_HEADER = ("Text", "AIOS 服务地址",
+                   "[36,180][640,226]")
+SETTINGS_SAVE = ("Text", "保存", "[36,1240][200,1276]")
+MENU_EVIDENCE = [SETTINGS_HEADER, SETTINGS_SAVE]
+
+
+def test_r6_clear_via_menu_happy_path(monkeypatch):
+    """longClick -> 全选 -> 剪切 -> dump proves the field EMPTY; the
+    actions are exactly the three clicks at the layout centers."""
+    monkeypatch.setattr(auth_smoke.time, "sleep", lambda s: None)
+    driver = _FakeSettingsDriver([
+        _r6_layout([*MENU_EVIDENCE, SETTINGS_TAB, URL_FIELD,
+                    ("Text", "全选", "[174,310][273,367]")]),
+        _r6_layout([*MENU_EVIDENCE, SETTINGS_TAB, URL_FIELD,
+                    ("Text", "剪切", "[119,254][218,311]")]),
+        _r6_layout([SETTINGS_TAB,
+                    ("TextInput", "", "[36,1136][1008,1224]")]),
+    ])
+    cleared, failures = auth_smoke._clear_url_field_via_menu(
+        driver, 522, 1180, 1)
+    assert cleared is True
+    assert failures == []
+    assert driver.actions == [
+        ("longClick", (522, 1180)),
+        ("click", ((174 + 273) // 2, (310 + 367) // 2)),
+        ("click", ((119 + 218) // 2, (254 + 311) // 2)),
+    ]
+
+
+def test_r6_clear_via_menu_fails_closed_without_select_all(monkeypatch):
+    monkeypatch.setattr(auth_smoke.time, "sleep", lambda s: None)
+    driver = _FakeSettingsDriver([
+        # strong pane evidence + visible 剪切 but NO 全选:
+        # menu-stage ownership passes, the exact-match search for
+        # 全选 then fails -> select_all_not_found stays reachable
+        _r6_layout([*MENU_EVIDENCE, SETTINGS_TAB, URL_FIELD,
+                    ("Text", "剪切", "[119,254][218,311]")]),
+    ])
+    cleared, failures = auth_smoke._clear_url_field_via_menu(
+        driver, 522, 1180, 1)
+    assert cleared is False
+    codes = [f["code"] for f in failures]
+    assert codes == ["settings_menu_select_all_not_found"]
+    detail = failures[0]["detail"]
+    assert detail["layout_digest"]["content_recorded"] is False
+    assert detail["node_text_count"] == 5
+    # nothing was typed, no cut attempted
+    assert [a[0] for a in driver.actions] == ["longClick"]
+
+
+def test_r6_clear_via_menu_fails_closed_when_field_not_empty(monkeypatch):
+    monkeypatch.setattr(auth_smoke.time, "sleep", lambda s: None)
+    driver = _FakeSettingsDriver([
+        _r6_layout([*MENU_EVIDENCE, SETTINGS_TAB, URL_FIELD,
+                    ("Text", "全选", "[174,310][273,367]")]),
+        _r6_layout([*MENU_EVIDENCE, SETTINGS_TAB, URL_FIELD,
+                    ("Text", "剪切", "[119,254][218,311]")]),
+        # cut tapped but the field still holds stale text
+        _r6_layout([SETTINGS_TAB, URL_FIELD]),
+    ])
+    cleared, failures = auth_smoke._clear_url_field_via_menu(
+        driver, 522, 1180, 1)
+    assert cleared is False
+    assert [f["code"] for f in failures] == ["settings_clear_not_proven"]
+    assert failures[0]["detail"]["cleared_text_empty"] is False
+    assert failures[0]["detail"]["layout_digest"][
+           "content_recorded"] is False
+
+
+def test_r6_clear_via_menu_fails_closed_on_foreground_loss(monkeypatch):
+    monkeypatch.setattr(auth_smoke.time, "sleep", lambda s: None)
+    driver = _FakeSettingsDriver([
+        # a foreign app screen: no ownership markers at all
+        _r6_layout([("Text", "Unrelated App", "[0,0][100,40]")]),
+    ])
+    cleared, failures = auth_smoke._clear_url_field_via_menu(
+        driver, 522, 1180, 1)
+    assert cleared is False
+    assert failures[0]["code"] == "settings_foreground_lost"
+    assert failures[0]["detail"]["stage"] == "menu"
+
+
+def _r6_full_flow_dumps(final_url, verify_url=None):
+    """Dump queue for one full _drive_settings_url attempt."""
+    verify_url = final_url if verify_url is None else verify_url
+    return [
+        # _goto_settings: Settings tab dump
+        _r6_layout([SETTINGS_TAB, URL_FIELD]),
+        # step-2 ownership dump
+        _r6_layout([SETTINGS_TAB, URL_FIELD]),
+        # menu dumps 1-3 (strong pane evidence + typed menu action)
+        _r6_layout([*MENU_EVIDENCE, SETTINGS_TAB, URL_FIELD,
+                    ("Text", "全选", "[174,310][273,367]")]),
+        _r6_layout([*MENU_EVIDENCE, SETTINGS_TAB, URL_FIELD,
+                    ("Text", "剪切", "[119,254][218,311]")]),
+        _r6_layout([SETTINGS_TAB,
+                    ("TextInput", "", "[36,1136][1008,1224]"),
+                    ("Text", "保存", "[36,1240][200,1276]")]),
+        # verify dump
+        _r6_layout([SETTINGS_TAB,
+                    ("TextInput", verify_url, "[36,1136][1008,1224]"),
+                    ("Text", "保存", "[500,1240][560,1276]")]),
+        # final dump after Save
+        _r6_layout([SETTINGS_TAB,
+                    ("Text", "已保存: " + final_url,
+                     "[36,1240][1008,1276]"),
+                    ("Text", "保存", "[36,640][200,690]")]),
+    ]
+
+
+def test_r6_drive_settings_url_full_flow_no_coordinate_inputtext(
+        monkeypatch):
+    """End-to-end over the fake: menu clear -> focused text -> exact
+    verify -> Save confirmed; no coordinate inputText is ever part
+    of the executed action list."""
+    monkeypatch.setattr(auth_smoke.time, "sleep", lambda s: None)
+    driver = _FakeSettingsDriver(_r6_full_flow_dumps(
+        "http://10.0.2.2:8765/"))
+    ok, failures = auth_smoke._drive_settings_url(
+        driver, "http://10.0.2.2:8765/")
+    assert ok is True
+    assert failures == []
+    names = [a[0] for a in driver.actions]
+    assert "longClick" in names
+    assert "focused_text" in names
+    typed = [a[1] for a in driver.actions if a[0] == "focused_text"]
+    assert typed == ["http://10.0.2.2:8765/"]
+    assert "dismiss_ime" in names
+    assert "restart_ability" in names  # cold restart after save
+
+
+def test_r6_drive_settings_url_rejects_r5_corrupted_prefix(
+        monkeypatch):
+    """R5 regression: the verify field reads "/http://10.0.2.2:8765/"
+    - the OLD substring check accepted it; exact equality must
+    fail the attempt AT ONCE with settings_input_mismatch
+    (SETTINGS_MAX_ATTEMPTS untouched - fail closed after one cycle)."""
+    monkeypatch.setattr(auth_smoke.time, "sleep", lambda s: None)
+    driver = _FakeSettingsDriver(_r6_full_flow_dumps(
+        "http://10.0.2.2:8765/",
+        verify_url="/http://10.0.2.2:8765/"))
+    ok, failures = auth_smoke._drive_settings_url(
+        driver, "http://10.0.2.2:8765/")
+    assert ok is False
+    mismatch = [f for f in failures
+                if f["code"] == "settings_input_mismatch"]
+    assert len(mismatch) == 1
+    detail = mismatch[0]["detail"]
+    assert detail["exact_match_required"] is True
+    assert detail["field_matches"] is False
+    assert detail["layout_digest"]["content_recorded"] is False
+
+
+def test_r6_mismatch_fails_closed_after_one_clear_type_cycle(
+        monkeypatch):
+    """Supervisor R1: with SETTINGS_MAX_ATTEMPTS at its DEFAULT value
+    (5, unpatched), one exact-equality mismatch ends the step - exactly
+    one clear/type cycle executes, no blind malformed retries."""
+    monkeypatch.setattr(auth_smoke.time, "sleep", lambda s: None)
+    assert auth_smoke.SETTINGS_MAX_ATTEMPTS == 5  # default, untouched
+    driver = _FakeSettingsDriver(_r6_full_flow_dumps(
+        "http://10.0.2.2:8765/",
+        verify_url="/http://10.0.2.2:8765/"))
+    ok, failures = auth_smoke._drive_settings_url(
+        driver, "http://10.0.2.2:8765/")
+    assert ok is False
+    mismatch = [f for f in failures
+                if f["code"] == "settings_input_mismatch"]
+    assert len(mismatch) == 1
+    assert mismatch[0]["detail"]["attempt"] == 1
+    names = [a[0] for a in driver.actions]
+    # exactly ONE caret-menu clear and ONE typed entry ever executed
+    assert names.count("longClick") == 1
+    assert names.count("focused_text") == 1
+    # nothing ran past the mismatch: no save confirmation path taken
+    assert "restart_ability" not in names
+
+
+def test_r6_drive_settings_url_nonforeground_clear_failure_stops_at_once(
+        monkeypatch):
+    """Supervisor R2: a NON-foreground clear failure (caret menu
+    never opened) is deterministic - the step fails after ONE cycle
+    with the existing evidence; no blind SETTINGS_MAX_ATTEMPTS
+    retries, nothing is ever typed."""
+    monkeypatch.setattr(auth_smoke.time, "sleep", lambda s: None)
+    assert auth_smoke.SETTINGS_MAX_ATTEMPTS == 5  # default, untouched
+    driver = _FakeSettingsDriver([
+        # navigation + ownership dumps: our Settings screen
+        _r6_layout([SETTINGS_TAB, URL_FIELD]),
+        _r6_layout([SETTINGS_TAB, URL_FIELD]),
+        # caret menu dump: strong pane evidence + 剪切 visible
+        # but NO 全选 (R11 shape) -> select_all_not_found,
+        # the deterministic one-cycle stop supervisor R2 guards
+        _r6_layout([*MENU_EVIDENCE, SETTINGS_TAB, URL_FIELD,
+                    ("Text", "剪切", "[119,254][218,311]")]),
+    ])
+    ok, failures = auth_smoke._drive_settings_url(
+        driver, "http://10.0.2.2:8765/")
+    assert ok is False
+    assert [f["code"] for f in failures] == [
+        "settings_menu_select_all_not_found"]
+    names = [a[0] for a in driver.actions]
+    # exactly one clear attempt, nothing typed, IME dismissed, no restart
+    assert names.count("longClick") == 1
+    assert "focused_text" not in names
+    assert "dismiss_ime" in names
+    assert "restart_ability" not in names
+
+
+def test_r6_drive_settings_url_foreground_clear_failure_still_retries(
+        monkeypatch):
+    """Foreground clear losses KEEP the retry loop (R6 contract):
+    the clear-stage settings_foreground_lost does not abort the step
+    at once - later attempts re-guard and recover via restart_ability
+    exactly like every other foreground loss."""
+    monkeypatch.setattr(auth_smoke.time, "sleep", lambda s: None)
+    driver = _FakeSettingsDriver([
+        _r6_layout([SETTINGS_TAB, URL_FIELD]),
+        _r6_layout([SETTINGS_TAB, URL_FIELD]),
+        # caret-menu dump lands on a foreign screen
+        _r6_layout([("Text", "Unrelated App", "[0,0][100,40]")]),
+    ])
+    ok, failures = auth_smoke._drive_settings_url(
+        driver, "http://10.0.2.2:8765/")
+    assert ok is False
+    clear_stage = [f for f in failures
+                   if f["code"] == "settings_foreground_lost"
+                   and f.get("detail", {}).get("stage") == "menu"]
+    assert len(clear_stage) == 1
+    # the loop continued: the repeated foreign ownership dump drove
+    # the documented restart/retry path on later attempts
+    assert "restart_ability" in [a[0] for a in driver.actions]
+
+    assert "restart_ability" in [a[0] for a in driver.actions]
+
+
+# ------------- M14-196 R7: strong-evidence Settings ownership ----------
+
+REAL_LAYOUT_PATH = Path(__file__).parent / "fixtures" / (
+    "m14_196_r6_ime_selectmenu_layout.json")
+
+
+def _load_real_dump():
+    """The R6 stage-b real dump (gitignored .verify copy); skipped
+    when the worktree evidence dir is absent (e.g. CI)."""
+    if not REAL_LAYOUT_PATH.is_file():
+        pytest.skip("real stage-b layout fixture not present")
+    return json.loads(REAL_LAYOUT_PATH.read_text(encoding="utf-8"))
+
+
+def test_r7_real_dump_huawei_ime_selectmenu_ownership(monkeypatch):
+    """Stage B real-layout regression (task goal 4): the REAL R6
+    stage-b dump - Huawei IME SelectMenu over our own Settings pane,
+    bottom tab bar covered - must be judged OURS by the new
+    menu-stage and pane ownership, while the old tab-only check
+    fails on it (that false negative WAS the settings_foreground_lost
+    x5 root cause)."""
+    real = _load_real_dump()
+    texts = auth_smoke.layout_texts(real)
+    typed = auth_smoke.layout_typed(real)
+    joined = "\n".join(t for t, _b in texts)
+    # root-cause shape: our Settings pane fully rendered...
+    assert "AIOS 服务地址" in joined
+    assert auth_smoke.find_url_input(typed) is not None
+    assert "保存" in joined and "测试连接" in joined
+    # ...the IME SelectMenu is open (typed menu actions)...
+    assert "全选" in joined and "剪切" in joined
+    # ...and the bottom tab bar is NOT visible (the misjudge cause)
+    assert auth_smoke.SETTINGS_TAB_TEXT not in joined
+    assert auth_smoke.HOME_TAB_TEXT not in joined
+    # old check fails on our own pane (the R6 defect)...
+    assert auth_smoke._owns_layout(texts) is False
+    # ...the new R7 checks own it (strong combination holds)
+    assert auth_smoke._owns_settings_menu_stage(texts, typed) is True
+    assert auth_smoke._owns_settings_pane(texts, typed) is True
+
+
+def test_r7_foreign_app_layout_fails_closed():
+    """A foreign app screen (no Settings evidence at all) must never
+    pass any R7 ownership check - fail-closed preserved."""
+    layout = _r6_layout([("Text", "Unrelated App", "[0,0][100,40]")])
+    texts = auth_smoke.layout_texts(layout)
+    typed = auth_smoke.layout_typed(layout)
+    assert auth_smoke._owns_layout(texts) is False
+    assert auth_smoke._has_settings_strong_evidence(texts, typed) is False
+    assert auth_smoke._owns_settings_pane(texts, typed) is False
+    assert auth_smoke._owns_settings_menu_stage(texts, typed) is False
+
+
+def test_r7_weak_single_text_never_passes():
+    """Weak evidence alone (header only / menu action only / header
+    + menu action without a TextInput) must NOT prove ownership."""
+    header_only = _r6_layout(
+        [("Text", "AIOS 服务地址", "[0,100][400,150]")])
+    ht, hd = auth_smoke.layout_texts(header_only), \
+        auth_smoke.layout_typed(header_only)
+    assert auth_smoke._has_settings_strong_evidence(ht, hd) is False
+    assert auth_smoke._owns_settings_pane(ht, hd) is False
+
+    menu_only = _r6_layout([("Text", "全选", "[0,100][400,150]")])
+    mt, md = auth_smoke.layout_texts(menu_only), \
+        auth_smoke.layout_typed(menu_only)
+    assert auth_smoke._owns_settings_menu_stage(mt, md) is False
+
+    # header + menu action but NO TextInput node: still weak
+    no_input = _r6_layout([
+        ("Text", "AIOS 服务地址", "[0,100][400,150]"),
+        ("Text", "全选", "[0,200][400,250]")])
+    nt, nd = auth_smoke.layout_texts(no_input), \
+        auth_smoke.layout_typed(no_input)
+    assert auth_smoke._has_settings_strong_evidence(nt, nd) is False
+    assert auth_smoke._owns_settings_menu_stage(nt, nd) is False
+
+
+def test_r7_real_settings_pane_without_tab_bar_passes():
+    """Task goal 3: a REAL Settings pane dump with NO bottom tab bar
+    (IME covering it) passes via the strong combination: header +
+    URL TextInput + 保存 (and 测试连接)."""
+    layout = _r6_layout([
+        ("Text", "AIOS 服务地址", "[56,252][640,298]"),
+        ("TextInput", "https://ndtool.cn/aios/", "[56,399][1264,539]"),
+        ("Text", "保存", "[56,640][300,690]"),
+        ("Text", "测试连接", "[420,640][700,690]"),
+    ])
+    texts = auth_smoke.layout_texts(layout)
+    typed = auth_smoke.layout_typed(layout)
+    assert auth_smoke.SETTINGS_TAB_TEXT not in \
+        "\n".join(t for t, _b in texts)
+    assert auth_smoke._owns_layout(texts) is False
+    assert auth_smoke._has_settings_strong_evidence(texts, typed) is True
+    assert auth_smoke._owns_settings_pane(texts, typed) is True
+
+
+def test_r7_initial_ownership_uses_strong_evidence(monkeypatch):
+    """Task goal 3 (flow level): _drive_settings_url's INITIAL
+    ownership check accepts a no-tab-bar Settings pane via strong
+    evidence and proceeds through the full flow; only the caret-menu
+    dumps use the menu-stage rule."""
+    monkeypatch.setattr(auth_smoke.time, "sleep", lambda s: None)
+    driver = _FakeSettingsDriver([
+        # _goto_settings dump: pane without tab bar (strong evidence)
+        _r6_layout([
+            ("Text", "AIOS 服务地址", "[56,252][640,298]"),
+            ("TextInput", "http://10.0.2.2:60880/",
+             "[36,1136][1008,1224]"),
+            ("Text", "保存", "[36,1240][200,1276]"),
+        ]),
+        # step-2 ownership dump: same no-tab pane
+        _r6_layout([
+            ("Text", "AIOS 服务地址", "[56,252][640,298]"),
+            ("TextInput", "http://10.0.2.2:60880/",
+             "[36,1136][1008,1224]"),
+            ("Text", "保存", "[36,1240][200,1276]"),
+        ]),
+        # caret-menu dump 1: SelectMenu over the pane (no tab bar)
+        _r6_layout([
+            ("Text", "AIOS 服务地址", "[56,252][640,298]"),
+            ("TextInput", "http://10.0.2.2:60880/",
+             "[36,1136][1008,1224]"),
+            ("Text", "保存", "[36,1240][200,1276]"),
+            ("Text", "全选", "[174,310][273,367]"),
+        ]),
+        # caret-menu dump 2: 剪切 visible
+        _r6_layout([
+            ("Text", "AIOS 服务地址", "[56,252][640,298]"),
+            ("TextInput", "http://10.0.2.2:60880/",
+             "[36,1136][1008,1224]"),
+            ("Text", "保存", "[36,1240][200,1276]"),
+            ("Text", "剪切", "[119,254][218,311]"),
+        ]),
+        # cleared-field dump (pane evidence, no tab bar)
+        _r6_layout([
+            ("Text", "AIOS 服务地址", "[56,252][640,298]"),
+            ("TextInput", "", "[36,1136][1008,1224]"),
+            ("Text", "保存", "[36,1240][200,1276]"),
+        ]),
+        # verify dump: typed URL exact + Save button
+        _r6_layout([
+            ("Text", "AIOS 服务地址", "[56,252][640,298]"),
+            ("TextInput", "http://10.0.2.2:8765/",
+             "[36,1136][1008,1224]"),
+            ("Text", "保存", "[36,1240][200,1276]"),
+        ]),
+        # final dump: save confirmed (pane keeps the URL input
+        # rendered - strong evidence holds without a tab bar)
+        _r6_layout([
+            ("Text", "AIOS 服务地址", "[56,252][640,298]"),
+            ("TextInput", "http://10.0.2.2:8765/",
+             "[36,1136][1008,1224]"),
+            ("Text", "已保存: http://10.0.2.2:8765/",
+             "[36,1240][1008,1276]"),
+            ("Text", "保存", "[36,640][200,690]"),
+        ]),
+    ])
+    ok, failures = auth_smoke._drive_settings_url(
+        driver, "http://10.0.2.2:8765/")
+    assert ok is True
+    assert failures == []
+    names = [a[0] for a in driver.actions]
+    assert names.count("longClick") == 1
+    assert "focused_text" in names
+    assert "restart_ability" in names  # cold restart after save
+
+
+def test_r7_menu_stage_requires_menu_action():
+    """Menu stage without a typed IME menu action (全选/剪切 both
+    absent) fails closed even when the pane itself is strong."""
+    layout = _r6_layout([
+        ("Text", "AIOS 服务地址", "[56,252][640,298]"),
+        ("TextInput", "https://ndtool.cn/aios/", "[56,399][1264,539]"),
+        ("Text", "保存", "[56,640][300,690]"),
+        ("Text", "测试连接", "[420,640][700,690]"),
+    ])
+    texts = auth_smoke.layout_texts(layout)
+    typed = auth_smoke.layout_typed(layout)
+    # pane-level passes (strong evidence, no menu open)...
+    assert auth_smoke._owns_settings_pane(texts, typed) is True
+    # ...but the menu stage demands a visible menu action
+    assert auth_smoke._owns_settings_menu_stage(texts, typed) is False
+
+
+# ------------- M14-196 R10: menu-stage shortcut removal ----------
+
+def test_r10_menu_stage_tab_only_layout_without_strong_evidence():
+    """R10: a TAB-ONLY layout (设置 tab visible) with NO strong
+    Settings evidence and NO typed menu action must NOT pass the
+    menu-stage ownership check - the deleted _owns_layout shortcut
+    used to wave exactly such screens through. Fail-closed restored."""
+    layout = _r6_layout([SETTINGS_TAB])
+    texts = auth_smoke.layout_texts(layout)
+    typed = auth_smoke.layout_typed(layout)
+    # the plain tab-bar check alone would own this layout...
+    assert auth_smoke._owns_layout(texts) is True
+    # ...but strong Settings evidence is absent (no header, no
+    # TextInput, no action button) and no menu action is visible
+    assert auth_smoke._has_settings_strong_evidence(texts, typed) \
+        is False
+    assert auth_smoke._owns_settings_menu_stage(texts, typed) \
+        is False
+
+
+# ------------- M14-196 R11: menu-stage evidence fixtures ---------
+
+def test_r11_menu_stage_tab_only_now_foreground_lost(monkeypatch):
+    """R11 flow-level regression: a caret-menu dump showing ONLY
+    the tab bar and URL field (no strong Settings evidence, no
+    IME menu action) no longer passes the R10 menu-stage check -
+    each attempt fails settings_foreground_lost at stage=menu
+    instead of reaching select_all_not_found; nothing is typed."""
+    monkeypatch.setattr(auth_smoke.time, "sleep", lambda s: None)
+    dumps = []
+    for _attempt in range(auth_smoke.SETTINGS_MAX_ATTEMPTS):
+        dumps += [
+            # navigation + ownership dumps: our Settings screen
+            # (the pane stage still owns this via the tab bar)
+            _r6_layout([SETTINGS_TAB, URL_FIELD]),
+            _r6_layout([SETTINGS_TAB, URL_FIELD]),
+            # caret-menu dump stays TAB-ONLY: the pre-R10
+            # _owns_layout shortcut waved exactly this shape
+            # through; R10 demands strong evidence + menu
+            # action, so ownership now fails at every attempt
+            _r6_layout([SETTINGS_TAB]),
+        ]
+    driver = _FakeSettingsDriver(dumps)
+    ok, failures = auth_smoke._drive_settings_url(
+        driver, "http://10.0.2.2:8765/")
+    assert ok is False
+    codes = [f["code"] for f in failures]
+    assert codes == ["settings_foreground_lost"] * \
+        auth_smoke.SETTINGS_MAX_ATTEMPTS
+    assert all(f["detail"]["stage"] == "menu" for f in failures)
+    names = [a[0] for a in driver.actions]
+    assert names.count("longClick") == \
+        auth_smoke.SETTINGS_MAX_ATTEMPTS
+    assert "focused_text" not in names
+    assert "restart_ability" not in names
+
+
+def test_r11_select_all_not_found_branch_reachable():
+    """R11 unit: the select_all_not_found branch stays reachable
+    under the R10 menu-stage rule - a layout with STRONG Settings
+    pane evidence plus a visible IME menu action (剪切) but no
+    全选 passes menu-stage ownership, then fails the exact-match
+    search for 全选."""
+    layout = _r6_layout([
+        SETTINGS_HEADER,
+        SETTINGS_SAVE,
+        SETTINGS_TAB,
+        URL_FIELD,
+        ("Text", "剪切", "[119,254][218,311]"),
+    ])
+    texts = auth_smoke.layout_texts(layout)
+    typed = auth_smoke.layout_typed(layout)
+    assert auth_smoke._owns_settings_menu_stage(texts, typed) is True
+    assert auth_smoke.find_text_exact(
+        texts, auth_smoke.SETTINGS_MENU_SELECT_ALL_TEXT) is None
