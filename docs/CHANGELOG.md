@@ -1,5 +1,39 @@
 # Changelog
 
+## M14-193 — 生产滚动与公开 basePath 验收证据（docs-only，非代码）
+
+- 运行时锚点：build base `50bd66a`；API
+  `aios/api:m14-193-production`（digest `73dca646…a8dae`），Web
+  `aios/web:m14-193-production`（digest `f1131e62…767f`）。Web 构建
+  绑定 `https://ndtool.cn/aios` 与 `/aios` basePath；API 然后 Web 各自
+  仅以 `--no-build --no-deps` recreate，其他服务 untouched。
+- 切换前保护：production preflight **5/5 pass**（report SHA256
+  `C99CC6A2…A1CB`）；pre-cutover backup 覆盖 **30 tables / 4 files**
+  （manifest SHA256 `381C4987…12EC`），env 备份 SHA256
+  `7A8561A6…BA09`。一次失败的宿主备份尝试未触碰数据；成功备份才是
+  采纳的 pre-cutover backup。
+- 验收：local API/Web 与 public `/aios`、health、download、manifest
+  路路全部 **200**；公共 edge **5/6 pass**，唯一 fail 是无真实
+  credentials file 下的 api-cookie fail-closed 边界。APK
+  `/android/ai-learning-os-0.1.0-release-signed.apk` size `8029570`、
+  SHA256 `1246C3EF…634d`；manifest 位于宿主根 `/android/...`。
+- 浏览器：desktop home、mobile home、mobile download 均 HTTP 200、
+  visible、截图非空、0 page error / request failure / unexpected console
+  error / overflow；mobile-home 恰有 2 条预期匿名 401。口径为 Playwright
+  mobile emulation，不是物理手机人工验收。
+- 监控：initial full monitor 的 2 critical 来自 hardcoded root routes；
+  API-only 复核 **26 ok / 0 warn / 0 critical**。M14-194 PR #283 merge
+  `4993ffc` 后，14:44:01Z 全量 **34 ok / 0 warn / 0 critical**、
+  `monitoring_ready=true`。回滚锚为 API `m14-124-production`、Web
+  `m14-179-public-download-production`，仍仅 recreate api/web。
+- 本切片零 production/Docker/HTTP/调度操作，tracked 文档不包含 env、
+  compose、数据库、上传对象或 APK 原文；验证为 docs 守卫
+  **2 passed**、`git diff --check` 通过、新增行 secret/本地绝对路径/
+  U+FFFD 扫描 **0 命中**。证据：
+  `docs/evidence/m14-193-production-rollout-evidence/README.md`。
+  单 local commit，不 push、不开 PR；supervisor 审查与 remote 发布
+  （push/PR/合并）在其后进行。
+
 ## M14-194 — production monitor 对齐 Web gateway basePath
 
 - 行为修复：`production_monitor.py` 的 Web 探测目标从 stale host 映射

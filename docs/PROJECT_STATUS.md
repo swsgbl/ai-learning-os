@@ -9,6 +9,28 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-193 生产滚动与公开 basePath 验收证据（docs-only）**：worktree
+`ai-learning-os-worktrees/docs-m14-193-production-rollout-evidence`，分支
+`docs/m14-193-production-rollout-evidence`，基于 main `4993ffc`
+（PR #283 merge，包含 M14-194 monitor basePath 修复）。运行时 build base
+为 `50bd66a`；API/Web 镜像分别为
+`aios/api:m14-193-production` / `aios/web:m14-193-production`，digest
+`73dca646…a8dae` / `f1131e62…767f`，API 然后 Web 仅
+`--no-build --no-deps` recreate，其他服务 untouched。preflight **5/5
+pass**（SHA256 `C99CC6A2…A1CB`）；备份 **30 tables / 4 files**（manifest
+SHA256 `381C4987…12EC`，env SHA256 `7A8561A6…BA09`）。local/public
+端点全部 200，公共 edge **5/6**（唯一 api-cookie 为无 credentials file
+的 fail-closed 边界），APK size/SHA256 复核为 `8029570` /
+`1246C3EF…634d`。浏览器三 case 全 pass，0 unexpected error/failure/
+overflow；mobile-home 恰 2 条预期匿名 401，口径为 Playwright mobile
+emulation。监控闭环：root-route false-critical → API-only **26/0/0** →
+PR #283 后 **34/0/0、monitoring_ready=true**。回滚锚为 API
+`m14-124-production`、Web `m14-179-public-download-production`。验证：
+docs 守卫 **2 passed**、`git diff --check` 通过、新增行 secret/本地绝对
+路径/U+FFFD 扫描 **0 命中**。证据：docs/evidence/
+m14-193-production-rollout-evidence/README.md。单 local commit，不 push、
+不开 PR；supervisor 审查与 remote 发布（push/PR/合并）在其后进行。
+
 **M14-194 production monitor 对齐 Web gateway basePath**：worktree
 `aios-learning-os-worktrees/m14-194-production-monitor-basepath`，分支
 `ops/m14-194-production-monitor-basepath`，基于 main `50bd66a`。修复
