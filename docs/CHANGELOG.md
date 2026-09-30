@@ -1,5 +1,38 @@
 # Changelog
 
+## M14-199 — Phase 1 VPS 归因采样预算与任务书（docs-only，非代码，零采样）
+
+- 新增 Phase 1（VPS 侧只读归因采样）的独立预算与 supervisor 任务书
+  （`docs/evidence/m14-199-phase1-vps-attribution-budget/README.md`）：
+  授权状态如实落档——Phase 0 `phase0_go` 已满足（M14-198 收口），
+  但 `phase0_go` 只是必要条件，**本切片未授权、未执行任何 Phase 1
+  样本**，执行待 supervisor 显式批准。
+- Round A 预算（M14-181「每轮 ≤40」分轮口径推导）：默认计划 3 窗 ×
+  8 样本 = **24 个 manifest 请求**、第 24 次完成后硬停止；reserve
+  （第 25–40 次，上限 16 个）一律需 supervisor 另行单独授权，本切片
+  授权 0 个。
+- 只读命令清单闭合、采集顺序固定：`curl --resolve
+  ndtool.cn:443:127.0.0.1 https://ndtool.cn/aios/download-manifest.json`
+  本地终结采样（保留主机名/SNI 与证书验证；`-k`/`--insecure` 与
+  `--ssl-no-revoke` 显式禁止、禁止裸 IP URL）；`openssl s_time
+  -connect 127.0.0.1:443 -servername ndtool.cn` 握手计时（恰 1 次、
+  `-time 3` 有界；s_time 不做证书链验证，结论不用于安全判定）；
+  恰 1 次 `nginx -T` 事实收集（仅 AIOS/TLS/keepalive/HTTP2 相关结论
+  摘录入库，整份宿主配置永不入库）；≤3 次 DNS 只读 A 记录对比（辅助
+  证据）。计时字段/输出格式/时钟归一、失败与畸形样本零重试处理、
+  证据脱敏规则、H1/H2 决策矩阵（本地快+公网慢 → H1 公网入站路径；
+  本地慢 → H2 VPS 处理；混合/不完整；预算耗尽四分支）、只读零清理
+  证明与非目标（零 Phase 2 配置变更、零 Nginx reload/restart、零
+  frp/Docker/VPS 服务操作、零生产镜像滚动、零外部手机测试、零新增
+  公网边缘采样）全部定式。
+- 本切片 docs-only（证据 README + 两处台账，零代码变更）；验证：
+  version-sync 与 R1 措辞守卫、`git diff --check`、新增行
+  secret/本地绝对路径/U+FFFD 扫描 0 真实命中（自指性关键词除外）、
+  `-k`/`--insecure` 仅出现于禁止语境、零「已执行采样」声明。证据：
+  `docs/evidence/m14-199-phase1-vps-attribution-budget/README.md`。
+  单 local commit 并推送远端分支；supervisor 审查与 remote 发布
+  （PR 开合/合并/release 门禁）在其后进行。
+
 ## M14-198 — 公网边缘 Phase 0 第三日采样与决策收口（docs-only，非代码）
 
 - 第三本地日期（2026-10-01）在 canonical checkout 以 main 既有工具

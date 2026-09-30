@@ -9,6 +9,32 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-199 Phase 1 VPS 归因采样预算与任务书（docs-only，零采样）**：
+worktree `ai-learning-os-worktrees/m14-199-phase1-budget`，分支
+`docs/m14-199-phase1-budget`，基于 main `0603c61`（PR #287 merge）。
+为 Phase 1（VPS 侧只读归因采样）落档独立预算与 supervisor 任务书：
+Round A 默认计划 3 窗 × 8 样本 = **24 个 manifest 请求**（M14-181
+「每轮 ≤40」分轮口径推导 + 默认计划 ≤24 加严）、第 24 次完成后硬
+停止、reserve（第 25–40 次，上限 16 个）一律需 supervisor 另行单独
+授权（本切片授权 0 个）。只读命令清单闭合、采集顺序固定：curl
+`--resolve ndtool.cn:443:127.0.0.1` 本地终结采样（保留主机名/SNI 与
+证书验证，`-k`/`--insecure` 与 `--ssl-no-revoke` 显式禁止）、
+`openssl s_time` 握手计时恰 1 次（`-time 3` 有界，s_time 不做证书
+链验证、结论不用于安全判定）、`nginx -T` 恰 1 次（仅
+AIOS/TLS/keepalive/HTTP2 结论摘录入库，整份宿主配置永不入库）、
+≤3 次 DNS 只读对比（辅助）；含计时字段/时钟归一/失败畸形零重试
+处理/脱敏规则/H1-H2 决策矩阵/只读零清理证明/非目标（零 Phase 2
+配置变更、零 Nginx reload、零 frp/Docker/VPS 服务操作、零镜像滚动、
+零手机测试、零新增公网采样）。**Phase 1 已预算、未启动**：Phase 0
+`phase0_go` 只是必要条件，本切片未授权、未执行任何 Phase 1 样本，
+执行待 supervisor 显式批准。本切片 docs-only（证据 README + 两处
+台账，零代码变更）；验证：version-sync 与 R1 措辞守卫、
+`git diff --check`、新增行 secret/本地路径/U+FFFD 扫描 0 真实命中
+（自指性关键词除外）。证据：
+`docs/evidence/m14-199-phase1-vps-attribution-budget/README.md`。
+单 local commit 并推送远端分支；supervisor 审查与 remote 发布
+（PR 开合/合并/release 门禁）在其后进行。
+
 **M14-198 公网边缘 Phase 0 第三日采样与决策收口（docs-only）**：
 worktree `ai-learning-os-worktrees/m14-198-phase0-third-date`，分支
 `docs/m14-198-phase0-third-date`，基于 main `fc3df0c`
