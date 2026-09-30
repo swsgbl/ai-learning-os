@@ -1,5 +1,36 @@
 # Changelog
 
+## M14-190 — current-main 发布证据刷新（证据刷新切片）
+
+- 背景：M14-185 代码绑定门绑定 `8d52f00`，其后 `8d52f00..ffd74cf` 为
+  13 commits，含 Phase 0 工具/测试、web 运行时/测试与 Harmony release
+  工具/测试变更，非 docs-only；两门必须在 current main 重新绑定。区间内
+  `services/api/app/`、API requirements 与 alembic 零变更。
+- ci-main：run **36655040106**（run_number 696，push@main，`ffd74cf`，
+  5/5 success，五 job 契约精确匹配）raw runs/jobs 归档 + stderr 空捕获；
+  canonical `ci-main.json` 1378 bytes，SHA256 `cca4fe43…4a0a`。
+- release-check：干净 `ffd74cf` tracked tree 上从零 venv/npm 环境 full 重跑，
+  **all_green 10/10**；pytest **5631 passed / 36 skipped / 1 warning，
+  323.37s**，migration `0027_audit_chain`，voice local 17324 bytes，
+  e2e 5 步 1192 ms。canonical 2488 bytes，SHA256 `13374e09…ba7e`。
+- provider-smoke / long-soak / production-state 零重跑、零生产接触。provider
+  聚合同哈希复用 `d589181e…a761`；原始输入目录当前缺失，本轮以 M14-185
+  canonical + SHA256SUMS + indexed input verification log 追溯，不声称重读
+  原始输入。long-soak 同哈希 `d939c652…56ec`，窗口 2026-09-22→23 且早于
+  生产切换。六个 production-state 源完整 SHA256 MATCH 后原样 staging。
+- evidence-cockpit：**cockpit_ready=true、cockpit_blockers=[]、
+  required_not_staged=[]、pass=9/missing=2**；ci-main/release-check 均
+  stale=current；staged 10/10 byte-identical。**readiness.release_ready=false
+  / production_ready=false 不变**：required human-only `release-approval`
+  未发生，optional `turn-tls` 未 stage。
+- 验证：聚焦九套件 **444 passed, 1 warning in 9.19s**；evidence 脚本 ruff
+  全过；contract 断言 **95 checks** 全过；canonical secret 扫描与 tracked
+  新增行 secret/本地路径/U+FFFD 扫描 0 命中；`git diff --check` 干净。
+  证据：`docs/evidence/m14-190-current-main-release-evidence/README.md`
+  （唯一入库证据文件；canonical gitignored 于 worktree
+  `.verify/artifacts/m14-190-current-main-release-evidence/`）。单 local
+  commit，不 push、不开 PR。
+
 ## M14-187 — Harmony auth smoke 驱动器 locator 缺陷修复 + current-main 模拟器回归（Round 2）
 
 - 背景：前一线程 attempt 1 真跑 12 stage = 4 ok / 1 failure / 7
