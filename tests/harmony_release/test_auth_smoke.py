@@ -784,3 +784,96 @@ def test_b2_refresh_home_and_dump_propagates_dump_failure(
     codes = [f["code"] for f in failures]
     assert "layout_pull_failed" in codes
     assert "home_zones_still_loading" not in codes
+
+# -------------------- M14-187 R2: typed URL-input locator --------------------
+
+def _settings_node(ntype, text, bounds):
+    return {"attributes": {"type": ntype, "text": text,
+                               "bounds": bounds}}
+
+
+def _m14_187_settings_layout():
+    """Attempt-1 real-world Settings layout (diag attempt 2): a
+    TextInput holding the base URL PLUS DownloadPane readonly
+    Text that is LONGER than the input content."""
+    return {
+        "attributes": {"type": "Root"},
+        "children": [
+            _settings_node("Text", "设置", "[912,1322][1008,1358]"),
+            _settings_node(
+                "TextInput", "http://10.0.2.2:60880/",
+                "[36,1136][1008,1224]"),
+            _settings_node(
+                "Text", "服务地址: http://10.0.2.2:60880/",
+                "[36,844][1008,880]"),
+        ],
+    }
+
+
+def test_find_url_input_prefers_typed_textinput_over_longer_readonly_text():
+    """M14-187 attempt-1 regression: with a real TextInput and a
+    LONGER readonly Text both carrying URLs, the TextInput must win -
+    the old longest-text heuristic picked the Text and the whole
+    settings_ui step failed settings_input_mismatch x5."""
+    typed = auth_smoke.layout_typed(_m14_187_settings_layout())
+    field = auth_smoke.find_url_input(typed)
+    assert field is not None
+    x, y, content = field
+    assert content == "http://10.0.2.2:60880/"
+    # the TextInput center, NOT the readonly Text center
+    assert (x, y) == ((36 + 1008) // 2, (1136 + 1224) // 2)
+    # and never the readonly Text bounds
+    assert (x, y) != ((36 + 1008) // 2, (844 + 880) // 2)
+
+
+def test_find_url_input_returns_none_without_typed_textinput():
+    """No TextInput in the tree -> None (fail-closed), even when a
+    readonly Text carries a long URL: the old heuristic would have
+    returned the Text and steered keystrokes onto it."""
+    layout = {
+        "attributes": {"type": "Root"},
+        "children": [
+            _settings_node(
+                "Text", "服务地址: http://10.0.2.2:60880/",
+                "[36,844][1008,880]"),
+        ],
+    }
+    field = auth_smoke.find_url_input(auth_smoke.layout_typed(layout))
+    assert field is None
+
+
+def test_find_url_input_empty_input_falls_back_to_first_textinput():
+    """Empty TextInput renders no text content: the compatibility
+    fallback returns the first TextInput in tree order (the URL
+    field is the pane topmost input) so a pre-existing URL never
+    blocks locating the field."""
+    layout = {
+        "attributes": {"type": "Root"},
+        "children": [
+            _settings_node("TextInput", "", "[36,1136][1008,1224]"),
+            _settings_node("TextInput", "", "[36,1420][1008,1508]"),
+        ],
+    }
+    field = auth_smoke.find_url_input(auth_smoke.layout_typed(layout))
+    assert field is not None
+    x, y, content = field
+    assert content == ""
+    assert (x, y) == ((36 + 1008) // 2, (1136 + 1224) // 2)
+
+
+def test_find_url_input_ignores_url_text_after_textinput():
+    """Tree order must not matter: the readonly Text may come AFTER
+    the TextInput; it still never steals the locator."""
+    layout = {
+        "attributes": {"type": "Root"},
+        "children": [
+            _settings_node("TextInput", "http://10.0.2.2:8765/",
+                           "[36,1136][1008,1224]"),
+            _settings_node(
+                "Text", "服务地址: http://10.0.2.2:60880/extra/path",
+                "[36,844][1008,880]"),
+        ],
+    }
+    field = auth_smoke.find_url_input(auth_smoke.layout_typed(layout))
+    assert field is not None
+    assert field[2] == "http://10.0.2.2:8765/"

@@ -9,6 +9,27 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-187 Harmony auth smoke 驱动器 locator 缺陷修复 + current-main 模拟器回归（Round 2）**：
+worktree `ai-learning-os-worktrees/m14-187-harmony-current-main-regression`，
+分支 `harmony/m14-187-current-main-regression`。修复
+`tools/harmony_release/auth_smoke.py::find_url_input()`——旧「最长
+URL 文本」启发式不查类型，被设置 Tab 中 DownloadPane 只读
+`Text('服务地址: ${baseUrl}')` 抢占输入定位（attempt 1 settings_ui
+5×mismatch）；改为严格 typed 定位（type==TextInput 且含 URL 优先，
+空输入 fallback 树序第一个 TextInput，只读 Text 永不入选）。
+backend_smoke.py 核查无同缺陷零改动；+4 回归单测（含 attempt 1
+缺陷布局复现）。attempt 3 预执行失败如实归档（系统 python 缺
+sqlalchemy，0 stage）；attempt 3b 以仓库规范 `.venv` 解释器真跑：
+**12 stage = 11 ok + 恰 1 not_run（auth_off_local，auth_phase_skip）**，
+failure/request/toolchain/warnings 全 0，cleanup/uninstall 完成，
+settings_ui 一次通过。验证：聚焦 4/4、全量 683 passed/1 skipped
+（+4 恰为新测试）、mock 契约 85/85、ruff 基线对照 221→220 零新增、
+compileall 过；HAP 复用复核 size=235172、SHA256=4DA92E1F…7615AF4B。
+清理：backend 停/端口释放/bundle 卸载闭环（bm dump -a 65 bundle
+零 ailearningos 匹配）/Pura 90 在线保留。诚实边界：unsigned +
+simulator + loopback，`production_ready=false` 不变。证据：
+`docs/evidence/m14-187-harmony-current-main-regression/README.md`。
+
 **M14-186 Phase 0 完成度与 go/no-go 决策门（只读本地工具切片）**：
 worktree `ai-learning-os-worktrees/m14-186-phase0-decision-gate`，分支
 `ops/m14-186-phase0-decision-gate`，基于 main `97e7fd1`（M14-185

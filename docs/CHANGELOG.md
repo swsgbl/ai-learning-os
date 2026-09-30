@@ -1,5 +1,48 @@
 # Changelog
 
+## M14-187 — Harmony auth smoke 驱动器 locator 缺陷修复 + current-main 模拟器回归（Round 2）
+
+- 背景：前一线程 attempt 1 真跑 12 stage = 4 ok / 1 failure / 7
+  not_run——`settings_ui` 5 次 `settings_input_mismatch`。诊断闭环
+  （diag attempt 2 五步布局）：产品 Settings 链路正常，缺陷在驱动器
+  `tools/harmony_release/auth_smoke.py::find_url_input()`——旧实现
+  按「最长 URL 文本」启发式选节点且不检查类型，M14-174H 后设置 Tab
+  中 DownloadPane 只读 `Text('服务地址: ${baseUrl}')` 恒比 TextInput
+  内容长，抢占输入定位，击键落在 Text 上，输入框保持旧值。
+- 修复（只修测试工具，零生产 ETS/UI 改动）：`find_url_input` 改为
+  **严格 typed 定位**——优先选 `type=="TextInput"` 且 text 含 URL 的
+  第一个节点（只读 Text 无论多长永不入选）；兼容 fallback：无 URL
+  TextInput 时取树序第一个 TextInput（空输入场景；URL 字段是设置
+  面板最顶 TextInput，M14-84 真实 dump 实证）。两个调用点改用
+  `layout_typed()` 三元组流。`backend_smoke.py` 核查后无同缺陷
+  （`find_input_node` 本就严格 type==TextInput），零改动。
+- 回归单测 +4（不弱化断言）：更长只读 Text 并存时选 TextInput
+  （直接复现 attempt 1 缺陷布局）、无 typed TextInput 返回 None、
+  空输入 fallback 树序第一个 TextInput、URL Text 出现在 TextInput
+  之后不抢占。
+- attempt 3（预执行基础设施失败，如实归档）：系统 python 缺
+  sqlalchemy → `server_start_failed`，0 stage 执行；launcher 后端为
+  进程内 import，控制解释器的受支持方式即调用 python 本身，按
+  AGENTS.md 改用仓库规范 `.venv` 解释器重跑（非代码 workaround）。
+- attempt 3b（真跑，验收达成）：**12 stage = 11 ok + 恰 1 not_run**
+  （`auth_off_local`，reason=`auth_phase_skip`）；failure/request/
+  toolchain/warnings 全 0；`cleanup_attempted=true`、`uninstall` ok。
+  `settings_ui` 从 5×mismatch failure → 一次通过。HAP 复用已构建
+  产物并复核 size=235172、SHA256=4DA92E1F…7615AF4B 精确 MATCH。
+- 验证（真实执行）：聚焦新测试 4/4；`pytest tests/harmony_release`
+  **683 passed / 1 skipped**（较 679 基线恰 +4）；mock 契约
+  **85/85**；ruff 修改文件 E4,E7,E9,F 全过 + 全规则基线对照
+  221→220 零新增；compileall 通过。
+- 清理：backend 进程停/端口释放/无 python 残留；`bm dump -a`
+  65 bundle 中 ailearningos 零匹配（卸载闭环）；Pura 90 在线保留。
+  诚实边界：unsigned + simulator + loopback，`production_ready=false`
+  不变；签名/AGC 材料缺失硬阻塞不变；attempt 1/3 证据原样保留未
+  被 3b 覆盖。证据：
+  `docs/evidence/m14-187-harmony-current-main-regression/README.md`
+  （唯一入库证据文件；原始工件 gitignored 于 worktree
+  `.verify/m14-187-harmony-current-main-regression/`）。单 local
+  commit，不 push、不开 PR。
+
 ## M14-186 — Phase 0 完成度与 go/no-go 决策门（只读本地工具切片）
 
 - 背景：M14-181 设计的 Phase 0 只有采样编排器（M14-182）没有收口
