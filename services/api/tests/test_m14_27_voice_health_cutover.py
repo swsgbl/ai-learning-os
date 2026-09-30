@@ -47,8 +47,8 @@ pm = _load_module(SCRIPT, "production_monitor_m14_27_under_test")
 def test_legacy_endpoint_profile_five_ids_and_urls_exact() -> None:
     """既有契约：五端点画像 endpoint_id → URL 逐字全等（顺序一并锁定）。"""
     assert [(e.endpoint_id, e.url, e.group) for e in pm.ENDPOINTS] == [
-        ("web-root", "http://127.0.0.1:3011/", "web"),
-        ("web-login", "http://127.0.0.1:3011/login", "web"),
+        ("web-root", "http://127.0.0.1:3012/", "web"),
+        ("web-login", "http://127.0.0.1:3012/login", "web"),
         ("api-health", "http://127.0.0.1:8000/health", "api"),
         ("funasr-health", "http://127.0.0.1:8010/health", "voice"),
         ("cosyvoice-health", "http://127.0.0.1:8011/health", "voice"),
@@ -112,14 +112,27 @@ def test_load_sidecar_manifest_rejects_invalid(tmp_path, case, text, expected_er
 
 
 def test_build_sidecar_endpoints_keeps_web_api_swaps_voice(tmp_path) -> None:
-    """(c) sidecar 画像：web/api 三端点原样 + 语音双端点换 sidecar 精确 URL。"""
+    """(c) sidecar 画像：root web/api 三端点保留 + 语音双端点换 sidecar URL。"""
     endpoints = pm.build_sidecar_endpoints("192.168.8.23")
     assert [(e.endpoint_id, e.url, e.group) for e in endpoints] == [
-        ("web-root", "http://127.0.0.1:3011/", "web"),
-        ("web-login", "http://127.0.0.1:3011/login", "web"),
+        ("web-root", "http://127.0.0.1:3012/", "web"),
+        ("web-login", "http://127.0.0.1:3012/login", "web"),
         ("api-health", "http://127.0.0.1:8000/health", "api"),
         ("funasr-health", "http://192.168.8.23:18010/health", "voice"),
         ("cosyvoice-health", "http://192.168.8.23:18011/health", "voice"),
+    ]
+
+
+def test_build_sidecar_endpoints_preserves_aios_web_base_path() -> None:
+    """(c) sidecar 只替换语音端点，不丢当前 Web basePath 形态。"""
+    endpoints = pm.build_sidecar_endpoints(
+        "192.168.8.23", web_base_path=pm.WEB_BASE_PATH_AIOS)
+    assert [(e.endpoint_id, e.url) for e in endpoints] == [
+        ("web-root", "http://127.0.0.1:3012/aios"),
+        ("web-login", "http://127.0.0.1:3012/aios/login"),
+        ("api-health", "http://127.0.0.1:8000/health"),
+        ("funasr-health", "http://192.168.8.23:18010/health"),
+        ("cosyvoice-health", "http://192.168.8.23:18011/health"),
     ]
 
 
@@ -190,9 +203,31 @@ def test_sidecar_plan_report_records_source_and_exact_urls(tmp_path, monkeypatch
     assert code == pm.EXIT_OK
     config = _read_latest_report(artifacts, "plan")["config"]
     assert config["voice_health_source"] == "sidecar"
+    assert config["web_base_path"] == pm.WEB_BASE_PATH_ROOT
     voice = [(e["endpoint_id"], e["url"]) for e in config["endpoints"]
              if e["group"] == "voice"]
     assert voice == [
+        ("funasr-health", "http://192.168.8.23:18010/health"),
+        ("cosyvoice-health", "http://192.168.8.23:18011/health"),
+    ]
+
+
+def test_sidecar_plan_preserves_aios_web_base_path(tmp_path, monkeypatch) -> None:
+    """sidecar 与 basePath 正交：语音来自 manifest，Web 仍来自 /aios 画像。"""
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    _patch_valid_manifest(tmp_path, monkeypatch)
+    code = pm.main(["--voice-health-source", "sidecar",
+                    "--web-base-path", pm.WEB_BASE_PATH_AIOS,
+                    "--artifact-dir", str(artifacts)])
+    assert code == pm.EXIT_OK
+    config = _read_latest_report(artifacts, "plan")["config"]
+    assert config["voice_health_source"] == "sidecar"
+    assert config["web_base_path"] == pm.WEB_BASE_PATH_AIOS
+    assert [(e["endpoint_id"], e["url"]) for e in config["endpoints"]] == [
+        ("web-root", "http://127.0.0.1:3012/aios"),
+        ("web-login", "http://127.0.0.1:3012/aios/login"),
+        ("api-health", "http://127.0.0.1:8000/health"),
         ("funasr-health", "http://192.168.8.23:18010/health"),
         ("cosyvoice-health", "http://192.168.8.23:18011/health"),
     ]

@@ -176,12 +176,42 @@ class Endpoint:
 
 
 ENDPOINTS: tuple[Endpoint, ...] = (
-    Endpoint("web-root", "http://127.0.0.1:3011/", "web"),
-    Endpoint("web-login", "http://127.0.0.1:3011/login", "web"),
+    Endpoint("web-root", "http://127.0.0.1:3012/", "web"),
+    Endpoint("web-login", "http://127.0.0.1:3012/login", "web"),
     Endpoint("api-health", "http://127.0.0.1:8000/health", "api"),
     Endpoint("funasr-health", "http://127.0.0.1:8010/health", "voice"),
     Endpoint("cosyvoice-health", "http://127.0.0.1:8011/health", "voice"),
 )
+
+#: Web gateway 的 canonical host/port 与受控 basePath 白名单。root 必须用
+#: 空串显式表达；`/aios` 是唯一当前生产 basePath 构建形态。
+WEB_HOST = "127.0.0.1"
+WEB_PORT = 3012
+WEB_BASE_PATH_ROOT = ""
+WEB_BASE_PATH_AIOS = "/aios"
+WEB_BASE_PATHS: tuple[str, ...] = (WEB_BASE_PATH_ROOT, WEB_BASE_PATH_AIOS)
+
+
+def validate_web_base_path(base_path: str) -> str | None:
+    """fail-closed 校验：仅接受空串（root）或精确 `/aios`。"""
+    if isinstance(base_path, str) and base_path in WEB_BASE_PATHS:
+        return None
+    return "web-base-path-not-whitelisted"
+
+
+def build_endpoint_profile(web_base_path: str = WEB_BASE_PATH_ROOT) -> list[Endpoint]:
+    """按受控 basePath 生成五端点画像；API/语音目标不受 Web basePath 影响。"""
+    problem = validate_web_base_path(web_base_path)
+    if problem is not None:
+        raise ValueError(problem)
+    origin = f"http://{WEB_HOST}:{WEB_PORT}"
+    root_path = "/" if web_base_path == WEB_BASE_PATH_ROOT else web_base_path
+    login_path = "/login" if web_base_path == WEB_BASE_PATH_ROOT else f"{web_base_path}/login"
+    return [
+        Endpoint("web-root", f"{origin}{root_path}", "web"),
+        Endpoint("web-login", f"{origin}{login_path}", "web"),
+        *[e for e in ENDPOINTS if e.group != "web"],
+    ]
 
 
 def validate_target_url(url: str) -> str | None:
@@ -315,14 +345,16 @@ def load_sidecar_manifest(path: Path) -> tuple[str | None, str | None]:
     return bind, None
 
 
-def build_sidecar_endpoints(bind: str) -> list[Endpoint]:
-    """sidecar 来源端点画像：web/api 端点原样保留，语音双端点替换为
-    manifest bind + 固定窄代理端口 + 精确 /health（固定五端点顺序）。"""
+def build_sidecar_endpoints(bind: str, *,
+                            web_base_path: str = WEB_BASE_PATH_ROOT) -> list[Endpoint]:
+    """sidecar 来源端点画像：保留当前 web basePath 与 api 端点，仅替换
+    语音双端点为 manifest bind + 固定窄代理端口 + 精确 /health。"""
     problem = _sidecar_bind_problem(bind) if isinstance(bind, str) else "bind-not-literal-ip"
     if problem is not None:
         raise ValueError(problem)
+    base = build_endpoint_profile(web_base_path)
     return [
-        *[e for e in ENDPOINTS if e.group != "voice"],
+        *[e for e in base if e.group != "voice"],
         Endpoint("funasr-health", f"http://{bind}:{SIDECAR_PORT_FUNASR}/health", "voice"),
         Endpoint("cosyvoice-health", f"http://{bind}:{SIDECAR_PORT_COSYVOICE}/health", "voice"),
     ]
@@ -1482,6 +1514,7 @@ class SafeLog:
 def build_config(*, project: str, profile: str, compose_file: Path, endpoints: list[Endpoint],
                  log_tail: int, request_timeout_seconds: float,
                  thresholds: Thresholds, voice_health_source: str = "loopback",
+                 web_base_path: str = WEB_BASE_PATH_ROOT,
                  log_error_window_start: str | None = None,
                  ) -> dict[str, object]:
     return {
@@ -1491,6 +1524,7 @@ def build_config(*, project: str, profile: str, compose_file: Path, endpoints: l
         "services": list(STACK_SERVICES),
         "endpoints": [{"endpoint_id": e.endpoint_id, "url": e.url, "group": e.group} for e in endpoints],
         "voice_health_source": voice_health_source,
+        "web_base_path": web_base_path,
         "log_tail": log_tail,
         "request_timeout_seconds": request_timeout_seconds,
         "thresholds": thresholds.as_dict(),
@@ -1707,6 +1741,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help=f"docker logs --tail 行数 {MIN_LOG_TAIL}-{MAX_LOG_TAIL}（默认 {DEFAULT_LOG_TAIL}）")
     parser.add_argument("--only", action="append", metavar="ENDPOINT_ID",
                         help="仅采集指定端点（可重复；候选见 plan 输出；阈值恒评全五端点画像的已选子集）")
+    parser.add_argument("--web-base-path", default=WEB_BASE_PATH_ROOT,
+                        help="Web gateway basePath（仅支持空串=root 或精确 /aios；默认 root）")
     parser.add_argument("--voice-health-source", choices=("loopback", "sidecar"),
                         default="loopback",
                         help="语音健康端点来源（默认 loopback=8010/8011 直采；sidecar=M14-26 窄代理"
@@ -1743,16 +1779,22 @@ def main(argv: list[str] | None = None) -> int:
     if project_problem is not None:
         log.say(f"拒绝: --project 名非法（原因: {project_problem}）——被拒值不回显")
         return EXIT_USAGE
+    # 1.6) Web basePath：固定白名单（root=/、唯一非 root=/aios）；
+    # 被拒值绝不回显，报告/采集/manifest 读取全部发生在校验之后
+    web_base_path_problem = validate_web_base_path(args.web_base_path)
+    if web_base_path_problem is not None:
+        log.say(f"拒绝: --web-base-path 非法（原因: {web_base_path_problem}）——被拒值不回显")
+        return EXIT_USAGE
     # 1.7) 语音健康来源（M14-27）：sidecar 需 canonical manifest 严格校验通过才
     # 放行——任何失败按固定词表拒绝（发生在报告写入与 Runner/Transport 构造
     # 之前，零采集零回退）；loopback 恒用固定五端点画像
-    endpoint_profile: list[Endpoint] = list(ENDPOINTS)
+    endpoint_profile: list[Endpoint] = build_endpoint_profile(args.web_base_path)
     if args.voice_health_source == "sidecar":
         bind, manifest_error = load_sidecar_manifest(SIDECAR_MANIFEST_PATH)
         if manifest_error is not None:
             log.say(f"拒绝: sidecar 语音健康清单不可用（原因: {manifest_error}）——零采集/零报告")
             return EXIT_USAGE
-        endpoint_profile = build_sidecar_endpoints(bind)
+        endpoint_profile = build_sidecar_endpoints(bind, web_base_path=args.web_base_path)
     # 2) 端点面（--only 仅限所选画像内集合）
     endpoints, endpoint_error = select_endpoints(args.only, profile=endpoint_profile)
     if endpoint_error is not None:
@@ -1779,6 +1821,7 @@ def main(argv: list[str] | None = None) -> int:
         endpoints=endpoints, log_tail=args.log_tail,
         request_timeout_seconds=args.request_timeout_seconds, thresholds=thresholds,
         voice_health_source=args.voice_health_source,
+        web_base_path=args.web_base_path,
     )
     stamp = clock.stamp()
     # 3) plan 模式（默认）：零 subprocess、零网络、零生产读取
@@ -1832,6 +1875,7 @@ def main(argv: list[str] | None = None) -> int:
         endpoints=endpoints, log_tail=args.log_tail,
         request_timeout_seconds=args.request_timeout_seconds, thresholds=thresholds,
         voice_health_source=args.voice_health_source,
+        web_base_path=args.web_base_path,
         log_error_window_start=log_window_start,
     )
     collectors = collect_snapshot(
