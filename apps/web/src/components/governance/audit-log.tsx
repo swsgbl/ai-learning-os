@@ -122,29 +122,39 @@ export function AuditLog() {
     { scope: rootRef, dependencies: [entries] },
   );
 
-  const reload = useCallback(async () => {
-    setError(null);
-    setForbidden(false);
-    try {
-      setEntries(await api.audit(100));
-    } catch (cause) {
-      if (cause instanceof ApiError && cause.status === 403) {
-        setForbidden(true);
-      } else {
-        setError(cause instanceof Error ? cause.message : "审计日志加载失败");
-      }
-    }
+  // M14-189: 拆分 load（纯加载，setState 全在 then/catch 异步回调路径——
+  // async/await 的 continuation 会被 lint 视为 effect 直线同步可达，故用
+  // promise 链）与 reload（刷新/重试入口：先清旧反馈再加载）。mount effect
+  // 只调 load——effect 体内零同步 setState；手动刷新/重试的可见行为与原
+  // 实现一致（点击瞬间清 error/forbidden）。
+  const load = useCallback(() => {
+    api
+      .audit(100)
+      .then(setEntries)
+      .catch((cause: unknown) => {
+        if (cause instanceof ApiError && cause.status === 403) {
+          setForbidden(true);
+        } else {
+          setError(cause instanceof Error ? cause.message : "审计日志加载失败");
+        }
+      });
   }, []);
 
+  const reload = useCallback(() => {
+    setError(null);
+    setForbidden(false);
+    load();
+  }, [load]);
+
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    load();
+  }, [load]);
 
   if (forbidden) {
     return <EmptyState title="需要管理员权限才能查看审计日志。" />;
   }
   if (error) {
-    return <ErrorState title="审计日志加载失败" detail={error} onRetry={() => void reload()} />;
+    return <ErrorState title="审计日志加载失败" detail={error} onRetry={() => reload()} />;
   }
   if (!entries) {
     return <LoadingState title="正在读取审计日志" />;
@@ -154,7 +164,7 @@ export function AuditLog() {
     <div ref={rootRef} className="space-y-3">
       <div className="flex items-center justify-between">
         <p className="text-sm text-muted tabular-nums">最近 {entries.length} 条</p>
-        <Button variant="ghost" size="icon" title="刷新审计" aria-label="刷新审计" onClick={() => void reload()}>
+        <Button variant="ghost" size="icon" title="刷新审计" aria-label="刷新审计" onClick={() => reload()}>
           <RefreshCw aria-hidden="true" />
         </Button>
       </div>

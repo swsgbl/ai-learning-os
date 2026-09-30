@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { Mic, Pause, Play, Repeat } from "lucide-react";
 import { api } from "@/lib/api";
 import { optionLabel, parseSpokenAnswer, speakableQuestion } from "@/lib/parse-answer";
-import type { ExamSession } from "@/lib/types";
+import type { ExamSession, PublicQuestion } from "@/lib/types";
 import { ErrorState, LoadingState } from "@/components/states";
 import { Waveform } from "@/components/voice/waveform";
 import { Button } from "./ui/button";
@@ -82,6 +82,22 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
   const sequence = useRef(0);
   const submitted = useRef(false);
 
+  // M14-189: 朗读改为参数化的纯异步入口（目标题/序号/总数由调用方传入），
+  // 三个调用点全部在事件/异步回调链中：首题（startExam .then）、切题
+  // （next()）、重复读题（按钮 onClick）。原「question?.id 变化即重读」的
+  // effect 语义由前两个调用点等价覆盖（题目只经这两条路径变化），并消除
+  // 了 effect 内同步 setSpeaking(true)（set-state-in-effect 级联渲染）。
+  const speak = useCallback(async (target: PublicQuestion, order: number, total: number) => {
+    setSpeaking(true);
+    try {
+      await speakLocal(speakableQuestion(target, order, total));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "语音朗读失败");
+    } finally {
+      setSpeaking(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (started.current) return;
     started.current = true;
@@ -90,29 +106,15 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
       .then((result) => {
         setSession(result);
         setAnswers(result.answers);
+        // M14-189: 首题自动朗读移入加载回调（事件回调路径）——朗读不再经
+        // effect 驱动，setSpeaking 同步于回调而非 effect 体内。
+        const first = result.questions[0];
+        if (first) void speak(first, 0, result.questions.length);
       })
       .catch((cause: Error) => setError(cause.message));
-  }, [paperId]);
+  }, [paperId, speak]);
 
   const question = session?.questions[index];
-
-  const speakCurrent = useCallback(async () => {
-    if (!session || !question) return;
-    setSpeaking(true);
-    try {
-      await speakLocal(speakableQuestion(question, index, session.questions.length));
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "语音朗读失败");
-    } finally {
-      setSpeaking(false);
-    }
-  }, [index, question, session]);
-
-  useEffect(() => {
-    if (question) void speakCurrent();
-    // speakCurrent 随题目变化重读；deps 语义与原实现一致
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [question?.id]);
 
   async function saveAnswer(questionId: string, key: string) {
     if (!session) return;
@@ -132,8 +134,12 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
   async function next() {
     if (!session) return;
     if (index + 1 < session.questions.length) {
+      const upcoming = session.questions[index + 1];
       setIndex(index + 1);
       setHeard("");
+      // M14-189: 切题自动朗读在事件回调内发起（原 effect 监听 question?.id
+      // 变化重读的等价路径）；提交分支（最后一题）不朗读，与原行为一致。
+      void speak(upcoming, index + 1, session.questions.length);
       return;
     }
     if (submitted.current) return;
@@ -234,7 +240,7 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
           <Button
             variant="outline"
             size="icon"
-            onClick={() => void speakCurrent()}
+            onClick={() => void speak(question, index, session.questions.length)}
             disabled={speaking}
             aria-label={speaking ? "正在朗读" : "重复读题"}
           >

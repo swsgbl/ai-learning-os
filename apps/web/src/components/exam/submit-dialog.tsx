@@ -6,7 +6,7 @@
 // PR#20 交互补齐：Tab/Shift+Tab 焦点圈定在对话框内（首/尾环绕 + 焦点逃逸拉回）、
 // 打开期间锁定 body 滚动（含滚动条宽度补偿）并在卸载时恢复、提交中焦点回落标题
 // 防止禁用按钮把焦点丢回 body。
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { Send } from "lucide-react";
 import { gsap, useMotion } from "@/lib/gsap";
 import { MOTION } from "@/lib/motion";
@@ -29,6 +29,13 @@ function focusableIn(root: HTMLElement): HTMLElement[] {
   );
 }
 
+// M14-189: 未答题数是 answered/total 的纯派生（原为 effect 同步 setState
+// 镜像），render 期直接计算——零额外渲染、无 effect 一拍延迟；下限 0 的
+// 语义（已答超计不显示负数）保持不变。导出以供单元测试钉住边界。
+export function unansweredCount(total: number, answered: number): number {
+  return Math.max(0, total - answered);
+}
+
 export function SubmitDialog({
   answered,
   total,
@@ -47,11 +54,7 @@ export function SubmitDialog({
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const submittingRef = useRef(submitting);
   const onCancelRef = useRef(onCancel);
-  const [unanswered, setUnanswered] = useState(total - answered);
-
-  useEffect(() => {
-    setUnanswered(Math.max(0, total - answered));
-  }, [answered, total]);
+  const unanswered = unansweredCount(total, answered);
 
   // 最新回调/状态入 ref：键盘监听只注册一次，不随父组件重渲染（onCancel 每帧新引用）重挂
   useEffect(() => {

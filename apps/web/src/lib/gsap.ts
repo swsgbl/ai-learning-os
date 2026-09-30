@@ -4,7 +4,7 @@
 // 保证插件只注册一次、且只在浏览器执行（本文件仅被 "use client" 组件引用，
 // SSR 不会走到 registerPlugin 之外的任何 DOM 操作）。
 import type { RefObject } from "react";
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { gsap } from "gsap";
 import { useGSAP } from "@gsap/react";
 import { Flip } from "gsap/Flip";
@@ -38,15 +38,30 @@ export function useMotion(
 }
 
 // 同步读取 prefers-reduced-motion 的 React 钩子（用于渲染分支，如波形降级为静态点）。
-// SSR 一律 false；GSAP 路径仍由 useMotion 的 matchMedia 兜底。
+// M14-189: 由「effect 内同步 setState」改为 useSyncExternalStore——外部媒体
+// 查询就是典型外部 store：订阅 change 事件、快照读 matches，消
+// set-state-in-effect 级联渲染；行为等价（SSR/水合期间恒 false，水合后
+// 同步真实值并跟随系统设置变化；GSAP 路径仍由 useMotion 的 matchMedia 兜底）。
+const REDUCED_MOTION_QUERY = "(prefers-reduced-motion: reduce)";
+
+function subscribeReducedMotion(onChange: () => void) {
+  const query = window.matchMedia(REDUCED_MOTION_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
+function getReducedMotionSnapshot(): boolean {
+  return window.matchMedia(REDUCED_MOTION_QUERY).matches;
+}
+
+function getReducedMotionServerSnapshot(): boolean {
+  return false;
+}
+
 export function usePrefersReducedMotion(): boolean {
-  const [reduced, setReduced] = useState(false);
-  useEffect(() => {
-    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
-    setReduced(query.matches);
-    const onChange = (event: MediaQueryListEvent) => setReduced(event.matches);
-    query.addEventListener("change", onChange);
-    return () => query.removeEventListener("change", onChange);
-  }, []);
-  return reduced;
+  return useSyncExternalStore(
+    subscribeReducedMotion,
+    getReducedMotionSnapshot,
+    getReducedMotionServerSnapshot,
+  );
 }

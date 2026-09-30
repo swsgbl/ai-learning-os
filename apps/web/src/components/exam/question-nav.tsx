@@ -22,9 +22,12 @@ export function QuestionNav({
   const rootRef = useRef<HTMLDivElement>(null);
   const { contextSafe } = useGSAP({ scope: rootRef });
 
-  const pulse = contextSafe((index: number, answered: boolean) => {
-    const el = rootRef.current?.querySelector<HTMLElement>(`[data-qnav="${index}"]`);
-    if (!el || !answered) return;
+  // M14-189: pulse 接收点击目标元素（事件回调里传 e.currentTarget），不再在
+  // render 期闭包内读 rootRef.current（react-hooks/refs：render 期间不得访问
+  // ref）。目标与原 querySelector(`[data-qnav="${index}"]`) 是同一按钮元素，
+  // contextSafe 包装保留（动画仍登记进 useGSAP context，随卸载清理）。
+  const pulse = contextSafe((el: HTMLElement, answered: boolean) => {
+    if (!answered) return;
     gsap.fromTo(
       el,
       { scale: 0.85 },
@@ -49,8 +52,8 @@ export function QuestionNav({
             data-qnav={itemIndex}
             aria-current={active ? "step" : undefined}
             aria-label={`第 ${itemIndex + 1} 题${answered ? "（已作答）" : ""}`}
-            onClick={() => {
-              pulse(itemIndex, answered);
+            onClick={(event) => {
+              pulse(event.currentTarget, answered);
               onSelect(itemIndex);
             }}
             className={cn(
