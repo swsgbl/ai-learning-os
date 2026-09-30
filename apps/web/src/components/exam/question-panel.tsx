@@ -3,7 +3,7 @@
 // M11-01 考场题目面板：题目切换的方向性 slide+fade（keyed 重放），
 // 选项选择即时反馈（scale 脉冲 + 勾选图标），选中态以颜色/图标持续呈现
 // ——动效只是反馈，作答语义仍在 ExamStudio 的 choose/saveAnswer 链路。
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Check } from "lucide-react";
 import type { PublicQuestion } from "@/lib/types";
 import { gsap, useGSAP, useMotion } from "@/lib/gsap";
@@ -25,13 +25,18 @@ const TYPE_LABELS: Record<string, string> = {
   essay: "写作",
 };
 
-// 非选项题（数值/数学/简答）：文本输入，走同一 append-only 保存链路
+// 非选项题（数值/数学/简答）：文本输入，走同一 append-only 保存链路。
+// M14-189: 「value 变化时重置草稿」由 effect 同步 setState 改为 React
+// 官方 render 期重置模式（比较前值、当帧同步重置）——去掉一拍延迟的
+// 级联渲染，切换题目时草稿与题目同帧生效，语义与原实现一致。
 function AnswerInput({ value, onSave }: { value: string; onSave: (text: string) => void }) {
+  const [prevValue, setPrevValue] = useState(value);
   const [draft, setDraft] = useState(value);
 
-  useEffect(() => {
+  if (prevValue !== value) {
+    setPrevValue(value);
     setDraft(value);
-  }, [value]);
+  }
 
   return (
     <div className="mt-5 flex flex-col gap-2 sm:flex-row">

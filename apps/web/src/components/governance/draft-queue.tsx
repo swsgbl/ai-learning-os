@@ -59,6 +59,36 @@ function formatTime(iso: string | null): string {
   }
 }
 
+export type DraftQueueLoadResult =
+  | { kind: "success" }
+  | { kind: "forbidden" }
+  | { kind: "failure"; message: string };
+
+export type DraftQueueFeedback = {
+  error: string | null;
+  forbidden: boolean;
+};
+
+export function draftQueueFeedback(result: DraftQueueLoadResult): DraftQueueFeedback {
+  if (result.kind === "forbidden") {
+    return { error: null, forbidden: true };
+  }
+  if (result.kind === "failure") {
+    return { error: result.message, forbidden: false };
+  }
+  return { error: null, forbidden: false };
+}
+
+function draftQueueLoadResult(cause: unknown): DraftQueueLoadResult {
+  if (cause instanceof ApiError && cause.status === 403) {
+    return { kind: "forbidden" };
+  }
+  return {
+    kind: "failure",
+    message: cause instanceof Error ? cause.message : "队列加载失败",
+  };
+}
+
 export function DraftQueue<T>({ config }: { config: DraftKindConfig<T> }) {
   const [drafts, setDrafts] = useState<T[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -71,23 +101,34 @@ export function DraftQueue<T>({ config }: { config: DraftKindConfig<T> }) {
     { kind: "ok" | "conflict" | "error"; text: string } | null
   >(null);
 
-  const reload = useCallback(async () => {
-    setError(null);
-    setForbidden(false);
-    try {
-      setDrafts(await config.load());
-    } catch (cause) {
-      if (cause instanceof ApiError && cause.status === 403) {
-        setForbidden(true); // 后端权威拒绝：只提示无权限，不泄露队列内容
-      } else {
-        setError(cause instanceof Error ? cause.message : "队列加载失败");
-      }
-    }
+  // M14-189: load 只在异步回调里写入状态，config 变化后的新一轮结果会
+  // 完整覆盖上一轮互斥反馈，避免旧 403/error 掩盖新结果。
+  const load = useCallback(() => {
+    config
+      .load()
+      .then((loadedDrafts) => {
+        setDrafts(loadedDrafts);
+        const feedback = draftQueueFeedback({ kind: "success" });
+        setError(feedback.error);
+        setForbidden(feedback.forbidden);
+      })
+      .catch((cause: unknown) => {
+        // 后端 403 时只提示无权限，不泄露队列内容；其他失败清掉旧 403。
+        const feedback = draftQueueFeedback(draftQueueLoadResult(cause));
+        setError(feedback.error);
+        setForbidden(feedback.forbidden);
+      });
   }, [config]);
 
+  const reload = useCallback(() => {
+    setError(null);
+    setForbidden(false);
+    load();
+  }, [load]);
+
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    load();
+  }, [load]);
 
   const act = async (decision: "approve" | "reject") => {
     if (!openId) return;
@@ -168,7 +209,7 @@ export function DraftQueue<T>({ config }: { config: DraftKindConfig<T> }) {
     return <EmptyState title="需要管理员权限才能查看该队列。" />;
   }
   if (error) {
-    return <ErrorState title="队列加载失败" detail={error} onRetry={() => void reload()} />;
+    return <ErrorState title="队列加载失败" detail={error} onRetry={() => reload()} />;
   }
   if (!drafts) {
     return <LoadingState title="正在读取队列" />;
@@ -204,7 +245,7 @@ export function DraftQueue<T>({ config }: { config: DraftKindConfig<T> }) {
               </button>
             ))}
           </div>
-          <Button variant="ghost" size="icon" title="刷新队列" aria-label="刷新队列" onClick={() => void reload()}>
+          <Button variant="ghost" size="icon" title="刷新队列" aria-label="刷新队列" onClick={() => reload()}>
             <RefreshCw aria-hidden="true" />
           </Button>
         </div>

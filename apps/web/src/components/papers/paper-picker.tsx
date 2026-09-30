@@ -2,7 +2,7 @@
 
 // M11-01 试卷选择列表（考场 / 语音索引入口共用）：
 // stagger 入场 + 等待骨架 / 空态 / 错误态。只读投影，不含考试语义。
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import type { PaperSummary } from "@/lib/types";
 import { gsap, useMotion } from "@/lib/gsap";
@@ -15,15 +15,24 @@ export function PaperPicker() {
   const [papers, setPapers] = useState<PaperSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const load = () => {
-    setError(null);
+  // M14-189: 拆分 load（setState 全在 then/catch 回调路径）与 reload（重试
+  // 入口：先清旧错误再加载）。mount effect 只调 load——effect 体内零同步
+  // setState；重试的可见行为与原实现一致（点击瞬间清错误态）。
+  const load = useCallback(() => {
     api
       .papers()
       .then(setPapers)
       .catch((cause: Error) => setError(cause.message));
-  };
+  }, []);
 
-  useEffect(load, []);
+  const reload = useCallback(() => {
+    setError(null);
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   useMotion(
     (reduced) => {
@@ -51,7 +60,7 @@ export function PaperPicker() {
     { scope: rootRef, dependencies: [papers] },
   );
 
-  if (error) return <ErrorState title="试卷列表加载失败" detail={error} onRetry={load} />;
+  if (error) return <ErrorState title="试卷列表加载失败" detail={error} onRetry={reload} />;
 
   if (!papers) {
     return (

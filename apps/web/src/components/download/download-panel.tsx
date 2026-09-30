@@ -10,7 +10,7 @@
 //   signed=true 且结构可信的条目时升级为可下载。获取/校验失败静默
 //   降级 pending，绝不显示错误链接。manifest 内容不写死在本组件。
 // - Harmony 卡：状态来自 src/lib/download.ts，AGC 签名未落地前恒 pending。
-import { useEffect, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { CheckCircle2, Clock, Download, Share, Smartphone } from "lucide-react";
 import { DOWNLOAD_CHANNELS, PWA_INSTALL_HINTS } from "@/lib/download";
 import {
@@ -35,9 +35,25 @@ type PwaInstallState =
   | { kind: "unsupported-ios" }
   | { kind: "unsupported" };
 
-function detectStandalone() {
+// M14-189: standalone（已安装显示模式）改经 useSyncExternalStore 派生——
+// display-mode 媒体查询是外部 store：订阅 change、快照读 matches，消除
+// effect 内同步 setState（set-state-in-effect 级联渲染）；SSR/水合恒
+// false（探测期），水合后同步真实值，行为与原「effect 首跑分流」等价。
+const STANDALONE_QUERY = "(display-mode: standalone)";
+
+function subscribeStandalone(onChange: () => void) {
+  const query = window.matchMedia(STANDALONE_QUERY);
+  query.addEventListener("change", onChange);
+  return () => query.removeEventListener("change", onChange);
+}
+
+function getStandaloneSnapshot(): boolean {
   if (typeof window === "undefined" || !window.matchMedia) return false;
-  return window.matchMedia("(display-mode: standalone)").matches;
+  return window.matchMedia(STANDALONE_QUERY).matches;
+}
+
+function getStandaloneServerSnapshot(): boolean {
+  return false;
 }
 
 function detectIOS() {
@@ -48,13 +64,17 @@ function detectIOS() {
 }
 
 function usePwaInstallState(): PwaInstallState {
+  const standalone = useSyncExternalStore(
+    subscribeStandalone,
+    getStandaloneSnapshot,
+    getStandaloneServerSnapshot,
+  );
   const [state, setState] = useState<PwaInstallState>({ kind: "probing" });
 
+  // 仅在未安装（非 standalone）时订阅安装事件；所有 setState 都发生在
+  // 事件/定时器回调内（合规路径），effect 体内零同步 setState。
   useEffect(() => {
-    if (detectStandalone()) {
-      setState({ kind: "installed" });
-      return;
-    }
+    if (standalone) return;
     const onPrompt = (e: Event) => {
       e.preventDefault();
       setState({ kind: "promptable", event: e as BeforeInstallPromptEvent });
@@ -74,8 +94,10 @@ function usePwaInstallState(): PwaInstallState {
       window.removeEventListener("appinstalled", onInstalled);
       window.clearTimeout(timer);
     };
-  }, []);
+  }, [standalone]);
 
+  // standalone 为真时已安装，state 事件机结果不再有意义（原实现同理直接短路）
+  if (standalone) return { kind: "installed" };
   return state;
 }
 

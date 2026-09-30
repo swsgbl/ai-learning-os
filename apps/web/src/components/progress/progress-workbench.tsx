@@ -98,27 +98,36 @@ export function ProgressWorkbench() {
     };
   }, []);
 
-  const loadAll = useCallback(async () => {
+  // M14-189: 拆分 loadAll（纯加载，setState 全在 then 异步回调路径——
+  // async/await 的 continuation 会被 lint 视为 effect 直线同步可达，故用
+  // promise 链）与 reloadAll（重试入口：先清旧错误再加载）。auth 确认后的
+  // 加载 effect 只调 loadAll——effect 体内零同步 setState；重试的可见行为
+  // 与原实现一致（点击瞬间清三个错误态）。auth 门语义不变：未定（null）时
+  // 绝不发受保护请求（未登录访问会被 401 全局跳转打断浏览）。
+  const loadAll = useCallback(() => {
+    Promise.allSettled([api.dailyPlan(), api.studentStates(), api.papers()]).then(
+      ([planResult, statesResult, papersResult]) => {
+        if (planResult.status === "fulfilled") setPlan(planResult.value);
+        else setPlanError(planResult.reason instanceof Error ? planResult.reason.message : "请求失败");
+        if (statesResult.status === "fulfilled") setStates(statesResult.value);
+        else setStatesError(statesResult.reason instanceof Error ? statesResult.reason.message : "请求失败");
+        if (papersResult.status === "fulfilled") setPapers(papersResult.value);
+        else setPapersError(papersResult.reason instanceof Error ? papersResult.reason.message : "请求失败");
+      },
+    );
+  }, []);
+
+  const reloadAll = useCallback(() => {
     setPlanError(null);
     setStatesError(null);
     setPapersError(null);
-    const [planResult, statesResult, papersResult] = await Promise.allSettled([
-      api.dailyPlan(),
-      api.studentStates(),
-      api.papers(),
-    ]);
-    if (planResult.status === "fulfilled") setPlan(planResult.value);
-    else setPlanError(planResult.reason instanceof Error ? planResult.reason.message : "请求失败");
-    if (statesResult.status === "fulfilled") setStates(statesResult.value);
-    else setStatesError(statesResult.reason instanceof Error ? statesResult.reason.message : "请求失败");
-    if (papersResult.status === "fulfilled") setPapers(papersResult.value);
-    else setPapersError(papersResult.reason instanceof Error ? papersResult.reason.message : "请求失败");
-  }, []);
+    loadAll();
+  }, [loadAll]);
 
   useEffect(() => {
     // 认证状态未定（null）时绝不发受保护请求——未登录访问会被 401 全局跳转
     // 打断浏览；只有明确 disabled（本地模式）/ authenticated 才加载。
-    if (auth?.mode === "disabled" || auth?.mode === "authenticated") void loadAll();
+    if (auth?.mode === "disabled" || auth?.mode === "authenticated") loadAll();
   }, [auth, loadAll]);
 
   // 任务卡编排：按分组 stagger；数据变化（重试/重载）时重放
@@ -195,7 +204,7 @@ export function ProgressWorkbench() {
               </h2>
             </div>
             {planError ? (
-              <ErrorState title="今日任务加载失败" detail={planError} onRetry={() => void loadAll()} />
+              <ErrorState title="今日任务加载失败" detail={planError} onRetry={() => reloadAll()} />
             ) : !plan ? (
               <LoadingState title="正在读取今日计划" />
             ) : plan.task_count === 0 ? (
@@ -228,7 +237,7 @@ export function ProgressWorkbench() {
           <section>
             <h2 className="mb-3 font-display text-2xl">薄弱概念</h2>
             {statesError ? (
-              <ErrorState title="学生状态加载失败" detail={statesError} onRetry={() => void loadAll()} />
+              <ErrorState title="学生状态加载失败" detail={statesError} onRetry={() => reloadAll()} />
             ) : !states ? (
               <LoadingState title="正在读取学生模型" />
             ) : states.concept_count === 0 ? (
@@ -292,7 +301,7 @@ export function ProgressWorkbench() {
               </Link>
             </div>
             {papersError ? (
-              <ErrorState title="试卷列表加载失败" detail={papersError} onRetry={() => void loadAll()} />
+              <ErrorState title="试卷列表加载失败" detail={papersError} onRetry={() => reloadAll()} />
             ) : !papers ? (
               <LoadingState title="正在读取试卷" />
             ) : papers.length === 0 ? (

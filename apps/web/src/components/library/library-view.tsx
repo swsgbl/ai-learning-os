@@ -3,7 +3,7 @@
 // M11-01 学习库：搜索 + 难度过滤 + Flip 布局过渡（过滤重排时卡片平滑移动）。
 // 等待（骨架屏）/ 空态 / 错误态三态清晰；Flip 已在 lib/gsap 注册，
 // reduced-motion 下直接跳过动画，列表即时重排。
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
 import { api } from "@/lib/api";
 import type { PaperSummary } from "@/lib/types";
@@ -31,15 +31,24 @@ export function LibraryView() {
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
 
-  const load = () => {
-    setError(null);
+  // M14-189: 拆分 load（setState 全在 then/catch 回调路径）与 reload（重试
+  // 入口：先清旧错误再加载）。mount effect 只调 load——effect 体内零同步
+  // setState；重试的可见行为与原实现一致（点击瞬间清错误态）。
+  const load = useCallback(() => {
     api
       .papers()
       .then(setPapers)
       .catch((cause: Error) => setError(cause.message));
-  };
+  }, []);
 
-  useEffect(load, []);
+  const reload = useCallback(() => {
+    setError(null);
+    load();
+  }, [load]);
+
+  useEffect(() => {
+    load();
+  }, [load]);
 
   const filtered = useMemo(() => {
     const keyword = query.trim().toLowerCase();
@@ -155,7 +164,7 @@ export function LibraryView() {
       </div>
 
       {error && (
-        <ErrorState title="试卷列表加载失败" detail={error} onRetry={load} />
+        <ErrorState title="试卷列表加载失败" detail={error} onRetry={reload} />
       )}
 
       {!error && !papers && (
