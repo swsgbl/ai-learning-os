@@ -9,27 +9,32 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
-**M14-193 生产滚动与公开 basePath 验收证据（docs-only）**：worktree
-`ai-learning-os-worktrees/docs-m14-193-production-rollout-evidence`，分支
-`docs/m14-193-production-rollout-evidence`，基于 main `4993ffc`
-（PR #283 merge，包含 M14-194 monitor basePath 修复）。运行时 build base
-为 `50bd66a`；API/Web 镜像分别为
-`aios/api:m14-193-production` / `aios/web:m14-193-production`，digest
-`73dca646…a8dae` / `f1131e62…767f`，API 然后 Web 仅
-`--no-build --no-deps` recreate，其他服务 untouched。preflight **5/5
-pass**（SHA256 `C99CC6A2…A1CB`）；备份 **30 tables / 4 files**（manifest
-SHA256 `381C4987…12EC`，env SHA256 `7A8561A6…BA09`）。local/public
-端点全部 200，公共 edge **5/6**（唯一 api-cookie 为无 credentials file
-的 fail-closed 边界），APK size/SHA256 复核为 `8029570` /
-`1246C3EF…634d`。浏览器三 case 全 pass，0 unexpected error/failure/
-overflow；mobile-home 恰 2 条预期匿名 401，口径为 Playwright mobile
-emulation。监控闭环：root-route false-critical → API-only **26/0/0** →
-PR #283 后 **34/0/0、monitoring_ready=true**。回滚锚为 API
-`m14-124-production`、Web `m14-179-public-download-production`。验证：
-docs 守卫 **2 passed**、`git diff --check` 通过、新增行 secret/本地绝对
-路径/U+FFFD 扫描 **0 命中**。证据：docs/evidence/
-m14-193-production-rollout-evidence/README.md。单 local commit，不 push、
-不开 PR；supervisor 审查与 remote 发布（push/PR/合并）在其后进行。
+**M14-194H Harmony AGC signing-input preflight（只读工具切片）**：worktree
+`ai-learning-os-worktrees/m14-194-agc-signing-preflight`，分支
+`harmony/m14-194-agc-signing-preflight`，基于 main
+`50bd66a8c5695bae76917cc3fc2f686f72133687`。新增
+`agc_signing_preflight.py` 与 value-free
+`agc_signing_inputs.json`：声明并严格校验 bundle
+`com.ailearningos.app`、product `default`、signing config `release`、
+三个仓库外材料路径变量（`.cer/.p7b/.p12`）与三个凭据变量；结构要求
+唯一 release config、唯一 default product、正确绑定和 app bundle 匹配；
+声明、build profile 与 app manifest 均要求 lstat 常规文件并拒绝
+symlink/reparse point。CLI `--repo-root` 语义是 Git/仓库根，工具内部
+固定读取 `apps/harmony/**`。
+材料不读内容，凭据只查非空存在，JSON 无绝对路径/值/secret，退出码
+`0/1/2` 区分结构成功、present-but-invalid/漂移与外部输入缺席。
+fake-only 冒烟四 case 符合契约；当前 canonical checkout 的新 AGC
+preflight 独立实测为 `failure` / exit 1（`signing_configs_empty` +
+`product_binding_missing`），不是外部输入 blocker；既有 unsigned
+preflight 仍为 `blocked_by_external_materials` / exit 0。验证：TDD
+先红，聚焦 **36 passed**，完整 Harmony release 套件 **725 passed /
+1 skipped**，
+新 Python 文件 ruff 全规则与 `F,E9`、compileall、CLI 冒烟、
+`git diff --check`、证据 JSON 泄露扫描与 staged 新增行 secret/本地
+绝对路径/U+FFFD 扫描均通过。无 AGC 访问、无真实
+材料/凭据、无签名 HAP、无设备操作；`production_ready=false` 不变。
+证据：`docs/evidence/m14-194-agc-signing-preflight/README.md`。单
+local commit，不 push、不开 PR。
 
 **M14-194 production monitor 对齐 Web gateway basePath**：worktree
 `aios-learning-os-worktrees/m14-194-production-monitor-basepath`，分支
@@ -46,6 +51,30 @@ basePath、仅替换语音端点；`monitoring_pipeline.py` 的固定 monitor ar
 mutation、零调度改动；`production_ready=false` 不变。证据：
 `docs/evidence/m14-194-production-monitor-basepath/README.md`。单 local
 commit，不 push、不开 PR，等待 supervisor 审查。
+
+**M14-193 生产滚动与公开 basePath 验收证据（docs-only）**：worktree
+`ai-learning-os-worktrees/docs-m14-193-production-rollout-evidence`，分支
+`docs/m14-193-production-rollout-evidence`，原始 authoring 基于 main
+`4993ffc`（PR #283 merge，包含 M14-194 monitor basePath 修复）；发布前
+已与当前 main `a62ae76`（PR #284 merge）合并。运行时 build base
+为 `50bd66a`；API/Web 镜像分别为
+`aios/api:m14-193-production` / `aios/web:m14-193-production`，digest
+`73dca646…a8dae` / `f1131e62…767f`，API 然后 Web 仅
+`--no-build --no-deps` recreate，其他服务 untouched。preflight **5/5
+pass**（SHA256 `C99CC6A2…A1CB`）；备份 **30 tables / 4 files**（manifest
+SHA256 `381C4987…12EC`，env SHA256 `7A8561A6…BA09`）。local/public
+端点全部 200，公共 edge **5/6**（唯一 api-cookie 为无 credentials file
+的 fail-closed 边界），APK size/SHA256 复核为 `8029570` /
+`1246C3EF…634d`。浏览器三 case 全 pass，0 unexpected error/failure/
+overflow；mobile-home 恰 2 条预期匿名 401，口径为 Playwright mobile
+emulation。监控闭环：root-route false-critical → API-only **26/0/0** →
+PR #283 后 **34/0/0、monitoring_ready=true**。回滚锚为 API
+`m14-124-production`、Web `m14-179-public-download-production`。验证：
+docs 守卫 **2 passed**、`git diff --check` 通过、新增行 secret/本地绝对
+路径/U+FFFD 扫描 **0 命中**。证据：docs/evidence/
+m14-193-production-rollout-evidence/README.md。原始 authoring 为单
+local docs commit，发布前已与当前 main `a62ae76` 合并；supervisor 审查
+与 remote 发布（push/PR/合并）在其后进行。
 
 **M14-191 Harmony 默认服务地址切换为公网 ndtool.cn**：worktree
 `ai-learning-os-worktrees/m14-187-harmony-current-main-regression`，

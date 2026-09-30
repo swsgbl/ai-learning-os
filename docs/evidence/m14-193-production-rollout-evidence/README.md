@@ -3,12 +3,15 @@
 ## 0. 交付与边界
 
 - 切片：worktree `ai-learning-os-worktrees/docs-m14-193-production-rollout-evidence`，
-  分支 `docs/m14-193-production-rollout-evidence`，基于 main
-  `4993ffc96fae957249658cf314c6ace465857474`（PR #283 merge =
-  M14-194 monitor basePath 修复，精确证据基点）。
+  分支 `docs/m14-193-production-rollout-evidence`，原始 authoring 基于
+  main `4993ffc96fae957249658cf314c6ace465857474`（PR #283 merge =
+  M14-194 monitor basePath 修复，精确证据基点）；发布前分支已与当前
+  main `a62ae76d18d999ebc847c5f13bb968bc85340d0a`（PR #284 merge =
+  M14-194H AGC signing preflight）合并，合并不改变本切片 docs-only
+  边界。
 - 定性：**docs-only 切片**。本切片零 app/运行时/模板/测试代码变更，
   零 production 操作，只把 supervisor 已完成的生产滚动、备份、端点、
-  公共浏览器与监控事实落档；不 push、不开 PR，supervisor 审查与 remote
+  公共浏览器与监控事实落档；supervisor 审查与 remote
   发布（push/PR/合并）在其后进行。
 - 原始证据保存在 gitignored 的 canonical
   `artifacts/m14-193-production-cutover/`。本 README 是唯一入库证据文件；
@@ -120,8 +123,9 @@ desktop-home 与 mobile-home 各有恰好 2 条匿名 resource-console 401，
 2. API-only 复核先出现无基线 full-tail warn；随后
    `2026-09-30T14:12:51Z` 为 **26 ok / 0 warn / 0 critical**，
    `monitoring_ready=true`，证明 critical 不是 API 运行故障。
-3. M14-194 修复以 PR #283 合入，merge commit 为本 README 的基点
-   `4993ffc96fae957249658cf314c6ace465857474`。
+3. M14-194 修复以 PR #283 合入，merge commit 为本 README 的原始
+   authoring 基点 `4993ffc96fae957249658cf314c6ace465857474`；发布前
+   分支另行与当前 main `a62ae76`（PR #284 merge）合并。
 4. post-merge monitor 第一轮 `14:43:51Z` 在新目录建立基线，32 ok /
    2 warn / 0 critical；两 warn 均为无基线时的保守 restart/log 口径。
 5. post-merge monitor 第二轮 `14:44:01Z` 为 **34 ok / 0 warn /
@@ -151,5 +155,7 @@ desktop-home 与 mobile-home 各有恰好 2 条匿名 resource-console 401，
 3. mobile browser case 是仿真视口，不覆盖物理 Android/Harmony/iPhone
    人工安装与实网体验。
 4. 备份 manifest 证明备份清单与文件哈希，不等同于已执行恢复演练。
-5. 本切片交付为 branch + 单 local commit；supervisor 审查与 remote 发布
+5. 本切片原始 authoring 为 branch + 基于 main `4993ffc` 的单 local
+   docs commit；发布前已与当前 main `a62ae76`（PR #284 merge）合并，
+   合并不改变 docs-only 边界；supervisor 审查与 remote 发布
    （push/PR/合并）在其后进行。

@@ -1,5 +1,50 @@
 # Changelog
 
+## M14-194H — Harmony AGC signing-input preflight
+
+- 新增只读 `agc_signing_preflight.py`：不访问 AGC、不调用签名工具、
+  不构建/签名 HAP、不读设备；仅校验 Harmony 工程结构与显式 signing
+  input 声明，并固定输出 `signing_performed=false`、
+  `signed_hap_generated=false`、`agc_access=false`、
+  `production_ready=false`。
+- 新增 tracked canonical 声明
+  `tools/harmony_release/agc_signing_inputs.json`：value-free 固定
+  bundle/product/config、三个材料环境变量及后缀、三个凭据环境变量；
+  严格 JSON 解析拒绝重复 key、非标准常量、未知形状和任何漂移。
+  `--repo-root` 语义为 Git/仓库根；声明、build profile 与 app manifest
+  均要求 lstat 常规文件并拒绝 symlink/reparse point。
+- 行为契约：exit `0` = fake/仓库结构与已提供输入全部有效；exit `1` =
+  结构、声明漂移或 present-but-invalid；exit `2` = 结构有效但必需外部
+  输入缺席。材料仅做仓库外常规文件与后缀检查，不读字节；凭据仅查非空
+  存在；JSON 不输出路径值、凭据值或 secret。
+- 验证：TDD 先红（30 failed 缺模块）；聚焦 **36 passed**；完整
+  Harmony release 套件 **725 passed / 1 skipped**；新 Python 文件
+  ruff 全规则与 `F,E9`、compileall、fake-only CLI 冒烟、
+  `git diff --check`、输出与 staged 新增行泄露扫描全部通过。证据：
+  `docs/evidence/m14-194-agc-signing-preflight/README.md`。
+- 边界：未使用真实 AGC 材料/凭据，未生成签名 HAP，未操作设备，未
+  push、未开 PR；`production_ready=false` 不变。
+
+## M14-194 — production monitor 对齐 Web gateway basePath
+
+- 行为修复：`production_monitor.py` 的 Web 探测目标从 stale host 映射
+  `127.0.0.1:3011` 改为 canonical gateway `127.0.0.1:3012`；新增
+  `--web-base-path`，仅接受空串（root：`/`、`/login`）与精确 `/aios`
+  （`/aios`、`/aios/login`），其他 basePath 在报告写入/采集前 fail-closed
+  拒绝且不回显原值。root 仍是显式默认，不假设所有部署都挂载 `/aios`。
+- 管道链路：`monitoring_pipeline.py` 的 monitor 固定 argv 追加
+  `--web-base-path /aios`，报告 config 记录
+  `monitor_web_base_path=/aios`；`command_identity` 与白名单测试逐 token
+  锁定，root/缺失/尾斜杠形态一律拒绝，计划任务不再探测错误 root 目标。
+- 组合语义：sidecar 语音来源只替换 FunASR/CosyVoice endpoints，Web
+  endpoints 保留当前 basePath 形态；`--only` 在所选 basePath 画像内过滤；
+  生成后的目标仍经 `validate_target_url` / sidecar 专用校验。
+- 验证：聚焦 monitor/pipeline/M14-27/tests-ops **557 passed**；ruff、
+  compileall、`git diff --check`、新增行 secret 扫描与 U+FFFD 扫描通过。
+  本轮只做合成测试与静态验证，零真实 production execute、零 Docker/HTTP
+  mutation、零调度改动；`production_ready=false` 不变。证据：
+  `docs/evidence/m14-194-production-monitor-basepath/README.md`。
+
 ## M14-193 — 生产滚动与公开 basePath 验收证据（docs-only，非代码）
 
 - 运行时锚点：build base `50bd66a`；API
@@ -31,28 +76,10 @@
   **2 passed**、`git diff --check` 通过、新增行 secret/本地绝对路径/
   U+FFFD 扫描 **0 命中**。证据：
   `docs/evidence/m14-193-production-rollout-evidence/README.md`。
-  单 local commit，不 push、不开 PR；supervisor 审查与 remote 发布
+  原始 authoring 基于 main `4993ffc`（PR #283 merge）的单 local docs
+  commit；发布前分支已与当前 main `a62ae76`（PR #284 merge）合并，
+  合并不改变 docs-only 边界；supervisor 审查与 remote 发布
   （push/PR/合并）在其后进行。
-
-## M14-194 — production monitor 对齐 Web gateway basePath
-
-- 行为修复：`production_monitor.py` 的 Web 探测目标从 stale host 映射
-  `127.0.0.1:3011` 改为 canonical gateway `127.0.0.1:3012`；新增
-  `--web-base-path`，仅接受空串（root：`/`、`/login`）与精确 `/aios`
-  （`/aios`、`/aios/login`），其他 basePath 在报告写入/采集前 fail-closed
-  拒绝且不回显原值。root 仍是显式默认，不假设所有部署都挂载 `/aios`。
-- 管道链路：`monitoring_pipeline.py` 的 monitor 固定 argv 追加
-  `--web-base-path /aios`，报告 config 记录
-  `monitor_web_base_path=/aios`；`command_identity` 与白名单测试逐 token
-  锁定，root/缺失/尾斜杠形态一律拒绝，计划任务不再探测错误 root 目标。
-- 组合语义：sidecar 语音来源只替换 FunASR/CosyVoice endpoints，Web
-  endpoints 保留当前 basePath 形态；`--only` 在所选 basePath 画像内过滤；
-  生成后的目标仍经 `validate_target_url` / sidecar 专用校验。
-- 验证：聚焦 monitor/pipeline/M14-27/tests-ops **557 passed**；ruff、
-  compileall、`git diff --check`、新增行 secret 扫描与 U+FFFD 扫描通过。
-  本轮只做合成测试与静态验证，零真实 production execute、零 Docker/HTTP
-  mutation、零调度改动；`production_ready=false` 不变。证据：
-  `docs/evidence/m14-194-production-monitor-basepath/README.md`。
 
 ## M14-191 — Harmony 默认服务地址切换为公网 ndtool.cn
 

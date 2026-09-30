@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "bundle_name": "com.ailearningos.app",
+  "product": "default",
+  "signing_config": "release",
+  "material_inputs": [
+    {
+      "name": "release_certificate",
+      "env": "AIOS_HARMONY_CERT_PATH",
+      "expected_suffix": ".cer"
+    },
+    {
+      "name": "release_profile",
+      "env": "AIOS_HARMONY_PROFILE_PATH",
+      "expected_suffix": ".p7b"
+    },
+    {
+      "name": "release_keystore",
+      "env": "AIOS_HARMONY_KEYSTORE_PATH",
+      "expected_suffix": ".p12"
+    }
+  ],
+  "credential_inputs": [
+    {
+      "name": "key_alias",
+      "env": "AIOS_HARMONY_KEY_ALIAS"
+    },
+    {
+      "name": "keystore_password",
+      "env": "AIOS_HARMONY_KEYSTORE_PASSWORD"
+    },
+    {
+      "name": "key_password",
+      "env": "AIOS_HARMONY_KEY_PASSWORD"
+    }
+  ]
+}
