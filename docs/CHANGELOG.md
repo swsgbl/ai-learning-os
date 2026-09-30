@@ -1,5 +1,48 @@
 # Changelog
 
+## M14-200 — Phase 1 Round A 仪表缺陷事故落档与 Round B 修正任务书（docs-only，非代码，零新采样）
+
+- Round A 事实（如实落档）：PR #288 合并且 main CI 5/5 后，supervisor
+  **单次**启动 M14-199 Round A 脚本（gitignored
+  `.verify/m14-199-phase1-vps-attribution/round-a/`）；`nginx -T`
+  段恰 1 次、DNS 段恰 3 次 `dig` 已执行后进入采样窗；A1 窗 8 样本
+  全执行、A2 窗至 idx 1 时 supervisor 检测到仪表缺陷**中断 SSH
+  进程**（无重试，A3 未开始，`s_time` 未执行）。审计计数：
+  `SAMPLE_START`=9、成功 manifest HTTPS 响应=9（A1 idx 1–8 + A2
+  idx 1，全 `code=200`）、畸形格式行=27（18 行 `code=000` 为额外
+  URL 失败尝试）、窗口标识解析失败 A1×8 / A2×1、窗 2 始 1 终。
+- 根因（三重机制）：curl `-w` 格式串误用 printf 风格
+  `win=%s idx=%s`（curl 只识别 `%{var}`，`%s` 字面输出）+ `"$win"`
+  `"$i"` 作为位置参数被 curl 当**额外 URL**（产生非 HTTPS DNS 解析
+  尝试，全部失败、零非预期 HTTP 请求发出）+ 单个 `-o /dev/null`
+  仅作用于第一个 URL（manifest body 泄入会话 stdout）。与
+  M14-199 §3.3 样板（shell 展开形态，本身正确）的偏离所致。
+- **Round A 判定 instrumentation-invalid/incomplete：不计算
+  H1/H2，9 行计时数据不构成有效窗集，永不作为归因证据引用**（仅
+  预算消耗事实 9/40 与教训可引）；零配置/服务变更、无需清理、
+  闭合命令清单被畸形仪表违反（意图命令全只读）。
+- 预算核算（M14-199 ≤40/轮口径）：Round A 已耗 9（默认计划
+  9/24）；Round B 任务书落档 supervisor 单独授权——**恰 24 个新
+  干净 manifest 请求**（3 窗 × 8 样本 = 默认余量 15 + reserve 9，
+  轮内总计 33 ≤ 40 硬上限；余 7 未授权、预算门拒绝），除此外零
+  其他 manifest 请求；本文档为预算授权落档、非启动指令。
+- Round B 契约：窗标识 B1/B2/B3、间隔 ≥1s、超时 15s、零重试、
+  `-k`/`--insecure`/`--ssl-no-revoke` 禁止、`--resolve
+  ndtool.cn:443:127.0.0.1` + `--noproxy '*'`（SNI/证书链验证全
+  保留、`ip=127.0.0.1` 断言）；**修正 curl 形态强制**（`-w` 双引号
+  shell 展开、格式串禁 `%s`、URL 恰 1 个且在 `-o /dev/null` 后、
+  `sh -n` 预检、B1 idx 1 窗首 canary 失败即终止）；辅助命令默认零
+  （`nginx -T` 1 次授权已耗且零变更故事实仍有效=0 次、`dig` ≤3
+  已满=0 次、`s_time` 授权未耗默认 0 次、严格需要才单列精确次数）。
+- 证据脱敏：`nginx -T` 完整输出/宿主面、manifest body、raw log
+  原文、凭据、VPS 细节、本地绝对路径永不入库，仅审计计数与结论
+  摘录入档。本切片 docs-only（证据 README + 两处台账，零代码
+  变更）；验证：version-sync 守卫、`git diff --check`、新增行
+  secret/本地路径/U+FFFD 扫描 0 真实命中。证据：
+  `docs/evidence/m14-200-phase1-round-a-invalid/README.md`。单
+  local commit 并推送远端分支；supervisor 审查与 remote 发布
+  （PR 开合/合并/release 门禁）在其后进行。
+
 ## M14-199 — Phase 1 VPS 归因采样预算与任务书（docs-only，非代码，零采样）
 
 - 新增 Phase 1（VPS 侧只读归因采样）的独立预算与 supervisor 任务书

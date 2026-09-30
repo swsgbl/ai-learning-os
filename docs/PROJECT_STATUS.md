@@ -9,6 +9,37 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-200 Phase 1 Round A 事故落档与 Round B 修正任务书（docs-only，
+零新采样）**：worktree `ai-learning-os-worktrees/m14-199-phase1-budget`，
+分支 `docs/m14-200-phase1-incident`，基于 main `12e31ad`
+（PR #288 merge）。Round A 事实：PR #288 合并且 CI 5/5 后
+supervisor 单次启动脚本（无重试），`nginx -T` 恰 1 次、`dig` 恰
+3 次已执行后进入采样；A1 窗 8 样本全执行、A2 窗至 idx 1 时检测到
+仪表缺陷中断 SSH（A3 与 `s_time` 未执行）。根因三重机制：curl
+`-w` 误用 printf 风格 `%s`（字面输出致 27 行畸形格式行）+
+`"$win"` `"$i"` 被当**额外 URL**（额外非 HTTPS DNS 尝试 18 行
+`code=000`，其中窗口标识解析失败 A1×8/A2×1，零非预期 HTTP 请求
+发出）+ `-o /dev/null` 仅作用于第一个 URL（manifest body 泄入
+stdout）。审计：`SAMPLE_START`=9、成功 manifest 响应=9（全
+`code=200`）、窗 2 始 1 终。**判定 instrumentation-invalid/
+incomplete：不计算 H1/H2，9 行计时数据不构成有效窗集、永不作为
+归因证据**；零配置/服务变更、无需清理、闭合清单被畸形仪表违反。
+预算账：已耗 9 + Round B 授权恰 24 个新 manifest 请求（B1/B2/B3
+3 窗 × 8 样本 = 默认余量 15 + reserve 9，总计 33 ≤ 40 硬上限，
+余 7 未授权；M14-199 §2.3 reserve 单独授权落档，除此外零 manifest
+请求）。Round B 契约：≥1s 间隔、15s 超时、零重试、验证削弱全禁、
+`--resolve ndtool.cn:443:127.0.0.1` + `--noproxy '*'`（SNI/证书
+验证保留）；修正 curl 形态强制（`-w` 双引号 shell 展开、禁 `%s`、
+URL 恰 1 个、`sh -n` 预检、B1 idx 1 canary 失败即终止）；辅助命令
+默认零（`nginx -T` 授权已耗且零变更=0、`dig` 已满=0、`s_time`
+未耗默认 0，严格需要才单列精确次数）。脱敏：nginx 完整输出/
+manifest body/raw log/凭据/VPS 细节永不入库。本切片 docs-only
+（证据 README + 两处台账，零代码变更）；验证：version-sync 守卫、
+`git diff --check`、新增行 secret/本地路径/U+FFFD 扫描 0 真实
+命中。证据：`docs/evidence/m14-200-phase1-round-a-invalid/README.md`。
+单 local commit 并推送远端分支；supervisor 审查与 remote 发布
+（PR 开合/合并/release 门禁）在其后进行。
+
 **M14-199 Phase 1 VPS 归因采样预算与任务书（docs-only，零采样）**：
 worktree `ai-learning-os-worktrees/m14-199-phase1-budget`，分支
 `docs/m14-199-phase1-budget`，基于 main `0603c61`（PR #287 merge）。
