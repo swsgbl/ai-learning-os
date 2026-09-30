@@ -1,5 +1,43 @@
 # Changelog
 
+## M14-203 — Phase 3 公网多入口/Cloudflare 调研与决策矩阵（docs-only，零请求零变更）
+
+- 背景：M14-202 H1 判定（慢在公网入站路径）关闭 Phase 2，Phase 3
+  另立切片。本切片为纯调研与决策准备，零请求、零 DNS/云/VPS 变更、
+  零 Phase 3 授权。
+- 选项矩阵（延迟假设/可用性/安全/运维复杂度/成本/中国·移动可达/
+  回滚/证据强度八维）：A Cloudflare 代理 DNS 前置现有 origin
+  （低复杂度 $0、origin 零改动、证据强度高）；B Cloudflare Tunnel
+  附加路径（源侧零入站端口，关键行为未核验=中）；C 多地域入口 +
+  GeoDNS/健康检查（结构性受 DNS TTL 与客户端缓存制约=低–中）；D
+  VPS 直连保持（对照臂与回滚基线，实测证据）。拒绝清单四类：ngrok
+  免费版插页、serveo/localhost.run 类通用隧道、付费消费隧道/
+  Tailscale Funnel 运营不匹配、家庭宽带端口暴露（永不实验）。
+- 事实纪律：4 份官方文档在线核验（V1/V1a 代理 DNS 行为与限制页、V2 SSL
+  Full (strict) 与 Origin CA 兼容、V3 默认缓存扩展名含 APK 不含
+  JSON + Free 档 512MB 上限、V4 China Network 企业版+ICP+跨境
+  延迟/可靠性官方表述）；其余 11 项关键事实全部标注假设并给出
+  未来核验源；Origin CA 文档页抓取不可达，如实记录为在线核验
+  不可用。
+- 推荐顺序与门：E1 A 最小代理（G1：实验臂 p95 < 对照×0.7 且零
+  失败）→ E2 缓存规则（G2：CF-Cache-Status=HIT + manifest
+  staleness 决策；APK 默认可缓存，manifest JSON 需规则）→ E3
+  Tunnel 可选（G3：零失败且开销 ≤1.5×）→ E4 多节点末位（G4：
+  双 no-go + 成本批准前置）；D 恒为对照臂；任一 no-go 先收口
+  落档再由 supervisor 定跳线或关线。
+- 有界测量计划（待批准，未执行）：每臂 3 窗 × 8 样本、零重试、
+  验证全保留、双臂合计 ≤48/轮硬停止、Phase 3 新账本（不复用
+  Phase 1 轮内余量 7）；协议混杂沿 M14-202 §7 纪律；原始工件
+  只进 gitignored `.verify/`。未来 DNS/Cloudflare/VPS 变更与生产
+  manifest 请求均须 supervisor 显式批准 + 独立切片（README §7
+  门禁表）。
+- 验证：tests/ops 164 通过、version-sync 守卫 9 通过（离线 uv）、
+  `git diff --check` 干净、新增行 secret/本地路径/VPS 细节/U+FFFD
+  扫描 0 真实命中。证据：
+  `docs/evidence/m14-203-phase3-ingress-research/README.md`。
+  单 local commit，不推送、不开 PR；supervisor 审查与 remote
+  发布在其后进行。
+
 ## M14-202 — Phase 1 Round B 干净执行收口与 H1 判定（docs-only，非代码，零新采样）
 
 - Round B 执行事实（gitignored raw log 标记级审计核实）：M14-201
