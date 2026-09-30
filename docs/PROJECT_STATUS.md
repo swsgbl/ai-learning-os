@@ -9,6 +9,33 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-194 Harmony AGC signing-input preflight（只读工具切片）**：worktree
+`ai-learning-os-worktrees/m14-194-agc-signing-preflight`，分支
+`harmony/m14-194-agc-signing-preflight`，基于 main
+`50bd66a8c5695bae76917cc3fc2f686f72133687`。新增
+`agc_signing_preflight.py` 与 value-free
+`agc_signing_inputs.json`：声明并严格校验 bundle
+`com.ailearningos.app`、product `default`、signing config `release`、
+三个仓库外材料路径变量（`.cer/.p7b/.p12`）与三个凭据变量；结构要求
+唯一 release config、唯一 default product、正确绑定和 app bundle 匹配；
+声明、build profile 与 app manifest 均要求 lstat 常规文件并拒绝
+symlink/reparse point。CLI `--repo-root` 语义是 Git/仓库根，工具内部
+固定读取 `apps/harmony/**`。
+材料不读内容，凭据只查非空存在，JSON 无绝对路径/值/secret，退出码
+`0/1/2` 区分结构成功、present-but-invalid/漂移与外部输入缺席。
+fake-only 冒烟四 case 符合契约；当前 canonical checkout 的新 AGC
+preflight 独立实测为 `failure` / exit 1（`signing_configs_empty` +
+`product_binding_missing`），不是外部输入 blocker；既有 unsigned
+preflight 仍为 `blocked_by_external_materials` / exit 0。验证：TDD
+先红，聚焦 **36 passed**，完整 Harmony release 套件 **725 passed /
+1 skipped**，
+新 Python 文件 ruff 全规则与 `F,E9`、compileall、CLI 冒烟、
+`git diff --check`、证据 JSON 泄露扫描与 staged 新增行 secret/本地
+绝对路径/U+FFFD 扫描均通过。无 AGC 访问、无真实
+材料/凭据、无签名 HAP、无设备操作；`production_ready=false` 不变。
+证据：`docs/evidence/m14-194-agc-signing-preflight/README.md`。单
+local commit，不 push、不开 PR。
+
 **M14-191 Harmony 默认服务地址切换为公网 ndtool.cn**：worktree
 `ai-learning-os-worktrees/m14-187-harmony-current-main-regression`，
 分支 `harmony/m14-191-public-default-url`，基于 main `ff25550`

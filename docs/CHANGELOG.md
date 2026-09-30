@@ -1,5 +1,30 @@
 # Changelog
 
+## M14-194 — Harmony AGC signing-input preflight
+
+- 新增只读 `agc_signing_preflight.py`：不访问 AGC、不调用签名工具、
+  不构建/签名 HAP、不读设备；仅校验 Harmony 工程结构与显式 signing
+  input 声明，并固定输出 `signing_performed=false`、
+  `signed_hap_generated=false`、`agc_access=false`、
+  `production_ready=false`。
+- 新增 tracked canonical 声明
+  `tools/harmony_release/agc_signing_inputs.json`：value-free 固定
+  bundle/product/config、三个材料环境变量及后缀、三个凭据环境变量；
+  严格 JSON 解析拒绝重复 key、非标准常量、未知形状和任何漂移。
+  `--repo-root` 语义为 Git/仓库根；声明、build profile 与 app manifest
+  均要求 lstat 常规文件并拒绝 symlink/reparse point。
+- 行为契约：exit `0` = fake/仓库结构与已提供输入全部有效；exit `1` =
+  结构、声明漂移或 present-but-invalid；exit `2` = 结构有效但必需外部
+  输入缺席。材料仅做仓库外常规文件与后缀检查，不读字节；凭据仅查非空
+  存在；JSON 不输出路径值、凭据值或 secret。
+- 验证：TDD 先红（30 failed 缺模块）；聚焦 **33 passed**；完整
+  Harmony release 套件 **725 passed / 1 skipped**；新 Python 文件
+  ruff 全规则与 `F,E9`、compileall、fake-only CLI 冒烟、
+  `git diff --check`、输出与 staged 新增行泄露扫描全部通过。证据：
+  `docs/evidence/m14-194-agc-signing-preflight/README.md`。
+- 边界：未使用真实 AGC 材料/凭据，未生成签名 HAP，未操作设备，未
+  push、未开 PR；`production_ready=false` 不变。
+
 ## M14-191 — Harmony 默认服务地址切换为公网 ndtool.cn
 
 - 行为变更：Harmony `DEFAULT_API_BASE_URL` 从
