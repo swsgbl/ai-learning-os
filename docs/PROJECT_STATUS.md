@@ -9,6 +9,27 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-191 Harmony 默认服务地址切换为公网 ndtool.cn**：worktree
+`ai-learning-os-worktrees/m14-187-harmony-current-main-regression`，
+分支 `harmony/m14-191-public-default-url`，基于 main `ff25550`
+（`origin/main` rebase 后复验）。
+`SettingsStore.DEFAULT_API_BASE_URL` 改为
+`https://ndtool.cn/aios/`；本地/LAN URL 仍可在 Settings 覆盖并持久化。
+新增源码契约测试覆盖默认值、初始输入/placeholder、URL policy、
+DownloadPane 下载入口推导，并同步 backend smoke fixture。验证：
+rebase 到 `origin/main` `ff25550` 后复验：新源码契约 **6 passed**、
+新契约 + backend smoke **77 passed**、完整 Harmony release 套件
+**689 passed / 1 skipped**、ruff/compileall 通过、clean release build 成功
+（unsigned HAP size=235176、SHA256=
+`ADB44A1CF8550784A7C8A9609A49FB0039A33D7D7C3854A74E7BB176FA7DC985`）。
+真实模拟器（仅 `127.0.0.1:5555`）fresh install 首启显示公网默认且
+`/health` ok、版本 0.1.0、匿名端点 401；Settings 与 DownloadPane
+分别验证公网默认和 `/download` 推导；真实 UI 保存 loopback 后冷重启
+仍恢复覆盖值；最终 uninstall 且全量 bundle 0 匹配。证据：
+`docs/evidence/m14-191-harmony-public-default-url/README.md`。
+HAP 仍 unsigned，不声明签名/AGC/生产分发就绪；`production_ready=false`
+不变。单 local commit，不 push、不开 PR。
+
 **M14-190 current-main 发布证据刷新（证据刷新切片）**：worktree
 `ai-learning-os-worktrees/m14-188-web-warning-hygiene`，分支
 `ops/m14-190-current-main-release-evidence`，基于 main `ffd74cf`（PR #279
@@ -34,7 +55,6 @@ m14-190-current-main-release-evidence/README.md（唯一入库证据文件；
 canonical gitignored，`SHA256SUMS` 全量索引）。零 production/Docker/
 secrets/Harmony/Android/CC Switch/代理接触。单 local commit，不 push、
 不开 PR；合并决策归 supervisor。
-
 **M14-187 Harmony auth smoke 驱动器 locator 缺陷修复 + current-main 模拟器回归（Round 2）**：
 worktree `ai-learning-os-worktrees/m14-187-harmony-current-main-regression`，
 分支 `harmony/m14-187-current-main-regression`。修复

@@ -1,5 +1,31 @@
 # Changelog
 
+## M14-191 — Harmony 默认服务地址切换为公网 ndtool.cn
+
+- 行为变更：Harmony `DEFAULT_API_BASE_URL` 从
+  `http://127.0.0.1:8000` 改为 `https://ndtool.cn/aios/`；本地开发
+  或 LAN 服务继续通过 Settings 覆盖，偏好校验、`put`/`flush` 与
+  URL policy fail-closed 边界不变。
+- 测试契约：新增 `test_harmony_default_url.py` 钉住 fresh 默认值、
+  Settings 初始值/placeholder、http 本地与 https 公网 URL policy、
+  以及 DownloadPane 从 active base 推导 `/download` 的规则；
+  `test_backend_smoke.py` 默认 fixture 和结构化 TextInput 断言同步
+  公网地址。
+- 验证：rebase 到 `origin/main` `ff25550` 后重跑；新源码契约
+  **6 passed**，新契约 + backend smoke **77 passed**，完整 Harmony release
+  套件 **689 passed / 1 skipped**；ruff（新文件全规则、修改文件
+  `E4,E7,E9,F`）与 compileall 通过；clean release build 成功，unsigned
+  HAP size=235176、SHA256=
+  `ADB44A1C…DC985`。
+- 模拟器闭环（仅 `127.0.0.1:5555`）：fresh install 首启 Home 显示
+  公网默认，`/health` 为 `status: ok  service: ai-learning-os-api`、
+  版本 `0.1.0`，受保护端点 401；Settings TextInput/hint 均为公网默认，
+  DownloadPane 显示 `https://ndtool.cn/aios/download`；真实 UI 保存
+  `http://127.0.0.1:8000/` 后冷重启仍持久化；最终 force-stop + uninstall，
+  bundle 全量列表 0 匹配。证据：
+  `docs/evidence/m14-191-harmony-public-default-url/README.md`。
+  单 local commit，不 push、不开 PR；`production_ready=false` 不变。
+
 ## M14-190 — current-main 发布证据刷新（证据刷新切片）
 
 - 背景：M14-185 代码绑定门绑定 `8d52f00`，其后 `8d52f00..ffd74cf` 为
@@ -30,7 +56,6 @@
   （唯一入库证据文件；canonical gitignored 于 worktree
   `.verify/artifacts/m14-190-current-main-release-evidence/`）。单 local
   commit，不 push、不开 PR。
-
 ## M14-187 — Harmony auth smoke 驱动器 locator 缺陷修复 + current-main 模拟器回归（Round 2）
 
 - 背景：前一线程 attempt 1 真跑 12 stage = 4 ok / 1 failure / 7

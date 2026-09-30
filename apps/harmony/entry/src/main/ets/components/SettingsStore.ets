@@ -34,8 +34,8 @@ import { emitter } from '@kit.BasicServicesKit';
 import { safeErrorText } from '../ErrorText';
 import { UrlPolicyCode, validateBaseUrl, urlPolicyMessage } from '../UrlPolicy';
 
-/** 默认服务地址(本地开发) */
-export const DEFAULT_API_BASE_URL: string = 'http://127.0.0.1:8000';
+/** 默认服务地址(公网服务;本地开发可在设置中覆盖) */
+export const DEFAULT_API_BASE_URL: string = 'https://ndtool.cn/aios/';
 
 /** preferences 存储名与键名(只此一组,无任何凭据键) */
 const PREF_NAME: string = 'aios_settings';

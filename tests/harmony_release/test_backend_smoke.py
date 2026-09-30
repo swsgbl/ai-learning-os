@@ -50,9 +50,10 @@ TAB_BAR = [
 SETTINGS_TAB_CENTER = ("160", "2730")   # 设置 tab
 INPUT_CENTER = ("660", "469")           # TextInput [56,399][1264,539]
 HOME_URL_LABEL_CENTER = ("370", "330")  # 服务地址 Text [40,300][700,360]
+PUBLIC_BASE = "https://ndtool.cn/aios/"
 
 
-def home_layout(service_url="http://127.0.0.1:8000/"):
+def home_layout(service_url=PUBLIC_BASE):
     """Structural Home: every URL-ish line is a Text label (the trap)."""
     return {
         "attributes": {"type": "Page", "bounds": "[0,0][100,100]"},
@@ -73,7 +74,7 @@ def home_layout(service_url="http://127.0.0.1:8000/"):
     }
 
 
-def settings_layout(input_url="http://127.0.0.1:8000/", saved=None):
+def settings_layout(input_url=PUBLIC_BASE, saved=None):
     """Structural Settings: one TextInput (the base-URL field) + Texts."""
     children = [
         *TAB_BAR,
@@ -823,9 +824,6 @@ dump_exit_failure = EXIT_FAILURE
 
 # --------------------------- M14-169A2b2 public https integration ----------
 
-PUBLIC_BASE = "https://ndtool.cn/aios/"
-
-
 class TestPublicHttpsIntegration:
     """One deterministic public-HTTPS full-chain run: host preflight
     probes the public base with its path prefix, Settings types and
@@ -974,7 +972,7 @@ class TestStructuralInputSelection:
         typed = layout_typed_nodes(settings_layout())
         assert is_settings_layout(typed) is True
         assert find_input_node(typed) == (
-            660, 469, "http://127.0.0.1:8000/")
+            660, 469, PUBLIC_BASE)
 
     def test_textinput_with_unparsable_bounds_fails_closed(self):
         assert find_input_node([("TextInput", "x", "garbage")]) is None
