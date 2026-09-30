@@ -9,6 +9,22 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-194 production monitor 对齐 Web gateway basePath**：worktree
+`aios-learning-os-worktrees/m14-194-production-monitor-basepath`，分支
+`ops/m14-194-production-monitor-basepath`，基于 main `50bd66a`。修复
+`production_monitor.py` 在 basePath 生产 Web 下误报 `endpoint-status
+critical`：Web host 映射 3011 → canonical gateway 3012，新增仅含空串与
+精确 `/aios` 的 `--web-base-path` 白名单（root `/`+`/login` 与 `/aios`+
+`/aios/login`，非法值零回显 fail-closed），sidecar 来源保留当前 Web
+basePath、仅替换语音端点；`monitoring_pipeline.py` 的固定 monitor argv
+显式追加 `--web-base-path /aios`，plan/execute 报告记录 basePath，避免
+计划任务继续走 root 默认。验证：monitor/pipeline/M14-27/tests-ops 聚焦
+**557 passed**；ruff、compileall、`git diff --check`、新增行 secret 扫描
+与 U+FFFD 扫描通过。本轮零真实 production execute、零 Docker/HTTP
+mutation、零调度改动；`production_ready=false` 不变。证据：
+`docs/evidence/m14-194-production-monitor-basepath/README.md`。单 local
+commit，不 push、不开 PR，等待 supervisor 审查。
+
 **M14-191 Harmony 默认服务地址切换为公网 ndtool.cn**：worktree
 `ai-learning-os-worktrees/m14-187-harmony-current-main-regression`，
 分支 `harmony/m14-191-public-default-url`，基于 main `ff25550`

@@ -1,5 +1,25 @@
 # Changelog
 
+## M14-194 — production monitor 对齐 Web gateway basePath
+
+- 行为修复：`production_monitor.py` 的 Web 探测目标从 stale host 映射
+  `127.0.0.1:3011` 改为 canonical gateway `127.0.0.1:3012`；新增
+  `--web-base-path`，仅接受空串（root：`/`、`/login`）与精确 `/aios`
+  （`/aios`、`/aios/login`），其他 basePath 在报告写入/采集前 fail-closed
+  拒绝且不回显原值。root 仍是显式默认，不假设所有部署都挂载 `/aios`。
+- 管道链路：`monitoring_pipeline.py` 的 monitor 固定 argv 追加
+  `--web-base-path /aios`，报告 config 记录
+  `monitor_web_base_path=/aios`；`command_identity` 与白名单测试逐 token
+  锁定，root/缺失/尾斜杠形态一律拒绝，计划任务不再探测错误 root 目标。
+- 组合语义：sidecar 语音来源只替换 FunASR/CosyVoice endpoints，Web
+  endpoints 保留当前 basePath 形态；`--only` 在所选 basePath 画像内过滤；
+  生成后的目标仍经 `validate_target_url` / sidecar 专用校验。
+- 验证：聚焦 monitor/pipeline/M14-27/tests-ops **557 passed**；ruff、
+  compileall、`git diff --check`、新增行 secret 扫描与 U+FFFD 扫描通过。
+  本轮只做合成测试与静态验证，零真实 production execute、零 Docker/HTTP
+  mutation、零调度改动；`production_ready=false` 不变。证据：
+  `docs/evidence/m14-194-production-monitor-basepath/README.md`。
+
 ## M14-191 — Harmony 默认服务地址切换为公网 ndtool.cn
 
 - 行为变更：Harmony `DEFAULT_API_BASE_URL` 从

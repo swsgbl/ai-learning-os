@@ -238,6 +238,11 @@ def test_plan_lists_fixed_profile(monkeypatch, tmp_path) -> None:
     assert [e["endpoint_id"] for e in config["endpoints"]] == [
         "web-root", "web-login", "api-health", "funasr-health", "cosyvoice-health",
     ]
+    assert [(e["endpoint_id"], e["url"]) for e in config["endpoints"][:2]] == [
+        ("web-root", "http://127.0.0.1:3012/"),
+        ("web-login", "http://127.0.0.1:3012/login"),
+    ]
+    assert config["web_base_path"] == pm.WEB_BASE_PATH_ROOT
 
 
 def test_execute_without_confirm_refused_zero_collection(monkeypatch, tmp_path) -> None:
@@ -316,6 +321,51 @@ def test_only_known_endpoint_subset_in_plan(monkeypatch, tmp_path) -> None:
     assert [e["endpoint_id"] for e in report["config"]["endpoints"]] == ["api-health"]
 
 
+def test_web_base_path_profiles_are_explicit_root_and_aios() -> None:
+    root = pm.build_endpoint_profile(pm.WEB_BASE_PATH_ROOT)
+    aios = pm.build_endpoint_profile(pm.WEB_BASE_PATH_AIOS)
+    assert [(e.endpoint_id, e.url) for e in root if e.group == "web"] == [
+        ("web-root", "http://127.0.0.1:3012/"),
+        ("web-login", "http://127.0.0.1:3012/login"),
+    ]
+    assert [(e.endpoint_id, e.url) for e in aios if e.group == "web"] == [
+        ("web-root", "http://127.0.0.1:3012/aios"),
+        ("web-login", "http://127.0.0.1:3012/aios/login"),
+    ]
+    for endpoint in (*root, *aios):
+        assert pm.validate_target_url(endpoint.url) is None
+
+
+@pytest.mark.parametrize("base_path", [
+    "/aios/", "/aios/login", "/aios?x=1", "/aios#fragment", "/other", "aios",
+    "/AIOS", "/", "//aios", "/aios/../login",
+])
+def test_web_base_path_rejects_non_whitelisted_values_without_echo(
+        monkeypatch, tmp_path, capsys, base_path: str) -> None:
+    _block_sockets(monkeypatch)
+    _block_subprocess(monkeypatch)
+    poisoned = base_path + MARK_TOKEN
+    rc = pm.main(["--web-base-path", poisoned, "--artifact-dir", str(tmp_path)])
+    assert rc == pm.EXIT_USAGE
+    assert MARK_TOKEN not in capsys.readouterr().out
+    assert not list(tmp_path.iterdir())
+
+
+def test_plan_aios_base_path_records_selected_web_endpoints(
+        monkeypatch, tmp_path) -> None:
+    _block_sockets(monkeypatch)
+    rc = pm.main(["--web-base-path", pm.WEB_BASE_PATH_AIOS,
+                  "--only", "web-root", "--only", "web-login",
+                  "--artifact-dir", str(tmp_path)])
+    assert rc == pm.EXIT_OK
+    report = json.loads(next(tmp_path.glob("plan-*.json")).read_text(encoding="utf-8"))
+    assert report["config"]["web_base_path"] == pm.WEB_BASE_PATH_AIOS
+    assert [(e["endpoint_id"], e["url"]) for e in report["config"]["endpoints"]] == [
+        ("web-root", "http://127.0.0.1:3012/aios"),
+        ("web-login", "http://127.0.0.1:3012/aios/login"),
+    ]
+
+
 # ---------------------------------------------------------------- 目标面 / loopback
 
 
@@ -351,7 +401,7 @@ def test_endpoint_profile_is_five_fixed_loopback_targets() -> None:
         ports.add(host_port.rsplit(":", 1)[1])
         if endpoint.group == "voice":
             assert endpoint.url.endswith("/health")
-    assert ports == {"3011", "8000", "8010", "8011"}
+    assert ports == {"3012", "8000", "8010", "8011"}
 
 
 def test_select_endpoints_unknown_refused() -> None:
@@ -523,7 +573,7 @@ def test_collect_endpoint_passes_profile_and_timeout() -> None:
     endpoint = pm.ENDPOINTS[0]
     result = pm.collect_endpoint(transport, endpoint, timeout_seconds=4.0)
     assert result.status == 200 and result.error_category is None
-    assert transport.calls == [("127.0.0.1", 3011, "/", 4.0)]
+    assert transport.calls == [("127.0.0.1", 3012, "/", 4.0)]
 
 
 def test_collect_endpoint_exception_categorized_without_text() -> None:
@@ -964,6 +1014,28 @@ def test_main_execute_happy_path_exit_ok(monkeypatch, tmp_path) -> None:
     assert sum(1 for c in runner.calls if c[1] == "inspect") == 6
     assert sum(1 for c in runner.calls if c[1] == "logs") == 6
     assert len(transport.calls) == 5
+    assert transport.calls[:2] == [
+        ("127.0.0.1", 3012, "/", pm.DEFAULT_REQUEST_TIMEOUT_SECONDS),
+        ("127.0.0.1", 3012, "/login", pm.DEFAULT_REQUEST_TIMEOUT_SECONDS),
+    ]
+
+
+def test_main_execute_aios_base_path_uses_gateway_and_selected_paths(
+        monkeypatch, tmp_path) -> None:
+    _block_sockets(monkeypatch)
+    _block_subprocess(monkeypatch)
+    runner, transport = FakeRunner(), FakeTransport(status=200, elapsed_ms=11.0)
+    _patch_gate(monkeypatch, runner, transport)
+    rc = pm.main(["--execute", "--confirm", pm.CONFIRM_PHRASE,
+                  "--web-base-path", pm.WEB_BASE_PATH_AIOS,
+                  "--only", "web-login", "--artifact-dir", str(tmp_path)])
+    assert rc == pm.EXIT_OK
+    assert transport.calls == [("127.0.0.1", 3012, "/aios/login", pm.DEFAULT_REQUEST_TIMEOUT_SECONDS)]
+    report = json.loads(next(tmp_path.glob("monitor-*.json")).read_text(encoding="utf-8"))
+    assert report["config"]["web_base_path"] == pm.WEB_BASE_PATH_AIOS
+    assert [e["url"] for e in report["config"]["endpoints"]] == [
+        "http://127.0.0.1:3012/aios/login",
+    ]
 
 
 def test_main_execute_warn_visible_exit_zero(monkeypatch, tmp_path, capsys) -> None:
@@ -1074,6 +1146,7 @@ def test_cli_registration_defaults_and_flags() -> None:
     assert args.artifact_dir == pm.ARTIFACT_DIR
     assert args.log_tail == pm.DEFAULT_LOG_TAIL
     assert args.request_timeout_seconds == pm.DEFAULT_REQUEST_TIMEOUT_SECONDS
+    assert args.web_base_path == pm.WEB_BASE_PATH_ROOT
     executed = parser.parse_args(["--execute", "--confirm", pm.CONFIRM_PHRASE])
     assert executed.execute is True and executed.confirm == pm.CONFIRM_PHRASE
 

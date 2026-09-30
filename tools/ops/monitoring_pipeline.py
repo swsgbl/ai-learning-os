@@ -17,8 +17,11 @@ HTTP/零计划任务注册，全部行为用 fake 注入测试锁定；真实执
   （plan 同样校验，先于任何报告写入）。
 - **固定命令白名单门（结构性）**：execute 仅允许四个**精确固定形态**——
   ``<python> tools/ops/production_monitor.py --execute --confirm "EXECUTE
-  READ-ONLY PRODUCTION MONITORING"``（monitor 自身的门禁短语，与
-  production_monitor.CONFIRM_PHRASE 逐字一致，回归测试锁定）、
+  READ-ONLY PRODUCTION MONITORING" --web-base-path /aios
+  --voice-health-source sidecar``（monitor 自身的门禁短语，与
+  production_monitor.CONFIRM_PHRASE 逐字一致，回归测试锁定；M14-194 起
+  Web 恒探测 3012 gateway 的 canonical /aios 形态，M14-27 起语音恒走
+  sidecar，二者均为固定 argv，不透出管道注入面）、
   ``<python> tools/ops/monitoring_history.py``（全部默认参数）、
   ``<python> tools/ops/monitoring_insights.py --execute --confirm "EXECUTE
   READ-ONLY MONITORING INSIGHTS"``（insights 自身门禁短语，与
@@ -154,6 +157,8 @@ CONFIRM_PHRASE = "EXECUTE READ-ONLY MONITORING PIPELINE"
 #: monitor 自身门禁短语——与 production_monitor.CONFIRM_PHRASE 逐字一致
 #: （固定命令白名单的组成部分；回归测试锁定两处恒相等）
 MONITOR_CONFIRM_PHRASE = "EXECUTE READ-ONLY PRODUCTION MONITORING"
+#: 生产 Web basePath 构建（M14-194）：monitor 固定探测 canonical /aios
+MONITOR_WEB_BASE_PATH = "/aios"
 #: insights 自身门禁短语——与 monitoring_insights.CONFIRM_PHRASE 逐字一致
 #: （固定命令白名单的组成部分；回归测试锁定两处恒相等）
 INSIGHTS_CONFIRM_PHRASE = "EXECUTE READ-ONLY MONITORING INSIGHTS"
@@ -323,6 +328,7 @@ def allowed_step_argv(python_exe: str, *, monitor_script: Path = MONITOR_SCRIPT,
     return {
         "monitor": (python_exe, str(monitor_script),
                     "--execute", "--confirm", MONITOR_CONFIRM_PHRASE,
+                    "--web-base-path", MONITOR_WEB_BASE_PATH,
                     "--voice-health-source", "sidecar"),
         "history": (python_exe, str(history_script)),
         "insights": (python_exe, str(insights_script),
@@ -544,7 +550,8 @@ class StepSpec:
 def command_identity(step_id: str) -> list[str]:
     """报告用固定命令身份（仓内相对身份 + <python> 占位；绝无绝对本机路径）。"""
     if step_id == "monitor":
-        return ["<python>", MONITOR_TOOL_NAME, "--execute", "--confirm", MONITOR_CONFIRM_PHRASE]
+        return ["<python>", MONITOR_TOOL_NAME, "--execute", "--confirm", MONITOR_CONFIRM_PHRASE,
+                "--web-base-path", MONITOR_WEB_BASE_PATH]
     if step_id == "insights":
         return ["<python>", INSIGHTS_TOOL_NAME, "--execute", "--confirm", INSIGHTS_CONFIRM_PHRASE]
     if step_id == "calibration":
@@ -859,7 +866,7 @@ def run_calibration_stage(runner: Runner, spec: StepSpec, argv: tuple[str, ...],
 PIPELINE_BOUNDARIES: tuple[str, ...] = (
     "plan mode is completely inert: zero subprocess, zero network, zero production reads, zero scheduler mutation",
     "execute requires --execute plus the exact confirmation phrase; malformed or missing gates exit 2 before any runner is constructed",
-    "only four fixed allowlisted command forms are ever invoked (monitor --execute with its own confirm phrase; history with defaults; insights --execute with its own confirm phrase and no --source, relying on the canonical history output default; calibration with only --format json and every other input left at the tool's existing defaults — no --history, no --samples, no threshold parameters, and no pipeline CLI surface to inject any of them); no shell=True, no user command/URL/env expansion",
+    "only four fixed allowlisted command forms are ever invoked (monitor --execute with its own confirm phrase, fixed --web-base-path /aios, and fixed sidecar voice source; history with defaults; insights --execute with its own confirm phrase and no --source, relying on the canonical history output default; calibration with only --format json and every other input left at the tool's existing defaults — no --history, no --samples, no threshold parameters, and no pipeline CLI surface to inject any of them); no shell=True, no user command/URL/env expansion",
     "sequence is monitor then history then insights then calibration; history runs only after monitor exits 0; insights runs only after history status is ok; calibration runs only after insights status is ok; stage failures and skips are preserved with fixed-vocabulary reasons, never masked",
     "the calibration stage captures the child's stdout as an in-memory artifact, validates it as JSON (top-level object whose schema_version and tool exactly match the supported calibration artifact contract) before persistence, and persists it atomically as the pipeline-owned fixed-name calibration.json; malformed or contract-incompatible output is a visible calibration failure (calibration-output-not-json), never silently accepted; calibration JSON mode is ASCII-safe so capture stays byte-faithful under any child stdout encoding; the standalone calibration tool stays offline/read-only/stdout-only with its zero-write contract unchanged and history.jsonl is never altered or deleted",
     "per-step bounded timeouts with conservative hard caps (monitor 60-540s, history 10-120s, insights 5-50s, calibration 1-5s with a 5s default; caps sum to 715s, keeping at least 5s of the PT12M task execution time limit for pipeline startup, locking, atomic evidence reporting, and scheduler overhead; history default raised 45s -> 90s in M14-79 after three observed 45.2-47.0s kills in production, about 1.9x worst observed (46.955s) while completed runs take 0.3-7.2s; timeout facts remain recorded as-is and are never suppressed)",
@@ -916,6 +923,7 @@ def build_config(*, monitor_timeout: float, history_timeout: float,
         "insights_timeout_seconds": insights_timeout,
         "calibration_timeout_seconds": calibration_timeout,
         "monitor_confirm_phrase": MONITOR_CONFIRM_PHRASE,
+        "monitor_web_base_path": MONITOR_WEB_BASE_PATH,
         "insights_confirm_phrase": INSIGHTS_CONFIRM_PHRASE,
         "calibration_output": CALIBRATION_OUTPUT_NAME,
         "lock": LOCK_NAME,
