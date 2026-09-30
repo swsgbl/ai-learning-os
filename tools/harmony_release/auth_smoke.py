@@ -153,6 +153,15 @@ HOME_ZONE_LOADING_TEXT = "加载中\u2026"
 HOME_ZONE_LOADING_DEADLINE_SECONDS = 15.0
 HOME_ZONE_LOADING_POLL_INTERVAL_SECONDS = 0.5
 SETTINGS_SAVE_TEXT = "保存"
+# M14-196 R7: strong AIOS-Settings evidence anchors. The Huawei
+# IME SelectMenu/softKeyboard can legally cover the bottom tab
+# bar (real stage-b dump: 设置/首页 both invisible while our own
+# Settings pane stays fully rendered), so ownership INSIDE the
+# Settings URL flow may also be proven by a strong-evidence
+# COMBINATION - never by a single weak text (see
+# _has_settings_strong_evidence / _owns_settings_menu_stage).
+SETTINGS_HEADER_TEXT = "AIOS 服务地址"
+SETTINGS_TEST_BUTTON_TEXT = "测试连接"
 SETTINGS_SAVED_PREFIX = "已保存: "
 QUERY_LOADING_TEXT = "正在查询认证状态"
 QUERY_FAILED_TEXT = "认证状态查询失败"
@@ -169,6 +178,17 @@ UI_SETTLE_SECONDS = 1.2
 LONG_SETTLE_SECONDS = 4.0
 HOME_SETTLE_SECONDS = 6.0
 SETTINGS_MAX_ATTEMPTS = 5
+# M14-196 R6: caret-menu clear anchors + focused (coordinate-free)
+# text entry. R5 proved coordinate ``uitest uiInput inputText`` can
+# leave ``/http://10.0.2.2:52034/`` in the Settings TextInput (the
+# app honestly rejects the ``/http`` prefix and the driver then waits
+# for a confirmation that cannot occur). The emulator-compatible
+# replacement is the M14-50/M14-191 proven flow: longClick -> 全选 ->
+# 剪切 -> prove empty from layout -> refocus -> ``uitest uiInput
+# text`` (never coordinate inputText).
+SETTINGS_MENU_SELECT_ALL_TEXT = "全选"
+SETTINGS_MENU_CUT_TEXT = "剪切"
+TEXT_INPUT_CHUNK = 64
 
 STEP_HOST_AUTH_CONTRACT = "host_auth_contract"
 STEP_INSTALL = "install"
@@ -603,38 +623,39 @@ class UiDriver:
         )
         return self._hdc("shell", script)
 
-    def type_url_field(
-        self, x: int, y: int, text: str, clear_count: int
-    ) -> CommandResult:
-        """Click -> settle -> focused clear -> input -> settle in ONE hdc call.
+    def clear_url_field_via_menu(self, x: int, y: int) -> CommandResult:
+        """Open the caret menu via longClick (R6 stage 1).
 
-        R9: R8 proved the batched on-device backspace loop alone is not
-        enough - the three host round trips (click / clear / inputText)
-        still opened a ~5s window in which the concurrent net.uniterm.poc
-        driver re-took the foreground mid-action, so keystrokes landed
-        in ITS inputs (r8b: settings_foreground_lost x3 at stage=verify,
-        settings_input_mismatch x1). Collapsing the whole action into a
-        single ``hdc shell`` script keeps every uitest call and the
-        short settles inside one device-side process: no host round
-        trip between focus acquisition and text entry. Quoting follows
-        mksh rules (' -> '\''  inside single quotes); integer sleeps
-        only (the device shell sleep has no sub-second support).
+        M14-196 R5 root cause: coordinate ``uitest uiInput
+        inputText`` can leave a leading-slash-corrupted value in
+        the Settings TextInput; the app honestly rejects the
+        ``/http`` prefix and the driver then waits for a save
+        confirmation that can never occur. This method ONLY
+        long-clicks the field - menu actions are chosen by the
+        caller from layout evidence, and every stage is proven
+        from a fresh dumpLayout, fail-closed.
         """
-        clear_count = max(clear_count, 0)
-        quoted = "'" + text.replace("'", "'\''") + "'"
-        script = (
-            "uitest uiInput click " + str(x) + " " + str(y) + "; "
-            "sleep 1; "
-            "n=" + str(clear_count) + "; "
-            "while [ $n -gt 0 ]; do "
-            "uitest uiInput keyEvent " + BACKSPACE_KEY_EVENT + "; "
-            "n=$((n-1)); done; "
-            "sleep 1; "
-            "uitest uiInput inputText " + str(x) + " " + str(y)
-            + " " + quoted + "; "
-            "sleep 1"
-        )
-        return self._hdc("shell", script)
+        return self._hdc(
+            "shell", "uitest", "uiInput", "longClick", str(x), str(y))
+
+    def focused_text(self, text: str) -> CommandResult:
+        """Type into the FOCUSED input - coordinate-free (R6 stage 2).
+
+        ``uitest uiInput text`` routes keystrokes through the
+        focused IME target instead of injecting at a coordinate
+        (proven on this emulator image, M14-50 / M14-191). Long
+        strings are chunked (TEXT_INPUT_CHUNK chars per shell
+        call) for argv safety; the caller MUST verify the final
+        field text from layout before tapping Save.
+        """
+        result: CommandResult | None = None
+        for start_i in range(0, len(text), TEXT_INPUT_CHUNK):
+            chunk = text[start_i:start_i + TEXT_INPUT_CHUNK]
+            result = self._hdc(
+                "shell", "uitest", "uiInput", "text", chunk)
+        return result if result is not None else CommandResult(
+            argv=[], returncode=0, stdout="", stderr="",
+            timed_out=False)
 
     def key_back(self) -> CommandResult:
         """Press BACK to dismiss a raised IME after text entry."""
@@ -962,6 +983,145 @@ def _owns_layout(texts: Sequence[Tuple[str, str]]) -> bool:
             or HOME_TAB_TEXT in joined)
 
 
+def _has_settings_strong_evidence(
+    texts: Sequence[tuple[str, str]],
+    typed: Sequence[tuple[str, str, str]],
+) -> bool:
+    """True when the layout shows a STRONG combination of
+    AIOS-Settings pane evidence (M14-196 R7).
+
+    Requires ALL of (a) the pane header ``AIOS 服务地址``,
+    (b) at least one real ``TextInput`` node, and (c) at least
+    one Settings action button (保存 or 测试连接). A single weak
+    text (e.g. just 全选, or just the header) never passes -
+    foreign apps and empty layouts stay fail-closed.
+    """
+    joined = "\n".join(t for t, _b in texts)
+    if SETTINGS_HEADER_TEXT not in joined:
+        return False
+    if not any(ntype == URL_INPUT_TYPE
+               for ntype, _t, _b in typed):
+        return False
+    actions = sum(
+        1 for needle
+        in (SETTINGS_SAVE_TEXT, SETTINGS_TEST_BUTTON_TEXT)
+        if needle in joined)
+    return actions >= 1
+
+
+def _owns_settings_pane(
+    texts: Sequence[tuple[str, str]],
+    typed: Sequence[tuple[str, str, str]],
+) -> bool:
+    """Ownership for the Settings URL flow pane/input stages.
+
+    The plain tab-bar marker still wins when visible; when the
+    Huawei IME covers the bottom tab bar (R6 stage-b reality:
+    设置/首页 both missing from our OWN pane dump), the strong
+    Settings evidence combination above may prove ownership.
+    Used ONLY by the settings_ui step - never as a general
+    ownership marker for other panes.
+    """
+    return (_owns_layout(texts)
+            or _has_settings_strong_evidence(texts, typed))
+
+
+def _owns_settings_menu_stage(
+    texts: Sequence[tuple[str, str]],
+    typed: Sequence[tuple[str, str, str]],
+) -> bool:
+    """Ownership for the caret-MENU stage only (M14-196 R7).
+
+    The long-press SelectMenu of the Huawei IME covers the
+    field/tab bar while our pane stays underneath; ownership at
+    THIS stage additionally demands a typed IME menu action
+    (全选 or 剪切) so the combination cannot pass on a foreign
+    screen that merely mentions the Settings header.
+    """
+    joined = "\n".join(t for t, _b in texts)
+    menu_action = (SETTINGS_MENU_SELECT_ALL_TEXT in joined
+                   or SETTINGS_MENU_CUT_TEXT in joined)
+    return (_has_settings_strong_evidence(texts, typed)
+            and menu_action)
+
+
+def _clear_url_field_via_menu(
+    driver: UiDriver, fx: int, fy: int, attempt: int
+) -> tuple[bool, list[dict]]:
+    """R6 stage 1: longClick -> 全选 -> 剪切 -> prove EMPTY from layout.
+
+    Returns ``(cleared, failures)``; cleared is True ONLY when a
+    fresh dumpLayout shows the URL TextInput rendering no text
+    content after the 剪切 tap. Any unprovable stage (menu not
+    opened, action missing, field not empty) fails closed with the
+    menu/input layout digest attached - layout CONTENT is never
+    recorded. The IME is left for the caller to dismiss.
+    """
+    failures: list[dict] = []
+    driver.clear_url_field_via_menu(fx, fy)
+    time.sleep(UI_SETTLE_SECONDS)
+    select_all = None
+    cut = None
+    for poll in range(3):
+        parsed, dump_failures = driver.dump()
+        if parsed is None:
+            failures += dump_failures or [{
+                "code": "settings_menu_layout_unreadable",
+                "detail": {"attempt": attempt}}]
+            return False, failures
+        texts = layout_texts(parsed)
+        if not _owns_settings_menu_stage(
+                texts, layout_typed(parsed)):
+            failures.append({
+                "code": "settings_foreground_lost",
+                "detail": {"attempt": attempt, "stage": "menu"}})
+            return False, failures
+        if select_all is None:
+            select_all = find_text_exact(
+                texts, SETTINGS_MENU_SELECT_ALL_TEXT)
+            if select_all is not None:
+                driver.click(*select_all)
+                time.sleep(UI_SETTLE_SECONDS)
+                continue
+            failures.append({
+                "code": "settings_menu_select_all_not_found",
+                "detail": {
+                    "attempt": attempt,
+                    "menu_poll": poll,
+                    "layout_digest": driver.digest(),
+                    "node_text_count": len(texts)}})
+            return False, failures
+        cut = find_text_exact(texts, SETTINGS_MENU_CUT_TEXT)
+        if cut is not None:
+            break
+        time.sleep(UI_SETTLE_SECONDS)
+    if cut is None:
+        failures.append({
+            "code": "settings_menu_cut_not_found",
+            "detail": {
+                "attempt": attempt,
+                "layout_digest": driver.digest()}})
+        return False, failures
+    driver.click(*cut)
+    time.sleep(UI_SETTLE_SECONDS)
+    cleared, cleared_failures = driver.dump()
+    if cleared is None:
+        failures += cleared_failures or [{
+            "code": "settings_cleared_layout_unreadable",
+            "detail": {"attempt": attempt}}]
+        return False, failures
+    cfield = find_url_input(layout_typed(cleared))
+    if cfield is None or cfield[2] != "":
+        failures.append({
+            "code": "settings_clear_not_proven",
+            "detail": {
+                "attempt": attempt,
+                "layout_digest": driver.digest(),
+                "cleared_text_empty":
+                    bool(cfield is not None and cfield[2] == "")}})
+        return False, failures
+    return True, failures
+
 def _drive_settings_url(
     driver: UiDriver,
     device_base: str,
@@ -969,12 +1129,14 @@ def _drive_settings_url(
     """Type the device mock URL (derived from --api-base) into
     Settings and save.
 
-    Input handling (proven on emulator, M14-89 round 4): inputText
-    APPENDS to the field, so existing content is cleared first with a
-    bounded backspace run derived from the observed content length; the
-    typed result is verified from a fresh dump before saving; the IME
-    raised by typing is dismissed with BACK before the Save button is
-    clicked so the click cannot land on the keyboard.
+    Input handling (M14-196 R6): the field is cleared via the
+    system caret menu (longClick -> 全选 -> 剪切) and proven EMPTY
+    from layout, then the URL is entered with focused coordinate-
+    free ``uitest uiInput text`` - never coordinate inputText (R5
+    proved that path can leave a corrupted value in the field).
+    The typed result must EQUAL the expected URL exactly before
+    Save is tapped; the IME raised by typing is dismissed with BACK
+    first so the click cannot land on the keyboard.
     """
     failures: List[dict] = []
     for attempt in range(1, SETTINGS_MAX_ATTEMPTS + 1):
@@ -988,7 +1150,7 @@ def _drive_settings_url(
                 {"code": "settings_layout_unreadable"}]
             continue
         texts = layout_texts(parsed)
-        if not _owns_layout(texts):
+        if not _owns_settings_pane(texts, layout_typed(parsed)):
             failures.append({
                 "code": "settings_foreground_lost",
                 "detail": {"attempt": attempt},
@@ -1011,36 +1173,49 @@ def _drive_settings_url(
             })
             time.sleep(UI_SETTLE_SECONDS)
             continue
-        fx, fy, current = field
-        # Single device-side invocation (R9): click -> settle -> focused
-        # clear -> inputText -> settle all run inside ONE hdc shell round
-        # trip. R8 proved the batched-backspace loop alone is not enough -
-        # the three host round trips (click / clear / input) still opened
-        # a ~5s window in which the concurrent net.uniterm.poc driver
-        # re-took the foreground mid-action and the keystrokes landed in
-        # ITS inputs (r8b: settings_foreground_lost x3 at stage=verify,
-        # settings_input_mismatch x1). With no host round trip between
-        # focus acquisition and text entry the whole action is atomic.
-        driver.type_url_field(
-            fx, fy, device_base, min(len(current) + 8, 64))
+        fx, fy, _current = field
+        # M14-196 R6: the old single-script coordinate inputText
+        # is gone (R5 proved it can leave a /http-prefixed value
+        # in the field the app then rejects). The replacement is
+        # the emulator-proven caret-menu flow: longClick -> 全选 ->
+        # 剪切 -> prove the field EMPTY from layout -> refocus ->
+        # focused coordinate-free ``uitest uiInput text``. Every
+        # stage is proven from layout evidence; an unprovable
+        # stage fails closed and consumes the attempt.
+        cleared, clear_failures = _clear_url_field_via_menu(
+            driver, fx, fy, attempt)
+        failures += clear_failures
+        if not cleared:
+            driver.dismiss_ime()
+            # Fail closed after ONE non-foreground clear failure
+            # (supervisor R2): a menu/action/clear-proof/layout-
+            # unreadable failure is deterministic - blind
+            # SETTINGS_MAX_ATTEMPTS retries cannot change the
+            # outcome. Only foreground losses keep the retry loop
+            # (the shared emulator can recover from those).
+            if any(f.get("code") != "settings_foreground_lost"
+                   for f in clear_failures):
+                return False, failures
+            continue
+        driver.click(fx, fy)
+        time.sleep(UI_SETTLE_SECONDS)
+        driver.focused_text(device_base)
         time.sleep(UI_SETTLE_SECONDS)
 
-        # Dismiss the IME BEFORE verification (R12). R11 proved at
-        # all 5 verify failures that app0 keeps Focus (win 313) at
-        # zord=102 while the softKeyboard1 window raised by this
-        # typing sits at zord=104 and covers the bottom tab bar, so
-        # the verify dump legitimately reads our own Settings page
-        # but cannot find the tab-bar ownership markers and
-        # _owns_layout misnames it "foreground lost" (poc0 stayed
-        # zord=-1 throughout). One BACK here lowers the keyboard
-        # before any dump; the old post-verify dismiss below was
-        # removed so BACK is sent exactly once.
+        # Dismiss the IME BEFORE verification (kept from R12): the
+        # softKeyboard window raised by typing covers the bottom
+        # tab bar, so the verify dump legitimately reads our own
+        # Settings page but cannot find the ownership markers
+        # while the IME is up. One BACK here lowers the keyboard
+        # before any dump.
         driver.dismiss_ime()
         time.sleep(UI_SETTLE_SECONDS)
 
-        # Pre-verify foreground guard (R10): with the input now atomic
-        # (R9 removed settings_input_mismatch) the remaining loss point
-        # is the verify dump itself - its 3 host hdc calls (rm /
+        # Pre-verify foreground guard (R10): R6 intentionally
+        # reintroduces settings_input_mismatch as an exact-equality
+        # guard that fails the step on the FIRST mismatch; the
+        # remaining loss point is the verify dump itself - its
+        # 3 host hdc calls (rm /
         # dumpLayout / recv) open a multi-second window in which the
         # concurrent net.uniterm.poc driver on the shared emulator
         # re-takes the top and the dump lands on ITS screen (r9: 5/5
@@ -1063,7 +1238,8 @@ def _drive_settings_url(
                 {"code": "settings_verify_layout_unreadable"}]
             continue
         vtexts = layout_texts(verify)
-        if not _owns_layout(vtexts):
+        if not _owns_settings_pane(
+                vtexts, layout_typed(verify)):
             # R11 mid-loss window probe: one immediate hidumper
             # snapshot taken here - BEFORE the restart below - so
             # the JSON evidence records whether poc0 (net.uniterm.
@@ -1088,12 +1264,29 @@ def _drive_settings_url(
             time.sleep(HOME_SETTLE_SECONDS)
             continue
         vfield = find_url_input(layout_typed(verify))
-        if vfield is None or device_base not in vfield[2]:
+        # R6: EXACT equality required. The old substring check
+        # (device_base in text) accepted corrupted values such as
+        # '/http://10.0.2.2:52034/' that the app then rejects;
+        # only a byte-for-byte match may proceed to Save - and a
+        # mismatch aborts the step AT ONCE (supervisor R1: never
+        # blindly retry malformed attempts).
+        if vfield is None or vfield[2] != device_base:
             failures.append({
                 "code": "settings_input_mismatch",
-                "detail": {"attempt": attempt},
+                "detail": {
+                    "attempt": attempt,
+                    "exact_match_required": True,
+                    "field_matches": bool(
+                        vfield is not None
+                        and vfield[2] == device_base),
+                    "layout_digest": driver.digest(),
+                },
             })
-            continue
+            # Fail closed after ONE mismatch (supervisor R1): the
+            # default SETTINGS_MAX_ATTEMPTS budget never applies to a
+            # mismatched typed value - exactly one clear/type cycle
+            # runs before the step fails with this evidence.
+            return False, failures
         # The IME was already dismissed BEFORE the verify dump
         # (R12); a second BACK here could travel into backward
         # navigation instead of closing a keyboard no longer open.
@@ -1112,7 +1305,8 @@ def _drive_settings_url(
                 {"code": "settings_final_layout_unreadable"})
             continue
         final_texts = layout_texts(final)
-        if not _owns_layout(final_texts):
+        if not _owns_settings_pane(
+                final_texts, layout_typed(final)):
             failures.append({
                 "code": "settings_foreground_lost",
                 "detail": {"attempt": attempt, "stage": "confirm"},
