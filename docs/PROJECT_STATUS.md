@@ -9,6 +9,33 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-195 Harmony current-main 模拟器回归证据收口（docs-only）**：执行
+worktree `ai-learning-os-worktrees/m14-195-harmony-current-main-regression`、
+分支 `harmony/m14-195-current-main-regression`，基点 main `a62ae76`
+（PR #284 merge）；落档 worktree
+`ai-learning-os-worktrees/m14-195-harmony-current-main-evidence`、分支
+`docs/m14-195-harmony-current-main-evidence`，基于 main `6d9b106`
+（PR #285 merge）；两基点间零 Harmony 代码变更（diff 仅 M14-193 三个
+docs 文件）。hmharness 于 Pura 90（HarmonyOS 6.1.1(24) Beta1 x86
+模拟器，hdc `127.0.0.1:5555`，1320×2856）verification-only 完成：
+release 构建 exit 0（unsigned HAP **235,176 字节**、SHA256
+`52143E0D…584D`；SDK debug 签名安装载体 271,774 字节、SHA256
+`609F058A…CAD4`，非发布物）；安装 `com.ailearningos.app` → 启动
+`EntryAbility` → hilog 首帧绘制完成，无崩溃；出厂默认公网地址
+`https://ndtool.cn/aios/` 下匿名只读 health `ok` / version `0.1.0`，
+隐私/运维/审计匿名 401（预期边界），DownloadPane PWA 可用 + Harmony
+待发布，全程零凭据零写请求；AGC preflight 默认契约 exit 0
+（signing_configs=0、仓库材料 0、JSON status 字面值为
+`blocked_by_external_materials` 系材料状态描述），`--require-materials`
+受控阻断 exit 2（三材料变量均 `not_set`）。本切片更正原报告两处与
+工件不符的概括（默认 preflight status 字面值；Android 原生行无截图/
+布局 dump 证据，仅 `DownloadPane.ets` 源码级）。验证：version-sync
+与 R1 措辞守卫、`git diff --check`、新增行 secret/本地路径/U+FFFD
+扫描 0 真实命中（自指性关键词除外）。证据：
+`docs/evidence/m14-195-harmony-current-main-regression/README.md`。
+单 local commit 并推送远端分支；supervisor 审查与 remote 发布
+（PR 开合/合并/release 门禁）在其后进行。
+
 **M14-194H Harmony AGC signing-input preflight（只读工具切片）**：worktree
 `ai-learning-os-worktrees/m14-194-agc-signing-preflight`，分支
 `harmony/m14-194-agc-signing-preflight`，基于 main

@@ -1,5 +1,41 @@
 # Changelog
 
+## M14-195 — Harmony current-main 模拟器回归证据收口（docs-only，非代码）
+
+- 回归事实（hmharness verification-only，基点 main `a62ae76` =
+  PR #284 merge，时点 2026-09-30；落档基点 `6d9b106` = PR #285
+  merge，两基点间零 Harmony 代码变更）：release 构建通过（exit 0，
+  clean/assemble 双 success），unsigned HAP **235,176 字节**、SHA256
+  `52143E0D972A2F65B0FDBE1A49CB70C97ACA29BBF0A2B7F41CC403A140A5584D`；
+  仅作安装载体的 SDK debug 签名 HAP 271,774 字节、SHA256
+  `609F058AA49AA376C7353BA410085412A5D0B1817E486209AE09680FEACBCAD4`
+  （debug 签名 ≠ AGC 发布签名，不构成发布物）。
+- 设备链路（Pura 90，HarmonyOS 6.1.1(24) Beta1 x86 模拟器，hdc
+  `127.0.0.1:5555`，1320×2856）：安装 `com.ailearningos.app` 成功 →
+  `EntryAbility` 启动成功 → hilog 首帧绘制完成
+  （`NotifyCompleteFirstFrameDrawing`，pid 3201），采样窗口无崩溃。
+- 公网默认回归：出厂默认服务地址 `https://ndtool.cn/aios/`（零配置
+  改动）；匿名只读 GET health `ok` / version `0.1.0`；隐私模式/
+  运维快照/审计日志匿名请求均 HTTP 401（预期拒绝）；Settings
+  DownloadPane 显示 PWA 网页版可用、Harmony 原生待发布；全程零
+  凭据、零写请求。
+- AGC preflight（M14-194 工具首个 main 级真实验证）：默认契约
+  exit 0（failures=[]、signing_configs=0、unsigned_boundary=true、
+  仓库材料 0 命中；JSON `status` 字面值为
+  `blocked_by_external_materials`，系材料状态描述非失败）；
+  `--require-materials` 受控阻断 exit 2（三材料变量均 `not_set`，
+  `repo_materials.count=0`）——fail-closed 契约不变。
+- 本切片更正 hmharness 原报告两处与工件不符的概括：默认 preflight
+  的 JSON status 字面值；DownloadPane 的 Android 原生行在截图与
+  布局 dump 中均未出现（仅 `DownloadPane.ets` 源码级证据，无渲染级
+  证据，不作已验证声明）。
+- 本切片 docs-only：仅证据 README + 两处台账；验证：version-sync
+  与 R1 措辞守卫、`git diff --check`、新增行 secret/本地路径/
+  U+FFFD 扫描 0 真实命中（自指性关键词除外）。证据：
+  `docs/evidence/m14-195-harmony-current-main-regression/README.md`。
+  单 local commit 并推送远端分支；supervisor 审查与 remote 发布
+  （PR 开合/合并/release 门禁）在其后进行。
+
 ## M14-194H — Harmony AGC signing-input preflight
 
 - 新增只读 `agc_signing_preflight.py`：不访问 AGC、不调用签名工具、
