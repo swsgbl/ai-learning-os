@@ -9,6 +9,31 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-198 公网边缘 Phase 0 第三日采样与决策收口（docs-only）**：
+worktree `ai-learning-os-worktrees/m14-198-phase0-third-date`，分支
+`docs/m14-198-phase0-third-date`，基于 main `fc3df0c`
+（PR #286 merge）。第三本地日期（2026-10-01）在 canonical
+checkout 以 main 既有工具执行 3 个 direct 窗 × 8 样本（plan 预检
+8 请求 → 单次 execute；间隔 1s、超时 15s、恒 HTTP/1.1、无代理、
+无大资产、零重试零额外请求），三窗全 exit 0、零失败、零缺失
+TTFB、零 `.reserve` 残留；采样前决策复核 `phase0_inconclusive`
+（仅 2 日期 / 48 样本）。M14-186 决策门收口结论：**`phase0_go`**
+（reason `slow_window_frequency_ge_go_threshold`）——恰 3 日期 ×
+3 窗 × 8 样本、总计 **72/72**（本日 24/24）零缺陷零畸形，慢窗
+3/9≈33.3% ≥5% go 门限，慢样本 10/72，TTFB（nearest-rank，全
+direct）p50 286.648ms / p95 5793.434ms / max 12283.814ms。
+**go 只是 Phase 1 的必要条件，Phase 1 未启动**（VPS 侧采样仍需
+supervisor 显式批准与预算计划）。诚实边界：三窗为同会话背靠背的
+清晨本地时段 direct 窗（约 01:58–02:03 +08:00），非日内分时段
+覆盖；统计口径描述性 only（无 p99/无成功率门）；原始窗/聚合/
+决策 JSON 留 gitignored 证据目录，仅摘要表 + 来源文件名入档。
+本切片 docs-only（证据 README + 两处台账，零代码变更）；验证：
+version-sync 与 R1 措辞守卫、`git diff --check`、新增行
+secret/本地路径/U+FFFD 扫描 0 真实命中（自指性关键词除外）。
+证据：`docs/evidence/m14-198-phase0-third-date/README.md`。
+单 local commit 并推送远端分支；supervisor 审查与 remote 发布
+（PR 开合/合并/release 门禁）在其后进行。
+
 **M14-195 Harmony current-main 模拟器回归证据收口（docs-only）**：执行
 worktree `ai-learning-os-worktrees/m14-195-harmony-current-main-regression`、
 分支 `harmony/m14-195-current-main-regression`，基点 main `a62ae76`
