@@ -9,6 +9,32 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-190 current-main 发布证据刷新（证据刷新切片）**：worktree
+`ai-learning-os-worktrees/m14-188-web-warning-hygiene`，分支
+`ops/m14-190-current-main-release-evidence`，基于 main `ffd74cf`（PR #279
+merge；origin/main 直连核验）。动因：`8d52f00..ffd74cf` 13 commits 含
+Phase 0、web 与 Harmony 工具/测试变更，非 docs-only；但 `services/api/app/`、
+API requirements 与 alembic 区间零变更。ci-main：run **36655040106**
+（run_number 696，push@main，5/5 success，五 job 精确匹配）raw 归档，
+canonical SHA256 `cca4fe43…4a0a`。release-check：干净 `ffd74cf` 树上从零
+venv/npm full 重跑，**all_green 10/10**，pytest **5631/36/1 warning in
+323.37s**，migration `0027_audit_chain`，e2e 5 步 1192 ms，canonical SHA256
+`13374e09…ba7e`。provider-smoke / long-soak / production-state 零重跑零
+生产接触：provider 同哈希复用 `d589181e…a761`，原始输入目录缺失，以
+M14-185 canonical + SHA256SUMS + indexed input verification log 追溯，不
+声称本轮重读原始输入；long-soak `d939c652…56ec` 窗口早于生产切换；六个
+production-state 源哈希 MATCH 后原样 staging。cockpit：
+**cockpit_ready=true、blockers=[]、pass=9/missing=2、staged 10/10
+IDENTICAL**，ci-main/release-check current；**readiness.release_ready=false
+/ production_ready=false 不变**（human-only release-approval 缺席，turn-tls
+optional 未 stage）。验证：聚焦九套件 **444 passed, 1 warning in 9.19s**、
+evidence 脚本 ruff 全过、contract 断言 **95 checks** 全过、hygiene 扫描
+0 命中、`git diff --check` 干净。证据：docs/evidence/
+m14-190-current-main-release-evidence/README.md（唯一入库证据文件；
+canonical gitignored，`SHA256SUMS` 全量索引）。零 production/Docker/
+secrets/Harmony/Android/CC Switch/代理接触。单 local commit，不 push、
+不开 PR；合并决策归 supervisor。
+
 **M14-187 Harmony auth smoke 驱动器 locator 缺陷修复 + current-main 模拟器回归（Round 2）**：
 worktree `ai-learning-os-worktrees/m14-187-harmony-current-main-regression`，
 分支 `harmony/m14-187-current-main-regression`。修复
