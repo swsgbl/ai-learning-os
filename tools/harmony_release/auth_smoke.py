@@ -357,21 +357,41 @@ def find_text_exact(
     return find_text(texts, needle)
 
 
+URL_INPUT_TYPE = "TextInput"
+
+
 def find_url_input(
-    texts: Sequence[Tuple[str, str]]
+    typed: Sequence[Tuple[str, str, str]]
 ) -> Optional[Tuple[int, int, str]]:
-    """The Settings base-URL TextInput: longest text that looks like a URL."""
-    best: Optional[Tuple[str, str]] = None
-    for text, bounds in texts:
+    """The Settings base-URL TextInput, located STRICTLY by node type.
+
+    M14-187 attempt 1 root cause: the old longest-URL-text heuristic
+    ignored node types, so DownloadPane's readonly
+    Text('服务地址: ${baseUrl}') - always longer than the input's own
+    content - stole the locator; keystrokes landed on a Text, the
+    input kept its old value, and all 5 attempts failed
+    settings_input_mismatch. Selection order now:
+
+    1. the FIRST type=="TextInput" node whose text contains a URL -
+       readonly Text nodes can never win, however long their URL
+       text is;
+    2. compatibility fallback for an EMPTY input (which renders no
+       text content at all): the first TextInput in tree order -
+       the URL field is the pane topmost TextInput (M14-84 real
+       dumps; login username/password inputs sit strictly below).
+    """
+    first_input: Optional[Tuple[int, int, str]] = None
+    for ntype, text, bounds in typed:
+        if ntype != URL_INPUT_TYPE:
+            continue
+        center = _bounds_center(bounds)
+        if center is None:
+            continue
+        if first_input is None:
+            first_input = (center[0], center[1], text)
         if "http://" in text or "https://" in text:
-            if best is None or len(text) > len(best[0]):
-                best = (text, bounds)
-    if best is None:
-        return None
-    center = _bounds_center(best[1])
-    if center is None:
-        return None
-    return center[0], center[1], best[0]
+            return center[0], center[1], text
+    return first_input
 
 
 def find_placeholder_field(
@@ -983,7 +1003,7 @@ def _drive_settings_url(
             driver.restart_ability()
             time.sleep(HOME_SETTLE_SECONDS)
             continue
-        field = find_url_input(texts)
+        field = find_url_input(layout_typed(parsed))
         if field is None:
             failures.append({
                 "code": "settings_input_not_found",
@@ -1067,7 +1087,7 @@ def _drive_settings_url(
             driver.restart_ability()
             time.sleep(HOME_SETTLE_SECONDS)
             continue
-        vfield = find_url_input(vtexts)
+        vfield = find_url_input(layout_typed(verify))
         if vfield is None or device_base not in vfield[2]:
             failures.append({
                 "code": "settings_input_mismatch",
