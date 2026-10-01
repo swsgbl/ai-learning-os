@@ -1,5 +1,54 @@
 # Changelog
 
+## M14-204 — Cloudflare/公网入口 E1 前置事实核验（docs-only / research-only）
+
+- 背景：把 M14-203 §10 的 E1 前置假设清单逐项核验为当前官方文档
+  事实，A8/A9/A10 拒绝清单简核。零请求（生产预算 0/0）、零
+  DNS/云/VPS 变更、零凭据接触、零 Phase 3 执行授权，G0 门禁
+  不变。
+- 核验结论（抓取窗口 2026-10-01 00:13–00:22 UTC，官方原文引句
+  见证据 README §3）：A2 Cache Rules 全过——JSON 经规则
+  "Eligible for cache" 获得缓存资格（默认扩展名列表不含 JSON），
+  Edge TTL 三模式（含忽略源 cache-control）+ Status Code TTL，
+  Browser TTL 仅浏览器侧，Free 档 10 条规则，规则需橙云代理。A4
+  Tunnel 全过——cloudflared outbound-only 连接、origin 可零入站
+  端口（防火墙仅放行出站）、公共主机名经 CNAME→
+  `<UUID>.cfargotunnel.com` 路由、公共发布不需 Access 席位、
+  冗余上限 25 replicas/tunnel（账号 1,000 tunnels）。A5 LB 为
+  账号级付费 add-on（$5/mo 起）+ 健康监视/自动故障转移语义核验；
+  "纯 DNS 无自动故障转移"现行文档无直接表述，降级为推导事实。A6
+  代理记录 Auto=300s 固定不可改、DNS-only 最低 60s（Enterprise
+  30s）、上限 1 天，官方原文承认本地缓存可能超 TTL 更新。A7
+  RFC 1035 TTL 定义原文核验（缓存时间上限、零值仅本次事务）。
+  A11 现价：Network & CDN Free $0 / Pro $20–25 / Business
+  $200–250 / 最高档现名 Contract；Zero Trust Free $0 forever
+  ≤50 用户（PAYG $7/用户/月）；LB add-on $5/mo 起。
+- A1 Origin CA：M14-203 记录的"抓取不可达"实为页面迁移（旧 URL
+  现 404）；新页（origin-ca/）核验信任边界（"only encrypt traffic
+  between Cloudflare and your origin server, not traffic from
+  client browsers"）、Free 全档可用、与 Full (strict) 兼容且公共
+  CA（Let's Encrypt 类）同样满足（V2 复核）；"默认 15 年有效期"
+  现行文档未公布，保留未核验（E1–E3 不依赖该路径）。
+- 拒绝清单复核：三项拒绝均维持。R1 ngrok 证据增强（免费档插页 +
+  Visit 后 7 天 cookie + 客户端 `ngrok-skip-browser-warning` 头
+  绕过 + 免费仅 1 个 ngrok-free.app dev domain）；R2 serveo 获
+  同类插页证据（Pro 档卖点 "No interstitial warnings" 反证免费
+  档有插页），"自定义域名付费墙"表述修正为"自定义子域免费含、
+  插页为否决项"；localhost.run 仍仅营销页、无运营承诺表述。R3
+  Tailscale Funnel 限制全部官方证实（仅 ts.net 域、仅 443/8443/
+  10000、不可配置带宽限制、tailnet 控制面依赖、beta）。
+- 影响：E1/E2/E3 无文档 blocker，E1 唯一前置门仍为 G0（supervisor
+  授权执行切片与测量预算）；E2 新增执行前检查项（origin 对
+  manifest 响应的 Cache-Control 现值）；E4 结构性限制确认（LB
+  付费 + TTL 语义）；回滚预期按 A6 官方表述落档（resolver 上限
+  300s、本地缓存可能更久）。
+- 验证：tests/ops 164 通过（离线 uv，含 version 相关子集）、
+  `git diff --check` 干净、新增行 secret/本地路径/VPS 细节/U+FFFD
+  扫描 0 真实命中。证据：
+  `docs/evidence/m14-204-cloudflare-preflight/README.md`。单
+  local commit，不推送、不开 PR；supervisor 审查与 remote 发布
+  在其后进行。
+
 ## M14-203 — Phase 3 公网多入口/Cloudflare 调研与决策矩阵（docs-only，零请求零变更）
 
 - 背景：M14-202 H1 判定（慢在公网入站路径）关闭 Phase 2，Phase 3
