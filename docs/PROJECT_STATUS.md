@@ -9,6 +9,23 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-207 current provider-smoke refresh（诚实失败收口）**：worktree
+`ai-learning-os-worktrees/m14-207-provider-smoke-refresh`，分支
+`ops/m14-207-current-provider-smoke-refresh`，基于 main
+`32b15be61646416cfa553cc62b9066659610636b`，执行前 tracked-clean。只读
+`provider-smoke-preflight --voice-mode local --json` 于
+2026-10-01T05:41:59Z–05:42:19Z 执行，20663ms / exit 1 / overall
+`blocked`：voice `ready`；search `not_ready/upstream_failure/
+repair_upstream_network_externally`；llm `not_ready/model_absent/
+load_model_externally_then_rerun`。按任务书未运行 search/local-voice/llm
+export，未运行 aggregate，未生成新 `provider-smoke.json`，未做任何 provider
+恢复或生产生命周期变更。旧 M14-148 聚合仍为 2026-09-26T01:12:09Z–
+01:14:14Z 三 pass 证据，但不能替代当前 blocked 前置事实。离线契约测试
+七套件 **306 passed**；preflight/旧聚合 schema 与时间断言通过；泄漏扫描与
+`git diff --check` 见证据 README。证据：
+`docs/evidence/m14-207-current-provider-smoke-refresh/README.md`。单 local
+commit，不 push、不开 PR、不合并。
+
 **M14-206 current-main 发布证据刷新（证据刷新切片，PR #294/M14-205
 后）**：worktree `ai-learning-os-worktrees/m14-206-current-main-release-
 evidence`，分支 `docs/m14-206-current-main-release-evidence`，基于 main
