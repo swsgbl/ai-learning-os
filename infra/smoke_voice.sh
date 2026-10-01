@@ -10,10 +10,27 @@ cd "$(dirname "$0")/.."
 
 MODE="${AIOS_MODE:-local}"
 API=${AIOS_API_URL:-http://127.0.0.1:8000}
-PY=.venv/Scripts/python.exe
-[ -x "$PY" ] || PY=.venv/bin/python
 fail() { printf '[voice] FAIL: %s\n' "$*" >&2; exit 1; }
 say() { printf '[voice] %s\n' "$*"; }
+
+# M14-210 Python 选择链：显式 PYTHON → 仓库 venv（Windows → POSIX）→ 容器
+# 系统 python/python3（生产镜像 /app 无仓库 venv，冒烟脚本随镜像打包后由
+# 系统解释器执行探针）。显式 PYTHON 不可用即 FAIL——不静默换用其它解释器。
+select_python() {
+  if [ -n "${PYTHON:-}" ]; then
+    command -v "$PYTHON" >/dev/null 2>&1 || fail "PYTHON 指定的解释器不可用: $PYTHON"
+    return 0
+  fi
+  local _candidate
+  for _candidate in .venv/Scripts/python.exe .venv/bin/python python python3; do
+    if [ -x "$_candidate" ] || command -v "$_candidate" >/dev/null 2>&1; then
+      PYTHON="$_candidate"
+      return 0
+    fi
+  done
+  fail "找不到可用 python（选择链：PYTHON= → .venv/Scripts/python.exe → .venv/bin/python → python → python3）"
+}
+select_python
 
 say "mode=$MODE"
 
@@ -22,7 +39,7 @@ suffix="$$_$RANDOM"
 body="{\"username\":\"voice_smoke_$suffix\",\"password\":\"voice-smoke-123\"}"
 reg=$(curl -s -m 15 -X POST -H 'Content-Type: application/json' -d "$body" "$API/api/v1/auth/register")
 lid=$(curl -s -m 15 -X POST -H 'Content-Type: application/json' -d "$body" "$API/api/v1/auth/login" \
-  | "$PY" -c 'import json,sys; print(json.load(sys.stdin).get("access_token",""))')
+  | "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin).get("access_token",""))')
 [ -n "$lid" ] || fail "login 未返回 token: $reg"
 say "login ok"
 
@@ -31,8 +48,8 @@ room="smoke-$suffix"
 vresp=$(curl -s -m 15 -X POST -H "Authorization: Bearer $lid" -H 'Content-Type: application/json' \
   -d "{\"room\":\"$room\",\"identity\":\"smoke-$suffix\",\"role\":\"student\"}" \
   "$API/api/v1/voice/token")
-ws_url=$(printf '%s' "$vresp" | "$PY" -c 'import json,sys; print(json.load(sys.stdin).get("ws_url",""))')
-access=$(printf '%s' "$vresp" | "$PY" -c 'import json,sys; print(json.load(sys.stdin).get("token",""))')
+ws_url=$(printf '%s' "$vresp" | "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin).get("ws_url",""))')
+access=$(printf '%s' "$vresp" | "$PYTHON" -c 'import json,sys; print(json.load(sys.stdin).get("token",""))')
 [ -n "$ws_url" ] || fail "voice token 响应缺 ws_url: $vresp"
 [ -n "$access" ] || fail "voice token 响应缺 token: $vresp"
 say "voice token ok: ws_url=$ws_url"
@@ -54,7 +71,7 @@ fi
 
 # --- 4. 真实客户端连接（livekit.rtc：connect -> CONNECTED -> data publish）---
 say "launching real client (livekit.rtc)..."
-"$PY" infra/voice_connect_check.py --url "$ws_url" --token "$access" --room "$room" \
+"$PYTHON" infra/voice_connect_check.py --url "$ws_url" --token "$access" --room "$room" \
   && say "PASS: real client connected + data channel" \
   || fail "real client 连接失败（鉴权/网络/媒体协商任一失败）"
 

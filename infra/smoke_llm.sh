@@ -51,9 +51,24 @@ if [ -n "${LLM_SMOKE_MAX_TOKENS:-}" ]; then
   say "冒烟探针输出预算覆写: max_tokens=${LLM_SMOKE_MAX_TOKENS}"
 fi
 
-PYTHON="${PYTHON:-.venv/Scripts/python.exe}"
-[ -x "$PYTHON" ] || PYTHON=".venv/bin/python"
-[ -x "$PYTHON" ] || fail "找不到项目 venv python（用 PYTHON= 指定）"
+# M14-210 Python 选择链：显式 PYTHON → 仓库 venv（Windows → POSIX）→ 容器
+# 系统 python/python3（生产镜像 /app 无仓库 venv，冒烟脚本随镜像打包后由
+# 系统解释器执行探针）。显式 PYTHON 不可用即 FAIL——不静默换用其它解释器。
+select_python() {
+  if [ -n "${PYTHON:-}" ]; then
+    command -v "$PYTHON" >/dev/null 2>&1 || fail "PYTHON 指定的解释器不可用: $PYTHON"
+    return 0
+  fi
+  local _candidate
+  for _candidate in .venv/Scripts/python.exe .venv/bin/python python python3; do
+    if [ -x "$_candidate" ] || command -v "$_candidate" >/dev/null 2>&1; then
+      PYTHON="$_candidate"
+      return 0
+    fi
+  done
+  fail "找不到可用 python（选择链：PYTHON= → .venv/Scripts/python.exe → .venv/bin/python → python → python3）"
+}
+select_python
 
 say "probing $LLM_ENDPOINT ($LLM_MODEL) ..."
 LLM_ENDPOINT="$LLM_ENDPOINT" LLM_API_KEY="$LLM_API_KEY" LLM_MODEL="$LLM_MODEL" LLM_NUM_CTX="${LLM_NUM_CTX:-}" LLM_TIMEOUT_SECONDS="${LLM_TIMEOUT_SECONDS:-}" LLM_SMOKE_MAX_TOKENS="${LLM_SMOKE_MAX_TOKENS:-}" \

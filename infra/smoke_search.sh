@@ -15,9 +15,24 @@ say() { printf '[smoke-search] %s\n' "$*"; }
 # SEARCH_CLOUD_API_KEY 可选：留空即无鉴权调用；key 只经环境变量注入，不回显
 QUERY="${SEARCH_SMOKE_QUERY:-AI Learning OS GitHub}"
 
-PYTHON="${PYTHON:-.venv/Scripts/python.exe}"
-[ -x "$PYTHON" ] || PYTHON=".venv/bin/python"
-[ -x "$PYTHON" ] || fail "找不到项目 venv python（用 PYTHON= 指定）"
+# M14-210 Python 选择链：显式 PYTHON → 仓库 venv（Windows → POSIX）→ 容器
+# 系统 python/python3（生产镜像 /app 无仓库 venv，冒烟脚本随镜像打包后由
+# 系统解释器执行探针）。显式 PYTHON 不可用即 FAIL——不静默换用其它解释器。
+select_python() {
+  if [ -n "${PYTHON:-}" ]; then
+    command -v "$PYTHON" >/dev/null 2>&1 || fail "PYTHON 指定的解释器不可用: $PYTHON"
+    return 0
+  fi
+  local _candidate
+  for _candidate in .venv/Scripts/python.exe .venv/bin/python python python3; do
+    if [ -x "$_candidate" ] || command -v "$_candidate" >/dev/null 2>&1; then
+      PYTHON="$_candidate"
+      return 0
+    fi
+  done
+  fail "找不到可用 python（选择链：PYTHON= → .venv/Scripts/python.exe → .venv/bin/python → python → python3）"
+}
+select_python
 
 # M14-66: 回环端点绕过系统代理 —— WSL/开发机继承的 http(s)_proxy 会把发往
 # 127.0.0.1/localhost 的请求交给代理（代理多拒绝回环目标），本地 SearXNG
