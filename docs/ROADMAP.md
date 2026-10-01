@@ -84,7 +84,8 @@
 - M14-207 证据刷新切片（worktree
   `ai-learning-os-worktrees/m14-207-provider-smoke-refresh`，分支
   `ops/m14-207-current-provider-smoke-refresh`，base `32b15be6`，单 local
-  commit，不 push/不开 PR/不合并）。2026-10-01T05:41:59Z–05:42:19Z 只读
+  commit，supervisor 审查与 remote 发布（push/PR/合并）在其后进行）。
+  2026-10-01T05:41:59Z–05:42:19Z 只读
   preflight 结果 exit 1 / `blocked`：voice ready，search
   `upstream_failure`，llm `model_absent`。因此三 export 与 aggregate 均未
   执行，无新单步证据或 `provider-smoke.json`，零 provider/生产生命周期

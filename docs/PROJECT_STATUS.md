@@ -24,7 +24,7 @@ export，未运行 aggregate，未生成新 `provider-smoke.json`，未做任何
 七套件 **306 passed**；preflight/旧聚合 schema 与时间断言通过；泄漏扫描与
 `git diff --check` 见证据 README。证据：
 `docs/evidence/m14-207-current-provider-smoke-refresh/README.md`。单 local
-commit，不 push、不开 PR、不合并。
+commit，supervisor 审查与 remote 发布（push/PR/合并）在其后进行。
 
 **M14-206 current-main 发布证据刷新（证据刷新切片，PR #294/M14-205
 后）**：worktree `ai-learning-os-worktrees/m14-206-current-main-release-
