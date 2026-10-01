@@ -9,6 +9,40 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-205 Cloudflare ingress 凭据/zone 只读 preflight 工具（实现+
+测试+docs，零真实云请求）**：worktree
+`ai-learning-os-worktrees/m14-205-cloudflare-credential-preflight`，
+分支 `ops/m14-205-cloudflare-credential-preflight`，基于本地
+`f9ddec3`（M14-204；tree 与远端 main merge 一致由 supervisor 核验）。
+交付 `tools/ops/cloudflare_ingress_preflight.py`：fail-closed、
+value-free、默认零网络——配置仅显式 `--config` 或
+`AIOS_CLOUDFLARE_CONFIG`（皆无 blocked/missing-config exit 2）；常规
+文件硬校验（lstat 拒 symlink/reparse point）+ 8 KiB 硬顶 + 严格
+JSON（重复 key 拒）+ schema 固定（未知字段拒）；zone_name 公网 DNS
+形态（禁 IP/保留域）；token 值绝不入输出。plan（默认）零网络本地
+校验（哨兵工厂钉死零 Transport）；execute 需 `--execute` + 精确
+短语 EXECUTE CLOUDFLARE INGRESS READONLY PREFLIGHT，恰 4 个只读
+GET（verify→zones?name=→settings/ssl→dns_records?per_page=100）、
+单次零重试固定超时；方法白名单三层；zone id 只进请求路径；输出
+确定性 JSON（无时间戳/token/id/record value/绝对路径；HTTP 错误
+只给 status+error code 数字）。退出码 0/1/2。测试 61 项
+（FakeTransport 零网络、白名单、零重试、脱敏标记、schema/路径
+安全/确认门全覆盖）。rework round 1（supervisor 审计）：修正 2xx+
+畸形 JSON 曾以 JSONDecodeError 裸逃逸（`_parse_json_body` 归一
+body=None、状态保留零重试；同族 `_result_object` None 解引用改恒
+dict），新增 4 项真实 RealTransport 边界回归（monkeypatch opener
+零外网；端到端真实 open 恰 2 次、ssl/dns skipped fail-closed、main
+级 fail JSON）。验证（rework 后）：聚焦 65、tests/ops 229、
+test_versioning_rollback 9（主仓库 venv，worktree 离线 uv 无
+sqlalchemy 如实记录）、ruff、py_compile、--help、冒烟、
+`git diff --check`、泄漏扫描 0 命中。本切片零真实 Cloudflare API/
+零 DNS/零生产请求/零凭据（本机无 CLOUDFLARE_*/wrangler/
+cloudflared 环境，未执行真实验证）；不构成 E1 授权（G0 与门禁表
+不变）。证据：
+`docs/evidence/m14-205-cloudflare-credential-preflight/README.md`。
+单 local commit，不推送、不开 PR；supervisor 审查与 remote 发布在
+其后进行。
+
 **M14-204 Cloudflare/公网入口 E1 前置事实核验（docs-only /
 research-only，零请求零变更）**：worktree
 `ai-learning-os-worktrees/m14-204-cloudflare-preflight`，分支
