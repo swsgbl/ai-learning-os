@@ -79,6 +79,26 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-208 状态更新（provider recovery，preflight ready）
+
+- M14-208 docs-only 证据收口（worktree
+  `ai-learning-os-worktrees/m14-208-provider-recovery`，分支
+  `ops/m14-208-provider-recovery`，base `9ffe723`，单 local commit，
+  supervisor 审查与 remote 发布（push/PR/合并）在其后进行）。恢复前
+  main CI run **36823521906** @ `9ffe723` 为 5/5 success；恢复序列备份
+  canonical recovery env（SHA256 见证据），仅禁用第 12/13 行 HTTP/HTTPS
+  代理槽位并保持九个 `PIN_KEYS`，复查无激活非空代理。一次漏 `-p` 的
+  compose 尝试只产生从未启动的 `Created` 容器与同 project cache volume，
+  已清理；正确 project 下仅 recreate searxng `8228aa70... → a2ebab6e...`
+  并 healthy。Ollama alias `aios-qwen3.5-9b-4096`（num_ctx 4096）
+  idempotent PASS 后以 24h keepalive 驻留（5.5 GB / 100% GPU）。
+  Preflight 从 blocked（llm `model_absent`）到 pass 的两份 JSON 已按
+  bytes+SHA256 锚定。preflight pass 不是 provider-smoke export/aggregate，
+  `production_ready=false` / release readiness 语义不变；M14-209 必须
+  fresh 执行三 export + aggregate。API/Web/DB/MinIO/voice 容器未被
+  recreate 或 stopped。证据
+  `docs/evidence/m14-208-provider-recovery/README.md`。
+
 ### M14-207 状态更新（current provider-smoke refresh，preflight blocked）
 
 - M14-207 证据刷新切片（worktree

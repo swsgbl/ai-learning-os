@@ -9,6 +9,32 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-208 provider recovery（生产 provider 前置恢复 + preflight readiness
+收口）**：worktree `ai-learning-os-worktrees/m14-208-provider-recovery`，
+分支 `ops/m14-208-provider-recovery`，基于 main
+`9ffe7232075419030c0aee282e04003b8f56a556`（恢复前 main CI run
+**36823521906** 5/5 success）。已执行 supervisor 恢复：canonical
+`infra/env.production-recovery` 备份至 gitignored `.before-m14-208`，helper
+dry-run 九个 `PIN_KEYS` 齐全并计划仅禁用第 12/13 行 HTTP/HTTPS 代理槽位；
+enforce 精确禁用两槽位且复查无激活非空代理（备份/恢复后 SHA256 见证据，
+值零回显）。一次漏 `-p` 的 compose 尝试产生从未启动的 `Created` 容器与
+`ai-learning-os_searxng-cache` volume，均被清理；修正 project 后仅 recreate
+searxng `8228aa70... → a2ebab6e...` 并 healthy。Ollama 0.33.2 验证
+`aios-qwen3.5-9b-4096`（base `qwen3.5:9b`，num_ctx 4096）idempotent PASS，
+并以 24h keepalive 加载为 5.5 GB / 100% GPU / context 4096。
+
+Preflight 证据：`preflight-after-searxng-recovery.json`（2541 bytes，
+SHA256 `B494A310...4C81`，2026-10-01T06:20:29.558818Z，exit 1 / blocked；
+voice+search ready、search 9 results、llm `model_absent`）与
+`preflight-after-ollama-recovery.json`（2540 bytes，SHA256
+`0385B304...3790`，2026-10-01T06:21:35.986879Z，exit 0 / pass；三槽位
+ready）。**该 pass 只是前置 readiness，不是 provider-smoke export 或
+aggregate，不生成 `provider-smoke.json`，不使 `production_ready` 或 release
+readiness 为 true；M14-209 必须执行 fresh search/local-voice/llm 三 export
+与 aggregate。**API/Web/DB/MinIO/voice 容器未被 recreate 或 stopped。证据：
+`docs/evidence/m14-208-provider-recovery/README.md`。单 local commit，
+supervisor 审查与 remote 发布（push/PR/合并）在其后进行。
+
 **M14-207 current provider-smoke refresh（诚实失败收口）**：worktree
 `ai-learning-os-worktrees/m14-207-provider-smoke-refresh`，分支
 `ops/m14-207-current-provider-smoke-refresh`，基于 main
