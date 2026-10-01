@@ -79,6 +79,38 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-206 状态更新（current-main 发布证据刷新，PR #294/M14-205 后）
+
+- M14-206 证据刷新切片（worktree `ai-learning-os-worktrees/
+  m14-206-current-main-release-evidence`，分支 `docs/m14-206-current-
+  main-release-evidence`，基于 main `e14d3f0`（PR #294 merge，执行前
+  tracked-clean 三核验留痕），单 local commit，**不 push、不开 PR（任务
+  书指令）**）。动因：M14-205 变更 release-tooling 代码与测试，自
+  M14-185 基点 `8d52f00` 区间 **43 commits/58 文件**另含
+  `services/api/tests/` 净增 19 测试与 web 变更——代码绑定门非
+  docs-only 漂移，在当前 HEAD 真实重执行；**`services/api/app/`、
+  requirements、alembic 区间零变更**（不声称运行时生产代码变化）。
+  **ci-main**：只读 `gh api` 双查询归档 run **36814009797**
+  （run_number 725，push@main@e14d3f0，success，五 job 精确集合 5/5
+  全绿），断言驱动派生 canonical `8679c34b…`；**release-check**：从零
+  隔离环境（uv CPython 3.12.14 + npm ci）干净 e14d3f0 full 重跑
+  **all_green 10/10**，pytest **5650/36 in 296.11s**（较 M14-185/190 恰
+  +19 的逐文件精确对账），canonical `3f60fbee…` 逐字节复核；
+  **provider-smoke/long-soak 零重跑**只读复用（provider 同哈希
+  `d589181e…` 且本轮原始输入在场逐份核验，复用时龄 5 天 3 小时如实
+  披露、窗口早于 M14-193 滚动——滚动未触碰 provider 容器；long-soak
+  同哈希 `d939c652…` 窗口早于切换与滚动）；六源 production-state 6/6
+  MATCH 原样 staging。**cockpit：cockpit_ready=true、blockers=[]、
+  pass=9/missing=2、staged 10/10 IDENTICAL**，两 code-bound 门 current
+  （embedded/flag），not_pass_required 恰 [release-approval]（human-only
+  缺席）、not_pass_optional 恰 [turn-tls]；**release_ready=false /
+  production_ready=false 恒不变**。验证：聚焦九套件 444 passed（恰同
+  M14-185/190）、契约断言 57 项全过、ruff + py_compile、秘密/U+FFFD
+  扫描 0 命中、`git diff --check` 干净。零生产触碰（零容器/DB/MinIO/
+  语音/secrets/Cloudflare/DNS/设备）；不是部署、不是审批、不是生产
+  变更；no-infinite-refresh——仅下一个非 docs-only 合并触发下一轮。
+  证据 `docs/evidence/m14-206-current-main-release-evidence/README.md`。
+
 ### M14-172 状态更新（Harmony install-gate 回归证据收口）
 
 - M14-172 docs-only 证据收口（worktree

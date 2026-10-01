@@ -9,6 +9,48 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-206 current-main 发布证据刷新（证据刷新切片，PR #294/M14-205
+后）**：worktree `ai-learning-os-worktrees/m14-206-current-main-release-
+evidence`，分支 `docs/m14-206-current-main-release-evidence`，基于 main
+`e14d3f0`（PR #294 merge；执行前 branch/HEAD/tracked-clean 三核验留
+痕）。动因：自 M14-185 基点 `8d52f00` 起区间 **43 commits/58 文件**，
+含 release-tooling 代码与测试（M14-205 cloudflare preflight +830/+707、
+M14-186 phase0 决策工具）、`services/api/tests/` 三文件净增 19 测试与
+web 运行时/测试变更——代码绑定门非 docs-only 漂移；但
+`services/api/app/`、API requirements 与 alembic 区间**零变更**（不
+声称运行时生产代码变化；head 仍 `0027_audit_chain`）。ci-main：run
+**36814009797**（run_number 725，push@main@e14d3f0，completed/success，
+五 job 精确集合 5/5 全绿）raw 双查询归档（stderr 空），断言驱动派生
+canonical `8679c34b…41f7`（11 项断言）。release-check：干净 `e14d3f0`
+树从零 venv（CPython 3.12.14）/npm ci full 重跑 **all_green 10/10**，
+pytest **5650/36/1 warning in 296.11s**（较 M14-185/190 恰 **+19** =
+新 7 def + parametrize 10 参数展开 9 + argv 追加 3 的精确对账），e2e
+5 步 1130ms，canonical `3f60fbee…cc66d` 逐字节复制复核 IDENTICAL。
+provider-smoke/long-soak/production-state 零重跑零生产接触：provider
+同哈希 `d589181e…a761` 复用且**本轮原始输入目录在场逐份核验**（7
+文件，三 pass 输入 + 三失败 attempt 未改写；复用时龄 **5 天 3 小时**
+如实披露，窗口早于 M14-193 生产滚动——滚动仅 recreate API+Web 容器、
+未触碰 provider 容器，三支柱论证如实更新）；long-soak 同哈希
+`d939c652…56ec`（窗口 2026-09-22→23 早于切换与滚动）；六源
+production-state sha256 6/6 MATCH 后原样 staging。cockpit（tracked
+docs 编辑前、干净 e14d3f0 上运行，双 head 显式声明）：
+**cockpit_ready=true、blockers=[]、required_not_staged=[]、
+pass=9/missing=2、staged 10/10 IDENTICAL**，ci-main（embedded）/
+release-check（flag）均 current；not_pass_required 恰
+[release-approval]（human-only 缺席）、not_pass_optional 恰 [turn-tls]；
+**readiness.release_ready=false / production_ready=false 不变**。
+验证：聚焦九套件 **444 passed**（与 M14-185/190 恰同，九套件区间零
+变更互证；basetemp 须在仓库外——仓库内 artifacts/ 路径被
+check-ignore 放行致守卫测试失败，已定位改用仓库外专用目录）、契约
+断言 **57 项**全过、ruff（api 基线 + 证据脚本）+ py_compile 全过、
+canonical 31 文件秘密/U+FFFD 扫描 0 命中、`git diff --check` 干净。
+证据：docs/evidence/m14-206-current-main-release-evidence/README.md
+（唯一入库证据文件；canonical gitignored，SHA256SUMS 全量索引）。
+零 production/Docker/secrets/Cloudflare/DNS/Harmony/Android/CC
+Switch/代理接触。单 local commit，不 push、不开 PR、不合并；发布/
+合并决策归 supervisor（no-infinite-refresh：仅下一个非 docs-only
+合并触发下一轮刷新）。
+
 **M14-205 Cloudflare ingress 凭据/zone 只读 preflight 工具（实现+
 测试+docs，零真实云请求）**：worktree
 `ai-learning-os-worktrees/m14-205-cloudflare-credential-preflight`，
