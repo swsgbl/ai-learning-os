@@ -79,6 +79,22 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-207 状态更新（current provider-smoke refresh，preflight blocked）
+
+- M14-207 证据刷新切片（worktree
+  `ai-learning-os-worktrees/m14-207-provider-smoke-refresh`，分支
+  `ops/m14-207-current-provider-smoke-refresh`，base `32b15be6`，单 local
+  commit，supervisor 审查与 remote 发布（push/PR/合并）在其后进行）。
+  2026-10-01T05:41:59Z–05:42:19Z 只读
+  preflight 结果 exit 1 / `blocked`：voice ready，search
+  `upstream_failure`，llm `model_absent`。因此三 export 与 aggregate 均未
+  执行，无新单步证据或 `provider-smoke.json`，零 provider/生产生命周期
+  变更。旧 M14-148 聚合（2026-09-26T01:12:09Z–01:14:14Z，三 pass）经
+  schema/时间复核仅作历史对照，不复用为当前新鲜证据。离线契约测试
+  306 passed；SHA256SUMS 全量复验与泄漏扫描见证据 README。未解决 blocker
+  正是 search 上游网络修复与 llm 模型外部驻留，二者均超出本切片授权。
+  证据 `docs/evidence/m14-207-current-provider-smoke-refresh/README.md`。
+
 ### M14-206 状态更新（current-main 发布证据刷新，PR #294/M14-205 后）
 
 - M14-206 证据刷新切片（worktree `ai-learning-os-worktrees/

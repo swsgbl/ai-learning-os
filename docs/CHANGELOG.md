@@ -1,5 +1,21 @@
 # Changelog
 
+## M14-207 — current provider-smoke refresh（preflight blocked，诚实失败收口）
+
+- 在 base `32b15be61646416cfa553cc62b9066659610636b` 的独立 worktree 执行
+  只读 `provider-smoke-preflight --voice-mode local --json`：
+  2026-10-01T05:41:59Z–05:42:19Z，20663ms，exit 1，overall `blocked`。
+  voice ready；search `upstream_failure`；llm `model_absent`。
+- 按任务书在 preflight blocked 后停止：search/local-voice/llm export 与
+  aggregate 均未执行，无新 `provider-smoke.json`，无 provider corrective
+  rerun，零生产或 provider 生命周期变更。
+- 旧 M14-148 聚合经 exact-schema 与时间边界复核：三 pass，窗口
+  2026-09-26T01:12:09Z–01:13:56Z、聚合 01:14:14Z；仅作历史对照，不复用
+  为当前证据。
+- 验证：七套件离线契约测试 **306 passed**；preflight raw/stdout 逐字节
+  一致；新增 tracked 行泄漏扫描与 `git diff --check` 见证据 README。
+  证据：docs/evidence/m14-207-current-provider-smoke-refresh/README.md。
+
 ## M14-206 — current-main 发布证据刷新（PR #294/M14-205 后；ci-main + release-check 真实重跑 + 只读复用 + cockpit 聚合）
 
 - 背景：M14-205 变更 release-tooling 代码与测试（tools/ops + tests/ops），
