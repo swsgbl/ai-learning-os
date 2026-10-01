@@ -2140,3 +2140,60 @@ JSON 决策——Phase 1 采样在 `phase0_go` 之前不可授权。
   README §4），工具报 `phase0_inconclusive`、**不授权 Phase 1**；
   真实收口按 docs/evidence/m14-186-phase0-decision-gate/README.md
   §5 落档。`production_ready=false` 不变。
+
+## cloudflare_ingress_preflight.py（M14-205）
+
+Cloudflare ingress **凭据/zone 只读 preflight**（M14-203 E1 前置安全
+检查，fail-closed、value-free、默认零网络）：验证 API token active、
+目标 zone 存在且唯一、SSL 模式可读、DNS 记录面可读，为受控 E1 DNS
+变更提供安全前置；本身零云侧变更（只读 GET）。
+
+- 配置只来自显式 `--config <path>` 或环境变量
+  `AIOS_CLOUDFLARE_CONFIG`，两者皆无 → `blocked/missing-config`
+  （exit 2），绝不发明默认凭据路径；配置文件必须常规文件（lstat
+  拒绝 symlink/reparse point/目录）、大小硬顶 8 KiB（stat 后限额
+  读取双保险）、严格 JSON（重复 key 拒绝）、schema 固定
+  （`schema_version=1` + `zone_name` + `api_token`，可选
+  `execute_timeout_s`/`user_agent`），未知字段拒绝；
+- `zone_name` 仅公网 DNS 名称形态（≥2 合法 label、≤253、禁 IP
+  字面量、禁 RFC 2606/6761 保留域）；`api_token` 非空但值绝不进入
+  任何输出/日志/异常（报告只记 `api_token_present` 布尔）；
+- 默认 plan 模式零网络：只解析与本地校验配置，绝不构造 Transport、
+  绝不发请求（测试以"构造即抛错"哨兵工厂钉住）；
+- execute 门：必须同时 `--execute` + `--confirm` 精确短语
+  `EXECUTE CLOUDFLARE INGRESS READONLY PREFLIGHT` + 可用配置，缺一
+  exit 2 且零网络；
+- execute 只做只读 GET，恰好 4 请求、单次、零重试、固定超时（默认
+  10s）：`/user/tokens/verify`（要求 active）→ `/zones?name=`
+  （恰 1 条；zone id 只进后续请求路径绝不进输出）→
+  `/zones/{id}/settings/ssl`（API 值 `strict` 归一显示
+  `full_strict`——M14-204 V5a；未知名/读取失败记 `unknown` 且
+  FAIL）→ `/zones/{id}/dns_records?per_page=100`（只统计计数与
+  candidate hostname 首页存在性，绝不输出 record content/IP/
+  target）；zone 查找失败时后两项显式 skipped+FAIL，绝不静默跳过；
+- 方法白名单三层：编排层只发 GET、RealTransport 拒绝非 GET、测试
+  FakeTransport 逐请求断言 method/path/query 形态；HTTP 错误只给
+  status 码与 Cloudflare error code 数字分类，绝不回显 response
+  body/message；输出确定性 JSON（无时间戳、无 token、无 zone/
+  account id、无 record value、无本机绝对路径，`requests_made` 只含
+  endpoint 标签）；
+- RealTransport 走 urllib 默认 opener（跟随执行环境标准代理 env——
+  验收对象是 CF API 凭据而非本机网络路径，与
+  public_edge_preflight 直连契约的差异是有意为之）。
+
+```
+# 仓库根执行（纯标准库；plan 零网络）
+python tools/ops/cloudflare_ingress_preflight.py --config <cf.json>
+# execute（只读 4 GET；需精确确认短语）
+python tools/ops/cloudflare_ingress_preflight.py --config <cf.json> \
+    --execute --confirm "EXECUTE CLOUDFLARE INGRESS READONLY PREFLIGHT" \
+    [--hostname <candidate>] [--output <report.json>]
+```
+
+退出码：0 全部通过（plan = ready-to-execute）/ 1 任一检查 FAIL /
+2 blocked（配置缺失/不可读/schema 非法/确认缺失/参数非法）。
+契约测试 `tests/ops/test_cloudflare_ingress_preflight.py`（61 项：
+FakeTransport 零网络、方法白名单、零重试、输出脱敏标记、plan 零
+Transport、symlink/超大/重复 key 拒绝、token inactive、zone 0/2、
+SSL unknown、DNS transport error 等）。本工具不发任何 DNS/生产
+变更；真实 execute 需 supervisor 批准的配置与执行环境。

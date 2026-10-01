@@ -1,5 +1,57 @@
 # Changelog
 
+## M14-205 — Cloudflare ingress 凭据/zone 只读 preflight 工具（实现+测试+docs，零真实云请求）
+
+- 背景：补齐 M14-203 E1 执行前"凭据与 zone 可用性无法安全验证"的
+  缺口。交付 `tools/ops/cloudflare_ingress_preflight.py`（fail-closed、
+  value-free、默认零网络）+ 65 项契约测试（含 rework round 1 的 4 项
+  畸形 2xx 边界回归）；本切片零真实 Cloudflare
+  API、零 DNS 变更、零生产 manifest 请求、零凭据接触（本机无任何
+  CLOUDFLARE_*/wrangler/cloudflared 凭据环境，execute 全部走
+  FakeTransport 注入点，零网络零子进程）。
+- 契约要点：配置仅显式 `--config` 或 `AIOS_CLOUDFLARE_CONFIG`（皆无
+  → blocked/missing-config exit 2，无默认凭据路径）；配置文件常规
+  文件硬校验（lstat 拒 symlink/reparse point/目录）+ 8 KiB 硬顶 +
+  严格 JSON（重复 key 拒绝）+ schema 固定（schema_version=1/
+  zone_name/api_token，可选 execute_timeout_s/user_agent，未知字段
+  拒绝）；zone_name 仅公网 DNS 形态（禁 IP/保留域）；api_token 值
+  绝不进入任何输出/日志/异常。
+- 模式：plan（默认）零网络——只本地校验，输出 config_present/
+  zone_name 形态与 ready-to-execute 或 blocked（测试以哨兵工厂钉死
+  "plan 零 Transport"）；execute 需 `--execute` + 精确短语
+  `EXECUTE CLOUDFLARE INGRESS READONLY PREFLIGHT` + 可用配置，缺一
+  exit 2 且零网络。
+- execute 只读序列（恰 4 GET、单次、零重试、固定超时）：token
+  verify（要求 active）→ zones?name=（恰 1 条；zone id 只进请求
+  路径绝不进输出）→ settings/ssl（API `strict` 归一 `full_strict`，
+  M14-204 V5a；未知/失败记 unknown 且 FAIL）→ dns_records?per_page=
+  100（只记计数与 candidate hostname 首页存在性，绝不输出 record
+  content；zone 失败后续显式 skipped+FAIL）。方法白名单三层（编排
+  只发 GET / RealTransport 拒绝非 GET / FakeTransport 逐请求断言
+  method+path+query）。输出确定性 JSON：无时间戳、无 token、无
+  zone/account id、无 record value、无本机绝对路径；HTTP 错误只给
+  status+error code 数字，不回显 body。
+- rework round 1（supervisor 审计）：修正 HTTP 2xx + 畸形 JSON 曾以
+  JSONDecodeError 裸逃逸的缺陷——`_parse_json_body` 归一不可解码/非
+  JSON 为 body=None（状态保留、零重试零额外请求）；同族 `_result_object`
+  None 解引用（HTTPError 空 body 潜伏路径）改为恒返回 dict。新增 4 项
+  真实 RealTransport 边界回归（monkeypatch opener 零外网）：2xx 畸形
+  归一、合法 JSON 控制组、端到端全 FAIL 无逃逸（真实 open 恰 2 次，
+  ssl/dns skipped 不发请求）、main 级 fail JSON（exit 1）。
+- 验证（rework 后第二轮全量）：聚焦 65 通过；`pytest tests/ops -q`
+  229 通过（含既有 164）；
+  `services/api/tests/test_versioning_rollback.py` 9 通过（主仓库
+  venv python——worktree 离线 uv 无 sqlalchemy，如实记录）；ruff
+  check/format 通过；py_compile/--help/无配置 blocked 冒烟通过；
+  `git diff --check` 干净；泄漏扫描 0 命中。退出码 0/1/2
+  （通过/FAIL/blocked）。
+- 影响：补齐 M14-203 §7"Cloudflare 账号/zone 操作"门禁的验证前置；
+  本切片不构成 E1 授权（G0 与 DNS/云变更门禁不变），真实 execute
+  待 supervisor 批准的配置与环境。证据：
+  `docs/evidence/m14-205-cloudflare-credential-preflight/README.md`。
+  单 local commit，不推送、不开 PR；supervisor 审查与 remote 发布
+  在其后进行。
+
 ## M14-204 — Cloudflare/公网入口 E1 前置事实核验（docs-only / research-only）
 
 - 背景：把 M14-203 §10 的 E1 前置假设清单逐项核验为当前官方文档
