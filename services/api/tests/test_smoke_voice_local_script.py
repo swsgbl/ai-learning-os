@@ -3,8 +3,9 @@
 - 行为契约（PYTHON=true/false 替身）：wrapper exec 探针 python，退出码原样
   透传（替身 exit 0 → 0；替身 exit 1 → 1），wrapper 自身不判分不打印 PASS；
 - 文本契约：set -euo pipefail、cd 仓库根、.venv/Scripts/python.exe 先于
-  .venv/bin/python 的选择顺序、exec tools/voice/smoke_local_voice.py、venv
-  双缺失明确 FAIL、无 export（env 零修改）、无探针复制（不 import
+  .venv/bin/python 的选择顺序、exec tools/voice/smoke_local_voice.py、
+  M14-210 选择链（显式 PYTHON → venv 双形态 → 容器系统 python/python3）
+  全链落空明确 FAIL、无 export（env 零修改）、无探针复制（不 import
   app.voice.providers、不自带 transcribe/synthesize 判分）、无 secret 形态。
 
 真实本地语音冒烟留给运维显式执行（bash infra/smoke_voice_local.sh）——本
@@ -100,8 +101,10 @@ def test_wrapper_text_contract() -> None:
     assert ".venv/Scripts/python.exe" in text
     assert ".venv/bin/python" in text
     assert text.index(".venv/Scripts/python.exe") < text.index(".venv/bin/python")
-    # 双缺失明确 FAIL（不静默换替身、不虚报成功）
-    assert "找不到项目 venv python" in text
+    # M14-210 选择链：venv 双形态之后还有容器系统 python/python3 兜底；
+    # 全链落空明确 FAIL（不静默换替身、不虚报成功）
+    assert "python python3" in text
+    assert "找不到可用 python" in text
     # 唯一出口 = exec 探针（零参数调用 M14-01 探针，退出码透传）
     assert 'exec "$PYTHON" tools/voice/smoke_local_voice.py' in text
     # env 零修改：不 export 任何变量（可选 PYTHON 覆盖只是读取）

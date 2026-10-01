@@ -25,6 +25,12 @@
   provider 同一证据形态；CLI choices、聚合槽位（``voice_mode`` 选轨，
   local 换用 local-voice 槽位）与 release-readiness 门（``evidence_step``
   拓扑校验）均已接入。
+- M14-210 容器布局：仓库根解析不再假设源码 checkout 的 ``parents[4]``
+  固定偏移（生产镜像 /app 布局下模块位于 /app/app/ops，偏移越界）——
+  :func:`_locate_repository_root` 按 VERSION 文件 + infra 目录标记向上
+  查找，源码 checkout 与容器 /app（Dockerfile 打包 VERSION 与
+  infra/smoke_*.sh）同一解析；找不到标记抛明确 RuntimeError（导入期即
+  失败，不产生含混错误）。
 
 安全护栏（全部先于 runner 执行；违例 exit 2、不运行冒烟、不写证据、不创建
 输出/父目录）：
@@ -90,7 +96,27 @@ SCHEMA_VERSION = "provider-smoke-evidence-v1"
 GATE_ID = "provider-smoke"
 GATE_OUTPUT_FILE = "provider-smoke.json"
 
-_REPOSITORY_ROOT = Path(__file__).resolve().parents[4]
+def _locate_repository_root(start: Path | None = None) -> Path:
+    """向上查找仓库根：源码 checkout（services/api/app/ops → 仓库根）与
+    生产镜像 /app 布局（/app/app/ops → /app）同一解析——两种布局的仓库根
+    都具备 VERSION 文件与 infra 目录，祖先目录都不具备。
+
+    M14-210：固定 ``parents[4]`` 只对源码 checkout 成立，容器布局下越界
+    （IndexError）；改按仓库标记向上查找（同 version._locate_version_file
+    口径），找不到时抛明确 RuntimeError，不允许含混失败。``start`` 可注入
+    起点路径（测试容器布局用，缺省本模块真实位置）。
+    """
+    current = (start or Path(__file__)).resolve()
+    for parent in current.parents:
+        if (parent / "VERSION").is_file() and (parent / "infra").is_dir():
+            return parent
+    raise RuntimeError(
+        "仓库根未找到：期望 VERSION 文件 + infra 目录位于源码仓库根或容器 "
+        "/app（services/api Dockerfile 需打包 VERSION 与 infra/smoke_*.sh）"
+    )
+
+
+_REPOSITORY_ROOT = _locate_repository_root()
 
 _REDACTION_NOTE = (
     "证据只含结论白名单标量：无命令行/stdout/stderr/endpoint/模型名/查询词/"
