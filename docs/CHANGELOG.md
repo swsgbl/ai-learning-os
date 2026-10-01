@@ -1,5 +1,29 @@
 # Changelog
 
+## M14-208 — provider recovery（SearXNG 直连恢复 + Ollama 驻留，preflight ready）
+
+- 在 base `9ffe7232075419030c0aee282e04003b8f56a556` 的独立 worktree 收口
+  已执行 supervisor 恢复：恢复前 main CI run **36823521906** 为同 head
+  5/5 success；canonical recovery env 先备份再由 M14-148 helper 禁用
+  第 12/13 行两个激活代理槽位，九个 `PIN_KEYS` 保持，复查无激活非空槽位
+  （备份/恢复后 SHA256 与命令形状见证据，值零回显）。
+- 一次遗漏 `-p` 的 compose 尝试只留下从未启动的 `Created` 容器
+  `a1f821c42dfb...` 与 `ai-learning-os_searxng-cache` volume，均已清理；
+  修正 `-p aios-m14-03-production-rehearsal` 后仅 recreate searxng
+  `8228aa70... → a2ebab6e...` 并达到 healthy。Ollama 0.33.2 的
+  `aios-qwen3.5-9b-4096`（base `qwen3.5:9b`，`num_ctx=4096`）幂等
+  verification PASS，随后以 24h keepalive 驻留，`ollama ps` 显示 5.5 GB /
+  100% GPU / context 4096。
+- 两次 preflight 工件已按 bytes+SHA256 锚定：SearXNG 恢复后 exit 1 /
+  `blocked`（voice+search ready，search 9 results，llm `model_absent`）；
+  Ollama 恢复后 exit 0 / `pass`（三槽位 ready）。preflight pass 不是
+  provider-smoke export/aggregate 证据，`production_ready=false` 与 release
+  readiness 语义不变；M14-209 必须执行 fresh 三 export + aggregate。
+- API/Web/DB/MinIO/voice 容器未被 recreate 或 stopped。本 docs-only 回合
+  不读取 env 值、不触碰 secrets/容器/Ollama。证据：
+  docs/evidence/m14-208-provider-recovery/README.md。本地 commit 后，
+  supervisor 审查与 remote 发布（push/PR/合并）在其后进行。
+
 ## M14-207 — current provider-smoke refresh（preflight blocked，诚实失败收口）
 
 - 在 base `32b15be61646416cfa553cc62b9066659610636b` 的独立 worktree 执行
