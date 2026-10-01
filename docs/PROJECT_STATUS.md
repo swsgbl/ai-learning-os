@@ -9,6 +9,41 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-204 Cloudflare/公网入口 E1 前置事实核验（docs-only /
+research-only，零请求零变更）**：worktree
+`ai-learning-os-worktrees/m14-204-cloudflare-preflight`，分支
+`docs/m14-204-cloudflare-preflight`，基于本地 `0dd8434`（M14-203
+merge；远端 main 指向由 supervisor 经 GitHub API 核验，本切片未
+自行 fetch）。把 M14-203 §10 的 E1 前置假设核验为当前官方文档
+事实（抓取窗口 2026-10-01 00:13–00:22 UTC）：A2 Cache Rules 全过
+（JSON 经规则 Eligible for cache 获得缓存资格、Edge TTL 三模式、
+Browser TTL 仅浏览器侧、Free 档 10 条、需橙云代理）；A4 Tunnel
+全过（cloudflared outbound-only、origin 可零入站端口、公共主机名
+CNAME→`<UUID>.cfargotunnel.com` 路由、公共发布不需 Access 席位、
+冗余上限 25 replicas/tunnel）；A5 LB 账号级付费 add-on（$5/mo
+起）与健康监视/自动故障转移核验，"纯 DNS 无自动故障转移"降级为
+推导事实；A6 代理记录 Auto=300s 固定、DNS-only 最低 60s
+（Enterprise 30s）、官方承认本地缓存可能超 TTL；A7 RFC 1035 TTL
+原文核验；A11 现价（Free $0、Zero Trust Free ≤50 用户 $0 forever、
+PAYG $7/用户/月、LB $5/mo 起、最高档现名 Contract 与 docs 站
+Enterprise 并存）。A1 Origin CA：旧 URL 404 实为页面迁移（解释
+M14-203 不可达），新页核验信任边界（仅 Cloudflare↔origin，浏览器
+不受信）、Free 可用、与 Full (strict) 兼容且公共 CA 亦兼容；
+"默认 15 年"现行文档未公布，保留未核验（E1–E3 不依赖）。A8/A9/
+A10 简核：三项拒绝均维持且 R1/R2 获插页类增强证据（ngrok 插页 +
+7 天 cookie + 客户端头绕过、serveo 免费档插页），A10 serveo
+"自定义域名付费墙"表述修正。影响：E1/E2/E3 无文档 blocker，
+E1 唯一前置门仍为 G0（supervisor 授权）；E2 新增执行前检查项
+（manifest 响应 Cache-Control 现值）；E4 结构性限制确认。本切片
+零请求（生产预算 0/0）、零 DNS/云/VPS 变更、零凭据接触；工具
+形态如实（本机 WebFetch 域名校验不可达，改服务端抓取官方公开
+页面，一处 404 判定来自抓取方前日缓存副本）。验证：tests/ops
+164 通过（离线 uv）、`git diff --check` 干净、新增行泄漏扫描
+0 真实命中。证据：
+`docs/evidence/m14-204-cloudflare-preflight/README.md`。单 local
+commit，不推送、不开 PR；supervisor 审查与 remote 发布在其后
+进行。
+
 **M14-203 Phase 3 公网多入口/Cloudflare 调研与决策矩阵（docs-only，
 零请求零变更）**：worktree `ai-learning-os-worktrees/m14-199-phase1-budget`，
 分支 `docs/m14-203-phase3-ingress-research`，基于本地 `86227c0`
