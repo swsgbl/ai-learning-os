@@ -9,6 +9,33 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-203 Phase 3 公网多入口/Cloudflare 调研与决策矩阵（docs-only，
+零请求零变更）**：worktree `ai-learning-os-worktrees/m14-199-phase1-budget`，
+分支 `docs/m14-203-phase3-ingress-research`，基于本地 `86227c0`
+（M14-202 落档）。为 H1 判定后的 Phase 3 落档候选对比与实验设计：
+四选项八维矩阵（A Cloudflare 代理 DNS 前置现有 origin = 低复杂度
+$0 首选实验；B Tunnel 附加路径 = 源零入站端口、关键行为未核验
+（中）；C 多节点 GeoDNS/健康检查 = 低–中证据、受 DNS TTL 与
+客户端缓存结构性制约；D 直连保持 = 对照臂与回滚基线），拒绝清单
+四类（ngrok 免费版插页、通用 SSH 隧道、付费消费隧道/Tailscale
+Funnel、家庭端口暴露永不实验）。事实分级 V/A：4 份官方文档在线
+核验（代理 DNS 行为、SSL Full (strict) 兼容现有公共证书、默认
+缓存扩展名含 APK 不含 JSON、China Network 企业版+ICP+跨境延迟
+可靠性表述），11 项假设全部给出未来核验源，Origin CA 抓取不可达
+如实记录。推荐 E1 最小代理 → G1（实验臂 p95 < 对照×0.7 且零
+失败）→ E2 缓存 → G2（HIT + staleness 决策）→ E3 Tunnel 可选 →
+G3（零失败且开销 ≤1.5×）→ E4 多节点末位 → G4（双 no-go + 成本
+批准前置）；D 恒对照臂。测量计划有界待批（每臂 3 窗×8 样本、
+双臂 ≤48/轮、Phase 3 新账本、零重试验证全保留、硬停止），本切片
+零请求零授权；未来 DNS/Cloudflare/VPS 变更与生产请求均须
+supervisor 批准 + 独立切片。本切片 docs-only（证据 README + 两处
+台账）；验证：tests/ops 164 通过、version-sync 守卫 9 通过（离线
+uv）、`git diff --check` 干净、新增行 secret/本地路径/VPS 细节/
+U+FFFD 扫描 0 真实命中。证据：
+`docs/evidence/m14-203-phase3-ingress-research/README.md`。单
+local commit，不推送、不开 PR；supervisor 审查与 remote 发布在
+其后进行。
+
 **M14-202 Phase 1 Round B 干净执行收口与 H1 判定（docs-only，零新
 采样）**：worktree `ai-learning-os-worktrees/m14-199-phase1-budget`，
 分支 `docs/m14-200-phase1-incident`，基于 M14-200 `2e893c0`。执行
