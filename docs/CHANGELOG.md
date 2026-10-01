@@ -1,5 +1,48 @@
 # Changelog
 
+## M14-206 — current-main 发布证据刷新（PR #294/M14-205 后；ci-main + release-check 真实重跑 + 只读复用 + cockpit 聚合）
+
+- 背景：M14-205 变更 release-tooling 代码与测试（tools/ops + tests/ops），
+  自 M14-185 基点 `8d52f00` 起 43 commits/58 文件还含
+  `services/api/tests/` 三文件净增 19 测试与 web 面变更，代码绑定门
+  （ci-main/release-check）非 docs-only 漂移，须在当前 main `e14d3f0`
+  真实重执行；`services/api/app/`、requirements、alembic 区间零变更
+  （head 仍 `0027_audit_chain`），本切片不声称运行时生产代码变化。
+- ci-main：只读 `gh api` 双查询（stderr 空）归档 run **36814009797**
+  （run_number 725，push@main@e14d3f0，completed/success，五 job 精确
+  集合 5/5 全绿）raw 响应，11 项断言驱动派生 canonical
+  `ci-main.json`（`8679c34b…`）；不复用 M14-185 run 36570439902 或
+  M14-190 run 36655040106 产物。
+- release-check：从零隔离环境（uv venv CPython 3.12.14 + npm ci
+  411 packages）在干净 `e14d3f0` 执行树 full 重跑 **all_green 10/10**；
+  api-test **5650 passed / 36 skipped in 296.11s**（较 M14-185/190 恰
+  +19：新 7 def + parametrize 10 参数展开 9 + argv 追加 3，逐文件
+  diff 精确对账）；canonical `release-check.json`（`3f60fbee…`）与
+  isolated 报告逐字节一致。
+- 复用纪律（零重跑零生产接触）：provider-smoke 同哈希 `d589181e…`
+  只读复用——本轮原始输入目录在场（7 文件逐份核验，三失败 attempt
+  未改写），复用时龄 **5 天 3 小时**如实披露，窗口早于 M14-193 生产
+  滚动（滚动仅 recreate API+Web 容器，provider 容器未触碰，复用三
+  支柱论证如实更新）；long-soak 同哈希 `d939c652…`（窗口
+  2026-09-22→23，早于切换与滚动，不制造新窗口）；六源
+  production-state sha256 6/6 MATCH 后原样 staging（呈现非重执行）。
+- evidence-cockpit（tracked docs 编辑前、干净 e14d3f0，双 head 显式
+  声明）：**cockpit_ready=true、blockers=[]、pass=9/missing=2、
+  staged 10/10 IDENTICAL**，ci-main（embedded）/release-check（flag）
+  均 current；not_pass_required 恰 [release-approval]（human-only
+  缺席）、not_pass_optional 恰 [turn-tls]；
+  **release_ready=false / production_ready=false 不变**，本切片不是
+  部署/审批/生产变更。
+- 验证：聚焦九套件 **444 passed**（与 M14-185/190 恰同，工具面零
+  漂移互证；basetemp 须仓库外——仓库内 artifacts/ 路径被
+  check-ignore 放行致 7 项守卫测试失败，已定位修复如实留痕）、契约
+  断言 57 项全过、ruff（api 基线 + 5 证据脚本）+ py_compile、
+  canonical 31 文件五类秘密模式 + U+FFFD 扫描 0 命中、
+  `git diff --check` 干净。
+- 交付：单 local commit，不 push、不开 PR、不合并；合并与发布决策
+  归 supervisor。no-infinite-refresh：docs-only 入库不触发下一轮刷新。
+  证据：docs/evidence/m14-206-current-main-release-evidence/README.md。
+
 ## M14-205 — Cloudflare ingress 凭据/zone 只读 preflight 工具（实现+测试+docs，零真实云请求）
 
 - 背景：补齐 M14-203 E1 执行前"凭据与 zone 可用性无法安全验证"的
