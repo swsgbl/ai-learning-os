@@ -7,8 +7,10 @@
 - 注释措辞必须声明兼容性不保证（Ollama /v1 实证不可靠消费 options.num_ctx），
   且 M14-71 本地路径固定走模型别名 aios-qwen3.5-9b-4096（LLM_NUM_CTX 不设）。
 - M14-100 LLM_TIMEOUT_SECONDS / LLM_SMOKE_MAX_TOKENS：形态校验 fail-closed、
-  两 probe 透传 timeout、简单探针有界预算默认 256（M14-98 实证 2048 超 30s
-  超时；rubric judge 保持 gateway 生产默认 1024——冒烟不改变生产语义）。
+  两 probe 透传 timeout；M14-218 起简单探针有界预算默认 1024（与 rubric
+  judge 走的 gateway 生产默认一致；256 有 thinking-only 空 content fail
+  实证 M14-115/M14-209，2048 有饱和 GPU 超时实证 M14-98），且禁止
+  retry/fallback/预算自适应二次请求——空 content 一律 fail。
 """
 from __future__ import annotations
 
@@ -55,17 +57,31 @@ def test_script_rejects_empty_thinking_only_response() -> None:
 
 
 def test_script_probe_token_budgets() -> None:
-    """M14-100: 简单探针有界预算默认 256（LLM_SMOKE_MAX_TOKENS 可覆写）——
-    2048 已实证在饱和 GPU 上生成 >30s（M14-98 两跑超时）；32 级小预算有
-    thinking-only 空 content 风险（M14-71 教训）。rubric judge 探针不显式
-    传 max_tokens（走 gateway 生产默认 1024——冒烟不改变生产语义）。"""
+    """M14-218: 简单探针有界预算默认 1024（LLM_SMOKE_MAX_TOKENS 可覆写）——
+    与 rubric judge 走的 gateway 生产默认一致。M14-115/M14-209 实证 256
+    thinking-only 空 content fail；M14-98 实证 2048 饱和 GPU >30s 超时。
+    rubric judge 探针不显式传 max_tokens（走 gateway 生产默认 1024——
+    冒烟不改变生产语义）。"""
     text = _text()
-    assert "max_tokens=int(_budget_raw) if _budget_raw else 256" in text
-    # 探针调用不得再固定 2048（带逗号的调用形态；头部注释引用 M14-98 实证
-    # 事实的措辞不在此限）
+    assert "max_tokens=int(_budget_raw) if _budget_raw else 1024" in text
+    # 默认不得回退 256（thinking-only 空 content 误判面，M14-115/M14-209）
+    assert "max_tokens=int(_budget_raw) if _budget_raw else 256" not in text
+    # 探针调用不得固定 2048（带逗号的调用形态；头部注释引用 M14-98 实证
+    # 事实的措辞不在此限）或 32 级小预算
     assert "max_tokens=2048," not in text
     assert "max_tokens=32" not in text
     assert "LLM_SMOKE_MAX_TOKENS" in text
+
+
+def test_script_llm_probe_single_shot_no_retry_or_fallback() -> None:
+    """M14-218: 简单探针保持单轮请求——禁止 retry/fallback/预算自适应
+    二次请求。空 content 一律 fail（M14-71），不得以任何自动补发把
+    thinking-only 失败「修成」通过。"""
+    text = _text()
+    lowered = text.lower()
+    assert "retry" not in lowered
+    assert "fallback" not in lowered
+    assert "重试" not in text
 
 
 def test_script_validates_timeout_and_budget_env_shapes() -> None:
