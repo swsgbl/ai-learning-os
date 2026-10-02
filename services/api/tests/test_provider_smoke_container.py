@@ -133,6 +133,52 @@ def test_module_has_no_pinned_parents_offset() -> None:
             pytest.fail("模块不得使用 parents[N] 固定偏移解析仓库根（容器布局越界）")
 
 
+def test_repository_root_rejects_version_only_ancestor(tmp_path) -> None:
+    """强契约回归：VERSION-only 祖先（缺 infra 目录）不得解析为根——
+    provider-smoke 编排冒烟脚本的契约是 VERSION + infra 齐备；弱契约
+    （locate_repository_root(require_infra=False)）会放行，强 wrapper
+    （require_infra=True）必须 fail-closed 抛 RuntimeError。
+
+    场景：模块位于 tmp_path/app/ops，tmp_path/VERSION 存在但 tmp_path/infra
+    不存在——模拟容器布局只打了 VERSION 漏打 infra/smoke_*.sh 的错误打包。
+    """
+    module_dir = tmp_path / "app" / "ops"
+    module_dir.mkdir(parents=True)
+    (tmp_path / "VERSION").write_text("0.0.0-no-infra\n", encoding="utf-8")
+    # 弱契约放行（VERSION 标记存在）
+    weak = pse.locate_repository_root(
+        module_dir / "provider_smoke_evidence.py", require_infra=False
+    )
+    assert weak == tmp_path.resolve()
+    # 强契约 fail-closed（infra 缺失）
+    with pytest.raises(RuntimeError, match="infra"):
+        pse._locate_repository_root(module_dir / "provider_smoke_evidence.py")
+
+
+def test_repository_root_constant_uses_strong_contract() -> None:
+    """常量 _REPOSITORY_ROOT 必须与强 wrapper（require_infra=True）一致——
+    不静默回落到 VERSION-only 弱契约（locate_repository_root() 默认
+    require_infra=False）。"""
+    strong = pse._locate_repository_root()
+    assert pse._REPOSITORY_ROOT == strong
+    # 强契约语义：常量根同时具备 VERSION 与 infra 标记
+    assert (pse._REPOSITORY_ROOT / "VERSION").is_file()
+    assert (pse._REPOSITORY_ROOT / "infra").is_dir()
+
+
+def test_repository_root_rejects_version_only_container_layout(tmp_path) -> None:
+    """容器布局回归：/app 布局只打 VERSION 漏打 infra 不得解析为根——
+    模拟生产镜像 Dockerfile 漏 COPY infra/smoke_*.sh（编排工具在容器内
+    定位不到冒烟脚本即应 fail-closed，而非放行后 subprocess 找不到脚本）。"""
+    app_root = tmp_path / "app"
+    module_dir = app_root / "app" / "ops"
+    module_dir.mkdir(parents=True)
+    (app_root / "VERSION").write_text("0.0.0-container-no-infra\n", encoding="utf-8")
+    # VERSION 存在但 infra 目录缺失——强契约拒绝
+    with pytest.raises(RuntimeError, match="infra"):
+        pse._locate_repository_root(module_dir / "provider_smoke_evidence.py")
+
+
 # --- 2. 脚本选择链（script selection） ---------------------------------------------
 
 
@@ -382,6 +428,76 @@ def test_dockerfile_glob_covers_all_provider_scripts() -> None:
         script = Path(spec.script)
         assert script.parent == Path("infra")
         assert script.name in packaged
+
+
+#: M14-211 local-voice 冒烟探针：infra/smoke_voice_local.sh 以 cwd=/app +
+#: 相对路径 exec tools/voice/smoke_local_voice.py——容器内必须可见此文件。
+LOCAL_VOICE_PROBE = Path("tools/voice/smoke_local_voice.py")
+
+
+def test_dockerfile_packages_smoke_local_voice_probe() -> None:
+    """容器布局契约：infra/smoke_voice_local.sh 以 cwd=/app + 相对路径
+    ``exec "$PYTHON" tools/voice/smoke_local_voice.py`` 调起本地语音冒烟
+    探针——API 镜像必须把该 .py 打进 /app/tools/voice/（M14-211 前缺失，
+    容器内 provider-smoke local-voice 轨道 exec 找不到文件而失败）。
+
+    锁定 Dockerfile 含精确 COPY 行（防回退）；并确认源树探针文件存在
+    （COPY 源必须有效）。仅打包这一个轻量探针——voice 模型/checkpoint/
+    log/artifact/temp/.verify/.claude 由 .dockerignore 排除。
+    """
+    text = API_DOCKERFILE.read_text(encoding="utf-8")
+    expected_copy = (
+        "COPY tools/voice/smoke_local_voice.py ./tools/voice/smoke_local_voice.py"
+    )
+    assert expected_copy in text, (
+        "Dockerfile 必须显式 COPY smoke_local_voice.py 到 /app/tools/voice/——"
+        "infra/smoke_voice_local.sh 在容器内以相对路径 exec 该探针"
+    )
+    source_probe = REPO_ROOT / LOCAL_VOICE_PROBE
+    assert source_probe.is_file(), (
+        f"源树缺失 {LOCAL_VOICE_PROBE}（Dockerfile COPY 源无效）"
+    )
+
+
+def test_dockerfile_does_not_package_voice_bulk_content() -> None:
+    """镜像只打包 smoke_local_voice.py 这一个轻量探针——voice 模型/
+    checkpoint/log/artifact/temp/.verify/.claude 一律不进镜像（防泄密、
+    防膨胀）。Dockerfile 不得出现整目录 COPY tools/voice/ 或宽 glob。"""
+    text = API_DOCKERFILE.read_text(encoding="utf-8")
+    # 禁止整目录打包与宽 glob（会把 voice 模型/checkpoint/log 一起带进镜像）。
+    assert "COPY tools/voice/ ./tools/voice/" not in text
+    assert "COPY tools/voice/*" not in text
+    assert "COPY tools ./tools" not in text
+    # smoke_local_voice.py 是 tools/ 下唯一允许的打包目标。
+    tools_copy_lines = [
+        line for line in text.splitlines()
+        if line.strip().startswith("COPY") and "tools/" in line
+    ]
+    assert tools_copy_lines == [
+        "COPY tools/voice/smoke_local_voice.py ./tools/voice/smoke_local_voice.py"
+    ], f"tools/ 下只允许打包 smoke_local_voice.py，实际: {tools_copy_lines}"
+
+
+DOCKERIGNORE = REPO_ROOT / ".dockerignore"
+
+#: M14-211 .dockerignore 必须排除的运维产物/临时文件/隔离区/本地配置——
+#: 防止误打包进镜像（泄密、膨胀、误带本地状态）。
+DOCKERIGNORE_REQUIRED_EXCLUSIONS = (
+    "artifacts/",
+    "temp/",
+    ".verify/",
+    ".claude/",
+)
+
+
+def test_dockerignore_excludes_runtime_bulge_and_secrets() -> None:
+    """``.dockerignore`` 至少排除 artifacts/、temp/、.verify/、.claude/——
+    运维产物/临时文件/审计隔离区/本地 agent 配置一律不进镜像。锁死防回退。"""
+    text = DOCKERIGNORE.read_text(encoding="utf-8")
+    missing = [
+        entry for entry in DOCKERIGNORE_REQUIRED_EXCLUSIONS if entry not in text
+    ]
+    assert not missing, f".dockerignore 缺少排除项: {missing}"
 
 
 # --- 4. 输出护栏（output guardrails，容器根注入） -----------------------------------

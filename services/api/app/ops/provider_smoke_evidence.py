@@ -25,12 +25,13 @@
   provider 同一证据形态；CLI choices、聚合槽位（``voice_mode`` 选轨，
   local 换用 local-voice 槽位）与 release-readiness 门（``evidence_step``
   拓扑校验）均已接入。
-- M14-210 容器布局：仓库根解析不再假设源码 checkout 的 ``parents[4]``
+- M14-210/M14-211 容器布局：仓库根解析不再假设源码 checkout 的 ``parents[4]``
   固定偏移（生产镜像 /app 布局下模块位于 /app/app/ops，偏移越界）——
-  :func:`_locate_repository_root` 按 VERSION 文件 + infra 目录标记向上
-  查找，源码 checkout 与容器 /app（Dockerfile 打包 VERSION 与
+  :func:`app.ops.version.locate_repository_root` 按 VERSION 文件 + infra
+  目录标记向上查找，源码 checkout 与容器 /app（Dockerfile 打包 VERSION 与
   infra/smoke_*.sh）同一解析；找不到标记抛明确 RuntimeError（导入期即
-  失败，不产生含混错误）。
+  失败，不产生含混错误）。M14-211 起该函数为共享实现，与
+  ``is_safe_artifact_path`` 等容器内护栏复用同一规则（不再各自维护偏移）。
 
 安全护栏（全部先于 runner 执行；违例 exit 2、不运行冒烟、不写证据、不创建
 输出/父目录）：
@@ -87,6 +88,7 @@ from pathlib import Path
 from typing import Any
 
 from app.ops.legacy_papers import is_safe_artifact_path
+from app.ops.version import locate_repository_root
 
 #: 证据自声明：聚合输入校验用（同 governance-evidence 的 TOOL_ID 模式）
 TOOL_ID = "provider-smoke-evidence"
@@ -97,25 +99,21 @@ GATE_ID = "provider-smoke"
 GATE_OUTPUT_FILE = "provider-smoke.json"
 
 def _locate_repository_root(start: Path | None = None) -> Path:
-    """向上查找仓库根：源码 checkout（services/api/app/ops → 仓库根）与
-    生产镜像 /app 布局（/app/app/ops → /app）同一解析——两种布局的仓库根
-    都具备 VERSION 文件与 infra 目录，祖先目录都不具备。
+    """provider-smoke 仓库根解析（薄 wrapper 供常量初始化、调用方与测试使用）。
 
-    M14-210：固定 ``parents[4]`` 只对源码 checkout 成立，容器布局下越界
-    （IndexError）；改按仓库标记向上查找（同 version._locate_version_file
-    口径），找不到时抛明确 RuntimeError，不允许含混失败。``start`` 可注入
-    起点路径（测试容器布局用，缺省本模块真实位置）。
+    M14-211：实现已提升为 :func:`app.ops.version.locate_repository_root`
+    共享函数；此处保留 ``require_infra=True`` 的更强契约（provider-smoke
+    编排冒烟脚本，容器内 ``infra/smoke_*.sh`` 必须可见）并委托共享实现。
+    常量 :data:`_REPOSITORY_ROOT` 经此 wrapper 初始化——与运行时调用方
+    同一强契约，不静默回落到 VERSION-only 弱契约。
     """
-    current = (start or Path(__file__)).resolve()
-    for parent in current.parents:
-        if (parent / "VERSION").is_file() and (parent / "infra").is_dir():
-            return parent
-    raise RuntimeError(
-        "仓库根未找到：期望 VERSION 文件 + infra 目录位于源码仓库根或容器 "
-        "/app（services/api Dockerfile 需打包 VERSION 与 infra/smoke_*.sh）"
-    )
+    return locate_repository_root(start, require_infra=True)
 
 
+#: 仓库根（M14-211：经 ``_locate_repository_root`` 强契约初始化——VERSION +
+#: infra 标记齐备；源码 checkout 与容器 /app 布局同一解析。此前本模块
+#: 自带的局部实现已提升为共享函数，供 is_safe_artifact_path 等护栏复用
+#: 同一规则）。
 _REPOSITORY_ROOT = _locate_repository_root()
 
 _REDACTION_NOTE = (

@@ -208,3 +208,85 @@ def test_readme_documents_rollback_runbook() -> None:
     assert "AIOS_IMAGE_TAG" in readme
     assert "up -d --no-build" in readme
     assert "cli backup" in readme or "cli backup --out" in readme
+
+
+# --- M14-211: 共享仓库根发现（locate_repository_root） ---------------------------
+
+
+def test_locate_repository_root_resolves_source_checkout() -> None:
+    """源码 checkout 布局：从 version.py 真实位置出发解析到真仓库根（VERSION
+    标记齐备），与 ``REPO_ROOT`` 常量一致；弱契约（只找 VERSION）与强契约
+    （额外要求 infra）都成立——源码仓库根两者齐备。"""
+    from app.ops.version import locate_repository_root
+
+    root = locate_repository_root()
+    assert root == REPO_ROOT
+    assert (root / "VERSION").is_file()
+    # 强契约：源码仓库根也含 infra（provider-smoke 编排冒烟脚本所需）。
+    root_strong = locate_repository_root(require_infra=True)
+    assert root_strong == REPO_ROOT
+    assert (root_strong / "infra").is_dir()
+
+
+def test_locate_repository_root_resolves_container_app_layout(tmp_path: Path) -> None:
+    """容器 /app 布局（Dockerfile COPY services/api/app ./app + VERSION +
+    infra/smoke_*.sh → /app/app/ops/version.py）：从 /app/app/ops 出发解析到
+    /app——旧 parents[N] 固定偏移在此布局下越界 IndexError；弱契约只找
+    VERSION 即可解析，强契约额外要求 infra 目录（容器内冒烟脚本可见）。"""
+    from app.ops.version import locate_repository_root
+
+    app_root = tmp_path / "app"
+    module_dir = app_root / "app" / "ops"
+    module_dir.mkdir(parents=True)
+    (app_root / "VERSION").write_text("0.0.0-container\n", encoding="utf-8")
+    # 弱契约：只找 VERSION，无需 infra——容器内 version 端点等不需要 infra。
+    resolved_weak = locate_repository_root(
+        module_dir / "version.py", require_infra=False
+    )
+    assert resolved_weak == app_root.resolve()
+    # 强契约：缺 infra 时 fail-closed（明确 RuntimeError，不含混失败）。
+    with pytest.raises(RuntimeError, match="仓库根"):
+        locate_repository_root(module_dir / "version.py", require_infra=True)
+    # 补上 infra 后强契约成立——容器内 provider-smoke 编排冒烟脚本所需。
+    (app_root / "infra").mkdir()
+    (app_root / "infra" / "smoke_search.sh").write_text("#!/usr/bin/env bash\n")
+    resolved_strong = locate_repository_root(
+        module_dir / "version.py", require_infra=True
+    )
+    assert resolved_strong == app_root.resolve()
+    assert (resolved_strong / "infra").is_dir()
+
+
+def test_locate_repository_root_missing_markers_raises_runtime_error(
+    tmp_path: Path,
+) -> None:
+    """标记缺失（无 VERSION 的目录树）=> 明确 RuntimeError——不允许含混失败
+    （如固定偏移越界的 IndexError）。弱契约与强契约都 fail-closed。"""
+    from app.ops.version import locate_repository_root
+
+    orphan = tmp_path / "orphan" / "app" / "ops"
+    orphan.mkdir(parents=True)
+    with pytest.raises(RuntimeError, match="仓库根"):
+        locate_repository_root(orphan / "version.py")
+    with pytest.raises(RuntimeError, match="仓库根"):
+        locate_repository_root(orphan / "version.py", require_infra=True)
+
+
+def test_locate_repository_root_strong_contract_rejects_version_without_infra(
+    tmp_path: Path,
+) -> None:
+    """强契约边界：有 VERSION 但无 infra 的目录不是 provider-smoke 的合法
+    仓库根——require_infra=True 必须拒绝（避免把缺冒烟脚本的目录误判为根，
+    导致容器内编排失败时含混）。弱契约仍放行（version 自身等不需要 infra）。"""
+    from app.ops.version import locate_repository_root
+
+    partial = tmp_path / "partial"
+    (partial / "app" / "ops").mkdir(parents=True)
+    (partial / "VERSION").write_text("0.0.0\n", encoding="utf-8")
+    # 弱契约放行
+    assert locate_repository_root(partial / "app" / "ops" / "v.py") == partial.resolve()
+    # 强契约拒绝
+    with pytest.raises(RuntimeError, match="仓库根"):
+        locate_repository_root(
+            partial / "app" / "ops" / "v.py", require_infra=True
+        )

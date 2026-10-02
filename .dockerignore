@@ -7,3 +7,9 @@ node_modules
 **/.ruff_cache
 apps/web/.next
 services/api/.pytest_cache
+# M14-211: 容器镜像只打包运行时必需文件——运维产物/临时文件/审计隔离区/
+# 本地 agent 配置一律不进镜像（防泄密、防镜像膨胀、防误打包本地状态）。
+artifacts/
+temp/
+.verify/
+.claude/
