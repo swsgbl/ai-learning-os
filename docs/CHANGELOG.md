@@ -1,5 +1,44 @@
 # Changelog
 
+## M14-212 — 打包后的 local-voice 探针导入路径修复（双布局兼容）
+
+- M14-211 把 `tools/voice/smoke_local_voice.py` 打进 API 镜像
+  `/app/tools/voice/`，但探针自身的 `sys.path.insert` 单候选硬拼
+  `REPO_ROOT / "services" / "api"`（源码 checkout 布局）——容器
+  `/app` 布局下该目录不存在（app 包在 `/app/app`），探针启动即
+  `ModuleNotFoundError: No module named 'app'`，provider-smoke
+  local-voice 轨道在容器内未跑任何探针即崩溃。本切片修复探针导入
+  路径的布局假设（M14-211 打包面的补全，不触碰 Dockerfile）。
+- 探针导入路径改为双候选标记探测（仓库既有模式，与
+  `app.ops.version.locate_repository_root` / `production_preflight`
+  同口径）：候选依次为 `<根>/services/api`（源码布局）与 `<根>`
+  （容器布局），按 `app/voice/providers.py` 存在性判定；两候选均
+  落空时抛明确 RuntimeError（fail-closed，不再 ModuleNotFoundError
+  含混失败）。
+- `services/api/tests/test_provider_smoke_container.py` 新增两个契约
+  测试锁死防回退：
+  - `test_probe_imports_app_package_from_container_layout`：沙箱复刻
+    容器 `/app` 布局（M14-211 Dockerfile COPY 面全量：VERSION +
+    infra/smoke_*.sh + 探针 + app.voice.providers）真实运行探针
+    （零网络：ASR 样例指向不存在文件、端点钉 127.0.0.1 discard
+    端口、剥 PYTHON/PYTHONPATH）——断言导入成功、探针进入正常
+    判分路径（不可达端点 => 干净 FAIL exit 1），而非
+    ModuleNotFoundError traceback。
+  - `test_probe_no_pinned_source_layout_import_path`：ast 守卫——
+    探针源码的 `sys.path.insert/append` 实参不得再拼接
+    `services/api` 固定子路径（空白重排也抓，容器布局下不存在）。
+- 验证（本地，未推送）：聚焦面 `pytest tests/test_provider_smoke_container.py`
+  → 25 passed（含两个新增）；更广冒烟面（container + voice_local +
+  voice_cloud + llm + search + voice_local_scripts）→ 90 passed,
+  1 skipped（既有 skip）；provider-smoke 编排/preflight/voice 面 →
+  221 passed；`ruff check app tests` 与探针单文件 → All checks
+  passed!；`py_compile` 探针 OK；`git diff --check` → clean。源码
+  checkout 与容器沙箱两种布局下探针真实运行均为「不可达端点 => 干净
+  FAIL exit 1」（零真实 provider 请求）。
+- 本切片只改探针导入路径与测试，不触碰 Dockerfile、编排层与任何
+  生产服务；不构成 production readiness 宣称，`production_ready=false`
+  不变。
+
 ## M14-208 — provider recovery（SearXNG 直连恢复 + Ollama 驻留，preflight ready）
 
 - 在 base `9ffe7232075419030c0aee282e04003b8f56a556` 的独立 worktree 收口
