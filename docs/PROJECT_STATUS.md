@@ -9,6 +9,29 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-217 release-check UTF-8 capture 修复（本地 10/10 且无解码线程异常）**：
+worktree
+`ai-learning-os-worktrees/m14-217-release-check-utf8-capture`，分支
+`fix/m14-217-release-check-utf8-capture`，基于 current main
+`4ac69889feb4ccbd0492b26e69f1378702833f69`（交接阶段已只读复核 PR #305
+merge、tree 与 main CI run 37019038982 5/5 success）。新增
+`run_captured` 统一 release-check 子进程捕获，固定
+`encoding="utf-8"` / `errors="replace"`，保留 cwd/env/timeout/check 语义；
+command、migration current、isolated migration 与 uvicorn log tail 在输出
+含 U+FFFD 时追加 replacement note，`redact_secrets` 与进程清理语义不变。
+两个按 UTF-8 断言中文输出的 API 测试子进程显式声明
+`PYTHONIOENCODING=utf-8`，未设置外层全局环境。验证：Ruff 全绿；新增契约
+**8 passed**；release-check 三件套 **73 passed / 1 warning**。第一次 full
+真实运行诚实失败 8/10（web-build + api-test），定位并修复两个测试子进程
+GBK 输出契约后，新工作区复跑 **exit 0 / all_green=true / 10/10 pass**，
+api-test **5697 passed / 36 skipped / 2 warnings**，migration head
+`0027_audit_chain`，JSON 2489 bytes / SHA256
+`98a58ed4...43f990`；外层输出无 reader-thread `UnicodeDecodeError`，最终
+JSON 无 U+FFFD note。provider-smoke、release-approval、turn-TLS 与
+long-soak 边界不变，`production_ready=false` 不变。证据：
+`docs/evidence/m14-217-release-check-utf8-capture/README.md`。单 local
+commit，不 push、不开 PR、不合并；未触碰 Docker/WSL/生产/设备/代理。
+
 **M14-216 release-check Windows bash executor 修复（本地 10/10 恢复）**：
 worktree
 `ai-learning-os-worktrees/m14-216-release-check-bash-executor`，分支

@@ -52,8 +52,10 @@ from app.ops.release_check import (
     CheckResult,
     build_release_check_evidence,
     build_release_checks,
+    run_captured,
     run_release_check,
     summarize,
+    utf8_replacement_note,
 )
 from app.ops.version import REPO_ROOT
 
@@ -174,14 +176,11 @@ def run_alembic_upgrade(
     """
     env = build_isolated_env(base_env if base_env is not None else os.environ, db_url)
     try:
-        proc = subprocess.run(
+        proc = run_captured(
             [sys.executable, "-m", "alembic", "upgrade", "head"],
-            cwd=str(api_dir),
+            cwd=api_dir,
             env=env,
-            capture_output=True,
-            text=True,
             timeout=timeout,
-            check=False,
         )
     except subprocess.TimeoutExpired:
         return False, f"alembic upgrade head 超时 (>{timeout:.0f}s)"
@@ -191,8 +190,15 @@ def run_alembic_upgrade(
         tail = " | ".join(
             ((proc.stdout or "") + (proc.stderr or "")).strip().splitlines()[-5:]
         )
+        replacement_note = utf8_replacement_note(proc.stdout, proc.stderr)
+        if replacement_note:
+            tail = " | ".join(part for part in (tail, replacement_note) if part)
         return False, redact_secrets(tail) or f"exit {proc.returncode}"
-    return True, "alembic upgrade head: exit 0"
+    replacement_note = utf8_replacement_note(proc.stdout, proc.stderr)
+    detail = "alembic upgrade head: exit 0"
+    if replacement_note:
+        detail = f"{detail} | {replacement_note}"
+    return True, detail
 
 
 def start_uvicorn(
@@ -314,7 +320,11 @@ def uvicorn_log_tail(log_path: Path, max_lines: int = 15) -> str:
     lines = [ln for ln in text.strip().splitlines() if ln.strip()]
     if not lines:
         return "(uvicorn 日志为空)"
-    return redact_secrets(" | ".join(lines[-max_lines:]))
+    tail = " | ".join(lines[-max_lines:])
+    replacement_note = utf8_replacement_note(tail)
+    if replacement_note:
+        tail = f"{tail} | {replacement_note}"
+    return redact_secrets(tail)
 
 
 def _run_full_gate(

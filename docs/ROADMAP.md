@@ -79,6 +79,26 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-217 状态更新（release-check UTF-8 capture）
+
+- 修复面：基于 current main `4ac6988` 新增 `run_captured`，release-check
+  子进程输出固定 UTF-8 + replacement 解码，避免 zh-CN Windows cp936 下
+  reader 线程 `UnicodeDecodeError` 与输出退化为 `None`。
+- 证据面：command、migration current、isolated migration 与 uvicorn log
+  tail 检测 U+FFFD 并追加 replacement note；`redact_secrets` 仍为最终
+  evidence/detail 边界，uvicorn 启动/关停语义不变。
+- 验证：Ruff 全绿；新增契约 8 passed；release-check 三件套
+  73 passed / 1 warning。第一次 full 8/10 的失败报告保留；修正两个测试
+  子进程自身 UTF-8 I/O 声明后，第二次 full 在新工作区 exit 0、
+  all_green=true、10/10 pass，api-test 5697 passed / 36 skipped /
+  2 warnings。JSON 2489 bytes，SHA256
+  `98a58ed4cb720b466767b086c25aa40a016688062a795f39b33ae3780943f990`。
+- 边界：本地修复分支验证，未 push/PR/合并；不触碰 Docker、WSL、容器、
+  生产、设备、代理。10/10 仍只是隔离本地门禁；provider-smoke
+  search/llm、release-approval、turn-TLS 与 long-soak 历史窗口边界不变，
+  `production_ready=false`。证据：
+  `docs/evidence/m14-217-release-check-utf8-capture/README.md`。
+
 ### M14-216 状态更新（release-check bash executor 修复）
 
 - 修复面：基于远端 current main `8d39772`（main CI run 36998129756

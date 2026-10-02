@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import ast
 import json
+import os
 import re
 import socket
 import ssl
@@ -942,6 +943,7 @@ def test_cli_entrypoint_module_compatible() -> None:
         [sys.executable, "-m", "public_edge_preflight"],
         capture_output=True, text=True, encoding="utf-8", timeout=60,
         cwd=str(REPO / "tools" / "ops"), check=False,
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
     assert result.returncode == 2
     assert "必须至少显式提供一个端点" in result.stderr
