@@ -9,6 +9,38 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-219 current-main 发布证据刷新（release-check 恢复 10/10；provider-smoke 仍诚实 blocked）**：
+worktree
+`ai-learning-os-worktrees/m14-219-current-main-release-evidence`，分支
+`docs/m14-219-current-main-release-evidence`，基于 current main
+`df3d9969bb7195f819a5e2e4cf0ab36c083933eb`（PR #307 merge）。区间
+`dcb8d380..df3d9969` 为 8 commits / 23 files +1571/−63（承载 M14-216
+bash executor、M14-217 UTF-8 capture、M14-218 smoke_llm 预算），M14-215
+代码绑定证据 stale，故在当前 main 真实刷新。ci-main：远端 run
+**37070706211**（push@main@df3d9969，run_number 753）5/5 jobs
+success，PR #307 身份链与 PR run 37053544037 5/5 一并 raw 复核，
+`derive_ci_main.py` 24 断言全过。release-check：干净 df3d9969 树从零
+隔离环境（uv venv CPython 3.12.14 + npm ci 411 packages）真实重跑
+`release-check-isolated`：**exit 0 / all_green=true / 10/10 pass**，
+api-test **5698 passed / 36 skipped / 2 warnings**，migration
+current==head==`0027_audit_chain`，local voice `audio/wav`（17324
+bytes），e2e 5 steps；M14-215 api-test 的 WSL bash relay 失败面已由
+M14-216 修复在位（resolve_bash 指向原生 Git Bash）。provider-smoke /
+long-soak / production-state 零重跑只读复用：provider-smoke 保持
+M14-209 真实失败聚合（voice pass、search/llm fail），long-soak 历史
+24h pass 窗口，六个 production-state 源 hash 复核 **61/61 checks**。
+evidence-cockpit exit 1 预期 fail-closed：**cockpit_ready=false、
+blockers=[provider-smoke:blocked]、pass=8/blocked=1/missing=2**，
+ci-main 与 release-check stale_status=current；
+`release_ready=false` / `production_ready=false` / `public_ready=false`
+不变。canonical 证据在 gitignored
+`.verify/m14-219-current-main-release-evidence/`（SHA256SUMS 49 文件；
+assert-contracts **ALL 34 CONTRACT CHECKS PASSED**；release-check.json
+2489 bytes / `ebc29a4f…`，cockpit 19314 bytes / `8db99dc1…`）。本切片
+只入库证据 README 与三份台账，单 local commit，不 push、不开 PR、
+不合并；零生产/容器/设备/代理接触。证据：
+`docs/evidence/m14-219-current-main-release-evidence/README.md`。
+
 **M14-218 provider-smoke LLM 默认预算修复（离线切片，零真实 provider 请求）**：
 worktree
 `ai-learning-os-worktrees/m14-218-provider-smoke-recovery-readiness`，分支

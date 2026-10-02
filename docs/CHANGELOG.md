@@ -1,5 +1,32 @@
 # Changelog
 
+## M14-219 — current-main release evidence refresh
+
+- 在 main 前进 8 commits / 23 files（`dcb8d380..df3d9969`，承载
+  M14-216 bash executor、M14-217 UTF-8 capture、M14-218 smoke_llm 预算）
+  后真实刷新代码绑定发布证据。只读 GitHub API 复核 run **37070706211**
+  （push@main@df3d9969）5/5 jobs success 与 PR #307 身份链（含 PR run
+  37053544037 5/5），24 项断言全过后程序化派生 ci-main 证据。
+- 干净 df3d9969 树从零隔离环境（uv venv CPython 3.12.14 + npm ci）
+  真实重跑 `release-check-isolated`：**exit 0 / all_green=true /
+  10/10 pass**，api-test 5698 passed / 36 skipped / 2 warnings，
+  migration current==head==`0027_audit_chain`，local voice
+  `audio/wav`（17324 bytes），e2e 5 steps；canonical release-check.json
+  与工具产物逐字节一致。M14-215 api-test 的 WSL bash relay 失败面已由
+  M14-216 在位修复。
+- provider-smoke / long-soak / production-state 六源零重跑，复用前
+  61 项校验全过；provider-smoke 仍为 M14-209 真实失败聚合（voice
+  pass、search/llm fail），不因失败改写。
+- evidence-cockpit 保持 fail-closed exit 1：cockpit_ready=false，
+  唯一 blocker provider-smoke:blocked，readiness pass=8 / blocked=1 /
+  missing=2，ci-main 与 release-check stale_status=current；
+  release_ready=false、production_ready=false、public_ready=false
+  不变。本切片不是发布审批。
+- 只入库证据 README 与三份台账；canonical 契约断言 ALL 34 CONTRACT
+  CHECKS PASSED，SHA256SUMS 49 文件索引，卫生扫描 credential hits 0 /
+  U+FFFD files 0。未 push、未 PR、未合并，零生产/容器/设备/代理接触。
+  证据：`docs/evidence/m14-219-current-main-release-evidence/README.md`。
+
 ## M14-218 — provider-smoke LLM 默认预算修复
 
 - 把 `infra/smoke_llm.sh` 简单探针的默认输出预算从 256 提到 1024
