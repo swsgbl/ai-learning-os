@@ -133,6 +133,52 @@ def test_module_has_no_pinned_parents_offset() -> None:
             pytest.fail("模块不得使用 parents[N] 固定偏移解析仓库根（容器布局越界）")
 
 
+def test_repository_root_rejects_version_only_ancestor(tmp_path) -> None:
+    """强契约回归：VERSION-only 祖先（缺 infra 目录）不得解析为根——
+    provider-smoke 编排冒烟脚本的契约是 VERSION + infra 齐备；弱契约
+    （locate_repository_root(require_infra=False)）会放行，强 wrapper
+    （require_infra=True）必须 fail-closed 抛 RuntimeError。
+
+    场景：模块位于 tmp_path/app/ops，tmp_path/VERSION 存在但 tmp_path/infra
+    不存在——模拟容器布局只打了 VERSION 漏打 infra/smoke_*.sh 的错误打包。
+    """
+    module_dir = tmp_path / "app" / "ops"
+    module_dir.mkdir(parents=True)
+    (tmp_path / "VERSION").write_text("0.0.0-no-infra\n", encoding="utf-8")
+    # 弱契约放行（VERSION 标记存在）
+    weak = pse.locate_repository_root(
+        module_dir / "provider_smoke_evidence.py", require_infra=False
+    )
+    assert weak == tmp_path.resolve()
+    # 强契约 fail-closed（infra 缺失）
+    with pytest.raises(RuntimeError, match="infra"):
+        pse._locate_repository_root(module_dir / "provider_smoke_evidence.py")
+
+
+def test_repository_root_constant_uses_strong_contract() -> None:
+    """常量 _REPOSITORY_ROOT 必须与强 wrapper（require_infra=True）一致——
+    不静默回落到 VERSION-only 弱契约（locate_repository_root() 默认
+    require_infra=False）。"""
+    strong = pse._locate_repository_root()
+    assert pse._REPOSITORY_ROOT == strong
+    # 强契约语义：常量根同时具备 VERSION 与 infra 标记
+    assert (pse._REPOSITORY_ROOT / "VERSION").is_file()
+    assert (pse._REPOSITORY_ROOT / "infra").is_dir()
+
+
+def test_repository_root_rejects_version_only_container_layout(tmp_path) -> None:
+    """容器布局回归：/app 布局只打 VERSION 漏打 infra 不得解析为根——
+    模拟生产镜像 Dockerfile 漏 COPY infra/smoke_*.sh（编排工具在容器内
+    定位不到冒烟脚本即应 fail-closed，而非放行后 subprocess 找不到脚本）。"""
+    app_root = tmp_path / "app"
+    module_dir = app_root / "app" / "ops"
+    module_dir.mkdir(parents=True)
+    (app_root / "VERSION").write_text("0.0.0-container-no-infra\n", encoding="utf-8")
+    # VERSION 存在但 infra 目录缺失——强契约拒绝
+    with pytest.raises(RuntimeError, match="infra"):
+        pse._locate_repository_root(module_dir / "provider_smoke_evidence.py")
+
+
 # --- 2. 脚本选择链（script selection） ---------------------------------------------
 
 

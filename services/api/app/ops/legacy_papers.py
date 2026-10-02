@@ -33,6 +33,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from app.db.orm import ExamSessionRow, PaperRow, QuestionRow, UserRow
 from app.db.session import create_engine
 from app.domain.audit_chain import append_audit
+from app.ops.version import locate_repository_root
 
 SEED_SOURCE = "AI Learning OS seed"
 MIGRATION_PATHS = ("keep-public", "assign-owner", "export-delete")
@@ -295,11 +296,22 @@ def is_safe_artifact_path(path: str | Path) -> bool:
     2. git check-ignore 判定该路径被忽略（覆盖仓库内 artifacts/temp 子目录
        及其他 .gitignore 规则；仓库外路径 git 无法判定即拒绝）。
     注意只看直接父目录——Windows 的 %TEMP% 是任意路径的祖先，不能据此放行。
+
+    M14-211：仓库根解析改用 :func:`app.ops.version.locate_repository_root`
+    的共享标记查找（VERSION 文件），同时支持源码 checkout 与容器 /app 布局
+    ——此前本函数用 ``Path(__file__).resolve().parents[4]`` 在容器
+    /app/app/ops/legacy_papers.py 下越界 IndexError，导致 provider-smoke
+    导出在 API 镜像内失败。``locate_repository_root`` 找不到标记抛明确
+    RuntimeError；此处 git 子进程不可用仍 fail-closed 返回 False（与
+    原行为一致——仓库根不可判定时不放行任何路径）。
     """
     resolved = Path(path).resolve()
     if resolved.parent.name.lower() in ("artifacts", "temp"):
         return True
-    repo_root = Path(__file__).resolve().parents[4]
+    try:
+        repo_root = locate_repository_root()
+    except RuntimeError:
+        return False
     try:
         git = subprocess.run(
             ["git", "check-ignore", "--quiet", str(resolved)],

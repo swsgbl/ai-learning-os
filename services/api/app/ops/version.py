@@ -28,6 +28,42 @@ def _locate_version_file() -> Path:
     )
 
 
+def locate_repository_root(
+    start: Path | None = None, *, require_infra: bool = False
+) -> Path:
+    """向上查找仓库根：源码 checkout（services/api/app/ops → 仓库根）与
+    生产镜像 /app 布局（/app/app/ops → /app）同一解析——两种布局的仓库根
+    都具备 VERSION 文件，祖先目录都不具备。
+
+    M14-211：固定 ``parents[N]`` 偏移只对单一布局成立（源码 checkout 的
+    ``parents[4]`` 在容器 /app 布局下越界 IndexError；反之亦然）。本函数按
+    VERSION 标记向上查找，找不到时抛明确 RuntimeError，不允许含混失败——
+    供 ``is_safe_artifact_path`` 等容器内必须可用的护栏复用（此前
+    ``legacy_papers.is_safe_artifact_path`` 的 ``parents[4]`` 在容器内
+    IndexError 导致 provider-smoke 导出失败）。
+
+    ``start`` 可注入起点路径（测试容器布局用，缺省本模块真实位置）。
+    ``require_infra=True`` 额外要求仓库根含 ``infra`` 目录（provider-smoke
+    编排冒烟脚本的更强契约——容器内 ``infra/smoke_*.sh`` 必须可见才允许
+    解析为根；弱契约只找 VERSION，供 version 自身等不需要 infra 的场景）。
+    """
+    current = (start or Path(__file__)).resolve()
+    for parent in current.parents:
+        if not (parent / "VERSION").is_file():
+            continue
+        if require_infra and not (parent / "infra").is_dir():
+            continue
+        return parent
+    hint = (
+        "VERSION 文件 + infra 目录" if require_infra else "VERSION 文件"
+    )
+    suffix = " 与 infra/smoke_*.sh" if require_infra else ""
+    raise RuntimeError(
+        f"仓库根未找到：期望 {hint} 位于源码仓库根或容器 /app"
+        f"（services/api Dockerfile 需打包 VERSION{suffix}）"
+    )
+
+
 REPO_ROOT = _locate_version_file().parent
 VERSION_FILE = REPO_ROOT / "VERSION"
 
