@@ -45,6 +45,7 @@ from itertools import count
 from pathlib import Path
 from typing import Any
 
+from app.ops.bash_executor import BashExecutorError, resolve_bash
 from app.ops.legacy_papers import is_safe_artifact_path
 from app.ops.production_preflight import redact_secrets
 from app.ops.release_check import (
@@ -316,7 +317,9 @@ def uvicorn_log_tail(log_path: Path, max_lines: int = 15) -> str:
     return redact_secrets(" | ".join(lines[-max_lines:]))
 
 
-def _run_full_gate(api_base: str, db_url: str) -> tuple[bool, str, list[CheckResult]]:
+def _run_full_gate(
+    api_base: str, db_url: str, *, bash_path: str | None = None
+) -> tuple[bool, str, list[CheckResult]]:
     """既有 full release-check 零改动复用：10 项门禁对临时 API + 一次性 SQLite。
 
     build_release_checks 的 db_url 门控（evaluate_pg_test_url）对 sqlite URL
@@ -325,7 +328,9 @@ def _run_full_gate(api_base: str, db_url: str) -> tuple[bool, str, list[CheckRes
     """
     import httpx
 
-    cmd_checks, live_checks = build_release_checks(db_url=db_url)
+    cmd_checks, live_checks = build_release_checks(
+        db_url=db_url, bash_path=bash_path
+    )
     with httpx.Client(base_url=api_base, trust_env=False, timeout=600.0) as client:
         results = run_release_check(cmd_checks, live_checks, client=client)
     all_green, report = summarize(results)
@@ -397,6 +402,16 @@ def run_isolated_release_check(
             "请换一个新工作区（--workdir）或移走该文件",
         )
 
+    try:
+        bash_path = resolve_bash(
+            env=base_env if base_env is not None else os.environ
+        )
+    except BashExecutorError as cause:
+        return IsolatedRunResult(
+            2,
+            f"bash preflight failed（未迁移、未启动临时 API、未执行门禁）: {cause}",
+        )
+
     db_url_value = sqlite_url(db_path)
     result = IsolatedRunResult(
         0,
@@ -444,7 +459,7 @@ def run_isolated_release_check(
             )
         # 4) 既有 full release-check 零改动复用（10 项，execution_scope=full）
         all_green, report, check_results = _run_full_gate(
-            result.api_base, db_url_value
+            result.api_base, db_url_value, bash_path=bash_path
         )
         evidence = build_release_check_evidence(check_results, execution_scope="full")
         # 5) 证据原子落盘（失败 => exit 2、旧报告原样、不打印门禁结论）

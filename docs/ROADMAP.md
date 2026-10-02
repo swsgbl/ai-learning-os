@@ -79,6 +79,27 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-216 状态更新（release-check bash executor 修复）
+
+- 修复面：基于远端 current main `8d39772`（main CI run 36998129756
+  五 job success 只读复核）新增 `app.ops.bash_executor`。`AIOS_BASH`
+  显式优先且 fail-closed；Windows 排除 WSL launcher，扫描完整 PATH 的
+  原生 bash 并可从 git 布局推导；POSIX/CI 保持 PATH 语义。
+- 编排边界：`release-check-isolated` 在任何迁移、临时 API、10 项门禁前
+  做 bash preflight；失败为单个明确 exit 2。解析结果注入 `api-test`
+  的 `AIOS_BASH`，五个原失败测试模块统一复用。
+- 验证：解析器/isolated/checklist **72 passed / 1 warning**；M14-215
+  失败五模块 **180 passed / 2 skipped / 1 warning**；full isolated
+  release-check exit 0，
+  all_green=true，10/10 pass，api-test 5689 passed / 36 skipped /
+  1 warning。报告 SHA256
+  `8a1747edfc2789f664c3cd00bb98842afb97f509e0b65d5e5792192945446299`。
+- 边界：本地修复分支验证，未 push/PR/合并；不触碰 WSL、Docker、容器、
+  生产、设备、代理。release-check 本地 blocker 解除，但 provider-smoke
+  search/llm、release-approval、turn-tls 与 long-soak 历史窗口边界不变，
+  `production_ready=false`。证据：
+  `docs/evidence/m14-216-release-check-bash-executor/README.md`。
+
 ### M14-215 状态更新（current-main 发布证据刷新，readiness fail-closed）
 
 - M14-215 docs/evidence 切片：worktree

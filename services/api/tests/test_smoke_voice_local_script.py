@@ -18,12 +18,12 @@ from __future__ import annotations
 
 import re
 import shlex
-import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from app.ops.bash_executor import BashExecutorError, resolve_bash
 from tests._subprocess_utf8 import run_bash
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -34,7 +34,10 @@ SCRIPT = REPO_ROOT / "infra" / "smoke_voice_local.sh"
 #: cd "$(dirname "$0")/.." 回仓库根，相对调用不影响其内部定位。
 SCRIPT_RELATIVE = "infra/smoke_voice_local.sh"
 
-BASH = shutil.which("bash")
+try:
+    BASH = resolve_bash()
+except BashExecutorError:
+    BASH = None
 
 #: wrapper 感知的全部输入环境键——只有 PYTHON（可选执行器覆盖，测试注入
 #: 替身用）；调用前在 bash 内 unset，清掉宿主/WSLENV 透传残留。

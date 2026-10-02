@@ -75,7 +75,9 @@ class CheckResult:
     kind: str = ""
 
 
-def default_command_checks(*, db_url: str | None = None) -> list[CommandCheck]:
+def default_command_checks(
+    *, db_url: str | None = None, bash_path: str | None = None
+) -> list[CommandCheck]:
     """七项本地命令门禁。命令与 CI 工作流同构。
 
     migration 为幂等安全形态（upgrade head + current 对账），不跑
@@ -97,6 +99,8 @@ def default_command_checks(*, db_url: str | None = None) -> list[CommandCheck]:
         "AIOS_PG_TEST_URL": gate.url,
         "DATABASE_URL": None,  # 剥离调用方 shell 的 DATABASE_URL（None=删除）
     }
+    if bash_path is not None:
+        test_env["AIOS_BASH"] = bash_path
     db_env: dict[str, str] = {}
     if db_url:
         db_env["DATABASE_URL"] = db_url  # alembic/backup 子进程需要
@@ -305,8 +309,12 @@ def summarize(results: list[CheckResult]) -> tuple[bool, str]:
     return all_green, "\n".join(lines)
 
 
-def build_release_checks(db_url: str | None = None) -> tuple[list[CommandCheck], list[LiveCheck]]:
-    return default_command_checks(db_url=db_url), list(DEFAULT_LIVE_CHECKS)
+def build_release_checks(
+    db_url: str | None = None, bash_path: str | None = None
+) -> tuple[list[CommandCheck], list[LiveCheck]]:
+    return default_command_checks(db_url=db_url, bash_path=bash_path), list(
+        DEFAULT_LIVE_CHECKS
+    )
 
 
 # ---------------------------------------------------------------- 证据导出 --

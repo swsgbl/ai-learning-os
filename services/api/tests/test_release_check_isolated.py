@@ -22,6 +22,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.ops import release_check_isolated as runner
+from app.ops.bash_executor import BashExecutorError
 from app.ops.release_check import CheckResult
 
 #: 密码 marker——任何输出面（stdout/消息/证据）都不得出现。
@@ -134,22 +135,23 @@ def _patch_green_path(monkeypatch, tmp_path: Path, *, gate_results=None, proc=No
         return state["proc"]
 
     monkeypatch.setattr(runner, "run_alembic_upgrade", fake_migrate)
+    monkeypatch.setattr(runner, "resolve_bash", lambda **kw: "/fake/bin/bash")
     monkeypatch.setattr(runner, "pick_free_port", lambda: 8017)
     monkeypatch.setattr(runner, "start_uvicorn", fake_start)
     monkeypatch.setattr(
         runner, "wait_for_health", lambda port, timeout=60.0, **kw: (True, "ok")
     )
     results = gate_results if gate_results is not None else _gate_results()
-    monkeypatch.setattr(
-        runner,
-        "_run_full_gate",
-        lambda api_base, db_url: (
+    def fake_gate(api_base, db_url, *, bash_path=None):
+        state["bash_path"] = bash_path
+        return (
             all(r.status == "pass" for r in results),
             "RESULT: ALL GREEN" if all(r.status == "pass" for r in results)
             else "RESULT: FAILED",
             results,
-        ),
-    )
+        )
+
+    monkeypatch.setattr(runner, "_run_full_gate", fake_gate)
     return state
 
 
@@ -386,6 +388,39 @@ def test_symlink_workspace_refused(tmp_path, monkeypatch) -> None:
     assert "符号链接" in result.summary
 
 
+def test_bash_preflight_failure_stops_before_side_effects(
+    tmp_path, monkeypatch
+) -> None:
+    """无可用 bash：单个明确 exit 2，不迁移、不启 API、不跑 25 个下游测试。"""
+    monkeypatch.setattr(runner, "run_alembic_upgrade", _must_not_run("迁移"))
+    monkeypatch.setattr(runner, "start_uvicorn", _must_not_run("启动 API"))
+    monkeypatch.setattr(runner, "_run_full_gate", _must_not_run("门禁"))
+
+    def failed_resolve(**kw):
+        raise BashExecutorError("未找到可用的原生 Windows bash")
+
+    monkeypatch.setattr(runner, "resolve_bash", failed_resolve)
+    ws = _safe_workspace(tmp_path)
+    result = runner.run_isolated_release_check(workdir=ws)
+    assert result.exit_code == 2
+    assert "bash preflight failed" in result.summary
+    assert "未迁移、未启动临时 API、未执行门禁" in result.summary
+    assert result.evidence is None and not result.evidence_written
+    assert not ws.exists()
+
+
+def test_bash_preflight_result_reaches_full_gate(tmp_path, monkeypatch) -> None:
+    """解析出的 bash 原样传给 full gate，供 api-test 的 AIOS_BASH 使用。"""
+    state = _patch_green_path(monkeypatch, tmp_path)
+    native = tmp_path / "native-bash.exe"
+    native.write_bytes(b"fake-native-bash\n")
+    monkeypatch.setattr(runner, "resolve_bash", lambda **kw: str(native))
+    ws = _safe_workspace(tmp_path)
+    result = runner.run_isolated_release_check(workdir=ws)
+    assert result.exit_code == 0
+    assert state["bash_path"] == str(native)
+
+
 # ------------------------------------------ 迁移失败 ------------------------
 
 
@@ -586,7 +621,7 @@ def test_gate_exception_still_shuts_down_server(tmp_path, monkeypatch) -> None:
     proc = FakeProc()
     _patch_green_path(monkeypatch, tmp_path, proc=proc)
 
-    def boom_gate(api_base, db_url):
+    def boom_gate(api_base, db_url, *, bash_path=None):
         raise RuntimeError(f"client blew up postgresql://u:{SECRET}@h/db")
 
     monkeypatch.setattr(runner, "_run_full_gate", boom_gate)

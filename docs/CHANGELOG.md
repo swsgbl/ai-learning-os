@@ -1,5 +1,31 @@
 # Changelog
 
+## M14-216 — release-check bash executor
+
+- Added a fail-closed product resolver for bash-dependent release tooling.
+  `AIOS_BASH` is an explicit override and must reference an existing
+  executable; invalid values fail before orchestration. POSIX keeps PATH
+  lookup, while Windows excludes System32/Sysnative/WindowsApps WSL relays,
+  scans the full PATH for a native bash, and can derive Git Bash from the
+  located git installation without machine-specific paths.
+- Moved the isolated release orchestrator's bash check ahead of workspace
+  creation, migration, temporary API startup, and the ten gates. A missing
+  executor now produces one clear exit-2 preflight error instead of 25
+  downstream pytest failures. The resolved path is passed to `api-test`
+  through `AIOS_BASH`, and the five affected test modules use the same
+  resolver.
+- Verified the selector matrix with 72 focused tests, reran the five formerly
+  failing modules with 180 passed and 2 skipped, and reran the full isolated
+  release check on the local fix branch: exit 0, `all_green=true`, and
+  10/10 checks passed. API tests were 5689 passed / 36 skipped / 1 warning.
+  The 2485-byte JSON evidence hash is
+  `8a1747edfc2789f664c3cd00bb98842afb97f509e0b65d5e5792192945446299`.
+- Read-only GitHub API checks confirmed base main `8d39772` and CI run
+  36998129756 completed successfully with all five jobs successful. The fix
+  branch itself was not pushed, so no remote CI claim is made for it.
+  Provider-smoke search/llm failures, human-only release approval, optional
+  turn-TLS, and the historical long-soak boundary remain unchanged.
+
 ## M14-215 — current-main release evidence refresh
 
 - Refreshed the code-bound evidence at main `dcb8d380` after provider-smoke,

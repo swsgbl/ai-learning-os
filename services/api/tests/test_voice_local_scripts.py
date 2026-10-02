@@ -31,6 +31,7 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
+from app.ops.bash_executor import BashExecutorError, resolve_bash
 from tests._subprocess_utf8 import run_bash, run_utf8
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -43,7 +44,10 @@ REACHABILITY = TOOLS_VOICE / "compose_voice_reachability.sh"
 RUNTIME_REQUIREMENTS = TOOLS_VOICE / "cosyvoice-runtime-requirements.txt"
 EVIDENCE_PS1 = TOOLS_VOICE / "run_api_tests.ps1"
 
-BASH = shutil.which("bash")
+try:
+    BASH = resolve_bash()
+except BashExecutorError:
+    BASH = None
 
 SECRET_PATTERNS = ("sk-", "AKIA", "ghp_", "xoxb-", "-----BEGIN")
 
