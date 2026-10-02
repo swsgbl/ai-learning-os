@@ -1,5 +1,23 @@
 # Changelog
 
+## M14-213H — Harmony current-main regression evidence
+
+- Added the repository evidence record for the completed Harmony emulator
+  regression at verification commit `b1f1a72`, bound to evidence base
+  `070b1f1` by the fact that `apps/harmony` has no diff between those commits.
+  The evidence scope is therefore Harmony-tree-equivalent current-main
+  regression, not full-stack current-main retesting.
+- Recorded the successful unsigned HAP build (573148 bytes), expected unsigned
+  preflight exit 0, expected signing-material exit 2, and successful
+  simulator/loopback auth smoke. The auth launcher exited 0 with 11 steps ok,
+  one expected auth-phase skip, and zero failures.
+- Recorded the environment root cause for the earlier continuation failure:
+  the auth-smoke child backend needed `AIOS_AUTH_SMOKE_PYTHON` pointed at the
+  repository virtual environment. This was not a product regression.
+- Kept the boundary explicit: unsigned only, simulator/loopback only, no AGC
+  signing or physical device, the 748-test result was reused rather than rerun,
+  and `production_ready=false` remains unchanged.
+
 ## M14-212 — 打包后的 local-voice 探针导入路径修复（双布局兼容）
 
 - M14-211 把 `tools/voice/smoke_local_voice.py` 打进 API 镜像
