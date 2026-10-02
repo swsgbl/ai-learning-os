@@ -79,6 +79,27 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-218 状态更新（provider-smoke LLM 默认预算修复，离线切片）
+
+- 修复面：基于 current main `d689069`（PR #306 merge）把
+  `infra/smoke_llm.sh` 简单探针默认 `max_tokens` 256 → 1024（仅在未
+  显式设置 `LLM_SMOKE_MAX_TOKENS` 时生效）。256 有 M14-115 第 1 次与
+  M14-209 两轮 thinking-only 空 content 误判实证；1024 是 rubric judge
+  一直走的 gateway 生产默认（M14-115 显式 1024 得非空正文并通过
+  rubric）；2048 有 M14-98 饱和 GPU >30s 超时实证，不采用。
+- 语义边界：探针保持单轮请求——不新增 retry/fallback/预算自适应二次
+  请求，空 content 一律 fail；显式覆写、timeout、num_ctx、错误脱敏与
+  两段 probe 结构不变，gateway 生产 chat 默认不变。
+- 验证（canonical venv，全部离线）：聚焦 `test_smoke_llm_script.py`
+  **8 passed**（含新增禁止 retry/fallback 契约）；邻居 provider-smoke
+  契约 **163 passed**；Ruff（`services/api/app services/api/tests`）
+  全绿；`git diff --check` 与新增行敏感值扫描通过。
+- 边界：本轮零真实 provider 请求、零生产接触；search 仍按 M14-209
+  如实 blocked（根因在外部上游/网络/容器环境，本切片不处理
+  Docker/SearXNG）；LLM 真实重跑必须等外部环境修复后由显式切片单独
+  执行。不 push、不 PR、不合并，`production_ready=false` 不变。证据：
+  `docs/evidence/m14-218-provider-smoke-recovery-readiness/README.md`。
+
 ### M14-217 状态更新（release-check UTF-8 capture）
 
 - 修复面：基于 current main `4ac6988` 新增 `run_captured`，release-check

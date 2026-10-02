@@ -1,5 +1,28 @@
 # Changelog
 
+## M14-218 — provider-smoke LLM 默认预算修复
+
+- 把 `infra/smoke_llm.sh` 简单探针的默认输出预算从 256 提到 1024
+  （仅当未显式设置 `LLM_SMOKE_MAX_TOKENS` 时生效）。256 有两次
+  thinking-only 空 content 误判实证（M14-115 第 1 次、M14-209）；
+  1024 是 rubric judge 一直走的 gateway 生产默认，M14-115 第 2 次
+  显式 1024 得到非空正文并通过 rubric；2048 有饱和 GPU >30s 超时实证
+  （M14-98），不采用。
+- 探针语义保持单轮请求：不新增 retry/fallback/预算自适应二次请求，
+  thinking-only 空 content 一律 fail。显式覆写、timeout、num_ctx、
+  错误脱敏与两段 probe 结构不变。
+- 契约测试更新：锁定默认 1024、禁止默认回退 256、禁止 2048/32 调用
+  形态、新增禁止 retry/fallback 契约。离线验证：聚焦
+  `test_smoke_llm_script.py` **8 passed**；邻居 provider-smoke 契约
+  **163 passed**；Ruff（`services/api/app services/api/tests`）全绿；
+  `git diff --check` 与新增行敏感值扫描通过。
+- 本切片只解决 LLM 冒烟预算误判面：本轮零真实 provider 请求、零生产
+  接触；search 仍按 M14-209 如实 blocked（根因在外部上游/网络/容器
+  环境，本切片不处理 Docker/SearXNG）。真实重跑必须等外部环境修复后
+  由显式切片单独执行。不表示 release readiness，
+  `production_ready=false` 不变。证据：
+  `docs/evidence/m14-218-provider-smoke-recovery-readiness/README.md`。
+
 ## M14-217 — release-check UTF-8 capture
 
 - Added a shared `run_captured` helper for release-check subprocess output and

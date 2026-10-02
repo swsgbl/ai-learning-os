@@ -14,10 +14,13 @@
 #   max_tokens=2048 生成 >30s，两跑 llm 冒烟 httpx.ReadTimeout——本地冒烟
 #   由运维按机器负载显式调大（本切片不实测默认值，不擅自改全局默认）。
 # - LLM_SMOKE_MAX_TOKENS（可选正整数，非敏感）：简单探针的有界输出预算覆写，
-#   默认 256。2048 已实证超时（M14-98）；过小预算有 thinking-only 空 content
-#   风险（M14-71 教训，冒烟仍要求非空 content）——256 是未实测折中，真实
-#   重跑切片可按实测调整。rubric judge 探针保持 gateway 生产默认 1024
-#   （冒烟不改变生产 chat 语义）。
+#   默认 1024（M14-218：与 rubric judge 走的 gateway 生产默认 1024 一致，
+#   是 M14-209 后的最小已知合理预算——M14-115 实证 256 thinking-only 空
+#   content fail、1024 得非空正文并通过 rubric；M14-98 实证 2048 在饱和
+#   GPU 上 >30s 超时，不采用）。探针保持单轮请求：不做预算自适应的二次
+#   请求，空 content 一律 fail（M14-71 教训）。rubric judge 探针保持不
+#   显式传 max_tokens（走 gateway 生产默认 1024——冒烟不改变生产 chat
+#   语义）。
 # - loopback 端点由 gateway 强制绕过环境代理（trust_env=False）——冒烟
 #   shell 不再依赖调用方 NO_PROXY 手工正确性（M14-98 attempt1 的
 #   httpcore http_proxy 帧教训）。
@@ -97,7 +100,12 @@ except ValueError as cause:
 try:
     out = gateway.chat(
         (ChatMessage(role="user", content='只输出 JSON：{"ok": true}'),),
-        max_tokens=int(_budget_raw) if _budget_raw else 256,
+        # M14-218: 未显式覆写时默认 1024——与 rubric judge 走的 gateway
+        # 生产默认一致。M14-115 实证 256 thinking-only 空 content fail、
+        # 1024 得非空正文并通过 rubric；M14-98 实证 2048 在饱和 GPU 上
+        # >30s 超时，不采用。仍单轮请求：空 content 一律 fail，不做预算
+        # 自适应的二次请求。
+        max_tokens=int(_budget_raw) if _budget_raw else 1024,
     )
 except LlmUnavailable as cause:
     print(f"[smoke-llm] FAIL: LLM 端点不可用: {cause}", file=sys.stderr)

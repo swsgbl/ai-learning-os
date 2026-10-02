@@ -9,6 +9,27 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-218 provider-smoke LLM 默认预算修复（离线切片，零真实 provider 请求）**：
+worktree
+`ai-learning-os-worktrees/m14-218-provider-smoke-recovery-readiness`，分支
+`ops/m14-218-provider-smoke-recovery-readiness`，基于 current main
+`d689069a7bab6a33d5ce39fc201b4066641024a0`（PR #306 merge）。只改
+`infra/smoke_llm.sh` 简单探针默认 `max_tokens` 256 → 1024（未显式设置
+`LLM_SMOKE_MAX_TOKENS` 时生效）：256 有 M14-115/M14-209 两轮
+thinking-only 空 content 误判实证，1024 与 rubric judge 走的 gateway
+生产默认一致且 M14-115 显式 1024 得非空正文并通过 rubric，2048 有
+M14-98 饱和 GPU 超时实证不采用。探针保持单轮请求（无 retry/fallback/
+预算自适应二次请求），空 content 一律 fail；显式覆写、timeout、
+num_ctx、错误脱敏与两段 probe 语义不变。契约测试锁定默认 1024、禁止
+回退 256/2048/32、禁止 retry/fallback。验证（canonical venv，全部
+离线）：聚焦 **8 passed**；邻居 provider-smoke 契约 **163 passed**；
+Ruff 全绿；`git diff --check` 与新增行敏感值扫描通过。search 仍按
+M14-209 如实 blocked（根因在外部上游/网络/容器环境，本切片不处理
+Docker/SearXNG）；真实重跑必须等外部环境修复后由显式切片单独执行。
+`production_ready=false` 不变。证据：
+`docs/evidence/m14-218-provider-smoke-recovery-readiness/README.md`。
+单 local commit，不 push、不开 PR、不合并。
+
 **M14-217 release-check UTF-8 capture 修复（本地 10/10 且无解码线程异常）**：
 worktree
 `ai-learning-os-worktrees/m14-217-release-check-utf8-capture`，分支
