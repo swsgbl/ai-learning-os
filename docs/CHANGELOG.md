@@ -1,5 +1,25 @@
 # Changelog
 
+## M14-221 — Harmony current-main 无漂移证据收口（docs-only）
+
+- 新增 `docs/evidence/m14-221-harmony-current-main-no-drift/README.md`，
+  把 M14-220H verification-only 会话的结论固化为仓库证据，并更新
+  PROJECT_STATUS / ROADMAP / CHANGELOG 三本台账。
+- 固化结论（写入前独立复核 gitignored 审计源）：Harmony 面
+  （apps/harmony、tools/harmony_release、tests/harmony_release）在
+  `b1f1a72..df3d9969` 区间 diff 为空，M14-213H 证据在 current main
+  `df3d9969` 代码等价；区间 30 个变更全在 Harmony 面之外，748 测试
+  套件与模拟器认证冒烟按规则不重跑。
+- 固化的运行时快照：unsigned HAP 构建 exit 0、235176 字节、SHA256
+  `3019D5D0C457AFAA7DAC35E54184BDF902261F4D0E3471ACCADB16E35A2C3A45`；
+  预检默认 exit 0 / `blocked_by_external_materials`、
+  `--require-materials` exit 2 fail-closed；`hdc list targets` 只读
+  `127.0.0.1:5555`。
+- 诚实边界：docs-only，不重跑构建/设备，不碰生产、Docker/WSL、ADB
+  生命周期、secrets、AGC 材料；不声称 `signedness_verified`、signed
+  HAP、真机/公开发布、`release_ready`/`production_ready`/
+  `public_ready`。1 个本地 commit，不 push、不 PR、不合并。
+
 ## M14-219 — current-main release evidence refresh
 
 - 在 main 前进 8 commits / 23 files（`dcb8d380..df3d9969`，承载

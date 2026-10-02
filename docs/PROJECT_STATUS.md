@@ -9,6 +9,27 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-221H Harmony current-main 无漂移证据收口（docs-only）**
+worktree
+`ai-learning-os-worktrees/m14-221-harmony-current-main-no-drift-evidence`，分支
+`docs/m14-221-harmony-current-main-no-drift-evidence`，基于 current main
+`df3d9969bb7195f819a5e2e4cf0ab36c083933eb`（PR #307 merge）。只读复核
+M14-220H verification-only 会话的 gitignored 证据
+（`.verify/m14-220-harmony-current-main-no-drift/`，13 文件含 REPORT.md）后
+固化入库：Harmony 面（apps/harmony、tools/harmony_release、
+tests/harmony_release）在 `b1f1a72..df3d9969` 区间 diff 为空
+（M14-213H 证据代码等价，748 套件与模拟器认证冒烟按规则不重跑）；
+unsigned HAP 构建 exit 0、235176 字节、SHA256
+`3019D5D0C457AFAA7DAC35E54184BDF902261F4D0E3471ACCADB16E35A2C3A45`
+（本会话 `Get-FileHash` 只读复算一致）；预检默认 exit 0 / status
+`blocked_by_external_materials`，`--require-materials` exit 2
+fail-closed；`hdc list targets` 只读见 `127.0.0.1:5555`。本切片不重跑
+构建/设备、不碰生产/Docker/WSL/ADB 生命周期/secrets/AGC 材料；不声称
+`signedness_verified`、signed HAP、真机/公开发布、`release_ready`/
+`production_ready`/`public_ready`。证据：
+`docs/evidence/m14-221-harmony-current-main-no-drift/README.md`。1 个
+本地 commit，不 push、不开 PR、不合并。
+
 **M14-219 current-main 发布证据刷新（release-check 恢复 10/10；provider-smoke 仍诚实 blocked）**：
 worktree
 `ai-learning-os-worktrees/m14-219-current-main-release-evidence`，分支
