@@ -9,6 +9,28 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-215 current-main 发布证据刷新（ci-main 通过；release-check 与
+provider-smoke 诚实 blocked）**：worktree
+`ai-learning-os-worktrees/m14-215-current-main-release-evidence`，分支
+`docs/m14-215-current-main-release-evidence`，基于 main
+`dcb8d380f761cadaada86bc6f1e6e3ee9cc45f2e`。GitHub Actions run
+**36989559053**（run_number 745，push@main@dcb8d380）经 raw API 双查询绑定，
+五 job 5/5 success。干净 dcb8d380 树从零隔离环境真实重跑
+`release-check-isolated`：**exit 1 / all_green=false / 9/10 pass**，唯一失败
+api-test（pytest 25 failed / 5643 passed / 47 skipped）；九个非 API-test 门
+通过。聚焦复现定位到宿主 `C:\WINDOWS\system32\bash.EXE` 的 WSL relay 无法
+启动 `/bin/bash`，未修复 WSL/Docker/容器。按项目规则只读复用 M14-209
+provider-smoke 真实失败聚合（voice pass、search/llm fail）、M14-106/M14-206
+long-soak 历史 pass 与六个 production-state snapshot，复用前 54 项断言全过。
+evidence-cockpit exit 1：**cockpit_ready=false、blockers=[
+provider-smoke:blocked, release-check:blocked]、pass=7/blocked=2/missing=2**；
+`release_ready=false` / `production_ready=false` / `public_ready=false`
+不变。
+非 WSL 依赖聚焦契约测试 **444 passed / 1 warning**。证据：
+`docs/evidence/m14-215-current-main-release-evidence/README.md`。单 local
+commit，不 push、不开 PR、不合并；未触碰 Docker Desktop/本机容器，未执行
+ADB/真机/模拟器操作。
+
 **M14-214 Android public-device smoke（工具 ready，真机 blocked）**：分支
 `ops/m14-214-android-public-device-smoke`，基于
 `f87e54ec71aa28c42ac2c50797aa5ce9599fb0d8`。新增

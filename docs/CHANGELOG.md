@@ -1,5 +1,31 @@
 # Changelog
 
+## M14-215 — current-main release evidence refresh
+
+- Refreshed the code-bound evidence at main `dcb8d380` after provider-smoke,
+  API runtime, Docker packaging, and Android smoke tooling changes made the
+  M14-206 gates stale. Read-only GitHub API queries verified run
+  `36989559053` as push/main/head-SHA-bound and completed successfully with
+  all five jobs successful.
+- Reran `release-check-isolated` in a fresh isolated environment on the clean
+  base tree. The result is honestly blocked: exit 1, 9/10 checks passed, and
+  `api-test` failed with 25 failed / 5643 passed / 47 skipped tests. Focused
+  reproduction points to the host WSL bash launcher being unable to execute
+  `/bin/bash`; no WSL, Docker Desktop, local container, or production-code
+  change was made.
+- Reused provider-smoke, long-soak, and six production-state snapshots only
+  after source hash, commit-chain, and time-window assertions passed. The
+  provider aggregate remains a real failure (voice pass, search/llm fail);
+  long-soak and production-state results remain historical snapshots rather
+  than new executions.
+- Aggregated with evidence-cockpit and preserved the fail-closed exit 1:
+  `cockpit_ready=false`, blockers are provider-smoke and release-check, and
+  readiness is pass=7 / blocked=2 / missing=2. `release_ready=false`,
+  `production_ready=false`, and `public_ready=false` remain unchanged.
+- Added the evidence README and status/roadmap/changelog records only. Focused
+  offline contract tests passed 444/444 with one warning. No push, PR, merge, release, local
+  Docker/container operation, or ADB/device/emulator operation occurred.
+
 ## M14-214 — Android public physical-device smoke chain
 
 - Added `tools/android_release/public_device_smoke.py`, a fail-closed single

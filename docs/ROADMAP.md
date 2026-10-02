@@ -79,6 +79,35 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-215 状态更新（current-main 发布证据刷新，readiness fail-closed）
+
+- M14-215 docs/evidence 切片：worktree
+  `ai-learning-os-worktrees/m14-215-current-main-release-evidence`，分支
+  `docs/m14-215-current-main-release-evidence`，基于 main
+  `dcb8d380f761cadaada86bc6f1e6e3ee9cc45f2e`。因
+  `e14d3f0..dcb8d380` 含 provider-smoke 工具/脚本/测试、API 运行时代码、
+  Docker 打包面与 Android public-device smoke 工具/测试，代码绑定证据
+  漂移，本轮真实刷新。
+- ci-main：run **36989559053**（run_number 745，push@main@dcb8d380，
+  completed/success）与五个 job API/Android/Docker/Release tools/Web 全部
+  success；raw GitHub API 双响应与空 stderr 归档，11 项断言驱动派生
+  canonical。
+- release-check：干净 dcb8d380 树从零隔离环境 full 重跑，**exit 1 /
+  all_green=false / 9/10 pass**；api-test 为唯一失败（25 failed / 5643
+  passed / 47 skipped），其余九门通过。
+  聚焦复现定位宿主 `C:\WINDOWS\system32\bash.EXE` 的 WSL relay 无法启动
+  `/bin/bash`；按边界不修复 WSL/Docker Desktop/本机容器。
+- 只读复用：M14-209 provider-smoke 真实失败聚合（voice pass、search/llm
+  fail，M14-211 partial 无 aggregate 不 stage）、M14-106/M14-206 long-soak
+  历史 pass、六源 production-state snapshot；54 项复用断言全过，gate JSON
+  零手改。
+- evidence-cockpit：exit 1 如实，`cockpit_ready=false`，blockers 恰
+  `provider-smoke:blocked` 与 `release-check:blocked`；readiness
+  pass=7/blocked=2/missing=2，`release_ready=false`、
+  `production_ready=false`、`public_ready=false`。非 WSL 依赖聚焦契约测试 **444
+  passed / 1 warning**。证据：
+  `docs/evidence/m14-215-current-main-release-evidence/README.md`。
+
 ### M14-214 状态更新（Android public-device smoke，设备 blocked）
 
 - 新增 fail-closed 公网 Android 物理设备冒烟工具与离线契约测试：物理
