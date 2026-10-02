@@ -869,6 +869,7 @@ def test_cli_help_lists_subcommand() -> None:
         text=True,
         check=False,
         encoding="utf-8",
+        env={**os.environ, "PYTHONIOENCODING": "utf-8"},
     )
     assert proc.returncode == 0
     assert "backup-restore-evidence" in (proc.stdout or "")

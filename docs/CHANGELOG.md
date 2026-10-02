@@ -1,5 +1,31 @@
 # Changelog
 
+## M14-217 — release-check UTF-8 capture
+
+- Added a shared `run_captured` helper for release-check subprocess output and
+  pinned it to UTF-8 decoding with replacement. The helper preserves cwd, env,
+  timeout, and unchecked-return semantics while preventing Windows cp936
+  reader threads from turning captured output into `None` on invalid bytes.
+- Moved command execution, migration-current checks, isolated Alembic runs,
+  and uvicorn log inspection onto loss-tolerant UTF-8 capture. Evidence details
+  now append an explicit replacement marker when U+FFFD is present, while
+  secret redaction and temporary-API cleanup behavior remain unchanged.
+- Made the two CLI subprocess tests that assert UTF-8 Chinese messages declare
+  `PYTHONIOENCODING=utf-8` for those child processes only. No outer global
+  encoding override was used.
+- Verified Ruff, 8 new encoding contracts, and the three focused release-check
+  suites (73 passed / 1 warning). The first full isolated run honestly failed
+  8/10 and is preserved as evidence; after fixing the two test child encoding
+  contracts, a fresh full run passed exit 0 with `all_green=true`, 10/10
+  checks, and 5697 API tests passed / 36 skipped / 2 warnings. The final
+  2489-byte JSON hash is
+  `98a58ed4cb720b466767b086c25aa40a016688062a795f39b33ae3780943f990`.
+  Neither full run printed a reader-thread `UnicodeDecodeError`.
+- Kept the release boundary unchanged: this is local isolated evidence only,
+  not production readiness. Provider-smoke search/llm failures, human-only
+  release approval, optional turn-TLS, and the historical long-soak boundary
+  remain unchanged.
+
 ## M14-216 — release-check bash executor
 
 - Added a fail-closed product resolver for bash-dependent release tooling.

@@ -24,7 +24,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import tempfile
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -48,6 +48,40 @@ ACCEPTANCE_COVERAGE = {
     "voice": ["voice"],
     "license": ["license"],
 }
+
+OUTPUT_REPLACEMENT_NOTE = "子进程输出含非 UTF-8 字节，已按 U+FFFD 替换"
+
+
+def utf8_replacement_note(*outputs: str | None) -> str:
+    """Return the evidence marker when replacement decoding occurred."""
+    return OUTPUT_REPLACEMENT_NOTE if any("\ufffd" in out for out in outputs if out) else ""
+
+
+def run_captured(
+    argv: Sequence[str],
+    *,
+    cwd: Path | str | None = None,
+    env: Mapping[str, str] | None = None,
+    timeout: float | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Capture subprocess output without depending on the console code page.
+
+    Python's text mode otherwise uses the process locale (cp936/GBK on this
+    Windows host). Invalid bytes then escape from ``communicate`` reader
+    threads as ``UnicodeDecodeError`` and turn captured output into ``None``.
+    UTF-8 with replacement keeps the reader threads total and marks lossy
+    bytes through :data:`OUTPUT_REPLACEMENT_NOTE` at call-site evidence.
+    """
+    return subprocess.run(
+        list(argv),
+        cwd=cwd,
+        env=dict(env) if env is not None else None,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        check=False,
+    )
 
 
 @dataclass(frozen=True)
@@ -154,13 +188,13 @@ def check_migration_current(api_dir: Path, alembic="alembic", env: dict | None =
             return alembic(argv)
         _env = {**os.environ, **(env or {})}
         _env = {k: v for k, v in _env.items() if v is not None}
-        return subprocess.run(
-            argv, cwd=str(api_dir), capture_output=True, text=True, check=False,
-            env=_env,
-        )
+        return run_captured(argv, cwd=api_dir, env=_env)
 
     heads = _exec("heads")
     current = _exec("current")
+    replacement_note = utf8_replacement_note(
+        heads.stdout, heads.stderr, current.stdout, current.stderr
+    )
     head_rev = next(
         (ln.split()[0] for ln in heads.stdout.splitlines() if ln and ln[0].isalnum()), ""
     )
@@ -168,10 +202,19 @@ def check_migration_current(api_dir: Path, alembic="alembic", env: dict | None =
         (ln.split()[0] for ln in current.stdout.splitlines() if ln and ln[0].isalnum()), ""
     )
     if not head_rev:
-        raise AssertionError(f"alembic heads 无输出: {heads.stdout!r} {heads.stderr!r}")
+        raise AssertionError(
+            f"alembic heads 无输出: {heads.stdout!r} {heads.stderr!r}"
+            + (f" | {replacement_note}" if replacement_note else "")
+        )
     if cur_rev != head_rev:
-        raise AssertionError(f"current={cur_rev or '(none)'} != head={head_rev}")
-    return f"current == head == {head_rev}"
+        raise AssertionError(
+            f"current={cur_rev or '(none)'} != head={head_rev}"
+            + (f" | {replacement_note}" if replacement_note else "")
+        )
+    detail = f"current == head == {head_rev}"
+    if replacement_note:
+        detail = f"{detail} | {replacement_note}"
+    return detail
 
 
 # ---------------------------------------------------------------- live 项 --
@@ -274,21 +317,17 @@ def _execute_command(check: CommandCheck) -> tuple[bool, str]:
 
         _env = {**_os.environ, **check.env}
         _env = {k: v for k, v in _env.items() if v is not None}
-        proc = subprocess.run(
-            list(check.argv),
-            cwd=str(check.cwd),
-            env=_env,
-            capture_output=True,
-            text=True,
-            timeout=900,
-            check=False,
-        )
+        proc = run_captured(check.argv, cwd=check.cwd, env=_env, timeout=900)
     except FileNotFoundError as exc:
         return False, f"命令不可用: {exc}"
     except subprocess.TimeoutExpired:
         return False, "超时 (>900s)"
     tail = ((proc.stdout or "") + (proc.stderr or "")).strip().splitlines()
-    detail = " | ".join(tail[-3:]) if tail else ""
+    detail_lines = tail[-3:]
+    replacement_note = utf8_replacement_note(proc.stdout, proc.stderr)
+    if replacement_note:
+        detail_lines.append(replacement_note)
+    detail = " | ".join(detail_lines)
     return proc.returncode == 0, detail or f"exit {proc.returncode}"
 
 
