@@ -97,7 +97,14 @@
        两个 VPS 本地静态路由对外服务（不经家机隧道；部署/验证/回滚
        契约见 docs/PUBLIC_EDGE_DEPLOYMENT.md §3G）；独立下载站形态
        （`download.example.com` 的 `/android/`）为备选，纪律同第 5 节；
-8. [ ] 真机安装冒烟（沿用 `tools/android_smoke/` 套件对公网 API 端点跑一遍）；
+8. [ ] 真机安装冒烟（M14-214 readiness：`tools/android_release/
+       public_device_smoke.py` 以显式物理 serial + 公网 HTTPS manifest/APK
+       执行单次无重试链——manifest/APK 尺寸与 SHA256、`signed=true`、
+       verify_artifact 语义、安装后包版本/签名证据、稳定进程与窗口、
+       layout/screenshot/logcat、未认证 `/health` 与
+       `/api/v1/auth/status`；离线注入测试 28 项通过。2026-10-02 对
+       `EYFBB22923201473` 真实执行在设备预检处 blocked：设备保持
+       offline，未下载/安装/启动/探测，清单项保持未签认）；
 9. [ ] preflight 人工清单 `mobile-android-apk` 项签认。
 
 ## 2. HarmonyOS signed 分发清单

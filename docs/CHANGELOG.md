@@ -1,5 +1,21 @@
 # Changelog
 
+## M14-214 — Android public physical-device smoke chain
+
+- Added `tools/android_release/public_device_smoke.py`, a fail-closed single
+  attempt orchestrator for an explicit physical adb serial and public HTTPS
+  manifest/APK. It bounds manifest/APK/API reads, verifies size and SHA-256,
+  requires the signed manifest contract and existing `verify_artifact` gate,
+  then captures installed package identity, stable process/window state, UI,
+  screenshot, logcat, and unauthenticated public health/auth-status evidence.
+- Added fully injected offline tests for HTTP, verifier, ADB, timing, and
+  filesystem behavior; no test requires network, Android SDK tools, or a
+  device. Focused coverage is 28 tests, and the Android release/smoke
+  regression is 546 passed / 5 skipped.
+- Recorded the honest real-device boundary: `EYFBB22923201473` remained
+  offline at precheck, so the final run was blocked with no download, install,
+  launch, or API probe. `public_ready=false` remains unchanged.
+
 ## M14-213H — Harmony current-main regression evidence
 
 - Added the repository evidence record for the completed Harmony emulator
