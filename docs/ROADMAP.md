@@ -79,6 +79,31 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-219 状态更新（current-main 发布证据刷新）
+
+- 刷新面：区间 `dcb8d380..df3d9969`（8 commits / 23 files
+  +1571/−63，M14-216 bash executor + M14-217 UTF-8 capture + M14-218
+  smoke_llm 预算）使 M14-215 代码绑定证据 stale，基于 current main
+  `df3d9969`（PR #307 merge）真实刷新。
+- ci-main：远端 run **37070706211**（push@main@df3d9969，run_number
+  753）5/5 jobs success；PR #307 身份链与 PR run 37053544037 5/5 一并
+  raw 复核；`derive_ci_main.py` 24 断言全过。
+- release-check：干净树从零隔离环境（uv venv CPython 3.12.14 +
+  npm ci）真实重跑 `release-check-isolated`：**exit 0 /
+  all_green=true / 10/10 pass**，api-test 5698 passed / 36 skipped /
+  2 warnings，migration `0027_audit_chain`，local voice 17324 bytes，
+  e2e 5 steps；canonical 与工具产物逐字节一致。
+- 复用边界：provider-smoke 零重跑，保持 M14-209 真实失败聚合
+  （voice pass、search/llm fail）；long-soak 历史窗口；production-state
+  六源 hash 复核 61/61 checks。
+- cockpit：exit 1 预期 fail-closed，cockpit_ready=false，唯一
+  blocker provider-smoke:blocked，pass=8 / blocked=1 / missing=2；
+  release_ready / production_ready / public_ready=false 不变。
+- 边界：只入库 README 与三份台账，单 local commit，不 push/PR/合并；
+  零生产/容器/设备/代理接触；canonical 在 gitignored `.verify`
+  （SHA256SUMS 49 文件，ALL 34 CONTRACT CHECKS PASSED）。证据：
+  `docs/evidence/m14-219-current-main-release-evidence/README.md`。
+
 ### M14-218 状态更新（provider-smoke LLM 默认预算修复，离线切片）
 
 - 修复面：基于 current main `d689069`（PR #306 merge）把
