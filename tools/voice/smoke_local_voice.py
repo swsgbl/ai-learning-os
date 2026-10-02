@@ -34,7 +34,23 @@ import urllib.request
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "services" / "api"))
+
+
+def _locate_api_package_root() -> Path:
+    """定位含 ``app`` 包的目录：源码 checkout（仓库根/services/api）与
+    容器 /app 布局（M14-211 打包面，探针位于 /app/tools/voice）双兼容——
+    按 ``app/voice/providers.py`` 标记探测，两个候选都落空时明确报错，
+    不允许 ModuleNotFoundError 含混失败。"""
+    for candidate in (REPO_ROOT / "services" / "api", REPO_ROOT):
+        if (candidate / "app" / "voice" / "providers.py").is_file():
+            return candidate
+    raise RuntimeError(
+        "app.voice.providers 未找到：期望位于源码仓库 services/api 或容器"
+        " /app（services/api Dockerfile 需打包 app 包）"
+    )
+
+
+sys.path.insert(0, str(_locate_api_package_root()))
 
 from app.voice.providers import (
     LocalCosyVoiceTtsProvider,

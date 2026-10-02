@@ -500,6 +500,99 @@ def test_dockerignore_excludes_runtime_bulge_and_secrets() -> None:
     assert not missing, f".dockerignore 缺少排除项: {missing}"
 
 
+# --- 3b. 探针容器布局导入（M14-212） ------------------------------------------------
+
+
+def _container_layout_sandbox(tmp_path: Path) -> Path:
+    """容器 /app 布局沙箱：按 Dockerfile COPY 顺序复刻 M14-211 打包面——
+    VERSION + infra/smoke_*.sh + tools/voice/smoke_local_voice.py + app 包
+    （app.voice.providers 为探针真实导入目标）。零网络：探针只被启动到
+    「导入成功、健康探测不可达即干净 FAIL」的形态。"""
+    app_root = tmp_path / "container-app"
+    (app_root / "infra").mkdir(parents=True)
+    for name in SELECTION_SCRIPTS:
+        shutil.copy2(INFRA / name, app_root / "infra" / name)
+    (app_root / "VERSION").write_text("0.0.0-container\n", encoding="utf-8")
+    probe_target = app_root / LOCAL_VOICE_PROBE
+    probe_target.parent.mkdir(parents=True)
+    shutil.copy2(REPO_ROOT / LOCAL_VOICE_PROBE, probe_target)
+    # app 包：探针的真实导入目标 app.voice.providers（providers 顶层纯标准库，
+    # httpx 为函数内延迟导入——容器内无需真实安装即能走完导入）
+    for source in (
+        REPO_ROOT / "services" / "api" / "app" / "voice" / "providers.py",
+    ):
+        target = app_root / "app" / "voice" / source.name
+        target.parent.mkdir(parents=True)
+        shutil.copy2(source, target)
+    return app_root
+
+
+def test_probe_imports_app_package_from_container_layout(tmp_path) -> None:
+    """M14-212 回归：容器 /app 布局（M14-211 打包面）下探针必须能导入
+    ``app.voice.providers``——此前 ``sys.path.insert`` 单候选硬拼
+    ``REPO_ROOT / "services" / "api"`` 只对源码 checkout 成立，容器内
+    ``/app/services/api`` 不存在 => ModuleNotFoundError: No module named
+    'app'，provider-smoke local-voice 轨道在容器内未跑任何探针即崩溃。
+
+    沙箱复刻容器布局真实运行探针（零网络）：断言导入成功——探针走到
+    health 探测并以明确 FAIL 退出（exit 1），而非 ModuleNotFoundError
+    traceback。"""
+    app_root = _container_layout_sandbox(tmp_path)
+    env = {
+        k: v
+        for k, v in os.environ.items()
+        # 剥离 PYTHON（显式解释器覆盖）与 PYTHONPATH（会把沙箱外目录注入
+        # 子进程 sys.path，令导入绕过沙箱布局、测试失去敏感性）
+        if k.upper() != "PYTHON" and k.upper() != "PYTHONPATH"
+    }
+    # 确定性零请求：ASR 样例指向不存在的文件（probe_asr 不执行），TTS 端点
+    # 钉到无 HTTP 服务的 discard 端口——即便宿主 8010/8011 跑着真实引擎，
+    # health 探测也只会干净 FAIL，绝不发出真实 provider 请求。
+    env["ASR_SMOKE_AUDIO"] = str(
+        app_root / "artifacts" / "voice" / "smoke" / "asr_sample_zh.wav"
+    )
+    env["ASR_LOCAL_ENDPOINT"] = "http://127.0.0.1:9/v1"
+    env["TTS_LOCAL_ENDPOINT"] = "http://127.0.0.1:9/v1"
+    proc = run_utf8(
+        [sys.executable, str(app_root / LOCAL_VOICE_PROBE)],
+        timeout=60,
+        cwd=str(app_root),
+        env=env,
+    )
+    assert "ModuleNotFoundError" not in proc.stderr, (
+        "容器 /app 布局下探针不得因 sys.path 布局假设崩溃（导入路径必须"
+        "双布局兼容）:\n" + proc.stderr
+    )
+    assert "Traceback" not in proc.stderr, proc.stderr
+    # 导入成功后探针进入正常判分路径：不可达端点 => 干净 FAIL（exit 1）
+    assert proc.returncode == 1
+    assert "不可达" in proc.stdout or "不可达" in proc.stderr
+    assert "asr=FAIL" in proc.stdout and "tts=FAIL" in proc.stdout
+
+
+def test_probe_no_pinned_source_layout_import_path() -> None:
+    """ast 守卫（M14-212）：探针不得再依赖源码 checkout 单布局的
+    ``sys.path.insert(0, str(REPO_ROOT / "services" / "api"))`` 固定形态——
+    该形态在容器 /app 布局下指向不存在的目录（/app/services/api），导入
+    必然失败。导入路径必须双布局兼容（源码 checkout 与容器 /app）。"""
+    tree = ast.parse((REPO_ROOT / LOCAL_VOICE_PROBE).read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr in ("insert", "append")
+            and isinstance(node.func.value, ast.Attribute)
+            and node.func.value.attr == "path"
+        ):
+            for arg in node.args:
+                rendered = ast.unparse(arg)
+                if "services" in rendered and "api" in rendered:
+                    pytest.fail(
+                        f"sys.path.{node.func.attr} 不得拼接 services/api 固定子路径"
+                        f"（容器 /app 布局下不存在）: {rendered}"
+                    )
+
+
 # --- 4. 输出护栏（output guardrails，容器根注入） -----------------------------------
 
 
