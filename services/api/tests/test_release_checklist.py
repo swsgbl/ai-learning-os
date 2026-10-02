@@ -253,6 +253,16 @@ def test_api_test_env_isolates_caller_pollution() -> None:
     assert os.environ.get("_AIOS_SENTINEL_") is None  # sanity: 不改全局
 
 
+def test_api_test_receives_resolved_bash_executor() -> None:
+    """M14-216：isolated 预检解析出的 bash 进入 api-test 子进程环境。"""
+    checks = default_command_checks(bash_path="C:/safe/Git/bin/bash.exe")
+    api_test = next(c for c in checks if c.id == "api-test")
+    assert api_test.env["AIOS_BASH"] == "C:/safe/Git/bin/bash.exe"
+    assert all(
+        c.env.get("AIOS_BASH") is None for c in checks if c.id != "api-test"
+    )
+
+
 # ------------------------------------------ M10-04: PG test URL 安全门控 --
 
 #: 必须被拒绝注入 api-test 的 db_url 形态（fail-closed；pytest 侧门控同源）。

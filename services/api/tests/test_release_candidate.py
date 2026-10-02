@@ -58,6 +58,7 @@ from types import SimpleNamespace
 import pytest
 
 from app.ops import cli as cli_module
+from app.ops.bash_executor import BashExecutorError, resolve_bash
 from app.ops.release_candidate import (
     BOUNDARY_NOTE,
     CHECKSUMS_FILE,
@@ -78,9 +79,12 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 BUILD_SCRIPT = REPO_ROOT / "infra" / "build_release_candidate.sh"
 BUILD_SCRIPT_RELATIVE = "infra/build_release_candidate.sh"
 WORKFLOW_FILE = REPO_ROOT / ".github" / "workflows" / "release-candidate.yml"
-# bash 可经 AIOS_TEST_BASH 显式指定（如 C:\WINDOWS\system32\bash.exe 跑 WSL
-# bash 全套），缺省找 PATH 里的 bash——同一测试面可在两种 bash 下复验。
-BASH = shutil.which(os.environ.get("AIOS_TEST_BASH", "bash"))
+# AIOS_BASH 显式优先；Windows 缺省避开 System32 WSL 启动器并选择原生
+# Git Bash，Linux/CI 仍走 PATH。
+try:
+    BASH = resolve_bash()
+except BashExecutorError:
+    BASH = None
 
 GIT_SHA = "a" * 40
 API_ID = "sha256:" + "b" * 64

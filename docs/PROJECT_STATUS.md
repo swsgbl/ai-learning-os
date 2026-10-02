@@ -9,6 +9,29 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-216 release-check Windows bash executor 修复（本地 10/10 恢复）**：
+worktree
+`ai-learning-os-worktrees/m14-216-release-check-bash-executor`，分支
+`fix/m14-216-release-check-bash-executor`，基于远端 current main
+`8d39772c5916d69651bb7ca653b4cf5400a67d8e`。只读 `gh api` 复核 main SHA
+与基线 CI run **36998129756**：completed/success，Docker/Android/Web/
+Release tools/API 五 job 全绿。针对 M14-215 的
+`C:\WINDOWS\system32\bash.EXE` WSL relay 失败，新增产品级 fail-closed
+bash resolver：`AIOS_BASH` 显式优先且必须存在可执行，Windows 排除
+System32/Sysnative/WindowsApps launcher，按完整 PATH 选择原生 bash 并可
+从 git 安装布局推导；无可用 bash 时 isolated 编排在迁移/API/门禁前单点
+exit 2。五个原裸 `shutil.which("bash")` 测试模块改用同一 resolver。
+聚焦验证 **72 passed / 1 warning**；M14-215 失败五模块重跑
+**180 passed / 2 skipped / 1 warning**；
+full `release-check-isolated` 真实重跑 **exit 0 / all_green=true /
+10/10 pass**，api-test **5689 passed / 36 skipped / 1 warning**，JSON
+2485 bytes / SHA256 `8a1747ed...46299`。release-check blocker 在本地修复
+分支解除；provider-smoke search/llm fail、human-only release-approval、
+optional turn-tls 与历史 long-soak 边界不变，`production_ready=false`
+不变。证据：
+`docs/evidence/m14-216-release-check-bash-executor/README.md`。单 local
+commit，不 push、不开 PR、不合并；未触碰 Docker/WSL/生产/设备/代理。
+
 **M14-215 current-main 发布证据刷新（ci-main 通过；release-check 与
 provider-smoke 诚实 blocked）**：worktree
 `ai-learning-os-worktrees/m14-215-current-main-release-evidence`，分支
