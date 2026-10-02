@@ -546,6 +546,16 @@ def test_launch_requires_repeated_equal_pid_and_package_window(tmp_path):
     monkeypatch.chdir(tmp_path)
     adb = FakeAdb(window_forever=True)
     sleeper = NoSleep()
+    clock = {"now": 0.0}
+
+    def controlled_monotonic() -> float:
+        return clock["now"]
+
+    def sleep_without_waiting(seconds: float) -> None:
+        sleeper(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr(smoke.time, "monotonic", controlled_monotonic)
     result, code = smoke.run_smoke(
         serial=SERIAL,
         manifest_url=MANIFEST_URL,
@@ -565,9 +575,9 @@ def test_launch_requires_repeated_equal_pid_and_package_window(tmp_path):
         verifier=FakeVerifier(),
         adb=adb,
         files=FakeFiles(),
-        sleep=sleeper,
-        stable_wait_seconds=0,
-        poll_interval_seconds=0,
+        sleep=sleep_without_waiting,
+        stable_wait_seconds=1,
+        poll_interval_seconds=0.25,
     )
     assert code == 1
     assert result["status"] == "failed"
