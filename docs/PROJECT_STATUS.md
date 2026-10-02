@@ -9,6 +9,20 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-214 Android public-device smoke（工具 ready，真机 blocked）**：分支
+`ops/m14-214-android-public-device-smoke`，基于
+`f87e54ec71aa28c42ac2c50797aa5ce9599fb0d8`。新增
+`tools/android_release/public_device_smoke.py` 与全注入离线测试：显式物理
+serial/公网 HTTPS manifest、schema-valid Android entry、单次有界无重试下载、
+SHA256/size/signed/verify_artifact 门、安装精确产物、稳定进程窗口、UI 与
+logcat 证据、未认证 `/health` + `/api/v1/auth/status`、opt-in 且按哈希删除
+本地 APK；报告固定 `public_ready=false`。聚焦测试 28 passed，Android
+release/smoke 回归 546 passed / 5 skipped，compileall 通过。真实执行
+`https://ndtool.cn/aios/download-manifest.json` + serial
+`EYFBB22923201473`：最终报告 `blocked / device / adb_command_failed`
+（exit 2），设备保持 offline；未下载、未安装、未启动、未做 API probe，
+清单不签认。证据：`docs/evidence/m14-214-android-public-device-smoke/README.md`。
+
 **M14-213H Harmony current-main 回归证据（docs-only 收口）**：分支
 `docs/m14-213-harmony-current-main-evidence`，基于 main
 `070b1f1fe0d268cbd48599a970b418fa69a01663`。HMHarness 实际执行 worktree

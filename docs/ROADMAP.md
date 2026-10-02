@@ -79,6 +79,20 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-214 状态更新（Android public-device smoke，设备 blocked）
+
+- 新增 fail-closed 公网 Android 物理设备冒烟工具与离线契约测试：物理
+  serial 预检先于下载，manifest/APK/API 单次有界无重试，完整复用
+  `verify_artifact` 语义后才安装，并收集包版本/签名、稳定进程窗口、UI、
+  screenshot、logcat 与未认证 public API health/auth-status 证据；本地 APK
+  删除仅显式 opt-in 且按 SHA256 精确匹配，报告恒为 `public_ready=false`。
+- 离线验证：聚焦 28 passed；`tests/android_release tests/android_smoke`
+  546 passed / 5 skipped；compileall 通过。
+- 真实执行 blocked：目标物理设备 `EYFBB22923201473` 在 ADB 预检处保持
+  offline，最终报告 `device / adb_command_failed`、exit 2；未下载/安装/
+  启动/探测，移动真机清单保持未关闭。证据：
+  `docs/evidence/m14-214-android-public-device-smoke/README.md`。
+
 ### M14-213H 状态更新（Harmony current-main 回归证据）
 
 - docs-only 证据切片：分支
