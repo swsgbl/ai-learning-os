@@ -9,6 +9,21 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-213H Harmony current-main 回归证据（docs-only 收口）**：分支
+`docs/m14-213-harmony-current-main-evidence`，基于 main
+`070b1f1fe0d268cbd48599a970b418fa69a01663`。HMHarness 实际执行 worktree
+为 `ai-learning-os-worktrees/m14-211-provider-smoke-container-path`，HEAD
+`b1f1a72b55513716d9281e22d6597b1c580742bf`；两提交间 `apps/harmony`
+零差异，因此证据口径为 **Harmony 代码树等价的 current-main 回归**，
+不声称后端/工具全量在 `070b1f1` 重跑。回归结果：748/748 release suite
+（沿用前一会话结果，本轮未重跑）、unsigned HAP 573148 bytes、默认
+unsigned preflight exit 0、`--require-materials` 预期 exit 2、模拟器
+loopback auth smoke exit 0（11 ok / 1 expected skip / 0 failure）。本轮
+修复的事实是验证环境 launcher 需将 `AIOS_AUTH_SMOKE_PYTHON` 指向仓库
+venv，不是产品回归。边界：unsigned、模拟器/loopback、无 AGC 签名、无
+真机、不解除 release gate，`production_ready=false` 不变。证据：
+`docs/evidence/m14-213-harmony-current-main-regression/README.md`。
+
 **M14-208 provider recovery（生产 provider 前置恢复 + preflight readiness
 收口）**：worktree `ai-learning-os-worktrees/m14-208-provider-recovery`，
 分支 `ops/m14-208-provider-recovery`，基于 main

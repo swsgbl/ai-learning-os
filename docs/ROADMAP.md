@@ -79,6 +79,23 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-213H 状态更新（Harmony current-main 回归证据）
+
+- docs-only 证据切片：分支
+  `docs/m14-213-harmony-current-main-evidence`，基于 main `070b1f1`；
+  HMHarness 实际执行 HEAD `b1f1a72`。两提交间 `apps/harmony` 零差异，
+  当前 main 另有 local-voice 探针/测试/changelog 变更，因此只声称
+  Harmony 代码树等价的 current-main 回归。
+- 通过项：748/748 release suite（沿用前一会话，本轮未重跑）、unsigned
+  HAP 573148 bytes、默认 unsigned preflight exit 0、签名材料门预期
+  exit 2、模拟器/loopback auth smoke exit 0（11 ok / 1 expected skip /
+  0 failure）。
+- 早期续跑失败根因是 auth-smoke 子后端解释器缺少依赖，需要
+  `AIOS_AUTH_SMOKE_PYTHON` 指向仓库 venv；不是产品回归。
+- 边界：unsigned、模拟器/loopback-only、无 AGC 签名/真机/公网分发，
+  不解除 release gate，`production_ready=false` 不变。证据：
+  `docs/evidence/m14-213-harmony-current-main-regression/README.md`。
+
 ### M14-208 状态更新（provider recovery，preflight ready）
 
 - M14-208 docs-only 证据收口（worktree
