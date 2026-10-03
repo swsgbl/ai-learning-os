@@ -79,6 +79,29 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-221H 状态更新（Harmony current-main 无漂移证据收口，docs-only）
+
+- M14-221H docs-only 收口：基于 current main `df3d9969`（PR #307
+  merge），把 M14-220H verification-only 会话的结论固化为仓库证据。
+  审计源为 gitignored `.verify/m14-220-harmony-current-main-no-drift/`
+  （写入前独立复核 REPORT.md 与全部引用证据：锚点、空 diff、HAP 哈希
+  `Get-FileHash` 复算、两份 preflight JSON 与退出码）。
+- 核心结论：Harmony 面（apps/harmony、tools/harmony_release、
+  tests/harmony_release）在 `b1f1a72..df3d9969` 区间 diff 为空——
+  M14-213H 证据在 current main 代码等价；区间全部 30 个变更均在
+  Harmony 面之外，故 748 测试套件与模拟器认证冒烟按规则不重跑。
+- 固化的 M14-220H 运行时快照：unsigned release build exit 0、HAP
+  235176 字节、SHA256
+  `3019D5D0C457AFAA7DAC35E54184BDF902261F4D0E3471ACCADB16E35A2C3A45`；
+  预检默认 exit 0 / `blocked_by_external_materials`（unsigned 边界），
+  `--require-materials` exit 2 fail-closed；`hdc list targets` 只读
+  `127.0.0.1:5555`。
+- 边界：docs-only，不重跑构建/设备，不碰生产、Docker/WSL、ADB 生命
+  周期、secrets、AGC 材料；不声称 `signedness_verified`、signed HAP、
+  真机/公开发布、`release_ready`/`production_ready`/`public_ready`。
+  1 个本地 commit，不 push、不 PR、不合并。证据：
+  `docs/evidence/m14-221-harmony-current-main-no-drift/README.md`。
+
 ### M14-219 状态更新（current-main 发布证据刷新）
 
 - 刷新面：区间 `dcb8d380..df3d9969`（8 commits / 23 files
