@@ -128,6 +128,38 @@
   1 个本地 commit，不 push、不 PR、不合并。
   证据：`docs/evidence/m14-228-harmony-signing-structure/README.md`。
 
+### M14-227 状态更新（Android 公共真机受控 remediation 重跑）
+
+- 分支 `ops/m14-227-android-public-device-retry` rebase 至
+  content-current 基座 `c3ca2ee6`（PR #315 parent，含 M14-226/M14-228
+  条目；原基于本地 main `b079692b`），M14-226/M14-227/M14-228 台账
+  条目全部保留。
+- 在用户批准下执行 M14-226 Remaining Blocker 记载的窄范围修复：
+  前置核验恰好一台授权物理设备 `EYFBB22923201473` 且其
+  `com.ailearningos.app` 与 M14-226 诊断的 stale debug 安装逐字节一致
+  （`CN=Android Debug` `740790e3...`、DEBUGGABLE、拉取 APK
+  `da54763f...` 全等）后，`adb -s EYFBB22923201473 uninstall
+  com.ailearningos.app` 为本切片唯一设备变更；其余包/设置/服务/ADB
+  生命周期/Docker/WSL/代理零接触，before/after 包+证书证据全部留档。
+- 原样重跑未改动的 M14-214 公共设备 smoke 链（同 serial、同 manifest）：
+  下载/SHA-256/`verify_artifact`（v2+v3、非 debug 证书）复现通过，
+  **真机 install 首次成功**（M14-226 blocker 清除；装后包与公共
+  release APK 字节一致、证书 `CN=AI Learning OS Release`
+  `b583ed9e...`），launch 45 秒稳定窗口未满足 → **failed/exit 1**
+  （`launch / stable_process_window_timeout`），public API 探测未执行。
+- 只读根因（harness 未改）：app 真实启动且无崩溃（proc 7724 存活、
+  onResume、logcat 526KB 零 FATAL/ANR），完整 `dumpsys window` 的
+  mCurrentFocus 即本 app，window-layout.xml 有 51 个本包节点与完整
+  Compose UI；但 EMUI 10 固件的 `dumpsys window windows` 子命令不打印
+  mCurrentFocus/mFocusedWindow 行，探针 package_window 条件结构性
+  不可满足——固件 dumpsys 差异，非 artifact/签名/安装/应用缺陷；
+  探针兼容性修复留待后续显式切片。
+- 验证：聚焦 28 passed、邻居 `tests/android_release tests/android_smoke`
+  546 passed / 5 skipped、compileall 通过（工具零改动）；`git diff
+  --check` 与敏感值扫描干净。`public_ready=false` 恒定。1 个本地
+  commit，不 push、不 PR、不合并。证据：
+  `docs/evidence/m14-227-android-public-device-controlled/README.md`。
+
 ### M14-225H 状态更新（Harmony AGC 签名/分发 gap report）
 
 - 交付只读 gap report 工具 `tools/harmony_release/agc_gap_report.py`

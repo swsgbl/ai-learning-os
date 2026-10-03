@@ -66,6 +66,46 @@ signed HAP**，本切片未签名任何产物。验证：聚焦
 `docs/evidence/m14-228-harmony-signing-structure/README.md`。
 
 
+**M14-227 Android 公共真机受控 remediation 重跑（用户批准卸载 stale debug 包；原样重跑 M14-214 链：安装 blocker 已清除，launch 门在新固件证据源上不可满足而 fail-closed failed）**
+worktree `ai-learning-os-worktrees/m14-227-android-public-device-retry`，
+分支 `ops/m14-227-android-public-device-retry`，基于 content-current 基座
+`c3ca2ee6`（PR #315 parent，含 M14-226/M14-228 台账条目；rebase 后基座，
+原基于本地 main `b079692b`，tracked-clean 起新）。前置核验：恰好一台
+授权物理设备 `EYFBB22923201473`（MGA-AL00，state=device，无模拟器），
+包 `com.ailearningos.app` 仍在且与 M14-226 诊断的 stale debug 安装逐字节
+一致（拉取 base.apk SHA-256 `da54763f...`、`CN=Android Debug` 证书
+`740790e3...`、pkgFlags 含 DEBUGGABLE、firstInstallTime 2026-09-08）。
+随后执行任务说明中用户已批准的唯一设备变更：
+`adb -s EYFBB22923201473 uninstall com.ailearningos.app`（Success）——
+不动任何其他包/设置/服务/ADB 生命周期/Docker/WSL/代理。原样重跑未改动
+的公共设备 smoke 链（同 serial、同 manifest
+`https://ndtool.cn/aios/download-manifest.json`、默认 fail-closed 门）：
+manifest/APK 下载与 SHA-256、`verify_artifact` 全门（v2+v3、非 debug
+证书）全部复现通过，**`adb install -r` 首次在真机成功**（M14-226 的
+INSTALL_FAILED_UPDATE_INCOMPATIBLE blocker 由受控卸载清除；装后包身份
+匹配，拉取安装包与公共 release APK 字节一致，证书
+`CN=AI Learning OS Release` `b583ed9e...`），launch 后 45 秒稳定窗口
+未满足 → 权威结果 **failed/exit 1**，单失败
+`launch / stable_process_window_timeout`，public API 阶段未执行。只读
+根因（不改工具）：logcat 证明 app 真实启动且无崩溃（proc 7724 全程
+存活、onResume、无 FATAL/ANR）、完整 `dumpsys window` 的
+mCurrentFocus 即 `com.ailearningos.app/.MainActivity`、捕获的
+window-layout.xml 有 51 个本包节点与完整渲染 Compose UI——但本机
+EMUI 10 固件的 `dumpsys window windows` 子命令不输出任何
+mCurrentFocus/mFocusedWindow 行，探针的 package_window 条件结构性
+不可满足，属固件 dumpsys 输出差异而非 artifact/签名/安装/应用缺陷；
+harness 按本切片要求保持未改动，兼容性缺口留待后续显式切片决策。
+验证：聚焦 `test_public_device_smoke.py` **28 passed**、邻居
+`tests/android_release tests/android_smoke` **546 passed / 5 skipped**、
+`compileall tools/android_release` 通过（工具零改动，复认既有契约）；
+`git diff --check`、新增行本地路径/敏感值/U+FFFD 扫描干净。1 个本地
+commit，不 push、不开 PR、不合并。`public_ready=false` 恒定（即使
+通过也不解除）。证据：
+`docs/evidence/m14-227-android-public-device-controlled/README.md`
+（before/after 包+证书证据与 bytes+SHA256 清单，gitignored
+`.verify/m14-227-android-public-device-controlled/` 与
+`.verify/m14-227-diagnostic/`）。
+
 **M14-225H Harmony AGC 签名/分发 gap report（read-only、机器可读、闭集词汇）**
 worktree
 `ai-learning-os-worktrees/m14-225h-agc-gap-report-retry`，分支
