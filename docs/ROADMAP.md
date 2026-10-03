@@ -79,6 +79,27 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+
+### M14-225H 状态更新（Harmony AGC 签名/分发 gap report）
+
+- 交付只读 gap report 工具 `tools/harmony_release/agc_gap_report.py`
+  （+25 项离线聚焦测试）：五维聚合（signing_structure /
+  external_inputs / signature_evidence / agc_distribution /
+  public_channel），闭集词汇（status/blocker code/next_action 常量表），
+  `production_ready=false` 恒成立——gap report 不是发布就绪声明。
+- **明确声明：当前没有任何 signed HAP**。签名证据维只做 lstat 存在性
+  探测（symlink 拒认、零 HAP 字节读取），presence 不是签名判定；
+  `signed_hap_generated=false`/`signing_performed=false` 恒成立。
+- 真实 checkout 报告（exit 1）：结构失败（signing_configs_empty +
+  product_binding_missing）为优先修复项；材料/凭据 env 全缺席；AGC
+  分发与公开渠道为固定边界 blocker（upload/manifest/渠道演练均需运维
+  真实凭据执行，agent 不代行）。
+- 验证：聚焦 25 passed、全套 tests/harmony_release 773 passed +
+  1 skipped、两个改动 Python 文件的 ruff/`git diff --check`/扫描干净。
+  零材料读取、零子进程、
+  零设备/生产/远端接触。1 个本地 commit，不 push、不 PR、不合并。
+  证据：`docs/evidence/m14-225-harmony-agc-signing-gap/README.md`。
+
 ### M14-224 状态更新（local 语音恢复诊断切片）
 
 - M14-224 基于 current main `465326d2`（PR #310 merge）交付

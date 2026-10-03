@@ -9,6 +9,33 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+
+**M14-225H Harmony AGC 签名/分发 gap report（read-only、机器可读、闭集词汇）**
+worktree
+`ai-learning-os-worktrees/m14-225h-agc-gap-report-retry`，分支
+`harmony/m14-225h-agc-gap-report-retry`，基于 current main
+`92c80ad00be6b10b301a5d442e7b1e635fcf06fd`（PR #312 merge）。交付最小
+只读聚合器 `tools/harmony_release/agc_gap_report.py`：五维 gap 报告
+（signing_structure 委托 `agc_signing_preflight` 零子进程复用；
+external_inputs 材料/凭据 env 缺席如实呈现且绝不序列化值；
+signature_evidence 仅 lstat 探测 signed/unsigned HAP 占位、零 HAP 字节
+读取、symlink 拒认；agc_distribution 与 public_channel 为固定边界
+blocker——本工具零 AGC 访问），全部闭集词汇（status/blocker code/
+next_action 常量表，测试锁定），`production_ready=false` 恒成立
+（`gap_report_is_not_release_readiness`）。退出码 0 结构性不可达/1 结构
+失败/2 存在 gap。**明确声明：当前没有任何 signed HAP**——
+`signed_hap_generated=false`/`signing_performed=false` 恒成立，presence
+不是签名判定。真实 checkout 报告（exit 1，如实）：结构失败
+（signing_configs_empty + product_binding_missing）、材料/凭据全缺席、
+signed_hap_present=false、14 blockers、8 去重 next_actions。硬边界全程
+遵守：零真实材料/凭据读取、零子进程、零设备/模拟器/Docker/WSL/生产/
+远端接触。验证：聚焦 `test_agc_gap_report.py` **25 passed**（含闭集
+词汇/排序去重/确定性/ASCII/无本地路径泄漏/真实 checkout 两次/CLI
+stdout JSON）、全套 `tests/harmony_release/` **773 passed, 1 skipped**
+（回归零破坏）、两个改动 Python 文件的 ruff、`git diff --check`、
+secret/本地路径/U+FFFD 扫描干净。1 个本地 commit，不 push、不开 PR、不合并。证据：
+`docs/evidence/m14-225-harmony-agc-signing-gap/README.md`。
+
 **M14-224 local 语音恢复诊断切片（M14-222 voice 阻塞的 fail-closed 机器可读恢复指令面）**
 worktree `ai-learning-os-worktrees/m14-224-voice-recovery-runbook`，分支
 `ops/m14-224-voice-recovery-runbook`，基于 current main
