@@ -79,6 +79,38 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-222 状态更新（current-main provider-smoke 新鲜刷新）
+
+- M14-222 基于 current main `1971f2b7`（PR #309 merge，SSH fetch
+  精确对齐，tracked-clean 起新 worktree）执行 M14-218 第 5 节预告的
+  真实重跑；证据目录为 gitignored 新 UTC 目录
+  `artifacts/temp/provider-smoke/m14-222/20261003T002318298Z/`
+  （13 工件 bytes+SHA256 + SHA256SUMS，未复用任何旧 JSON）。
+- preflight `--voice-mode local --json`（默认 loopback 端点 8878/
+  8010/8011/11434，零 secret）overall **blocked**：voice
+  `not_ready`/`endpoint_absent`（ASR/TTS health 无监听）；search
+  `ready`（200/8 结果，上游 brave/duckduckgo/google cse/wikidata
+  unresponsive）；llm `ready`（`aios-qwen3.5-9b-4096` 驻留）。
+- 按预检就绪状态选择性执行：search export 真实 **fail**（exit 1，
+  11041ms，「网络错误或超时」脱敏文案，单次未重试，与 M14-207/M14-209
+  以来外部上游/网络根因口径一致）；llm export 真实 **pass**（exit 0，
+  13043ms，12 chars + rubric achieved=[True,True]/confidence=1.0）——
+  M14-218 预算修复（256→1024）后的首次真实端点验证，thinking-only
+  误判未再现。
+- 诚实未执行：local-voice export（voice 预检 not_ready，任务边界禁止
+  启动 ASR/TTS/WSL/voice 服务）与 aggregate（聚合契约要求恰好三份
+  单步输入）；blocked 原因与编排层两次调用笔误留档
+  `failure-closeout.json`。无新的 `provider-smoke.json`，M14-209
+  聚合仍是最近一次完整聚合；voice 就绪后的完整三输入重跑聚合属于
+  后续显式切片。
+- 验证：聚焦离线契约测试（provider-smoke evidence/preflight + 三个
+  smoke 脚本契约，basetemp 仓库外）**201 passed**；`git diff --check`
+  通过；新增 tracked 行敏感值扫描干净。零服务 stop/start/recreate、
+  零 secret 读取输出、零生产接触。`release_ready=false`/
+  `production_ready=false`/`public_ready=false` 不变。1 个本地
+  commit，不 push、不 PR、不合并。证据：
+  `docs/evidence/m14-222-current-provider-smoke/README.md`。
+
 ### M14-221H 状态更新（Harmony current-main 无漂移证据收口，docs-only）
 
 - M14-221H docs-only 收口：基于 current main `df3d9969`（PR #307

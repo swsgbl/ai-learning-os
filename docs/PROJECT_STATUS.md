@@ -9,6 +9,32 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-222 current-main provider-smoke 新鲜刷新（preflight blocked；search 真实 fail；llm 真实 pass；voice/aggregate 诚实未执行）**
+worktree
+`ai-learning-os-worktrees/m14-222-current-main-provider-smoke-refresh`，分支
+`ops/m14-222-current-main-provider-smoke-refresh`，基于 current main
+`1971f2b742fca1ee94219f1b3c79b1fddd6e0e1b`（PR #309 merge，SSH fetch
+FETCH_HEAD 精确一致，执行前 tracked-clean）。M14-218 第 5 节预告的
+真实重跑：preflight `--voice-mode local --json`（默认 loopback 端点，
+零 secret）**overall blocked**——voice `not_ready`/`endpoint_absent`
+（ASR 8010/TTS 8011 health 无监听）、search `ready`（8878，200/8 结果）、
+llm `ready`（11434，`aios-qwen3.5-9b-4096` 驻留）。按预检就绪状态：
+`provider-smoke-export search` 真实执行 **fail**（exit 1，11041ms，单次
+未重试）；`provider-smoke-export llm` 真实执行 **pass**（exit 0，
+13043ms，12 chars + rubric achieved=[True,True]/confidence=1.0，默认
+预算 1024 下 M14-218 修复的首次真实端点验证）；local-voice 与
+aggregate **诚实未执行**（voice 预检 not_ready；聚合契约要求三份输入）
+——blocked 原因与编排笔误留档 `failure-closeout.json`，无新的
+`provider-smoke.json`，M14-209 聚合仍是最近一次完整聚合。零服务
+stop/start/recreate、零 secret 读取输出、零生产接触；未重试把失败修成
+通过、未手工编辑 gate JSON。聚焦离线契约测试（evidence/preflight + 三个
+smoke 脚本契约，basetemp 仓库外）**201 passed**。证据：
+`docs/evidence/m14-222-current-provider-smoke/README.md`（13 工件
+bytes+SHA256，gitignored `<worktree>/artifacts/temp/provider-smoke/
+m14-222/20261003T002318298Z/` + SHA256SUMS）。`release_ready=false`/
+`production_ready=false`/`public_ready=false` 不变。1 个本地 commit，
+不 push、不开 PR、不合并。
+
 **M14-221H Harmony current-main 无漂移证据收口（docs-only）**
 worktree
 `ai-learning-os-worktrees/m14-221-harmony-current-main-no-drift-evidence`，分支
