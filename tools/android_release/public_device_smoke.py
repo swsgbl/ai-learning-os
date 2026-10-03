@@ -72,9 +72,18 @@ SERIAL_RE = re.compile(r"^[A-Za-z0-9._-]+$")
 VERSION_CODE_RE = re.compile(r"(?:^|\s)versionCode=(\d+)(?:\s|$)")
 VERSION_NAME_RE = re.compile(r"(?:^|\s)versionName=([^\s]+)(?:\s|$)")
 SIGNATURE_RE = re.compile(r"(?:^|\s)signatures=PackageSignatures\{")
+# Focus lines may carry leading whitespace (EMUI 10 full window dump prints
+# mCurrentFocus indented two spaces, mFocusedWindow four), so both regexes
+# tolerate indentation. The ownership filter still requires a Window{...}
+# payload, so an indented ``mCurrentFocus=null`` never counts as owned.
 FOCUSED_WINDOW_RE = re.compile(
-    r"^m(?:CurrentFocus|FocusedWindow)=.*[{\s]", re.MULTILINE
+    r"^\s*m(?:CurrentFocus|FocusedWindow)=.*[{\s]", re.MULTILINE
 )
+# Presence-only check for the focus lines. EMUI 10 omits every
+# mCurrentFocus/mFocusedWindow line from ``dumpsys window windows`` while the
+# full ``dumpsys window`` still reports them; a present (foreign or null)
+# focus line must keep the probe on the windows dump alone.
+FOCUS_LINE_RE = re.compile(r"^\s*m(?:CurrentFocus|FocusedWindow)=", re.MULTILINE)
 
 
 class SmokeFailure(Exception):
@@ -192,7 +201,15 @@ class RealAdbSmokeDevice:
         ).strip()
 
     def focused_window(self) -> str:
-        return self.client.run_shell(["dumpsys", "window", "windows"]).stdout.decode(
+        windows = self.client.run_shell(
+            ["dumpsys", "window", "windows"]
+        ).stdout.decode("utf-8", errors="replace")
+        if FOCUS_LINE_RE.search(windows) is not None:
+            return windows
+        # EMUI 10 drops the focus lines from the windows-only dump; fall back
+        # to the full window dump only when every focus line is absent so a
+        # present (foreign or null) focus line stays fail-closed.
+        return self.client.run_shell(["dumpsys", "window"]).stdout.decode(
             "utf-8", errors="replace"
         )
 

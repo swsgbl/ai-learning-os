@@ -79,6 +79,32 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-229 状态更新（Android 公网真机冒烟 focus 探针修复，launch 门真机实证通过）
+
+- 修复 M14-214 链 focus 探针的两层 EMUI 10（HUAWEI MGA-AL00，Android
+  10）取证缺陷：`dumpsys window windows` 完全省略
+  `mCurrentFocus`/`mFocusedWindow` 行（windows 优先 + 仅焦点行全缺时回
+  退一次完整 `dumpsys window`，外来包/null 焦点行在场不回退）；完整
+  dump 焦点行带前导缩进（真机实测两/四空格）→ 两个正则 `^\s*` 容忍，
+  归属过滤仍要求 `Window{…}` 载荷。fail-closed 门不变：3 个连续稳定
+  非空 PID 采样 + 包名拥有焦点行，PID/UI-only 永不通过。
+- 真机两轮验证（分支 `ops/m14-229-android-focus-probe`，基于
+  content-current 基座 `7ef3d51`（PR #316 merge）；原基于 main
+  `1746df06`）：run 1 过 install（stale debug 包已被外部清除）后
+  launch 超时，只读诊断实证 PID 稳定、UI 全屏、焦点在本包，失败纯为
+  缩进锚定；run 2 **launch 稳定门在 EMUI 回退路径真机通过**（3 采样
+  package_window 全 true、PID 稳定、UI/screenshot/logcat 无阻塞），
+  链最终 fail-closed **blocked / exit 2 / health_network_unavailable**
+  ——只读探测证实公网主机只托管静态下载，AI Learning OS API 面未部署
+  （`/aios/*` API 404，根 `/health` 为另一应用且 status 值不满足契约
+  `"ok"`），外部缺失而非工具缺陷；`public_ready` 恒 false。完整 pass
+  的剩余外部依赖：公网 API 面部署。
+- 验证：聚焦 `tests/android_release/test_public_device_smoke.py`
+  **36 passed**（M14-226 基线 28+8，TDD 先红后绿）；android 邻居回归
+  **554 passed / 5 skipped**；compileall、ruff、`git diff --check`、
+  新增行敏感值/本地路径扫描干净。证据：
+  `docs/evidence/m14-229-android-public-device-focus-fallback/README.md`。
+
 ### M14-226 状态更新（Android 公网真机冒烟重试，install 阶段 blocked）
 
 - 只读 adb 预检确认恰一台物理设备 `EYFBB22923201473`（HUAWEI

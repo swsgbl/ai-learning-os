@@ -9,6 +9,36 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-229 Android 公网真机冒烟 focus 探针修复（EMUI 10 windows dump 缺焦点行 + 全量 dump 缩进焦点行；修复真机实证 launch 门通过；链最终 blocked 于公网 API 面缺失）**
+worktree `ai-learning-os-worktrees/m14-229-android-focus-probe`，分支
+`ops/m14-229-android-focus-probe`，基于 content-current 基座 `7ef3d51`
+（PR #316 merge，含 M14-226/M14-228/M14-227 台账条目；rebase 后基座，
+原基于 current main `1746df06`，PR #314 merge）。修复
+`public_device_smoke.py` focus 取证两层 EMUI 10 缺陷：
+（1）`dumpsys window windows` 完全省略 `mCurrentFocus`/`mFocusedWindow`
+行 → `focused_window()` 改为 windows 优先、仅焦点行全缺时回退一次完整
+`dumpsys window`（存在性正则 `FOCUS_LINE_RE`，外来包/null 焦点行在场不
+回退）；（2）完整 dump 焦点行带前导缩进（真机实测 mCurrentFocus 两空格、
+mFocusedWindow 四空格）→ 两个正则 `^\s*` 容忍缩进，归属过滤仍要求
+`Window{…}` 载荷，缩进 `null` 永不算包拥有。fail-closed 门不变：通过仍
+需 3 个连续稳定非空 PID 采样 + 包名拥有焦点行，PID/UI-only 永不通过。
+真机验证（serial `EYFBB22923201473`，manifest
+`https://ndtool.cn/aios/download-manifest.json`）两轮：run 1（commit
+`9ee060eb`，17:52）过 install（M14-226 的 stale debug 包已被外部清除）
+后 launch 超时，只读诊断实证 PID 稳定（11590）、UI 全屏、焦点在本包，
+失败纯为缩进锚定 → 第二层修复（TDD 先红后绿）；run 2（18:04）**launch
+稳定门在 EMUI 回退路径真机通过**（3 采样 `package_window=[true,true,
+true]`、PID 13306 稳定、UI/screenshot/logcat 齐备无阻塞），链随后
+fail-closed **blocked / exit 2 / `health_network_unavailable`**：只读
+探测证实 `ndtool.cn` 只托管静态下载（`/aios/*` API 404；根 `/health`
+是另一应用且 `status="healthy"`≠契约 `"ok"`；auth 端点任何候选 base 均
+404）——外部 API 面未部署，非工具缺陷，门禁未放松；`public_ready` 两轮
+恒 false。离线测试 36 passed（基线 28+8，全 argv fake runner 驱动真实
+适配器）；android 邻居回归 554 passed / 5 skipped；compileall/ruff/
+`git diff --check`/敏感行扫描干净。证据：
+`docs/evidence/m14-229-android-public-device-focus-fallback/README.md`
+（原始报告在 gitignored `.verify/m14-229-android-public-device-focus-fallback{,-r2}/`）。
+
 **M14-226 Android 公网真机冒烟重试（设备在线；install 阶段 blocked——遗留 debug 签名安装冲突）**
 worktree `ai-learning-os-worktrees/m14-226-android-public-device-retry`，分支
 `ops/m14-226-android-public-device-retry`，基于 current main

@@ -17,7 +17,7 @@ from tools.android_release.verify_artifact import (
     ACCEPTED_SIGNATURE_SCHEME,
     MANIFEST_SCHEMA,
 )
-from tools.android_smoke.adb import AdbError
+from tools.android_smoke.adb import AdbClient, AdbError
 
 MANIFEST_URL = "https://public.example/aios/download-manifest.json"
 APK_URL = "https://public.example/android/app-release-signed.apk"
@@ -750,4 +750,317 @@ def test_markdown_and_json_are_atomic_value_free_and_deterministic(tmp_path):
     assert str(tmp_path).encode() not in json_bytes
     assert str(tmp_path).encode() not in md_bytes
     assert SECRET_MARKER.encode() not in json_bytes + md_bytes
+    monkeypatch.undo()
+
+
+# ---------------------------------------------------------------------------
+# Focus probe: windows-dump-first with full-window-dump fallback (M14-229).
+# EMUI 10 omits every mCurrentFocus/mFocusedWindow line from
+# `dumpsys window windows` while the full `dumpsys window` still reports
+# them. The fallback must trigger only on absence; a present (foreign or
+# null) focus line keeps the probe fail-closed on the windows dump alone.
+# ---------------------------------------------------------------------------
+
+FOCUS_LINE = f"mCurrentFocus=Window{{8a0 u0 {PACKAGE}/{PACKAGE}.MainActivity}}"
+
+WINDOW_DUMP_WITH_FOCUS = (
+    "WINDOW MANAGER WINDOWS (dumpsys window windows)\n"
+    f"{FOCUS_LINE}\n"
+    f"mFocusedWindow=Window{{8a0 u0 {PACKAGE}/{PACKAGE}.MainActivity}}\n"
+)
+
+WINDOW_DUMP_WITH_FOREIGN_FOCUS = (
+    "WINDOW MANAGER WINDOWS (dumpsys window windows)\n"
+    "mCurrentFocus=Window{99d u0 com.android.launcher3/"
+    "com.android.launcher3.Launcher}\n"
+    "mFocusedWindow=Window{99d u0 com.android.launcher3/"
+    "com.android.launcher3.Launcher}\n"
+)
+
+WINDOW_DUMP_NULL_FOCUS = (
+    "WINDOW MANAGER WINDOWS (dumpsys window windows)\n"
+    "  mCurrentFocus=null\n"
+    "  mFocusedWindow=null\n"
+)
+
+# EMUI 10 `dumpsys window windows`: window list only, no focus lines at all.
+EMUI_WINDOWS_DUMP_WITHOUT_FOCUS = (
+    "WINDOW MANAGER WINDOWS (dumpsys window windows)\n"
+    f"  Window #0 Window{{8a0 u0 {PACKAGE}/{PACKAGE}.MainActivity}}\n"
+    "  Window #1 Window{9b1 u0 NotificationShade}\n"
+)
+
+# EMUI 10 full `dumpsys window`: still reports the focus lines — but
+# indented (real-device capture, MGA-AL00 EMUI 10: mCurrentFocus at two
+# spaces, mFocusedWindow at four). The ownership filter must tolerate the
+# leading whitespace or the probe can never pass on these devices.
+EMUI_FULL_WINDOW_DUMP_WITH_FOCUS = (
+    "WINDOW MANAGER (dumpsys window)\n"
+    f"  mCurrentFocus=Window{{8f1d0b1 u0 {PACKAGE}/{PACKAGE}.MainActivity}}\n"
+    f"    mFocusedWindow=Window{{8f1d0b1 u0 {PACKAGE}/{PACKAGE}.MainActivity}}\n"
+)
+
+DUMP_WITHOUT_ANY_FOCUS = (
+    "WINDOW MANAGER WINDOWS (dumpsys window windows)\n"
+    "  Window #0 Window{8a0 u0 NotificationShade}\n"
+)
+
+WINDOWS_DUMP_ARGV = ["adb", "-s", SERIAL, "shell", "dumpsys", "window", "windows"]
+FULL_DUMP_ARGV = ["adb", "-s", SERIAL, "shell", "dumpsys", "window"]
+PIDOF_ARGV = ["adb", "-s", SERIAL, "shell", "pidof", PACKAGE]
+
+GETPROP_VALUES = {
+    "ro.kernel.qemu": "",
+    "ro.boot.qemu": "",
+    "ro.product.manufacturer": "HUAWEI",
+    "ro.product.model": "MGA-AL00",
+    "ro.build.version.release": "10",
+}
+
+PACKAGE_DUMP = (
+    f"Package [{PACKAGE}] userId=10234\n"
+    "  pkgFlags=[ HAS_CODE ALLOW_CLEAR_USER_DATA ]\n"
+    "  versionCode=2 minSdk=26 targetSdk=36\n"
+    "  versionName=0.14.0\n"
+    "  signatures=PackageSignatures{version:3, signatures:[ABC123]}\n"
+)
+
+UI_DUMP_XML = (
+    b'<?xml version="1.0" encoding="UTF-8"?><hierarchy>'
+    b'<node package="com.ailearningos.app"/></hierarchy>'
+)
+
+
+class FakeRunnerProc:
+    def __init__(self, stdout: bytes):
+        self.returncode = 0
+        self.stdout = stdout
+        self.stderr = b""
+
+
+class FakePublicDeviceRunner:
+    """Full-argv adb dispatch so RealAdbSmokeDevice runs offline."""
+
+    def __init__(self, windows_dump: str, full_dump: str):
+        self.windows_dump = windows_dump.encode("utf-8")
+        self.full_dump = full_dump.encode("utf-8")
+        self.calls: list[list[str]] = []
+
+    def __call__(self, args, timeout):
+        argv = [str(arg) for arg in args]
+        self.calls.append(argv)
+        tail = argv[3:]
+        if tail == ["get-state"]:
+            stdout = b"device"
+        elif tail[:2] == ["shell", "getprop"] and len(tail) == 3:
+            stdout = GETPROP_VALUES.get(tail[2], "").encode("utf-8")
+        elif tail[:2] == ["install", "-r"]:
+            stdout = b"Success"
+        elif tail == ["shell", "dumpsys", "package", PACKAGE]:
+            stdout = PACKAGE_DUMP.encode("utf-8")
+        elif tail == ["shell", "dumpsys", "window", "windows"]:
+            stdout = self.windows_dump
+        elif tail == ["shell", "dumpsys", "window"]:
+            stdout = self.full_dump
+        elif tail == ["logcat", "-c"]:
+            stdout = b""
+        elif tail[:4] == ["shell", "am", "start", "-W"]:
+            stdout = b"Starting: Intent { cmp=... }\nStatus: ok\n"
+        elif tail == ["shell", "pidof", PACKAGE]:
+            stdout = b"4242"
+        elif tail == ["exec-out", "screencap", "-p"]:
+            stdout = b"\x89PNG\r\n\x1a\nfake"
+        elif tail == ["logcat", "-d"]:
+            stdout = b"--------- beginning of main\n"
+        elif tail[:3] == ["shell", "uiautomator", "dump"]:
+            stdout = b"UI hierarchy dumped to: /sdcard/aios_window_dump.xml\n"
+        elif tail[:2] == ["shell", "cat"]:
+            stdout = UI_DUMP_XML
+        elif tail[:3] == ["shell", "rm", "-f"]:
+            stdout = b""
+        else:
+            raise AssertionError(f"unexpected adb invocation: {argv}")
+        return FakeRunnerProc(stdout)
+
+
+def make_real_device(runner: FakePublicDeviceRunner) -> smoke.RealAdbSmokeDevice:
+    device = smoke.RealAdbSmokeDevice(SERIAL)
+    device.client = AdbClient(adb_path="adb", serial=SERIAL, runner=runner)
+    return device
+
+
+def test_focused_window_prefers_windows_dump_when_focus_line_present():
+    runner = FakePublicDeviceRunner(
+        WINDOW_DUMP_WITH_FOCUS, EMUI_FULL_WINDOW_DUMP_WITH_FOCUS
+    )
+    device = make_real_device(runner)
+
+    assert device.focused_window() == WINDOW_DUMP_WITH_FOCUS
+    assert runner.calls == [WINDOWS_DUMP_ARGV]
+
+
+def test_focused_window_falls_back_to_full_window_dump_when_focus_absent():
+    runner = FakePublicDeviceRunner(
+        EMUI_WINDOWS_DUMP_WITHOUT_FOCUS, EMUI_FULL_WINDOW_DUMP_WITH_FOCUS
+    )
+    device = make_real_device(runner)
+
+    assert device.focused_window() == EMUI_FULL_WINDOW_DUMP_WITH_FOCUS
+    assert runner.calls == [WINDOWS_DUMP_ARGV, FULL_DUMP_ARGV]
+
+
+def test_focused_window_does_not_fall_back_when_focus_line_reports_null():
+    runner = FakePublicDeviceRunner(
+        WINDOW_DUMP_NULL_FOCUS, EMUI_FULL_WINDOW_DUMP_WITH_FOCUS
+    )
+    device = make_real_device(runner)
+
+    assert device.focused_window() == WINDOW_DUMP_NULL_FOCUS
+    assert runner.calls == [WINDOWS_DUMP_ARGV]
+
+
+def _run_smoke_controlled_clock(monkeypatch, adb):
+    sleeper = NoSleep()
+    clock = {"now": 0.0}
+
+    def controlled_monotonic() -> float:
+        return clock["now"]
+
+    def sleep_without_waiting(seconds: float) -> None:
+        sleeper(seconds)
+        clock["now"] += seconds
+
+    monkeypatch.setattr(smoke.time, "monotonic", controlled_monotonic)
+    return smoke.run_smoke(
+        serial=SERIAL,
+        manifest_url=MANIFEST_URL,
+        apk_url=None,
+        output=".verify/public-device-smoke",
+        remove_apk=False,
+        http=FakeHttp(
+            {
+                MANIFEST_URL: FakeResponse(manifest_bytes()),
+                APK_URL: FakeResponse(APK_BYTES),
+                API_BASE_URL + "/health": FakeResponse(b'{"status":"ok"}'),
+                API_BASE_URL + "/api/v1/auth/status": FakeResponse(
+                    b'{"auth_enabled":false}'
+                ),
+            }
+        ),
+        verifier=FakeVerifier(),
+        adb=adb,
+        files=FakeFiles(),
+        sleep=sleep_without_waiting,
+        stable_wait_seconds=1,
+        poll_interval_seconds=0.25,
+    )
+
+
+def test_focus_probe_passes_with_windows_dump_focus_line(tmp_path):
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.chdir(tmp_path)
+    runner = FakePublicDeviceRunner(
+        WINDOW_DUMP_WITH_FOCUS, EMUI_FULL_WINDOW_DUMP_WITH_FOCUS
+    )
+    result, code = _run_smoke_controlled_clock(
+        monkeypatch, make_real_device(runner)
+    )
+
+    assert code == 0
+    assert result["status"] == "passed"
+    assert result["launch"]["stable_process_window"] is True
+    assert [
+        sample["package_window"] for sample in result["launch"]["samples"]
+    ] == [True, True, True]
+    assert runner.calls.count(WINDOWS_DUMP_ARGV) == 3
+    assert runner.calls.count(FULL_DUMP_ARGV) == 0
+    monkeypatch.undo()
+
+
+def test_focus_probe_passes_via_full_window_dump_fallback_on_emui10(tmp_path):
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.chdir(tmp_path)
+    runner = FakePublicDeviceRunner(
+        EMUI_WINDOWS_DUMP_WITHOUT_FOCUS, EMUI_FULL_WINDOW_DUMP_WITH_FOCUS
+    )
+    result, code = _run_smoke_controlled_clock(
+        monkeypatch, make_real_device(runner)
+    )
+
+    assert code == 0
+    assert result["status"] == "passed"
+    assert result["launch"]["stable_process_window"] is True
+    assert [
+        sample["package_window"] for sample in result["launch"]["samples"]
+    ] == [True, True, True]
+    assert runner.calls.count(WINDOWS_DUMP_ARGV) == 3
+    assert runner.calls.count(FULL_DUMP_ARGV) == 3
+    monkeypatch.undo()
+
+
+def test_focus_probe_foreign_focus_line_fails_closed(tmp_path):
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.chdir(tmp_path)
+    runner = FakePublicDeviceRunner(
+        WINDOW_DUMP_WITH_FOREIGN_FOCUS, WINDOW_DUMP_WITH_FOREIGN_FOCUS
+    )
+    result, code = _run_smoke_controlled_clock(
+        monkeypatch, make_real_device(runner)
+    )
+
+    assert code == 1
+    assert result["status"] == "failed"
+    assert "stable_process_window_timeout" in codes(result)
+    assert result["launch"]["stable_process_window"] is False
+    # Stable PID and a captured UI dump alone must never turn into a pass.
+    assert runner.calls.count(PIDOF_ARGV) >= 3
+    assert any(call[3:6] == ["shell", "uiautomator", "dump"] for call in runner.calls)
+    # A present (foreign) focus line must not trigger the full-dump fallback.
+    assert runner.calls.count(WINDOWS_DUMP_ARGV) >= 3
+    assert runner.calls.count(FULL_DUMP_ARGV) == 0
+    monkeypatch.undo()
+
+
+def test_focus_probe_absent_focus_lines_in_both_dumps_fail_closed(tmp_path):
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.chdir(tmp_path)
+    runner = FakePublicDeviceRunner(
+        DUMP_WITHOUT_ANY_FOCUS, DUMP_WITHOUT_ANY_FOCUS
+    )
+    result, code = _run_smoke_controlled_clock(
+        monkeypatch, make_real_device(runner)
+    )
+
+    assert code == 1
+    assert result["status"] == "failed"
+    assert "stable_process_window_timeout" in codes(result)
+    assert result["launch"]["stable_process_window"] is False
+    # Both probes were attempted every sample and neither ever satisfied the
+    # package-owned focus requirement; PID stability alone never passes.
+    assert runner.calls.count(PIDOF_ARGV) >= 3
+    assert runner.calls.count(WINDOWS_DUMP_ARGV) >= 3
+    assert runner.calls.count(FULL_DUMP_ARGV) >= 3
+    monkeypatch.undo()
+
+
+def test_focus_probe_emui_fallback_foreign_focus_fails_closed(tmp_path):
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.chdir(tmp_path)
+    runner = FakePublicDeviceRunner(
+        EMUI_WINDOWS_DUMP_WITHOUT_FOCUS,
+        "  mCurrentFocus=Window{99d u0 com.android.launcher3/"
+        "com.android.launcher3.Launcher}\n",
+    )
+    result, code = _run_smoke_controlled_clock(
+        monkeypatch, make_real_device(runner)
+    )
+
+    assert code == 1
+    assert result["status"] == "failed"
+    assert "stable_process_window_timeout" in codes(result)
+    assert result["launch"]["stable_process_window"] is False
+    # The fallback ran and its indented foreign focus line still never
+    # satisfies the package-owned requirement.
+    assert runner.calls.count(WINDOWS_DUMP_ARGV) >= 3
+    assert runner.calls.count(FULL_DUMP_ARGV) >= 3
     monkeypatch.undo()

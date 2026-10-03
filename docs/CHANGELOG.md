@@ -1,5 +1,60 @@
 # Changelog
 
+## M14-229 — Android 公网真机冒烟 focus 探针修复（EMUI 10 双层取证缺陷；launch 门真机实证通过；链最终 blocked 于公网 API 面缺失）
+
+- 修复 `tools/android_release/public_device_smoke.py` 焦点探针的两层
+  EMUI 10（HUAWEI MGA-AL00，Android 10）取证缺陷（应用实际聚焦仍被
+  确定性误判 `launch / stable_process_window_timeout` 的假阴性根因）：
+  （1）`dumpsys window windows` 输出**完全省略**
+  `mCurrentFocus`/`mFocusedWindow` 行——`focused_window()` 改为
+  windows 优先，仅当焦点行全缺（新增存在性正则 `FOCUS_LINE_RE`）时回
+  退一次完整 `dumpsys window`；外来包或 `null` 焦点行在场时不回退、
+  保持 fail-closed 判负；（2）完整 dump 的焦点行**带前导缩进**（真机
+  实测 `mCurrentFocus` 两空格、`mFocusedWindow` 四空格）——两个正则
+  `^\s*` 容忍缩进，包归属过滤 `FOCUSED_WINDOW_RE` 仍要求 `Window{…}`
+  载荷，缩进 `mCurrentFocus=null` 永不算包拥有。
+- fail-closed 契约不变：通过仍要求三个连续非空且相等的 PID 采样
+  （`STABLE_SAMPLE_COUNT=3`）**加**包名拥有的焦点行；PID 稳定 + UI
+  dump 存在 alone 永不构成 pass。探测/采样/稳定性逻辑与
+  `wait_for_stable_process_window` 零改动，仅真实适配器取证方式扩级；
+  离线协议测试注入面（`AdbSmokeDevice` 协议）不变。
+- 真机验证两轮（serial `EYFBB22923201473`，manifest
+  `https://ndtool.cn/aios/download-manifest.json`，输出 gitignored
+  `.verify/m14-229-android-public-device-focus-fallback{,-r2}/`）：
+  run 1（17:52，第一层修复后）过设备预检 → manifest/APK（SHA256
+  `1e2ebb33…`/`1246c3ef…`）→ `verify_artifact` → replace-install
+  （M14-226 的 stale debug 包已被外部清除）→ launch 超时；只读诊断
+  实证 PID `11590` 稳定、UI 层级全屏、logcat 零 FATAL、焦点行就在本
+  包——失败纯为缩进锚定，据此做第二层修复（TDD 先红后绿）。run 2
+  （18:04）**launch 稳定门在 EMUI 回退路径真机通过**：3 采样
+  `package_window=[true,true,true]`、PID `13306` 稳定、UI/screenshot/
+  logcat 齐备无阻塞；链随后 fail-closed **blocked / exit 2 /
+  `health_network_unavailable`**——只读探测证实 `ndtool.cn` 只托管静态
+  下载（`/aios/*` API 404；根 `/health` 为另一应用且
+  `status="healthy"`≠契约 `"ok"`；auth 端点任何候选 base 均 404），
+  外部 API 面未部署而非工具缺陷；门禁未放松，`public_ready` 两轮恒
+  false。注：HTTPError⊂OSError 的既有分类语义使 404 归入
+  `*_network_unavailable`（未改动）。
+- 新增 8 项离线契约测试（`tests/android_release/test_public_device_smoke.py`，
+  全量 argv 级 `FakePublicDeviceRunner` 驱动真实 `RealAdbSmokeDevice`，
+  零网络/零设备）：windows 焦点行在场优先不回退（适配器级+e2e）、
+  EMUI 缺行回退成功（e2e 回归主测试，fixture 为真机缩进格式）、缩进
+  `null` 在场不回退（适配器级）、AOSP 外来焦点行判负不回退（e2e）、
+  EMUI 回退后外来缩进焦点行仍判负（e2e）、双 dump 均无焦点行判负且
+  两探针均被调用（e2e）；失败场景断言 PID 稳定 + UI dump 已采集仍判
+  负，锁定"永不 PID/UI-only"。
+- 验证：聚焦 `python -m pytest
+  tests/android_release/test_public_device_smoke.py -q` **36 passed**
+  （M14-226 基线 28+8）；android 邻居回归 `tests/android_release
+  tests/android_smoke` **554 passed / 5 skipped**；
+  `python -m compileall tools/android_release`、`ruff check`、
+  `git diff --check`、新增 tracked 行敏感值/本地绝对路径扫描全部通
+  过。证据（含两轮真机报告解读）：
+  `docs/evidence/m14-229-android-public-device-focus-fallback/README.md`；
+  状态同步 `docs/PROJECT_STATUS.md`、`docs/ROADMAP.md`。仅改 Android
+  工具与其测试 + 文档；未触碰 Docker/生产/代理/Harmony，未 push、
+  未建 PR。
+
 ## M14-226 — Android 公网真机冒烟重试（install 阶段 blocked，遗留 debug 签名安装冲突；零代码改动证据切片）
 
 - 只读 adb 预检恰一台物理设备 `EYFBB22923201473`（HUAWEI MGA-AL00，
