@@ -9,6 +9,38 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-226 Android 公网真机冒烟重试（设备在线；install 阶段 blocked——遗留 debug 签名安装冲突）**
+worktree `ai-learning-os-worktrees/m14-226-android-public-device-retry`，分支
+`ops/m14-226-android-public-device-retry`，基于 current main
+`92c80ad00be6b10b301a5d442e7b1e635fcf06fd`（PR #312 merge）。只读 adb
+预检恰一台物理设备 `EYFBB22923201473`（HUAWEI MGA-AL00，Android 10，
+authorized/online）后，零改动重跑 M14-214 公网冒烟链（默认有界/无重试/
+fail-closed 门，显式 serial，manifest
+`https://ndtool.cn/aios/download-manifest.json`）。相对 M14-214 的
+offline 阻塞实质推进：设备预检过 → 公网 manifest（1392B）契约校验过 →
+公网 release APK（8029570B）单次下载 SHA256 匹配 → 完整 `verify_artifact`
+门过（v2+v3、非 debug 证书、badging 与 manifest 全等）→ 真机
+replace-install 失败，fail-closed 报 `device / adb_command_failed`，
+最终报告 **blocked / exit 2**；未 launch、未清 logcat、未做 UI/screenshot/
+logcat 证据与两公共 API 探测。只读根因（`pm path`+`adb pull`+apksigner
+对比证书）：设备上遗留 2026-09-08 装、2026-09-19 更新的 **debug 签名**
+`com.ailearningos.app`（`CN=Android Debug`，cert SHA256 `740790e3…`，
+`pkgFlags=[DEBUGGABLE]`）与公网 release 签名（`CN=AI Learning OS Release`，
+`b583ed9e…`）证书不同，同包名不同签名者使 `install -r` 被 Android
+确定性拒绝（UPDATE_INCOMPATIBLE 类）——外部设备状态，非工件/校验器/
+harness 缺陷，工具行为完全符合契约，无需也无 harness 修复；工具契约与
+本切片边界均禁 uninstall/pm clear，未执行任何破坏性操作，运行后设备
+install 时间戳未变、仍在线。报告口径区分：实际结果=blocked/exit 2
+（install 未成功，launch/API 证据不存在）；`public_ready=false` 为固定
+边界声明（pass 亦恒 false），`cleanup=not_requested` 仅为未给 opt-in。
+验证（零代码改动回归确认）：聚焦 `test_public_device_smoke.py` **28
+passed**；`tests/android_release tests/android_smoke` **546 passed /
+5 skipped**；compileall 通过。证据：
+`docs/evidence/m14-226-android-public-device-retry/README.md`（13 工件
+bytes+SHA256，gitignored `.verify/m14-226-android-public-device-retry/` +
+`.verify/m14-226-diagnostic/`，console 日志字节级重建并附 provenance）。
+剩余阻塞：需用户批准 `adb uninstall com.ailearningos.app` 清除遗留 debug
+安装后方可重跑至 install/launch/API 段；设备连通性已不再是阻塞。
 
 **M14-225H Harmony AGC 签名/分发 gap report（read-only、机器可读、闭集词汇）**
 worktree
