@@ -400,12 +400,16 @@ def test_signed_hap_name_derived_from_unsigned_canonical():
 
 
 def test_current_checkout_reports_gaps_not_failure_pretense():
-    # Real checkout: signingConfigs is empty and no materials exist. The
-    # report must be blocked (exit 2), not a structural failure pretense,
-    # and must never claim a signed HAP exists.
+    # Real checkout (M14-228): a value-free release signingConfig bound to
+    # the default product is structurally canonical, so the structure
+    # dimension is now ok; the report stays blocked (exit 2) on external
+    # materials and must never claim a signed HAP exists.
     result, exit_code = gap.run_gap_report(REPO_ROOT)
     assert exit_code in (1, 2)
     assert result["production_ready"] is False
+    structure = result["dimensions"]["signing_structure"]
+    assert structure["status"] == "ok"
+    assert structure["failure_codes"] == []
     signature = result["dimensions"]["signature_evidence"]
     assert signature["signed_hap_present"] is False
     assert result["signed_hap_generated"] is False

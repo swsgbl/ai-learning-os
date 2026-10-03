@@ -254,25 +254,48 @@ class TestJsonSafety:
 
 
 class TestBuildProfile:
-    def test_real_repo_build_profile_unsigned_boundary(self):
+    def test_real_repo_build_profile_value_free_structure(self):
+        # M14-228: the real checkout declares a value-free structural
+        # release config (name/type only) bound to the default product.
         result, failures = check_build_profile(DEFAULT_REPO_ROOT)
         assert failures == []
         assert result["exists"] is True
         assert result["parseable"] is True
-        assert result["signing_configs_count"] == 0
-        assert result["unsigned_boundary"] is True
+        assert result["signing_configs_count"] == 1
+        assert result["unsigned_boundary"] is False
+        assert result["signing_configs_value_free"] is True
 
-    def test_non_empty_signing_configs_fails_closed(self, tmp_path):
-        profile = json.dumps(
-            {"app": {"signingConfigs": [{"name": "release"}]}}
-        )
+    def test_empty_signing_configs_still_accepted(self, tmp_path):
+        repo = make_repo(tmp_path)  # DEFAULT_PROFILE: signingConfigs == []
+        result, code = run_preflight(repo_root=repo)
+        assert code == 0
+        assert result["build_profile"]["signing_configs_count"] == 0
+        assert result["build_profile"]["signing_configs_value_free"] is True
+
+    @pytest.mark.parametrize("extra_key", ["material", "storePath", "password"])
+    def test_value_carrying_signing_config_fails_closed(self, tmp_path, extra_key):
+        entry = {"name": "release", "type": "HarmonyOS", extra_key: "value"}
+        profile = json.dumps({"app": {"signingConfigs": [entry]}})
         repo = make_repo(tmp_path, profile)
         result, code = run_preflight(repo_root=repo)
         assert code == 1
         assert result["build_profile"]["signing_configs_count"] == 1
-        assert result["build_profile"]["unsigned_boundary"] is False
-        assert {f["code"] for f in result["failures"]} == {
-            "signing_configs_not_empty"
+        assert result["build_profile"]["signing_configs_value_free"] is False
+        assert [f["code"] for f in result["failures"]] == [
+            "signing_config_carries_values"
+        ]
+        assert result["failures"][0]["detail"] == {"index": 0, "keys": [extra_key]}
+
+    def test_non_object_signing_config_entry_fails_closed(self, tmp_path):
+        profile = json.dumps({"app": {"signingConfigs": ["release"]}})
+        repo = make_repo(tmp_path, profile)
+        result, code = run_preflight(repo_root=repo)
+        assert code == 1
+        assert [f["code"] for f in result["failures"]] == [
+            "signing_config_carries_values"
+        ]
+        assert result["failures"][0]["detail"] == {
+            "index": 0, "reason": "not_an_object"
         }
 
     def test_json5_comments_and_trailing_commas_parse(self, tmp_path):
@@ -401,7 +424,7 @@ class TestCli:
     def test_cli_default_repo_root_is_this_checkout(self):
         code, payload = self._run_cli(DEFAULT_REPO_ROOT)
         assert code == 0
-        assert payload["build_profile"]["unsigned_boundary"] is True
+        assert payload["build_profile"]["signing_configs_value_free"] is True
         assert payload["repo_materials"]["count"] == 0
 
 
@@ -444,6 +467,7 @@ class TestExpectSignedMode:
             "expect_signed": True,
             "signing_configs_required_non_empty": True,
             "signing_configs_non_empty": True,
+            "signing_configs_value_free": True,
             "materials_required": True,
             "materials_present": False,
             "materials_valid": None,
@@ -548,21 +572,23 @@ class TestExpectSignedMode:
         assert [f["code"] for f in result["failures"]] == ["signing_configs_missing"]
         assert result["signed_contract"]["signing_configs_non_empty"] is None
 
-    def test_non_empty_signing_configs_verdict_flips_with_mode(self, tmp_path, monkeypatch):
-        """Same repo state: unsigned mode fails, signed mode is ok."""
-        repo = make_signed_repo(tmp_path)
-        set_material_env(monkeypatch, make_outside_materials(tmp_path))
+    def test_value_carrying_config_fails_closed_in_signed_mode(self, tmp_path):
+        """Same repo state: unsigned mode rejects values, signed mode too."""
+        entry = {"name": "release", "type": "HarmonyOS", "storePath": "x.p12"}
+        repo = make_repo(tmp_path, json.dumps({"app": {"signingConfigs": [entry]}}))
         default_result, default_code = run_preflight(repo_root=repo)
         assert default_code == 1
         assert [f["code"] for f in default_result["failures"]] == [
-            "signing_configs_not_empty"
+            "signing_config_carries_values"
         ]
         assert "expect_signed" not in default_result
         assert "signed_contract" not in default_result
         signed_result, signed_code = run_preflight(repo_root=repo, expect_signed=True)
-        assert signed_code == 0
-        assert signed_result["status"] == "ok"
-        assert signed_result["signed_contract"]["satisfied"] is True
+        assert signed_code == 1
+        assert [f["code"] for f in signed_result["failures"]] == [
+            "signing_config_carries_values"
+        ]
+        assert signed_result["signed_contract"]["satisfied"] is False
 
     def test_repo_material_leak_still_fails_closed_in_signed_mode(self, tmp_path, monkeypatch):
         repo = make_signed_repo(tmp_path)
@@ -624,7 +650,7 @@ class TestExpectSignedMode:
         _, default_failures = check_build_profile(unsigned_repo)
         assert default_failures == []
         _, default_failures = check_build_profile(signed_repo)
-        assert [f["code"] for f in default_failures] == ["signing_configs_not_empty"]
+        assert default_failures == []
         _, signed_failures = check_build_profile(signed_repo, expect_signed=True)
         assert signed_failures == []
         _, signed_failures = check_build_profile(unsigned_repo, expect_signed=True)
@@ -667,7 +693,7 @@ class TestExpectSignedCli:
         repo = make_signed_repo(tmp_path)
         unsigned_code, unsigned_payload = self._run_cli(repo, "--expect-unsigned")
         default_code, default_payload = self._run_cli(repo)
-        assert unsigned_code == default_code == 1
+        assert unsigned_code == default_code == 0
         assert unsigned_payload == default_payload
 
     def test_cli_expectation_flags_are_mutually_exclusive(self, tmp_path):
