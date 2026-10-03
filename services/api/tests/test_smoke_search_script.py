@@ -195,6 +195,27 @@ def test_loopback_no_proxy_idempotent_and_cross_case() -> None:
     assert "no_proxy=[localhost,127.0.0.1]" in result.stdout
 
 
+def test_script_probe_timeout_aligns_with_preflight_search_tier() -> None:
+    """M14-223 探针超时契约：smoke 探针超时与 preflight search 档同源同值。
+
+    M14-209/M14-222 两次真实失败（10693ms/11041ms，同一脱敏超时文案）均为
+    CloudWebProvider 默认 10s 界对 SearXNG 慢聚合的超时——同端点同查询词下
+    preflight 30s 档（M14-115：聚合实测 10.3–18.5s）ready 而 smoke 必败，
+    契约不对称。修复：探针超时 import preflight 常量（单一事实源），杜绝
+    两处字面量漂移。
+    """
+    text = SCRIPT.read_text(encoding="utf-8")
+    # 探针超时唯一合法来源：preflight search 档常量（非散落字面量）
+    assert (
+        "from app.ops.provider_smoke_preflight import SEARCH_PROBE_TIMEOUT_SECONDS"
+        in text
+    )
+    assert "timeout_seconds=SEARCH_PROBE_TIMEOUT_SECONDS" in text
+    # 防漂移：字面量硬编码形态一律拒绝（10s 假阴性窗口 / 30s 第二事实源）
+    assert "timeout_seconds=30" not in text
+    assert "timeout_seconds=10" not in text
+
+
 def test_script_text_contract() -> None:
     """脚本源码契约：必填 endpoint、可选 key、默认查询词、真实 provider、无敏感回显。"""
     text = SCRIPT.read_text(encoding="utf-8")
