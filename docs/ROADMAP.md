@@ -79,6 +79,30 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-226 状态更新（Android 公网真机冒烟重试，install 阶段 blocked）
+
+- 只读 adb 预检确认恰一台物理设备 `EYFBB22923201473`（HUAWEI
+  MGA-AL00，authorized/online）在线后，零改动重跑 M14-214 公网冒烟链
+  （分支 `ops/m14-226-android-public-device-retry`，基于 main
+  `92c80ad`，默认有界/无重试/fail-closed 门与显式 serial 全部保持）。
+- 相对 M14-214 offline 阻塞实质推进并全程留证：物理设备预检过 →
+  公网 manifest 下载+契约校验过 → 公网 release APK（8029570B）单次
+  下载 SHA256 匹配 → 完整 `verify_artifact` 门过（v2+v3、非 debug
+  证书、badging 全等）→ 真机 replace-install 失败，最终报告
+  **`device / adb_command_failed`（blocked）/ exit 2**；未 launch、
+  未清 logcat、未做 UI/screenshot/logcat 证据与公共 API 探测。
+- 只读根因（`pm path`+`adb pull`+apksigner 证书对比）：设备遗留
+  2026-09-08 安装的 **debug 签名** `com.ailearningos.app`
+  （`CN=Android Debug`）与公网 release 签名（`CN=AI Learning OS
+  Release`）证书不同，同包名不同签名者 ⇒ `install -r` 被 Android
+  确定性拒绝——外部设备状态而非 harness 缺陷，零代码改动，聚焦
+  28 passed + Android 回归 546 passed / 5 skipped + compileall 通过。
+- 边界保持：不 uninstall、不 pm clear、不重启 ADB、不触碰
+  Docker/WSL/生产容器/代理；运行后设备 install 时间戳未变、仍在线；
+  `public_ready=false` 为固定边界声明（非本次失败项）。证据：
+  `docs/evidence/m14-226-android-public-device-retry/README.md`。
+  剩余阻塞：需用户批准清除遗留 debug 安装（`adb uninstall
+  com.ailearningos.app`）后重跑；设备连通性已不是阻塞。
 
 ### M14-225H 状态更新（Harmony AGC 签名/分发 gap report）
 

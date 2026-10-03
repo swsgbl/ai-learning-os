@@ -1,5 +1,50 @@
 # Changelog
 
+## M14-226 — Android 公网真机冒烟重试（install 阶段 blocked，遗留 debug 签名安装冲突；零代码改动证据切片）
+
+- 只读 adb 预检恰一台物理设备 `EYFBB22923201473`（HUAWEI MGA-AL00，
+  Android 10，authorized/online）在线，满足 M14-214 冒烟链的设备门后，
+  零改动重跑该链（分支 `ops/m14-226-android-public-device-retry`，基于
+  main `92c80ad`，PR #312 merge）：显式 serial、公网 manifest
+  `https://ndtool.cn/aios/download-manifest.json`、默认有界/无重试/
+  fail-closed 门全部保持，证据入 gitignored `.verify/`。
+- 相对 M14-214（offline 在预检即 blocked）实质推进：物理设备预检过 →
+  manifest（1392B）契约校验过 → 公网 release APK
+  `ai-learning-os-0.1.0-release-signed.apk`（8029570B）单次有界下载
+  SHA256 `1246c3ef…` 匹配 → 完整 `verify_artifact` 门过（v2+v3、非
+  debug 证书、badging 与 manifest 全等 `com.ailearningos.app`
+  0.1.0/vc1）→ 真机 replace-install 失败，fail-closed 最终报告
+  **`device / adb_command_failed`（blocked）/ exit 2**；未 launch、未清
+  logcat、未做 UI/screenshot/logcat 证据与 `/health`、
+  `/api/v1/auth/status` 探测，cleanup 如实 `not_requested`。
+- 只读根因（`pm path`+`adb pull`+apksigner `--print-certs` 证书对比，
+  零设备变更）：设备遗留 2026-09-08 安装、2026-09-19 更新的 debug 签名
+  `com.ailearningos.app`（`CN=Android Debug`，cert SHA256 `740790e3…`，
+  `pkgFlags=[DEBUGGABLE]`）与公网 release 签名
+  （`CN=AI Learning OS Release`，`b583ed9e…`）证书不同——同包名不同
+  签名者使 `install -r` 被 Android 确定性拒绝（UPDATE_INCOMPATIBLE 类）。
+  判定为外部设备状态而非工件/校验器/harness 缺陷：工具分类与 fail-closed
+  行为完全符合 M14-214 契约，本切片零代码改动、无 harness 修复；工具契约
+  与任务边界均禁 uninstall/pm clear，未执行任何破坏性设备操作，运行后
+  install 时间戳未变、设备仍在线，未重启 ADB、未触碰 Docker/WSL/生产
+  容器/代理。
+- 报告口径显式区分：实际结果 = blocked / exit 2（install 未成功，
+  launch 与 API 证据不存在）；`public_ready=false` 为固定边界声明
+  （即使 pass 亦恒 false，不构成额外失败项）；`cleanup.not_requested`
+  仅反映未给 opt-in。
+- 验证（零代码改动回归确认）：聚焦
+  `python -m pytest tests/android_release/test_public_device_smoke.py -q`
+  **28 passed**；`tests/android_release tests/android_smoke` **546
+  passed / 5 skipped**；`python -m compileall tools/android_release`
+  通过；`git diff --check` 通过；新增 tracked 行敏感值/本地绝对路径
+  扫描干净。证据：
+  `docs/evidence/m14-226-android-public-device-retry/README.md`（13 工件
+  bytes+SHA256；console 日志因 `.verify/` 预不存在致 tee 失败，按字节
+  级重建并附 provenance——stdout 与 report.json SHA256 全等可证）。
+- 剩余阻塞：需用户批准 `adb uninstall com.ailearningos.app` 清除遗留
+  debug 安装后重跑该链方可抵达 install/launch/API 段；设备连通性已不再
+  是阻塞。1 个本地 commit，不 push、不 PR、不合并。
+
 ## M14-225H — Harmony AGC 签名/分发 gap report（read-only、机器可读、闭集词汇）
 
 - 交付只读聚合器 `tools/harmony_release/agc_gap_report.py`（+25 项离线聚焦
