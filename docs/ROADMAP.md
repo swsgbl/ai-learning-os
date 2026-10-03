@@ -79,6 +79,32 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-223 状态更新（provider-smoke search 预检/冒烟差异根因切片）
+
+- M14-223 基于 current main `465326d2`（PR #310 merge）只读复核 M14-222
+  tracked + raw 证据（gitignored 目录只读），定位「preflight search ready
+  但真实 search 冒烟 fail（exit 1，11041ms）」差异根因：**代码侧探针
+  超时契约不对称，由外部上游引擎劣化触发**——同端点同查询词下 preflight
+  探针 30s 档（M14-115：聚合实测 10.3–18.5s）能等到慢聚合，冒烟路径
+  `CloudWebProvider` 默认 10s 界必然超时（M14-209 10693ms/M14-222
+  11041ms 两次同构真实失败；bing 引擎 timeout 20s、4 引擎 unresponsive
+  构成 (10s,30s] 命中窗口；连接拒绝为亚秒级，已排除）。
+- 最小修复：`infra/smoke_search.sh` 探针超时对齐 preflight search 档
+  （import `SEARCH_PROBE_TIMEOUT_SECONDS`，单一事实源防字面量漂移），
+  生产 `build_search_registry` 10s 默认不动（生产响应上限是独立决策）；
+  新增契约测试锁定 import/传参形态并拒绝任何字面量硬编码。
+- 任务边界许可的单次真实 search 冒烟（2026-10-03T01:14:45.578Z–
+  01:15:06.142Z，20604ms，零重试）：30s 界内等到完整聚合（~19.6s——
+  修复前同请求必 10s 超时，直接实证根因），失败形态变为「0 条合法结果」
+  ——真实外部上游劣化，与 preflight `unresponsive_engines` 归因一致；
+  剩余外部阻塞为 SearXNG 上游引擎健康（CAPTCHA/SSL/限流/超时）。
+- 验证：聚焦+邻居 provider-smoke 契约 **202 passed**（M14-222 基线 201+1）、
+  `test_search.py` 25 passed、ruff/`git diff --check`/新增行敏感值扫描
+  全部干净。零服务 stop/start/recreate、零生产接触；无新的
+  `provider-smoke.json`，release-readiness 结论不变。1 个本地 commit，
+  不 push、不 PR、不合并。证据：
+  `docs/evidence/m14-223-provider-search-failure-root-cause/README.md`。
+
 ### M14-222 状态更新（current-main provider-smoke 新鲜刷新）
 
 - M14-222 基于 current main `1971f2b7`（PR #309 merge，SSH fetch

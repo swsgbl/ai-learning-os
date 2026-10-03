@@ -5,6 +5,12 @@
 # 查询词默认 "AI Learning OS GitHub"，可用 SEARCH_SMOKE_QUERY 覆盖。
 # 至少 1 条合法结果（http/https URL 可解析）才算 PASS——绝不虚构「通过」。
 # 输出脱敏：只打印 provider/结果数等摘要，不打印 endpoint、key 或鉴权头。
+# M14-223 探针超时契约：与 provider-smoke-preflight search 档（30s，
+# SEARCH_PROBE_TIMEOUT_SECONDS）同源同值——SearXNG 真实上游聚合实测延迟
+# 10.3s/12.6s/18.5s（M14-115）、bing 引擎 timeout 20s（infra/searxng/
+# settings.yml），CloudWebProvider 默认 10s 界会把慢聚合超时误报为失败
+# （M14-209 10693ms / M14-222 11041ms 两次同构真实失败），而同期 preflight
+# 30s 档 ready——「预检就绪 ⇒ 冒烟可执行」语义要求两侧等待上限一致。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -61,13 +67,20 @@ import sys
 
 sys.path.insert(0, "services/api")
 
+# M14-223：探针超时与 preflight search 档同源（单一事实源，防两处字面量
+# 漂移回归到 10s 假阴性窗口）。
+from app.ops.provider_smoke_preflight import SEARCH_PROBE_TIMEOUT_SECONDS
 from app.search.providers import CloudWebProvider, ProviderUnavailable
 
 endpoint = os.environ["SEARCH_CLOUD_ENDPOINT"].strip()
 api_key = os.environ.get("SEARCH_CLOUD_API_KEY", "").strip() or None
 query = os.environ["SEARCH_SMOKE_QUERY"]
 
-provider = CloudWebProvider(endpoint=endpoint, api_key=api_key)
+provider = CloudWebProvider(
+    endpoint=endpoint,
+    api_key=api_key,
+    timeout_seconds=SEARCH_PROBE_TIMEOUT_SECONDS,
+)
 try:
     results = asyncio.run(provider.search(query, 5))
 except ProviderUnavailable as cause:

@@ -9,6 +9,29 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-223 provider-smoke search「预检 ready / 冒烟 fail」差异根因切片（根因：探针超时契约不对称；最小修复冒烟探针对齐 preflight search 档）**
+worktree
+`ai-learning-os-worktrees/m14-223-provider-search-failure-root-cause`，分支
+`ops/m14-223-provider-search-failure-root-cause`，基于 current main
+`465326d2bf6454acbc6341ae0a5a7cf75d90bfa1`（PR #310 merge）。只读复核
+M14-222 tracked+raw 证据定位根因：**代码侧探针超时契约不对称，由外部
+上游引擎劣化触发**——同端点同查询词下 preflight 30s 档（M14-115 聚合
+实测 10.3–18.5s）ready，冒烟路径 `CloudWebProvider` 默认 10s 界同窗口
+必然超时（M14-209 10693ms/M14-222 11041ms 两次同构真实失败；bing 引擎
+timeout 20s + 4 引擎 unresponsive 构成 (10s,30s] 命中窗口；连接拒绝为
+亚秒级已排除）。最小修复：`infra/smoke_search.sh` 探针超时 import
+`SEARCH_PROBE_TIMEOUT_SECONDS`（单一事实源），生产 `build_search_registry`
+10s 默认不动；新增契约测试锁定 import/传参形态并拒绝字面量漂移。任务
+边界许可的单次真实 search 冒烟（2026-10-03T01:14:45.578Z–01:15:06.142Z，
+20604ms，零重试）：30s 界内等到完整聚合 ~19.6s（修复前同请求必 10s
+超时，直接实证），失败形态变为「0 条合法结果」——真实外部上游劣化，
+剩余外部阻塞为 SearXNG 上游引擎健康。聚焦+邻居 provider-smoke 契约
+**202 passed**（基线 201+1）、`test_search.py` 25 passed、ruff/
+`git diff --check`/敏感值扫描干净。零服务 stop/start/recreate、零生产
+接触；无新的 `provider-smoke.json`，release-readiness 结论不变。1 个
+本地 commit，不 push、不开 PR、不合并。证据：
+`docs/evidence/m14-223-provider-search-failure-root-cause/README.md`。
+
 **M14-222 current-main provider-smoke 新鲜刷新（preflight blocked；search 真实 fail；llm 真实 pass；voice/aggregate 诚实未执行）**
 worktree
 `ai-learning-os-worktrees/m14-222-current-main-provider-smoke-refresh`，分支
