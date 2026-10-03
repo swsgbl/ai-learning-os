@@ -9,6 +9,40 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-224 local 语音恢复诊断切片（M14-222 voice 阻塞的 fail-closed 机器可读恢复指令面）**
+worktree `ai-learning-os-worktrees/m14-224-voice-recovery-runbook`，分支
+`ops/m14-224-voice-recovery-runbook`，基于 current main
+`465326d2bf6454acbc6341ae0a5a7cf75d90bfa1`（PR #310 merge）。交付
+`python -m app.ops.cli voice-recovery-diagnostic [--asr-endpoint]
+[--tts-endpoint] [--json]`：把 M14-222 实证的 preflight 输出缺口（voice
+not_ready 只给泛化建议，操作者需人工翻文档拼恢复步骤）转换为确定性
+fail-closed 机器可读恢复诊断——每引擎 listener 状态（复用 preflight
+`_voice_health_check`，测试交叉锁定输出全等）+ manifest 事实源只读快照
+（引擎规格经 importlib 从 `voice_service_control.ENGINE_SPECS` 派生，
+工具缺席时 builtin 回退如实声明）+ 选定恢复路径与必需动作（闭集：
+stopped→`controlled_start`（status 先行 + 受控 start，与
+`production_recovery.decide_voice_action` 唯一放行动作同轨）/ manifest
+在场→`status_verification_required`/ 其余失败→
+`external_investigation_required`（+日志指引））+ provider-smoke 阻塞
+固定因果链 + 恢复后完整重跑序列（preflight → 三 export → aggregate，
+M14-209 口径全新证据）。只读边界测试锁定：零子进程/零写入/零服务变更
+（不启动 Docker/WSL/ASR/TTS/Ollama/CC Switch/代理/生产服务）、不读
+secret（userinfo 拒绝零泄漏）、不探活（PID 归属核验让渡给 status）、
+stdout-only 非证据（`production_ready=false` 自声明，readiness 门评估器
+拒收）；preflight/voice_service_control/production_recovery 与三个冒烟
+脚本判定逻辑零改动。真实运行（2026-10-03T04:40Z，默认 loopback 端点，
+仅 `/health` 只读 GET）：ASR 8010/TTS 8011 仍无监听、manifest 不在场
+——M14-222 阻塞形态仍在，双引擎 `controlled_start`、overall
+`voice_recovery_required`、exit 1 如实不通过；本工具不执行恢复，恢复后
+的完整三输入重跑聚合仍属后续显式切片。验证：新契约测试 **31 passed**
+（零网络含 ast 只读守卫与 socket 禁令）；邻居 preflight + production_recovery
+**118 passed**、evidence+voice smoke 脚本 **136 passed** 零
+回归；ruff/`git diff --check`/敏感扫描通过。证据：
+`docs/evidence/m14-224-voice-recovery-runbook/README.md`（11 工件
+bytes+SHA256，gitignored `.verify/artifacts/m14-224-voice-recovery-
+diagnostic/`）。`release_ready=false`/`production_ready=false`/
+`public_ready=false` 不变。1 个本地 commit，不 push、不开 PR、不合并。
+
 **M14-223 provider-smoke search「预检 ready / 冒烟 fail」差异根因切片（根因：探针超时契约不对称；最小修复冒烟探针对齐 preflight search 档）**
 worktree
 `ai-learning-os-worktrees/m14-223-provider-search-failure-root-cause`，分支

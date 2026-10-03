@@ -1,5 +1,53 @@
 # Changelog
 
+## M14-224 — local 语音恢复诊断切片（M14-222 voice 阻塞的 fail-closed 机器可读恢复指令面）
+
+- 交付 `python -m app.ops.cli voice-recovery-diagnostic [--asr-endpoint URL]
+  [--tts-endpoint URL] [--json]`：把 M14-222 实证的 provider-smoke-preflight
+  输出缺口（voice not_ready 时只给泛化建议 `start_externally_then_rerun`，
+  不告诉操作者走哪条既有生命周期路径、前置是什么、恢复后按什么顺序重跑）
+  转换为确定性、fail-closed、机器可读的恢复诊断报告。
+- 报告四要素（任务口径全覆盖）：每引擎 listener 状态（直接复用 preflight
+  `_voice_health_check`——同 `/health` 契约、同 loopback `trust_env=False`、
+  同 reason/recommendation 闭集，测试交叉锁定与 preflight voice checks
+  全等，零第二套探测语义）；manifest 事实源只读快照
+  （`artifacts/voice/<engine>/service/manifest.json` 在场/解析/端口匹配/
+  PID/启动时间，引擎规格经 importlib 从 `voice_service_control.ENGINE_SPECS`
+  派生——与 `production_recovery` 同款复用模式；工具缺席时 builtin 回退
+  并如实报告 `engine_specs_source`）；选定恢复路径 + 必需下一步动作
+  （闭集：stopped→`controlled_start`（先 status 权威核验再受控 start，与
+  `production_recovery.decide_voice_action` 唯一放行动作同轨）/ manifest
+  在场→`status_verification_required`（不盲目 start）/ 其余失败→
+  `external_investigation_required`（+日志指引）/ ready→
+  `rerun_provider_smoke_preflight`）；provider-smoke 为何仍被阻塞的固定
+  因果链（预检 not_ready ⇒ local-voice export 前置不满足 ⇒ 聚合要求三份
+  全新证据 ⇒ 无新 provider-smoke.json，M14-209 仍是最近完整聚合）+
+  恢复后完整重跑序列（preflight → 三 export → aggregate，全新证据
+  不复用旧 JSON）。
+- 只读边界（全部测试锁定）：零子进程、零文件写入、零服务生命周期变更
+  （Docker/WSL/ASR/TTS/Ollama/CC Switch/代理/生产服务均不触碰）、不读
+  环境变量/secret（userinfo endpoint fail-closed 拒绝且凭据零泄漏）、
+  不做 WSL `/proc` 探活（manifest PID 归属核验让渡给
+  `voice_service_control status`）、stdout-only 不产生证据（报告恒带
+  `production_ready=false`/`release_readiness_evidence=false` 自声明，
+  release-readiness 门评估器拒收）；既有判定逻辑零改动——
+  `provider_smoke_preflight.py`/`voice_service_control.py`/
+  `production_recovery.py` 与三个冒烟脚本未动。
+- 真实运行（默认 loopback 端点，2026-10-03T04:40Z，仅 `/health` 只读
+  GET 非真实语音请求）：ASR 8010/TTS 8011 仍无监听、manifest 均不在场
+  ——M14-222 阻塞形态仍在，双引擎 `controlled_start`、overall
+  `voice_recovery_required`、exit 1（如实不通过）；本工具不执行恢复。
+- 验证：新契约测试 `test_voice_recovery_diagnostic.py` **31 passed**
+  （零网络/零子进程，含 ast 源码级只读守卫与 socket 拨号禁令）；邻居
+  测试 preflight+production_recovery **118 passed**、evidence+两份 voice
+  smoke 脚本契约 **136 passed**（零回归）；ruff 通过；`git diff --check`
+  通过；新增 tracked 行敏感值扫描干净。证据：
+  `docs/evidence/m14-224-voice-recovery-runbook/README.md`（11 工件
+  bytes+SHA256，gitignored `.verify/artifacts/m14-224-voice-recovery-diagnostic/`
+  + SHA256SUMS，含离线三形态演示与真实运行归档）。`release_ready=false`/
+  `production_ready=false`/`public_ready=false` 不变。1 个本地 commit，
+  不 push、不 PR、不合并。
+
 ## M14-223 — provider-smoke search 预检/冒烟差异根因切片
 
 - 只读复核 M14-222 tracked + raw 证据后定位差异根因：**代码侧探针超时
