@@ -79,6 +79,49 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-224 状态更新（local 语音恢复诊断切片）
+
+- M14-224 基于 current main `465326d2`（PR #310 merge）交付
+  `python -m app.ops.cli voice-recovery-diagnostic [--asr-endpoint]
+  [--tts-endpoint] [--json]`：把 M14-222 实证的 preflight 输出缺口
+  （voice not_ready 只给泛化建议 `start_externally_then_rerun`，操作者
+  需人工翻文档拼恢复步骤）转换为 fail-closed 机器可读恢复指令——
+  每引擎 listener 状态（复用 preflight `_voice_health_check`，测试交叉
+  锁定输出全等，零第二套探测语义）+ manifest 事实源只读快照（引擎规格
+  经 importlib 从 `voice_service_control.ENGINE_SPECS` 派生，工具缺席时
+  builtin 回退如实声明 `engine_specs_source`）+ 选定恢复路径与必需动作
+  （闭集：stopped→`controlled_start`（status 先行 + 受控 start，与
+  `production_recovery.decide_voice_action` 唯一放行动作同轨）/ manifest
+  在场→`status_verification_required`（不盲目 start）/ 其余失败→
+  `external_investigation_required`（+service.log 指引）/ ready→重跑
+  preflight）+ provider-smoke 阻塞固定因果链（预检 not_ready ⇒
+  local-voice export 前置不满足 ⇒ 聚合要求三份全新证据 ⇒ 无新
+  provider-smoke.json，M14-209 仍是最近完整聚合）+ 恢复后完整重跑序列
+  （preflight → 三 export → aggregate，全新证据不复用旧 JSON）。
+- 只读边界全部测试锁定：零子进程、零文件写入、零服务生命周期变更
+  （不启动/停止 Docker/WSL/ASR/TTS/Ollama/CC Switch/代理/生产服务）、
+  不读环境变量/secret（userinfo endpoint fail-closed 拒绝零泄漏）、
+  不做 WSL `/proc` 探活（manifest PID 归属核验让渡给
+  `voice_service_control status`）、stdout-only 非证据（报告恒带
+  `production_ready=false`/`release_readiness_evidence=false` 自声明，
+  release-readiness 门评估器拒收）；preflight/voice_service_control/
+  production_recovery 与三个冒烟脚本判定逻辑零改动，不发明第二套生命
+  周期管理器。
+- 真实运行（2026-10-03T04:40Z，默认 loopback 端点，仅 `/health` 只读
+  GET 非真实语音请求）：ASR 8010/TTS 8011 仍无监听、manifest 均不在场
+  ——M14-222 阻塞形态仍在，双引擎 `controlled_start`、overall
+  `voice_recovery_required`、exit 1 如实不通过；本工具不执行恢复。
+- 验证：新契约测试 **31 passed**（零网络，含 ast 源码级只读守卫与
+  socket 拨号禁令）；邻居测试 preflight+production_recovery **118
+  passed**、evidence+两份 voice smoke 脚本 **136 passed** 零回归；
+  ruff、`git diff --check`、敏感值扫描通过。证据：
+  `docs/evidence/m14-224-voice-recovery-runbook/README.md`（11 工件
+  bytes+SHA256，gitignored `.verify/artifacts/m14-224-voice-recovery-diagnostic/`
+  含离线三形态演示与真实运行归档）。`release_ready=false`/
+  `production_ready=false`/`public_ready=false` 不变。1 个本地 commit，
+  不 push、不 PR、不合并。下一生产阻塞点不变：voice 引擎恢复后的完整
+  三输入 provider-smoke 重跑聚合（后续显式切片）。
+
 ### M14-223 状态更新（provider-smoke search 预检/冒烟差异根因切片）
 
 - M14-223 基于 current main `465326d2`（PR #310 merge）只读复核 M14-222

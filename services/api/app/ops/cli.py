@@ -1680,6 +1680,50 @@ def _run_provider_smoke_preflight(args) -> int:
     return preflight_exit_code(report)
 
 
+def _run_voice_recovery_diagnostic(args) -> int:
+    """python -m app.ops.cli voice-recovery-diagnostic
+    [--asr-endpoint URL] [--tts-endpoint URL] [--json]
+
+    M14-224 local 语音恢复诊断：把 M14-222 的 voice 阻塞（ASR 8010 /
+    TTS 8011 无监听 → provider-smoke local-voice 轨道不可执行）转换为
+    fail-closed、机器可读的恢复指令——报告每引擎 listener 状态（复用
+    provider-smoke-preflight 的 /health 只读探测与固定 reason 闭集）、
+    manifest 事实源只读快照（artifacts/voice/<engine>/service/
+    manifest.json；引擎规格经 importlib 复用 voice_service_control.py，
+    工具缺席时 builtin 回退并如实声明）、选定恢复路径与必需下一步动作
+    （闭集；stopped→先 status 权威核验再经受控工具 start，与
+    production_recovery 的 decide_voice_action 唯一放行动作同轨）、以及
+    provider-smoke 为何仍被阻塞 + 恢复后的完整重跑序列（preflight →
+    三 export → aggregate，全新证据不复用旧 JSON）。
+
+    只读边界：零子进程、零文件写入、零服务生命周期变更、不读 secret、
+    不探活（manifest PID 归属核验让渡给 voice_service_control status）；
+    不生成 provider-smoke.json、不触碰 release-readiness 证据；
+    production_ready 恒 false。建议动作全部为外部运维动作。
+
+    退出码：双引擎 listener ready=0 / 恢复或核验 required=1（如实不
+    通过）/ 参数问题=2（argparse，不做任何探测）。--json 时 stdout 纯
+    JSON、提示走 stderr。
+    """
+    import json as _json
+
+    from app.ops.voice_recovery_diagnostic import (
+        diagnostic_exit_code,
+        format_recovery_summary,
+        run_voice_recovery_diagnostic,
+    )
+
+    report = run_voice_recovery_diagnostic(
+        asr_endpoint=args.asr_endpoint,
+        tts_endpoint=args.tts_endpoint,
+    )
+    if args.as_json:
+        print(_json.dumps(report, ensure_ascii=False, indent=2))
+    else:
+        print(format_recovery_summary(report))
+    return diagnostic_exit_code(report)
+
+
 def _run_production_evidence_gap(args) -> int:
     """python -m app.ops.cli production-evidence-gap --evidence-dir DIR
     [--output <artifacts/temp路径>] [--json]
@@ -2738,6 +2782,42 @@ def main() -> None:
         action="store_true",
         help="stdout 输出纯 JSON 报告（提示走 stderr；本输出不是 release 证据）",
     )
+    p_vrd = sub.add_parser(
+        "voice-recovery-diagnostic",
+        help=(
+            "local 语音恢复诊断（M14-224；M14-222 voice 阻塞的 fail-closed"
+            "机器可读恢复指令：listener 状态（复用 preflight /health 探测与"
+            "reason 闭集）+ manifest 只读快照 + 选定恢复路径/必需动作（闭集，"
+            "指向 voice_service_control / production_recovery 既有生命周期）"
+            "+ provider-smoke 阻塞因果链与重跑序列；零子进程零写入零服务"
+            "变更不读 secret 不探活，production_ready 恒 false；"
+            "listeners ready=0 / 恢复 required=1 / 参数问题=2）"
+        ),
+    )
+    p_vrd.add_argument(
+        "--asr-endpoint",
+        default=None,
+        metavar="URL",
+        help=(
+            "本地 ASR base URL（默认 http://127.0.0.1:8010/v1，与 preflight/"
+            "冒烟脚本同款；传值以镜像 local-voice 冒烟实际将用的配置）"
+        ),
+    )
+    p_vrd.add_argument(
+        "--tts-endpoint",
+        default=None,
+        metavar="URL",
+        help=(
+            "本地 TTS base URL（默认 http://127.0.0.1:8011/v1，与 preflight/"
+            "冒烟脚本同款）"
+        ),
+    )
+    p_vrd.add_argument(
+        "--json",
+        dest="as_json",
+        action="store_true",
+        help="stdout 输出纯 JSON 诊断报告（提示走 stderr；本输出不是 release 证据）",
+    )
     p_pg = sub.add_parser(
         "production-evidence-gap",
         help=(
@@ -3019,6 +3099,8 @@ def main() -> None:
         raise SystemExit(_run_provider_smoke_aggregate(args))
     if args.command == "provider-smoke-preflight":
         raise SystemExit(_run_provider_smoke_preflight(args))
+    if args.command == "voice-recovery-diagnostic":
+        raise SystemExit(_run_voice_recovery_diagnostic(args))
     if args.command == "production-evidence-gap":
         raise SystemExit(_run_production_evidence_gap(args))
     if args.command == "release-closure-manifest":
