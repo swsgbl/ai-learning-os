@@ -1,12 +1,24 @@
 {
   "app": {
-    "signingConfigs": [],
+    // Release signing structure (M14-228): value-free declaration only.
+    // Materials/credentials never live in this repository; sign_hap.py
+    // injects them from AIOS_HARMONY_* env vars declared in
+    // tools/harmony_release/agc_signing_inputs.json. Until those external
+    // inputs exist, this structure remains unsigned/pending and no signed
+    // HAP is produced.
+    "signingConfigs": [
+      {
+        "name": "release",
+        "type": "HarmonyOS"
+      }
+    ],
     "products": [
       {
         "name": "default",
         "compatibleSdkVersion": "6.1.1(24)",
         "targetSdkVersion": "6.1.1(24)",
-        "runtimeOS": "HarmonyOS"
+        "runtimeOS": "HarmonyOS",
+        "signingConfig": "release"
       }
     ],
     "buildModeSet": [

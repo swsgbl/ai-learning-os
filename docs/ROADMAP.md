@@ -104,6 +104,30 @@
   剩余阻塞：需用户批准清除遗留 debug 安装（`adb uninstall
   com.ailearningos.app`）后重跑；设备连通性已不是阻塞。
 
+### M14-228 状态更新（Harmony 签名结构与 preflight value-free 契约）
+
+- 基于 current main `1746df06`（PR #314 merge，rebase 后基座；原基于 b079692b）交付：`apps/harmony/
+  build-profile.json5` 新增 value-free release signingConfig
+  （仅 name/type 键，零材料/凭据）并绑定 default product；
+  `preflight.py` 默认模式从“空数组”收紧为 value-free
+  契约：空数组或仅 name/type 的结构声明均合法，
+  任何携带值/非对象条目 fail-closed 报
+  `signing_config_carries_values`（只回显键名+索引，
+  绝不回显值）；`--expect-signed` 语义与退出码不变，
+  `signed_contract` 新增 `signing_configs_value_free`。
+- 真实 checkout gap report 转变：`signing_structure` 维度
+  failure→ok（exit 仍 2，blocked on 材料），首要
+  next_action 前进为 `provide_external_signing_materials`；
+  **明确声明：当前没有任何 signed HAP**，本切片
+  未签名任何产物，未发明任何材料/凭据。
+- 验证：聚焦 120 passed（preflight 59 + gap report 25 +
+  agc_signing_preflight 36）、全套 tests/harmony_release
+  777 passed + 1 skipped、ruff（`--select F,E9` 作用域；默认规则
+  集存量 finding 非门禁）、compileall、
+  `git diff --check`、secret/本地路径/U+FFFD 扫描干净。
+  1 个本地 commit，不 push、不 PR、不合并。
+  证据：`docs/evidence/m14-228-harmony-signing-structure/README.md`。
+
 ### M14-225H 状态更新（Harmony AGC 签名/分发 gap report）
 
 - 交付只读 gap report 工具 `tools/harmony_release/agc_gap_report.py`

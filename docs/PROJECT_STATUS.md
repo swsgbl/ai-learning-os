@@ -42,6 +42,30 @@ bytes+SHA256，gitignored `.verify/m14-226-android-public-device-retry/` +
 剩余阻塞：需用户批准 `adb uninstall com.ailearningos.app` 清除遗留 debug
 安装后方可重跑至 install/launch/API 段；设备连通性已不再是阻塞。
 
+**M14-228 Harmony 签名结构与 preflight value-free 契约**
+worktree `ai-learning-os-worktrees/m14-228-harmony-signing-structure`，
+分支 `harmony/m14-228-signing-structure`，基于 current main
+`1746df06`（PR #314 merge，rebase 后基座；原基于 b079692b）。交付：(1) `apps/harmony/build-profile.json5`
+新增 value-free release signingConfig（仅 name/type 键，零材料/凭据）
+并绑定 default product；(2) `tools/harmony_release/preflight.py` 默认
+期望模式从“空数组”收紧为 value-free 契约——空数组或仅 name/type 的
+结构化声明均合法，任何携带值/非对象条目 fail-closed 报
+`signing_config_carries_values`（只回显键名+索引，绝不回显值，秘密
+卫生严格强于旧规则）；`--expect-signed` 语义与退出码契约不变，
+`signed_contract` 新增 `signing_configs_value_free` 并纳入 satisfied。
+真实 checkout gap report 转变：`signing_structure` 维度 failure→ok
+（exit 仍 2，blocked on 材料），首要 next_action 前进为
+`provide_external_signing_materials`。**明确声明：当前没有任何
+signed HAP**，本切片未签名任何产物。验证：聚焦
+`test_preflight.py` **59 passed** + `test_agc_gap_report.py`
+**25 passed** + `test_agc_signing_preflight.py` **36 passed**（合计
+120）、全套 `tests/harmony_release/` **777 passed, 1 skipped**、改动
+文件 ruff（`--select F,E9` 作用域；ruff 默认规则集存量 finding
+非本切片门禁）、compileall、`git diff --check`、secret/本地路径/U+FFFD
+扫描干净。1 个本地 commit，不 push、不开 PR。证据：
+`docs/evidence/m14-228-harmony-signing-structure/README.md`。
+
+
 **M14-225H Harmony AGC 签名/分发 gap report（read-only、机器可读、闭集词汇）**
 worktree
 `ai-learning-os-worktrees/m14-225h-agc-gap-report-retry`，分支

@@ -8,9 +8,15 @@ Safety contract:
 - Never reads the contents of signing material files (stat/suffix only).
 - Deterministic JSON: identical repository state produces identical bytes.
 
-Expectation modes:
-- default / --expect-unsigned: signingConfigs must still be the empty array
-  (the honest unsigned boundary); non-empty configs fail closed.
+Expectation modes (M14-228: the empty-array-only default was replaced by
+a stricter value-free contract - structural signing declarations are valid
+as unsigned/external-materials-pending, while any in-repo material or
+credential value still fails closed):
+- default / --expect-unsigned: signingConfigs must be value-free - either
+  the empty array or a structural declaration whose entries carry only
+  "name"/"type" keys. Any entry with a material path, credential, password,
+  or any other key fails closed (signing_config_carries_values), which is
+  strictly stronger than the old "must be empty" rule for secret hygiene.
 - --expect-signed: the repository claims the signed contract, so
   signingConfigs must be non-empty AND the three external materials
   referenced by AIOS_HARMONY_CERT_PATH / AIOS_HARMONY_PROFILE_PATH /
@@ -18,9 +24,9 @@ Expectation modes:
   an external blocker (status blocked_by_external_materials, exit 2 - the
   same signal --require-materials uses); present-but-invalid materials and
   empty signingConfigs are contract violations, so they fail closed (exit 1).
-- The signed-mode keys (expect_signed, signed_contract) are additive and are
-  emitted only in --expect-signed mode, so default-mode output stays
-  byte-identical to the pre-existing unsigned contract.
+- The signed-mode keys (expect_signed, signed_contract) are additive and
+  are emitted only in --expect-signed mode. Since M14-228 every mode also
+  reports build_profile.signing_configs_value_free.
 
 Exit codes: 0 = ok or (by default) blocked-by-missing-materials,
 1 = failure (fail-closed), 2 = blocked and materials are required
@@ -66,6 +72,13 @@ SCAN_PRUNED_DIRS = frozenset({
     "node_modules", "build", "dist", "coverage", ".next",
 })
 
+# Keys a value-free structural signingConfigs entry may carry (M14-228).
+# Anything else (material paths, credentials, passwords, provider options)
+# fails closed: the repository must never hold signing values. Real paths
+# and secrets arrive out-of-band via the AIOS_HARMONY_* environment
+# variables declared in agc_signing_inputs.json.
+VALUE_FREE_SIGNING_CONFIG_KEYS = frozenset({"name", "type"})
+
 EXIT_OK = 0
 EXIT_FAILURE = 1
 EXIT_MISSING_MATERIALS = 2
@@ -76,9 +89,13 @@ def check_build_profile(
 ) -> Tuple[dict, List[dict]]:
     """Verify signingConfigs against the expected signing boundary.
 
-    expect_signed=False (default): signingConfigs must be the empty array.
-    expect_signed=True: signingConfigs must be non-empty; an empty array is a
-    contract violation because the caller declared the signed state.
+    expect_signed=False (default): signingConfigs must be value-free - the
+    empty array or structural entries with only "name"/"type" keys. A
+    structural declaration is valid as an unsigned / external-materials-
+    pending boundary; any carried value fails closed.
+    expect_signed=True: signingConfigs must additionally be non-empty; an
+    empty array is a contract violation because the caller declared the
+    signed state.
     """
     path = repo_root / BUILD_PROFILE_RELPATH
     result = {
@@ -107,15 +124,38 @@ def check_build_profile(
         return result, failures
     result["signing_configs_count"] = len(configs)
     result["unsigned_boundary"] = len(configs) == 0
-    if expect_signed:
-        if not configs:
-            failures.append({"code": "signing_configs_empty"})
-    elif configs:
-        failures.append({
-            "code": "signing_configs_not_empty",
-            "detail": {"signing_configs_count": len(configs)},
-        })
+    value_failures = _signing_config_value_failures(configs)
+    result["signing_configs_value_free"] = not value_failures
+    if expect_signed and not configs:
+        failures.append({"code": "signing_configs_empty"})
+    failures += value_failures
     return result, failures
+
+
+def _signing_config_value_failures(configs: list) -> list[dict]:
+    """Fail closed on any signingConfigs entry that carries values.
+
+    Only key NAMES are ever emitted (never values), and only for keys that
+    are structurally forbidden - so the failure detail cannot leak a path
+    or a secret either.
+    """
+    failures: List[dict] = []
+    for index, item in enumerate(configs):
+        if not isinstance(item, dict):
+            failures.append({
+                "code": "signing_config_carries_values",
+                "detail": {"index": index, "reason": "not_an_object"},
+            })
+            continue
+        offending = sorted(
+            key for key in item if key not in VALUE_FREE_SIGNING_CONFIG_KEYS
+        )
+        if offending:
+            failures.append({
+                "code": "signing_config_carries_values",
+                "detail": {"index": index, "keys": offending},
+            })
+    return failures
 
 
 def scan_repo_materials(repo_root: Path) -> Tuple[dict, List[dict]]:
@@ -209,17 +249,19 @@ def signed_contract_summary(build_profile: dict, external_materials: dict) -> di
     """
     count = build_profile.get("signing_configs_count")
     configs_non_empty = count > 0 if isinstance(count, int) else None
+    value_free = build_profile.get("signing_configs_value_free")
     materials_present = bool(external_materials.get("all_present"))
     materials_valid = external_materials.get("all_valid")
     return {
         "expect_signed": True,
         "signing_configs_required_non_empty": True,
         "signing_configs_non_empty": configs_non_empty,
+        "signing_configs_value_free": value_free,
         "materials_required": True,
         "materials_present": materials_present,
         "materials_valid": materials_valid,
-        "satisfied": bool(configs_non_empty) and materials_present
-        and materials_valid is True,
+        "satisfied": bool(configs_non_empty) and value_free is True
+        and materials_present and materials_valid is True,
     }
 
 
@@ -348,7 +390,10 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
     )
     expectations.add_argument(
         "--expect-unsigned", dest="expect_signed", action="store_false",
-        help="Require the empty signingConfigs unsigned boundary (default).",
+        help=(
+            "Require value-free signingConfigs (empty array or structural "
+            "declaration; default)."
+        ),
     )
     parser.set_defaults(expect_signed=False)
     return parser.parse_args(argv)
