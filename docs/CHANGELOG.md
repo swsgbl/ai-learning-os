@@ -1,5 +1,39 @@
 # Changelog
 
+## M14-222 — current-main provider-smoke 新鲜刷新
+
+- 基于 current main `1971f2b7`（PR #309 merge）执行 M14-218 第 5 节
+  预告的真实重跑：全新 preflight → 按预检就绪状态选择性 export →
+  聚合（未达条件诚实不执行），全部证据落在 gitignored 新 UTC 目录
+  `artifacts/temp/provider-smoke/m14-222/20261003T002318298Z/`。
+- preflight `--voice-mode local --json`（默认 loopback 端点，零 secret）
+  overall **blocked**：voice `not_ready`/`endpoint_absent`（ASR 8010/
+  TTS 8011 health 无监听）；search `ready`（8878，200/8 结果，4 上游
+  引擎 unresponsive）；llm `ready`（11434，`aios-qwen3.5-9b-4096`
+  驻留）；ambient proxy pressure=false。
+- 按预检就绪状态选择性执行：`provider-smoke-export search` 真实执行
+  **fail**（exit 1，11041ms，脱敏文案「网络错误或超时」，单次未重试）；
+  `provider-smoke-export llm` 真实执行 **pass**（exit 0，13043ms，
+  12 chars 正文 + rubric achieved=[True,True]/confidence=1.0）——默认
+  预算 1024（M14-218 256→1024 修复）在真实端点的首次验证，thinking-only
+  误判未再现。
+- 诚实未执行：`provider-smoke-export local-voice`（voice 预检 not_ready，
+  任务边界禁止启动 ASR/TTS/WSL/voice 服务）与
+  `provider-smoke-aggregate --voice-mode local`（聚合契约要求恰好三份
+  单步输入，voice 证据未产生）；blocked 原因、编排层两次调用笔误
+  （重定向 typo 未发出请求即被拒 / --output 落点 typo 字节原样迁移）
+  全部留档 `failure-closeout.json`。无新的 `provider-smoke.json`，
+  M14-209 聚合（voice pass/search fail/llm fail）仍是最近一次完整聚合。
+- 零服务 stop/start/recreate（Docker/WSL/Ollama/ASR/TTS）、零 secret
+  读取输出（LLM key 为非敏感非空占位符）、零生产 DB/状态接触、未重试
+  把失败修成通过、未手工编辑 gate JSON、未复用旧 JSON。
+- 聚焦离线契约测试（provider-smoke evidence/preflight + search/
+  voice-local/llm 三个 smoke 脚本契约，basetemp 仓库外）**201 passed**；
+  `git diff --check` 通过；新增 tracked 行敏感值扫描干净。
+  `release_ready=false`/`production_ready=false`/`public_ready=false`
+  不变。1 个本地 commit，不 push、不 PR、不合并。证据：
+  `docs/evidence/m14-222-current-provider-smoke/README.md`。
+
 ## M14-221 — Harmony current-main 无漂移证据收口（docs-only）
 
 - 新增 `docs/evidence/m14-221-harmony-current-main-no-drift/README.md`，
