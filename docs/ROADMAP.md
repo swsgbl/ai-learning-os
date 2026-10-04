@@ -177,6 +177,28 @@
   剩余阻塞：需用户批准清除遗留 debug 安装（`adb uninstall
   com.ailearningos.app`）后重跑；设备连通性已不是阻塞。
 
+### M14-230H 状态更新（Harmony Settings 一次性连接诊断）
+
+- 基于 current main `7ef3d51c`（PR #316 merge）交付：SettingsPane
+  「测试连接」从单端点 `/health` 文案直显改造为一次性双端点连接
+  诊断——每次测试恰好一次 `getHealth` + 一次 `getAuthStatus`（各受
+  AiosApi 既有 10s 超时约束，无重试/轮询），单端点三值判决
+  （good/http_error/no_conn）映射四值闭集（ok/http_path_mismatch/
+  network_unreachable/mixed），固定中文闭集文案展示（仅
+  http_path_mismatch 可附加数字 HTTP 状态码）；URL 校验失败直接归入
+  network_unreachable 且零网络请求。诊断仅由按钮显式触发（挂载/保存/
+  改 URL 均不自动运行），运行期间两按钮禁用，`testing` 布尔防重入；
+  绝不渲染响应体/异常对象/令牌/堆栈/内部路径，无 console/hilog。
+- 新增源码契约测试 `test_harmony_settings_diag.py` **21 passed**
+  （显式触发门/端点使用/闭集映射/无重试轮询/禁用态/泄漏边界七类）；
+  邻居 `test_harmony_default_url.py` **6 passed** 零回归；全套
+  `tests/harmony_release/` **798 passed, 1 skipped**（较 M14-228 净增
+  21 = 新用例数）；新测试文件 ruff（默认规则 + `--select F,E9` 双
+  口径）、py_compile、`git diff --check`、secret/本地路径/U+FFFD
+  扫描干净。源码契约级验证，未做设备/模拟器运行；仍无 signed HAP，
+  `production_ready=false` 不变。1 个本地 commit，不 push、不开 PR、
+  不合并。证据：`docs/evidence/m14-230h-harmony-settings-diag/README.md`。
+
 ### M14-228 状态更新（Harmony 签名结构与 preflight value-free 契约）
 
 - 基于 current main `1746df06`（PR #314 merge，rebase 后基座；原基于 b079692b）交付：`apps/harmony/

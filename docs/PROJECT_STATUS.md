@@ -113,6 +113,29 @@ bytes+SHA256，gitignored `.verify/m14-226-android-public-device-retry/` +
 剩余阻塞：需用户批准 `adb uninstall com.ailearningos.app` 清除遗留 debug
 安装后方可重跑至 install/launch/API 段；设备连通性已不再是阻塞。
 
+**M14-230H Harmony Settings 一次性连接诊断（源码契约切片）**
+worktree `ai-learning-os-worktrees/m14-230h-harmony-release-provenance`，
+分支 `harmony/m14-230h-release-provenance`，基于 current main
+`7ef3d51c`（PR #316 merge）。交付：SettingsPane「测试连接」改造为
+一次性双端点连接诊断——每次测试恰好一次 `getHealth` + 一次
+`getAuthStatus`（AiosApi 既有 10s 超时，无重试/轮询），单端点三值
+判决（good=2xx+形状合法 / http_error=真实非 2xx / no_conn=传输或
+校验失败）映射四值闭集 ok/http_path_mismatch/network_unreachable/
+mixed，固定中文闭集文案（仅 mismatch 可附数字 HTTP 状态码）；仅由
+按钮显式触发（挂载/保存/改 URL 零自动运行，`testing` 防重入），
+运行期两按钮禁用；绝不渲染响应体/异常/令牌/堆栈/内部路径，无
+console/hilog；诊断不读/写/存基地址，URL 校验失败归入
+network_unreachable 且零网络请求。新增源码契约测试
+`test_harmony_settings_diag.py` **21 passed**、邻居
+`test_harmony_default_url.py` **6 passed**、全套
+`tests/harmony_release/` **798 passed, 1 skipped**（较 M14-228 净增 21）、
+ruff（默认 + `--select F,E9`）、py_compile、`git diff --check`、
+secret/本地路径/U+FFFD 扫描干净。源码契约级验证（无设备/模拟器
+运行）；AiosApi/UrlPolicy/SettingsStore 零改动；仍无 signed HAP，
+`production_ready=false` 不变。1 个本地 commit，不 push、不开 PR、
+不合并。证据：`docs/evidence/m14-230h-harmony-settings-diag/README.md`。
+
+
 **M14-228 Harmony 签名结构与 preflight value-free 契约**
 worktree `ai-learning-os-worktrees/m14-228-harmony-signing-structure`，
 分支 `harmony/m14-228-signing-structure`，基于 current main
