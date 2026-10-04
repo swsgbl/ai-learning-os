@@ -7,6 +7,12 @@ r"""M14-231 tools/ops/production_restore_preflight.py 契约测试：只读分�
 - compose 分类：config 无效（stderr 摘要脱敏）、渲染服务集漂移；
 - 镜像分类：env tag 派生自建锚点（api/web）+ minio 自建锚点缺失 =
   local-image-missing（阻塞）；registry 镜像缺失仅提示（不阻塞）；
+- 持久数据卷分类（Codex 评审修正）：postgres-data/minio-data 缺失 =
+  persistent-volume-missing:<key> 阻塞且抑制恢复建议（up 会静默建空卷）；
+  searxng-cache 缺失仅提示；docker volume ls / compose --volumes 查询失败
+  fail-closed（volume-query-failed，不下任何卷结论）；compose 声明未分类
+  卷 fail-closed；命名约定 <project>_<key> 与 M14-41/M14-46 证据交叉锁定；
+  源码契约：唯一卷子命令 ls，绝不 rm/prune/create；
 - 容器五分类：stack-absent / stack-stopped / stack-partial /
   stack-degraded / stack-healthy；
 - 监听交叉分类：未运行而端口被占 = port-conflict；运行中而端口不通 =
@@ -72,6 +78,9 @@ class FakeRunner:
     def __init__(self, *, engine_ready: bool = True, compose_ok: bool = True,
                  services: tuple[str, ...] = STACK_SERVICES,
                  compose_stderr: str = "",
+                 declared_volumes: tuple[str, ...] | None = ("postgres-data", "minio-data"),
+                 existing_volumes: tuple[str, ...] | None = None,
+                 volume_ls_rc: int = 0,
                  containers: dict[str, tuple[str, str]] | None = None,
                  missing_images: frozenset[str] = frozenset(),
                  recovery_dry_rc: int = 0, recovery_enforce_rc: int = 0,
@@ -80,6 +89,13 @@ class FakeRunner:
         self.compose_ok = compose_ok
         self.services = services
         self.compose_stderr = compose_stderr
+        self.declared_volumes = declared_volumes
+        # 默认：三个生产卷全在（默认路径 = 卷面无阻塞）
+        self.existing_volumes = (
+            tuple(f"{PROJECT}_{key}" for key in ("postgres-data", "minio-data", "searxng-cache"))
+            if existing_volumes is None else tuple(existing_volumes)
+        )
+        self.volume_ls_rc = volume_ls_rc
         # service -> (State, Status)
         self.containers = {} if containers is None else dict(containers)
         self.missing_images = frozenset(missing_images)
@@ -95,12 +111,22 @@ class FakeRunner:
             if self.engine_ready:
                 return pr.recovery.CommandResult(argv, 0, "27.5.1\n", "")
             return pr.recovery.CommandResult(argv, 1, "", "Cannot connect to the Docker daemon")
+        if argv[:2] == ("docker", "volume"):
+            if self.volume_ls_rc != 0:
+                return pr.recovery.CommandResult(argv, self.volume_ls_rc, "", "daemon error")
+            return pr.recovery.CommandResult(
+                argv, 0, "\n".join(self.existing_volumes) + ("\n" if self.existing_volumes else ""), "")
         if "compose" in argv and "config" in argv:
             if not self.compose_ok:
                 return pr.recovery.CommandResult(argv, 1, "", self.compose_stderr)
             if "--services" in argv:
                 return pr.recovery.CommandResult(
                     argv, 0, "\n".join(sorted(self.services)) + "\n", "")
+            if "--volumes" in argv:
+                if self.declared_volumes is None:
+                    return pr.recovery.CommandResult(argv, 1, "", "render failed")
+                return pr.recovery.CommandResult(
+                    argv, 0, "\n".join(sorted(self.declared_volumes)) + "\n", "")
             return pr.recovery.CommandResult(argv, 0, "", "")
         if argv[:2] == ("docker", "ps"):
             rows = "".join(
@@ -275,10 +301,104 @@ def test_registry_image_missing_is_note_not_blocker(tmp_path: Path) -> None:
     assert set(report["images"]["registry_missing"]) == set(pr.REGISTRY_IMAGE_ANCHORS)
 
 
+# ---------------------------------------------------------------- 持久数据卷
+
+def test_persistent_volume_absent_blocks_and_kills_recovery_hint(tmp_path: Path) -> None:
+    """Codex 评审缺口：镜像重建后若卷仍缺，up 会静默建空生产数据卷——必须阻塞。"""
+    env = tmp_path / "pin.env"
+    env.write_text(_env_text(), encoding="utf-8")
+    runner = FakeRunner(existing_volumes=())  # 三卷全缺（真实机器形态）
+    report, _log = _assess(runner, FakeProbe(), env)
+    assert "persistent-volume-missing:postgres-data" in report["blockers"]
+    assert "persistent-volume-missing:minio-data" in report["blockers"]
+    assert report["verdict"] == pr.VERDICT_BLOCKED
+    joined = " ".join(report["actions"])
+    assert "不要执行 compose up" in joined and "备份" in joined  # 绝不建议静默建空卷
+    assert not any("production_recovery.py --dry-run" in a for a in report["actions"])
+
+
+def test_cache_volume_absent_is_note_not_blocker(tmp_path: Path) -> None:
+    env = tmp_path / "pin.env"
+    env.write_text(_env_text(), encoding="utf-8")
+    runner = FakeRunner(existing_volumes=(
+        f"{PROJECT}_postgres-data", f"{PROJECT}_minio-data"))  # 仅缓存卷缺
+    report, _ = _assess(runner, FakeProbe(), env)
+    assert not any(b.startswith(pr.BLOCK_PERSISTENT_VOLUME_MISSING) for b in report["blockers"])
+    assert pr.NOTE_CACHE_VOLUME_MISSING in report["notes"]
+    assert report["volumes"]["cache_missing"] == ["searxng-cache"]
+
+
+def test_volume_query_failure_fail_closed(tmp_path: Path) -> None:
+    env = tmp_path / "pin.env"
+    env.write_text(_env_text(), encoding="utf-8")
+    runner = FakeRunner(volume_ls_rc=1)
+    report, _ = _assess(runner, FakeProbe(), env)
+    assert pr.BLOCK_VOLUME_QUERY_FAILED in report["blockers"]
+    assert report["volumes"]["query_ok"] is False
+    # 查询失败 ≠ 卷在场：不得把「查不出」伪装成缺失以外的任何结论
+    assert report["volumes"]["persistent_missing"] == []
+    assert report["verdict"] == pr.VERDICT_BLOCKED
+
+
+def test_declared_volume_render_failure_fail_closed(tmp_path: Path) -> None:
+    env = tmp_path / "pin.env"
+    env.write_text(_env_text(), encoding="utf-8")
+    runner = FakeRunner(declared_volumes=None)  # compose config --volumes 失败
+    report, _ = _assess(runner, FakeProbe(), env)
+    assert pr.BLOCK_VOLUME_QUERY_FAILED in report["blockers"]
+    assert report["volumes"]["declared"] is None
+
+
+def test_existing_volumes_allow_restore_required(tmp_path: Path) -> None:
+    env = tmp_path / "pin.env"
+    env.write_text(_env_text(), encoding="utf-8")
+    runner = FakeRunner()  # 默认三卷全在
+    report, _ = _assess(runner, FakeProbe(), env)
+    assert report["volumes"]["persistent_missing"] == []
+    assert report["volumes"]["cache_missing"] == []
+    assert report["blockers"] == []
+    assert report["verdict"] == pr.VERDICT_RESTORE_REQUIRED
+
+
+def test_unclassified_declared_volume_fail_closed(tmp_path: Path) -> None:
+    env = tmp_path / "pin.env"
+    env.write_text(_env_text(), encoding="utf-8")
+    runner = FakeRunner(declared_volumes=("postgres-data", "minio-data", "new-data"))
+    report, _ = _assess(runner, FakeProbe(), env)
+    assert "volume-classification-unknown:new-data" in report["blockers"]
+
+
+def test_persistent_volume_undeclared_in_profile_fail_closed(tmp_path: Path) -> None:
+    """local profile 渲染必须声明两个持久卷——未声明即拓扑漂移（unknown）。"""
+    env = tmp_path / "pin.env"
+    env.write_text(_env_text(), encoding="utf-8")
+    runner = FakeRunner(declared_volumes=("postgres-data",))  # minio-data 未声明
+    report, _ = _assess(runner, FakeProbe(), env)
+    assert "volume-classification-unknown:minio-data" in report["blockers"]
+
+
+def test_cache_volume_undeclared_in_local_profile_is_expected(tmp_path: Path) -> None:
+    """searxng-cache 属 --profile search：local 渲染不声明是预期，非漂移。"""
+    env = tmp_path / "pin.env"
+    env.write_text(_env_text(), encoding="utf-8")
+    runner = FakeRunner()  # declared 默认恰为两持久卷（真实 local 渲染形态）
+    report, _ = _assess(runner, FakeProbe(), env)
+    assert report["volumes"]["classification_unknown"] == []
+    assert report["blockers"] == []  # 卷存在（默认三卷全在）→ restore-required
+
+
+def test_volume_names_follow_project_underscore_convention() -> None:
+    """M14-41/M14-46 实证约定：命名卷全名 = <project>_<key>（下划线）。"""
+    assert pr.compose_volume_name(PROJECT, "minio-data") == \
+        "aios-m14-03-production-rehearsal_minio-data"
+    assert pr.compose_volume_name(PROJECT, "postgres-data") == \
+        "aios-m14-03-production-rehearsal_postgres-data"
+
+
 # ---------------------------------------------------------------- 容器五分类
 
 def test_stack_absent_gives_restore_required(tmp_path: Path) -> None:
-    """真实故障形态：容器完全不在场 + env/compose/镜像/端口全部就绪 → 可恢复。"""
+    """真实故障形态：容器完全不在场 + env/compose/镜像/卷/端口全部就绪 → 可恢复。"""
     env = tmp_path / "pin.env"
     env.write_text(_env_text(), encoding="utf-8")
     report, _log = _assess(FakeRunner(), FakeProbe(open_ports=frozenset()), env)
@@ -486,6 +606,11 @@ def test_source_never_issues_destructive_subcommands() -> None:
     for literal in ('"down"', '"stop"', '"kill"', '"rm"', '"restart"', '"reset"',
                     '"pull"', '"build"'):
         assert literal not in source, f"禁止出现的子命令字面量: {literal}"
+    # 卷面只读纪律：唯一 docker volume 子命令是 ls（绝不 rm/prune/create）
+    for literal in ('"volume", "rm"', '"volume", "create"', '"volume", "prune"',
+                    '"prune"'):
+        assert literal not in source, f"禁止出现的卷子命令字面量: {literal}"
+    assert '"volume", "ls"' in source  # 唯一卷探测面（只读）
     assert str(pr.RECOVERY_SCRIPT).endswith("production_recovery.py")
     assert "sys.executable" in source  # 恢复动作只经子进程委托
     assert "frpc" in source  # 边界声明在场（绝不重启 frpc）
@@ -507,6 +632,17 @@ def test_constants_cross_locked_with_recovery_and_compose() -> None:
         assert literal in compose  # 开发默认回落值确为 compose 公开字面量
     for dev in ("aios-local-dev-secret-7d21b9e4c8a3", "ailos-local-dev-secret-0f4c9a1e7b2d"):
         assert dev in pr.DEV_DEFAULT_SECRET_VALUES
+    # 卷分类与 compose volumes: 块交叉锁定：声明集恰为持久+缓存，无未分类卷
+    volumes_block = compose.split("volumes:", 1)[1] if "volumes:" in compose else ""
+    for key in pr.PERSISTENT_VOLUME_KEYS + pr.CACHE_VOLUME_KEYS:
+        assert f"{key}:" in volumes_block, f"compose 未声明分类卷: {key}"
+    assert set(pr.PERSISTENT_VOLUME_KEYS) | set(pr.CACHE_VOLUME_KEYS) == {
+        "postgres-data", "minio-data", "searxng-cache"}
+    # 命名约定与 M14-41 卷采纳工具、M14-46 历史证据同构（<project>_<key> 下划线）
+    adoption = (REPO_ROOT / "tools" / "ops" / "minio_volume_adoption.py").read_text(encoding="utf-8")
+    assert 'VOLUME_NAME = f"{PROJECT}_minio-data"' in adoption
+    evidence46 = (REPO_ROOT / "docs" / "evidence" / "m14-46-compose-label-reconcile" / "README.md").read_text(encoding="utf-8")
+    assert "aios-m14-03-production-rehearsal_postgres-data" in evidence46
 
 
 def test_service_name_derivation() -> None:

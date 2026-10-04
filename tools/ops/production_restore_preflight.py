@@ -18,6 +18,16 @@ tools/ops/public_edge_preflight.py，见 docs/PUBLIC_EDGE_DEPLOYMENT.md §9）�
   自建镜像锚点 + production_recovery 的 aios/minio 自建锚点缺失即阻塞
   （恢复路径 up -d --no-build 不会 pull 自建命名镜像；本工具绝不 pull/build）；
   registry 镜像（postgres/redis/livekit）缺失仅为提示（compose up 可自动拉取）；
+- 持久数据卷预检（docker volume ls 只读，绝不从容器状态推断）：compose 声明的
+  命名卷按 key 分为持久数据卷（postgres-data、minio-data）与可重建缓存卷
+  （searxng-cache）；卷名按 compose 命名约定 ``<project>_<key>``（下划线，
+  与 M14-41 minio_volume_adoption.VOLUME_NAME、M14-46 证据
+  ``aios-m14-03-production-rehearsal_postgres-data`` 同构）。**持久数据卷缺失
+  即阻塞**（persistent-volume-missing:<key>）——compose up 会为缺失卷**静默
+  创建空卷**，把空库当"生产恢复"是数据事故；动作明确要求：先从经校验的
+  备份恢复数据卷，或完成显式全新安装决策并留证，绝不建议静默建空卷。
+  缓存卷缺失仅为提示；Docker 卷查询失败 fail-closed（volume-query-failed）；
+  compose 声明了未分类卷同样 fail-closed（volume-classification-unknown）。
 - 当前容器状态（docker ps -a 按 compose project label 过滤，只读）分类：
   stack-absent（容器完全不在场）/ stack-stopped（齐但全未运行）/
   stack-partial（部分在场或部分运行）/ stack-degraded（齐且全运行但未达
@@ -36,7 +46,8 @@ tools/ops/public_edge_preflight.py，见 docs/PUBLIC_EDGE_DEPLOYMENT.md §9）�
 - 需要前置 verdict == restore-required **且** 精确短语
   ``--confirm-phrase "APPLY PRODUCTION RESTORE"``，缺一即 fail-closed 拒绝
   （confirm-gate，零动作）；
-- blocked（env/compose/镜像/端口任何阻塞）→ 拒绝执行，零动作；
+- blocked（env/compose/镜像/卷/端口任何阻塞，含持久数据卷缺失）→ 拒绝执行，
+  零动作；
   healthy → 无需恢复，拒绝执行（零动作）；
 - 执行 = 纯委托既有文档化路径 tools/ops/production_recovery.py：先
   ``--dry-run``（只读计划，非零即中止），后 enforce（幂等
@@ -83,9 +94,11 @@ CONFIRM_PHRASE = "APPLY PRODUCTION RESTORE"
 TOOLS_DIR = Path(__file__).resolve().parent
 RECOVERY_SCRIPT = TOOLS_DIR / "production_recovery.py"
 
-#: 纯提示（不阻塞本地恢复）：registry 镜像缺失由 compose up 自动拉取
+#: 纯提示（不阻塞本地恢复）：registry 镜像缺失由 compose up 自动拉取；
+#: 缓存卷缺失可由 compose up 重建（无持久数据语义）
 NOTE_REGISTRY_PULL_REQUIRED = "registry-pull-required"
 NOTE_PUBLIC_EDGE_UNCERTAIN = "public-edge-uncertain"
+NOTE_CACHE_VOLUME_MISSING = "cache-volume-missing"
 
 BLOCK_DOCKER_UNAVAILABLE = "docker-unavailable"
 BLOCK_ENV_MISSING = "env-missing"
@@ -98,6 +111,16 @@ BLOCK_LOCAL_IMAGE_MISSING = "local-image-missing"
 BLOCK_PORT_CONFLICT = "port-conflict"        # 形如 port-conflict:api
 BLOCK_LISTENER_MISSING = "listener-missing"  # 形如 listener-missing:web
 BLOCK_CONFIRM_GATE = "confirm-gate"
+#: 持久数据卷缺失（形如 persistent-volume-missing:postgres-data）——compose up
+#: 会为缺失命名卷静默创建空卷，空库绝不构成生产恢复
+BLOCK_PERSISTENT_VOLUME_MISSING = "persistent-volume-missing"
+BLOCK_VOLUME_QUERY_FAILED = "volume-query-failed"
+BLOCK_VOLUME_CLASSIFICATION_UNKNOWN = "volume-classification-unknown"
+
+#: compose 声明卷的持久性分类（契约测试与 infra/docker-compose.yml volumes:
+#: 块交叉锁定）。持久数据卷缺失 = 阻塞；缓存卷缺失 = 提示。
+PERSISTENT_VOLUME_KEYS: tuple[str, ...] = ("postgres-data", "minio-data")
+CACHE_VOLUME_KEYS: tuple[str, ...] = ("searxng-cache",)
 
 STACK_ABSENT = "stack-absent"
 STACK_STOPPED = "stack-stopped"
@@ -299,6 +322,23 @@ def build_actions(blockers: tuple[str, ...], stack_class: str) -> tuple[str, ...
             "自建镜像本机缺失：在获准窗口构建缺失锚点（本工具与恢复路径均绝不 pull/build；"
             "见 docs/PUBLIC_EDGE_DEPLOYMENT.md §8）"
         )
+    if any(code.startswith(BLOCK_PERSISTENT_VOLUME_MISSING) for code in blockers):
+        actions.append(
+            "persistent-volume-missing：<key>——**不要执行 compose up/生产恢复**"
+            "（会静默创建空数据卷，空库绝不构成生产恢复）：先从经校验的备份恢复"
+            "数据卷（Postgres/MinIO 备份演练产物），或完成显式「全新安装」决策"
+            "并留证后再谈重建；本工具绝不创建/删除卷"
+        )
+    if BLOCK_VOLUME_QUERY_FAILED in codes:
+        actions.append(
+            "Docker 卷查询失败（fail-closed）：核查 docker volume ls 可用性后重试 preflight"
+            "——查询不出不等于卷在场"
+        )
+    if any(code.startswith(BLOCK_VOLUME_CLASSIFICATION_UNKNOWN) for code in blockers):
+        actions.append(
+            "compose 声明卷与分类常量漂移（volume-classification-unknown）：先在本工具"
+            "PERSISTENT/CACHE_VOLUME_KEYS 显式分类新卷（持久语义不得默认按缓存处理）"
+        )
     for code in blockers:
         if code.startswith(BLOCK_PORT_CONFLICT):
             actions.append(
@@ -414,6 +454,70 @@ def _display_host(bind_ip: str) -> str:
     return bind_ip if bind_ip else "127.0.0.1"
 
 
+# ---------------------------------------------------------------- 卷预检
+
+
+def compose_volume_name(project: str, key: str) -> str:
+    """compose 命名卷全名：``<project>_<key>``（下划线约定）。
+
+    与 M14-41 ``minio_volume_adoption.VOLUME_NAME = f"{PROJECT}_minio-data"``
+    及 M14-46 证据 ``aios-m14-03-production-rehearsal_postgres-data`` 同构
+    （契约测试交叉锁定）——绝不由容器状态推断卷存在性。
+    """
+    return f"{project}_{key}"
+
+
+def probe_volume_names(runner: Runner) -> tuple[bool, frozenset[str]]:
+    """docker volume ls（只读）→ (查询是否成功, 现存卷名集)。失败 fail-closed。"""
+    result = runner.run(["docker", "volume", "ls", "--format", "{{.Name}}"], timeout=60.0)
+    if result.returncode != 0:
+        return False, frozenset()
+    return True, frozenset(line.strip() for line in result.stdout.splitlines() if line.strip())
+
+
+def probe_declared_volumes(runner: Runner, compose_file: Path, project: str,
+                           profile: str, env_file: Path | None) -> frozenset[str] | None:
+    """compose config --volumes（只读渲染）→ 声明的卷 key 集；失败返回 None。"""
+    result = runner.run(
+        _compose_argv(compose_file, project, profile, env_file, ["config", "--volumes"]),
+        timeout=120.0,
+    )
+    if result.returncode != 0:
+        return None
+    return frozenset(line.strip() for line in result.stdout.splitlines() if line.strip())
+
+
+def classify_volumes(declared: frozenset[str] | None, existing: frozenset[str],
+                     project: str) -> tuple[tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    """卷事实 → (持久缺失 keys, 缓存缺失 keys, 分类不可证 names)。纯函数。
+
+    - declared 含未分类卷 key（既非持久也非缓存）→ 分类不可证（fail-closed：
+      新卷的持久语义必须先在本工具常量里显式声明，不得默认按缓存处理）；
+    - 持久卷 key 未被当前 profile 渲染声明 → 同样分类不可证（local profile
+      必须声明两个持久卷——服务集漂移之外的运行时兜底）；缓存卷（searxng-cache
+      属 --profile search）不随 local profile 声明是**预期**，不算漂移，其
+      存在性仍按 volume ls 全量事实计提示；
+    - 持久卷按 ``<project>_<key>`` 全名在现存卷集中查——缺失即持久缺失；
+    - declared 查询失败（None）→ 不下任何卷结论（调用方以
+      volume-query-failed 阻塞，绝不把「查询不出」伪装成「在场/缺失」）。
+    """
+    if declared is None:
+        return (), (), ()
+    known = frozenset(PERSISTENT_VOLUME_KEYS) | frozenset(CACHE_VOLUME_KEYS)
+    extra = sorted(set(declared) - known)
+    persistent_undeclared = sorted(frozenset(PERSISTENT_VOLUME_KEYS) - set(declared))
+    unknown = tuple(extra + persistent_undeclared)
+    persistent_missing = tuple(
+        key for key in PERSISTENT_VOLUME_KEYS
+        if compose_volume_name(project, key) not in existing
+    )
+    cache_missing = tuple(
+        key for key in CACHE_VOLUME_KEYS
+        if compose_volume_name(project, key) not in existing
+    )
+    return persistent_missing, cache_missing, unknown
+
+
 def _redact_env_secrets(text: str, env_values: dict[str, str]) -> str:
     """env secret 值 → 标签（防御性脱敏；值只在内存，报告/日志永不落原值）。"""
     for key in SECRET_SHAPE_KEYS:
@@ -495,6 +599,41 @@ def run_preflight(*, runner: Runner, probe: Probe, log: PreflightLog,
     if registry_missing:
         notes.append(NOTE_REGISTRY_PULL_REQUIRED)
 
+    # ④b 持久数据卷预检（docker volume ls 只读；绝不从容器状态推断）
+    declared_volumes: frozenset[str] | None = None
+    volume_query_ok = False
+    volume_names: frozenset[str] = frozenset()
+    if engine_ok:
+        volume_query_ok, volume_names = probe_volume_names(runner)
+        if volume_query_ok:
+            declared_volumes = probe_declared_volumes(
+                runner, compose_file, project, profile, env_file if shape.present else None
+            )
+    persistent_missing, cache_missing, volume_unknown = classify_volumes(
+        declared_volumes, volume_names, project
+    )
+    report["volumes"] = {
+        "query_ok": volume_query_ok,
+        "declared": sorted(declared_volumes) if declared_volumes is not None else None,
+        "persistent_missing": list(persistent_missing),
+        "cache_missing": list(cache_missing),
+        "classification_unknown": list(volume_unknown),
+    }
+    if not engine_ok:
+        log.say("volumes: 引擎不可用——卷探测跳过（fail-closed 已由 docker-unavailable 阻塞）")
+    elif not volume_query_ok:
+        log.say("volumes: Docker 卷查询失败——fail-closed（volume-query-failed）")
+    elif declared_volumes is None:
+        log.say("volumes: compose 声明卷查询失败——fail-closed（volume-query-failed，不下任何卷结论）")
+    else:
+        log.say(
+            f"volumes: 持久缺失 {list(persistent_missing) or '无'}；缓存缺失 "
+            f"{list(cache_missing) or '无'}；分类不可证 {list(volume_unknown) or '无'}"
+            f"（命名约定 <project>_<key>，只读 volume ls）"
+        )
+    if cache_missing:
+        notes.append(NOTE_CACHE_VOLUME_MISSING)
+
     # ⑤ 当前容器状态（compose project label 过滤，只读）
     service_states: dict[str, str] = probe_containers(runner, project) if engine_ok else {}
     stack_class = classify_stack(service_states, EXPECTED_SERVICES)
@@ -535,8 +674,12 @@ def run_preflight(*, runner: Runner, probe: Probe, log: PreflightLog,
     }
 
     # ⑧ 汇总分类（纯函数可离线复测）
-    blockers = _collect_blockers(shape, engine_ok, compose_ok, drift, local_missing,
-                                 listener_blockers(service_states, api_open, web_open))
+    blockers = _collect_blockers(
+        shape, engine_ok, compose_ok, drift, local_missing,
+        listener_blockers(service_states, api_open, web_open),
+        persistent_missing, volume_unknown,
+        volume_query_ok and declared_volumes is not None,
+    )
     verdict = compose_verdict(blockers, stack_class)
     report["notes"] = notes
     report["blockers"] = list(blockers)
@@ -550,8 +693,15 @@ def run_preflight(*, runner: Runner, probe: Probe, log: PreflightLog,
 
 def _collect_blockers(shape: EnvShape, engine_ok: bool, compose_ok: bool | None,
                       drift: list[str], local_missing: tuple[str, ...],
-                      listener_codes: tuple[str, ...]) -> tuple[str, ...]:
-    """六类阻塞归并（确定性顺序）；栈状态本身不阻塞（进 verdict 语义）。"""
+                      listener_codes: tuple[str, ...],
+                      persistent_volume_missing: tuple[str, ...],
+                      volume_unknown: tuple[str, ...], volume_query_ok: bool) -> tuple[str, ...]:
+    """阻塞归并（确定性顺序）；栈状态本身不阻塞（进 verdict 语义）。
+
+    引擎不可用时卷探测被跳过——不重复报 volume-query-failed（docker-
+    unavailable 已 fail-closed）；引擎可用而卷查询失败/查询到缺失持久卷/
+    分类不可证，均独立阻塞。
+    """
     blockers: list[str] = []
     if not engine_ok:
         blockers.append(BLOCK_DOCKER_UNAVAILABLE)
@@ -570,6 +720,10 @@ def _collect_blockers(shape: EnvShape, engine_ok: bool, compose_ok: bool | None,
         blockers.append(BLOCK_COMPOSE_SERVICES_DRIFT)
     if local_missing:
         blockers.append(BLOCK_LOCAL_IMAGE_MISSING)
+    if engine_ok and not volume_query_ok:
+        blockers.append(BLOCK_VOLUME_QUERY_FAILED)
+    blockers.extend(f"{BLOCK_PERSISTENT_VOLUME_MISSING}:{key}" for key in persistent_volume_missing)
+    blockers.extend(f"{BLOCK_VOLUME_CLASSIFICATION_UNKNOWN}:{name}" for name in volume_unknown)
     blockers.extend(listener_codes)
     return tuple(blockers)
 

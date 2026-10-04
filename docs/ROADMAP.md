@@ -79,35 +79,51 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
-### M14-231 状态更新（生产恢复前置检查 + 守卫式 --apply；真实机器定位 stack-absent + 自建镜像全缺）
+### M14-231 状态更新（生产恢复前置检查 + 守卫式 --apply；真实机器定位 stack-absent + 自建镜像全缺 + 持久数据卷全缺【Codex 评审修正轮】）
 
 - 新增 `tools/ops/production_restore_preflight.py`（分支
   `ops/m14-231-production-restore`，基于 worktree 基座 `f814c101`，
   与 remote main merge `4b8ed1e0` 同树）：恢复前只读 fail-closed 分类
   ——env pin 九键形状（键名-only）、compose config + 六服务锚点漂移、
-  镜像预检（自建锚点缺失阻塞 / registry 缺失仅提示）、容器五分类
-  （stack-absent/stopped/partial/degraded/healthy）、API/Web 监听交叉
-  （listener-missing vs port-conflict，web stale 映射指向 M14-157
-  production_web_gateway）；公网边缘恒 uncertain（不阻塞不探测、绝不
-  重启 frpc）；blocked/restore-required/healthy 三 verdict。守卫式
-  `--apply` 仅在 restore-required + 精确短语时纯委托既有
+  镜像预检（自建锚点缺失阻塞 / registry 缺失仅提示）、**持久数据卷
+  预检（Codex 评审修正轮）——`docker volume ls` 只读普查（绝不从容器
+  状态推断）+ compose --volumes 声明核对，postgres-data/minio-data
+  持久缺失即阻塞 `persistent-volume-missing:<key>`（up 会静默建空卷，
+  空库绝不构成生产恢复；动作明确「不要执行 compose up/恢复：先经校验
+  备份恢复数据卷或显式全新安装决策留证」，任何阻塞在场时恢复建议被
+  抑制）、searxng-cache 缺失仅提示、volume ls/compose --volumes 查询
+  失败与声明未分类/持久未声明均 fail-closed、命名约定 `<project>_<key>`
+  与 M14-41 `minio_volume_adoption.VOLUME_NAME` 及 M14-46 证据卷名交叉
+  锁定**、容器五分类（stack-absent/stopped/partial/degraded/healthy）、
+  API/Web 监听交叉（listener-missing vs port-conflict，web stale 映射
+  指向 M14-157 production_web_gateway）；公网边缘恒 uncertain（不阻塞
+  不探测、绝不重启 frpc）；blocked/restore-required/healthy 三 verdict。
+  守卫式 `--apply` 仅在 restore-required + 精确短语时纯委托既有
   `production_recovery.py`（dry-run 门 → enforce），本工具零 docker
-  动作面（源码契约测试锁定），绝不删卷/容器、绝不触碰无关项目。
-- 真实机器只读 preflight（本切片未执行任何生产动作）：实证比「栈停了」
-  更严重——AIOS 容器完全不在场（仅 uniterm-mysql，未触碰）、全部
-  AIOS 镜像（自建 + registry）缺失、8000/3012 无监听、canonical env
-  pin 九键齐全；结论 **blocked / `local-image-missing` / exit 1**：
-  恢复前置 = 获准窗口重建 `aios/api`/`aios/web`/`aios/minio` 三自建
-  镜像（本工具与恢复路径均绝不 pull/build），再 `restore-required` →
-  既有 `production_recovery.py --dry-run` → enforce；公网 404 属公网
-  边缘面，恢复后按 §9 `public_edge_preflight.py` + frpc status 独立
-  验收，`public_ready` 口径不变。
+  动作面（源码契约测试锁定，卷面唯一子命令 ls），绝不创建/删除卷或
+  容器、绝不触碰无关项目。
+- 真实机器只读 preflight（本切片未执行任何生产动作：零容器/零卷改动、
+  frpc/uniterm-mysql 未触碰）：实证比「栈停了」更严重——AIOS 容器完全
+  不在场（仅 uniterm-mysql）、全部 AIOS 镜像（自建 + registry）缺失、
+  **全部 AIOS 命名卷缺失**（`aios-m14-03-production-rehearsal_postgres-
+  data`/`_minio-data`/`_searxng-cache` 均不在 volume ls）、8000/3012 无
+  监听、canonical env pin 九键齐全；终态结论 **blocked /
+  `[local-image-missing, persistent-volume-missing:postgres-data,
+  persistent-volume-missing:minio-data]` / exit 1**：若只重建镜像就
+  up 会静默创建空生产数据卷（Codex 评审指出的缺口，已闭合）；恢复
+  前置 = 数据卷决策（经校验备份恢复/显式全新安装留证）先行 → 获准
+  窗口重建三自建镜像 → `restore-required` → 既有
+  `production_recovery.py --dry-run` → enforce；公网 404 属公网边缘面，
+  恢复后按 §9 `public_edge_preflight.py` + frpc status 独立验收，
+  `public_ready` 口径不变。
 - 验证：聚焦 `services/api/tests/test_production_restore_preflight.py`
-  **31 passed**（FakeRunner/FakeProbe 全离线：分类矩阵、secret 全链路
-  零泄漏、报告零绝对路径、--apply 守卫链、源码契约与
-  production_recovery/compose 常量交叉锁定）；ops/release 邻居
-  **703 passed / 1 skipped**（canonical venv Python 3.11.15）；compileall、
-  ruff、`git diff --check`、新增行敏感值/本机路径扫描干净。证据：
+  **40 passed**（首轮 31 + 修正轮 9：持久缺失阻塞且抑制恢复建议、
+  缓存缺失仅提示、查询失败 fail-closed、既有卷放行 restore-required、
+  未分类/持久未声明 fail-closed、local profile 缓存卷不声明为预期、
+  命名约定、无破坏性卷命令、compose 卷名交叉锁定；FakeRunner/FakeProbe
+  全离线）；ops/release 邻居 **712 passed / 1 skipped**（canonical venv
+  Python 3.11.15）；compileall、ruff、`git diff --check`、新增行敏感值/
+  本机路径扫描干净。证据：
   `docs/evidence/m14-231-production-restore-preflight/README.md`。
 
 ### M14-229 状态更新（Android 公网真机冒烟 focus 探针修复，launch 门真机实证通过）
