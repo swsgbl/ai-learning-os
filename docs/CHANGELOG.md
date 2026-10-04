@@ -1,5 +1,48 @@
 # Changelog
 
+## M14-234 — 恢复 preflight 可选 search-profile 服务契约修复（searxng 不再把七容器全健康误判 stack-partial/restore-required；必需六服务口径 + 未知多余服务照旧 fail-closed；真实机器只读复跑 verdict=healthy）
+
+- `tools/ops/production_restore_preflight.py` 窄契约修复（M14-231 工具，
+  零新增探测面）：线上生产彩排项目现跑**七个**健康容器——必需
+  `--profile local` 六服务 + 可选 `--profile search` 的 searxng（同
+  compose project label）。M14-231 五分类把**每个** project label 容器都
+  计入 `EXPECTED_SERVICES` 比对，导致全七健康被误判 `stack-partial` →
+  verdict `restore-required`，阻塞诚实的生产验收。
+- 修复后契约：五分类**只按必需六服务锚点**（`recovery.
+  EXPECTED_STACK_SERVICES` 原样）判定——新增
+  `OPTIONAL_PROFILE_SERVICES={"searxng"}`（与 infra/docker-compose.yml 的
+  `profiles: ["search"]` 声明源码契约交叉锁定，绝不挂 local），可选
+  服务在 `containers.optional_services` 单独上报、其任何形态（健康/
+  停止/不健康/缺席）都不改变必需栈分类，未达健康仅提示
+  `optional-service-not-healthy:<name>`（永不阻塞、永不翻 verdict）；
+  集外**未知多余服务无豁免**，照旧 fail-closed 归 `stack-partial`；
+  必需服务缺失/不健康照旧 fail-closed（partial/degraded 原样）；
+  `optional` 为空时判定与 M14-231 逐分支等价（单测锁定）。报告
+  `containers` 新增 `optional_services`/`unknown_services`，
+  `SCHEMA` 升 `/1`→`/2`。只读面/阻塞集/`--apply` 守卫链/env/compose/
+  镜像/卷/监听保护全部不变（源码契约测试照旧锁定零
+  stop/rm/kill/down/restart/reset/pull/build、卷面唯一子命令 ls）。
+- 真实机器只读复跑（worktree 内以**相对路径**引用 canonical
+  `infra/env.production-recovery`，原文件不复制、值不回显；本切片**零
+  Docker 突变**——运行前后 `docker ps -a` 七容器 uptime 连续 38→39 min
+  无重启、三命名卷齐在，工具只发 version/volume ls/ps -a/image inspect
+  与客户端 compose config 渲染 + 回环 TCP/HTTP GET）：**exit 0 /
+  verdict=healthy / blockers=[]**，必需六服务 6/6 running-healthy、
+  `optional_services={'searxng': 'running-healthy'}`、unknown=[]、
+  api 8000 /health=200、web 3011 open、卷/镜像/env 全就绪、公网边缘恒
+  uncertain；报告 JSON 断言零 secret 零绝对路径（证据
+  `docs/evidence/m14-234-restore-preflight-optional-search/README.md`，
+  原始输出 gitignored `.verify/m14-234/`）。
+- 测试：聚焦 `services/api/tests/test_production_restore_preflight.py`
+  **47 passed**（M14-231 40 + 本轮 7：七容器全健康=healthy 线上误判
+  形态、可选停/不健康/health-starting 仍 healthy 且显式提示、未知多余
+  照旧 partial、必需缺失/不健康不因 searxng 在场放宽、纯函数边界
+  （仅 searxng=partial、六停+可选跑=stopped、空 optional 等价性）、
+  searxng↔compose search profile 双向锁定）；ops/release 邻居
+  **719 passed / 1 skipped**（canonical venv Python 3.11.15）；
+  ruff/compileall/`git diff --check`/新增行（170 行）敏感值·本机绝对
+  路径·U+FFFD 扫描全净。
+
 ## M14-232 — 逻辑恢复前置检查（只读判定缺失持久卷能否安全由 M14-193 逻辑备份分阶段重建；无 --execute、零 Docker 变更；真实机器实证 blocked 于持久卷已在场）
 
 - 新增 `tools/ops/logical_restore_preflight.py`（M14-232）：M14-231 实证

@@ -31,7 +31,11 @@ tools/ops/public_edge_preflight.py，见 docs/PUBLIC_EDGE_DEPLOYMENT.md §9）�
 - 当前容器状态（docker ps -a 按 compose project label 过滤，只读）分类：
   stack-absent（容器完全不在场）/ stack-stopped（齐但全未运行）/
   stack-partial（部分在场或部分运行）/ stack-degraded（齐且全运行但未达
-  healthy）/ stack-healthy；
+  healthy）/ stack-healthy。五分类**只按必需六服务锚点判定**（M14-234）：
+  已知可选 --profile search 服务（searxng）与必需集同 project label，
+  在 containers.optional_services 单独上报，其任何形态（健康/停止/不健康/
+  缺席）都不改变必需栈分类——不健康仅提示 optional-service-not-healthy:
+  <name>；未知多余服务无此豁免，仍 fail-closed 归 stack-partial；
 - API/Web 本地监听（socket TCP 探测注入面 + loopback HTTP /health 只读探测）：
   服务容器在运行而端口不通 → listener-missing（含 M14-157 已知的 Docker
   Desktop stale host 映射形态，动作指向 production_web_gateway.py）；服务
@@ -87,7 +91,9 @@ EXIT_BLOCKED = 1
 EXIT_USAGE = 2
 
 TOOL_NAME = "production_restore_preflight"
-SCHEMA = "aios-production-restore-preflight/1"
+#: M14-234 起 /2：containers 新增 optional_services/unknown_services，栈
+#: 五分类改为只按必需六服务锚点判定（可选 profile 服务单独上报）
+SCHEMA = "aios-production-restore-preflight/2"
 TAG = "[restore]"
 CONFIRM_PHRASE = "APPLY PRODUCTION RESTORE"
 
@@ -99,6 +105,9 @@ RECOVERY_SCRIPT = TOOLS_DIR / "production_recovery.py"
 NOTE_REGISTRY_PULL_REQUIRED = "registry-pull-required"
 NOTE_PUBLIC_EDGE_UNCERTAIN = "public-edge-uncertain"
 NOTE_CACHE_VOLUME_MISSING = "cache-volume-missing"
+#: 已知可选 profile 服务在场而未达健康（形如 optional-service-not-healthy:
+#: searxng）——纯提示不阻塞：可选服务不参与必需栈判定（M14-234）
+NOTE_OPTIONAL_SERVICE_NOT_HEALTHY = "optional-service-not-healthy"
 
 BLOCK_DOCKER_UNAVAILABLE = "docker-unavailable"
 BLOCK_ENV_MISSING = "env-missing"
@@ -168,6 +177,14 @@ recovery = _load_recovery_module()
 #: 与既有恢复编排共享的锚点（契约测试交叉锁定两侧一致）
 PIN_KEYS: tuple[str, ...] = tuple(recovery.PIN_KEYS)
 EXPECTED_SERVICES: frozenset[str] = frozenset(recovery.EXPECTED_STACK_SERVICES)
+#: 已知可选 compose profile 服务（M14-234）：searxng 属 compose 显式
+#: ``profiles: ["search"]``（契约测试与 infra/docker-compose.yml 交叉锁定），
+#: 与必需六服务同 compose project label。栈五分类只按 EXPECTED_SERVICES
+#: 判定；本集服务在 containers.optional_services 单独上报，其任何形态
+#: （健康/停止/不健康/缺席）都不得把必需栈翻成 partial/restore-required
+#: ——未达健康仅提示（optional-service-not-healthy:<name>）。集外多余
+#: 服务无此豁免：仍 fail-closed 归 stack-partial（拓扑漂移人工裁决）。
+OPTIONAL_PROFILE_SERVICES: frozenset[str] = frozenset({"searxng"})
 DEFAULT_PROJECT: str = recovery.DEFAULT_PROJECT
 DEFAULT_PROFILE: str = recovery.DEFAULT_PROFILE
 DEFAULT_ENV_FILE: Path = recovery.DEFAULT_ENV_FILE
@@ -260,18 +277,28 @@ def derive_service_state(state: str, status: str) -> str:
     return "running-no-healthcheck"
 
 
-def classify_stack(service_states: dict[str, str], expected: frozenset[str]) -> str:
+def classify_stack(service_states: dict[str, str], expected: frozenset[str],
+                   optional: frozenset[str] = frozenset()) -> str:
     """容器在场/运行/健康三轴 → 五分类（与 recovery.stack_health_gaps 同口径：
-    running 且无 healthcheck 事实同样视为达标）。"""
+    running 且无 healthcheck 事实同样视为达标）。
+
+    判定只看必需服务集 expected（M14-234）：已知可选 profile 服务
+    （optional，如 --profile search 的 searxng）不参与——其任何形态都
+    不得改变必需栈分类；expected|optional 之外的多余服务仍 fail-closed
+    归 stack-partial（拓扑漂移人工裁决）。optional 为空时与既有判定逐
+    分支等价（契约测试锁定）。
+    """
     present = set(service_states)
+    unknown = present - expected - optional
+    if unknown:
+        return STACK_PARTIAL
     if not present:
         return STACK_ABSENT
+    required_present = present & expected
     running = {name for name, value in service_states.items() if value.startswith("running")}
-    if present == expected and not running:
+    if required_present == expected and not (running & expected):
         return STACK_STOPPED
-    if present != expected or len(running) != len(expected & present):
-        return STACK_PARTIAL
-    if running != expected:
+    if required_present != expected or (running & expected) != expected:
         return STACK_PARTIAL
     ok = {name for name in expected if service_states.get(name) in ("running-healthy", "running-no-healthcheck")}
     return STACK_HEALTHY if ok == expected else STACK_DEGRADED
@@ -635,13 +662,29 @@ def run_preflight(*, runner: Runner, probe: Probe, log: PreflightLog,
         notes.append(NOTE_CACHE_VOLUME_MISSING)
 
     # ⑤ 当前容器状态（compose project label 过滤，只读）
+    # 五分类只按必需六服务判定（M14-234）：可选 profile 服务（searxng）
+    # 单独上报、不参与判定；未知多余服务 fail-closed 归 partial。
     service_states: dict[str, str] = probe_containers(runner, project) if engine_ok else {}
-    stack_class = classify_stack(service_states, EXPECTED_SERVICES)
+    stack_class = classify_stack(service_states, EXPECTED_SERVICES, OPTIONAL_PROFILE_SERVICES)
+    optional_states = {
+        name: service_states[name] for name in sorted(service_states) if name in OPTIONAL_PROFILE_SERVICES
+    }
+    unknown_services = sorted(set(service_states) - EXPECTED_SERVICES - OPTIONAL_PROFILE_SERVICES)
     report["containers"] = {
         "classification": stack_class,
         "service_states": dict(sorted(service_states.items())),
+        "optional_services": optional_states,
+        "unknown_services": unknown_services,
     }
-    log.say(f"containers: {stack_class}（在场 {len(service_states)}/{len(EXPECTED_SERVICES)} 服务）")
+    required_present = sum(1 for name in service_states if name in EXPECTED_SERVICES)
+    optional_desc = ", ".join(f"{name}={state}" for name, state in optional_states.items()) or "无在场"
+    log.say(
+        f"containers: {stack_class}（必需在场 {required_present}/{len(EXPECTED_SERVICES)}；"
+        f"可选 {optional_desc}）"
+    )
+    for name, state in optional_states.items():
+        if state not in ("running-healthy", "running-no-healthcheck"):
+            notes.append(f"{NOTE_OPTIONAL_SERVICE_NOT_HEALTHY}:{name}")
 
     # ⑥ API/Web 本地监听（TCP + loopback HTTP /health 只读）
     bind_ip = env_values.get("AIOS_BIND_IP") or "127.0.0.1"

@@ -79,6 +79,44 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-234 状态更新（恢复 preflight 可选 search-profile 服务契约修复；真实机器七容器全健康复跑 verdict=healthy）
+
+- 窄契约修复 `tools/ops/production_restore_preflight.py`（分支
+  `ops/m14-234-restore-preflight-optional-search`，原基于 origin/main
+  `9307918`，rebase 后基座为 M14-232 feature commit `c4dc3f4`——remote
+  main merge `2ad62a4` 同树）：M14-231 五分类把每个 project label 容器计入必需集比对，
+  线上七容器全健康（必需 `--profile local` 六服务 + 可选
+  `--profile search` 的 searxng，同 project label）被误判
+  `stack-partial` → `restore-required`，阻塞诚实生产验收。修复后五分类
+  **只按必需六服务锚点**（`recovery.EXPECTED_STACK_SERVICES` 原样）
+  判定：`OPTIONAL_PROFILE_SERVICES={"searxng"}`（与 compose
+  `profiles: ["search"]` 声明源码契约双向锁定，绝不挂 local）单独上报
+  于 `containers.optional_services`，任何形态不改变必需栈分类，未达
+  健康仅提示 `optional-service-not-healthy:searxng`；未知多余服务照旧
+  fail-closed `stack-partial`；必需缺失/不健康照旧 partial/degraded；
+  空 optional 判定与 M14-231 逐分支等价（单测锁定）；`SCHEMA` 升
+  `/1`→`/2`（containers 新增 optional_services/unknown_services）；
+  只读面/阻塞集/`--apply` 守卫链/env/compose/镜像/卷/监听保护全部
+  不变（源码契约照旧锁定零破坏性子命令、卷面唯一 ls）。
+- 真实机器只读复跑（worktree 以相对路径引用 canonical env pin，原文件
+  不复制、值不回显；本切片**零 Docker 突变**——运行前后 `docker ps -a`
+  七容器 uptime 连续 38→39 min 无重启、三命名卷齐在，工具只发只读
+  探测 + 客户端 compose config 渲染 + 回环 TCP/HTTP GET；`--apply` 未用、
+  frpc/无关项目未触碰）：**exit 0 / verdict=healthy / blockers=[]**，
+  必需 6/6 running-healthy、`optional_services={'searxng':
+  'running-healthy'}`、api 8000 /health=200、web 3011 open、卷/镜像/env
+  全就绪、公网边缘恒 uncertain（恢复后另走 §9 验收，`public_ready`
+  口径不变）；报告 JSON 断言零 secret 零绝对路径。
+- 验证：聚焦 `services/api/tests/test_production_restore_preflight.py`
+  **47 passed**（M14-231 40 + 本轮 7：七容器全健康=healthy、可选停/
+  不健康仍 healthy+显式提示、未知多余照旧 partial、必需缺失/不健康不
+  放宽、纯函数边界与空 optional 等价性、searxng↔search profile 锁定）；
+  ops/release 邻居 **719 passed / 1 skipped**（canonical venv Python
+  3.11.15）；compileall、ruff、`git diff --check`、新增行（170 行）
+  敏感值/本机路径/U+FFFD 扫描干净。证据：
+  `docs/evidence/m14-234-restore-preflight-optional-search/README.md`
+  （原始输出 gitignored `.verify/m14-234/`）。
+
 ### M14-232 状态更新（逻辑恢复前置检查：只读判定缺失持久卷能否安全由 M14-193 逻辑备份重建；真实机器实证 blocked 于持久卷已在场）
 
 - 新增 `tools/ops/logical_restore_preflight.py`（分支
