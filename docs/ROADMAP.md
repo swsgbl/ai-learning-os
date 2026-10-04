@@ -79,6 +79,37 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-231 状态更新（生产恢复前置检查 + 守卫式 --apply；真实机器定位 stack-absent + 自建镜像全缺）
+
+- 新增 `tools/ops/production_restore_preflight.py`（分支
+  `ops/m14-231-production-restore`，基于 worktree 基座 `f814c101`，
+  与 remote main merge `4b8ed1e0` 同树）：恢复前只读 fail-closed 分类
+  ——env pin 九键形状（键名-only）、compose config + 六服务锚点漂移、
+  镜像预检（自建锚点缺失阻塞 / registry 缺失仅提示）、容器五分类
+  （stack-absent/stopped/partial/degraded/healthy）、API/Web 监听交叉
+  （listener-missing vs port-conflict，web stale 映射指向 M14-157
+  production_web_gateway）；公网边缘恒 uncertain（不阻塞不探测、绝不
+  重启 frpc）；blocked/restore-required/healthy 三 verdict。守卫式
+  `--apply` 仅在 restore-required + 精确短语时纯委托既有
+  `production_recovery.py`（dry-run 门 → enforce），本工具零 docker
+  动作面（源码契约测试锁定），绝不删卷/容器、绝不触碰无关项目。
+- 真实机器只读 preflight（本切片未执行任何生产动作）：实证比「栈停了」
+  更严重——AIOS 容器完全不在场（仅 uniterm-mysql，未触碰）、全部
+  AIOS 镜像（自建 + registry）缺失、8000/3012 无监听、canonical env
+  pin 九键齐全；结论 **blocked / `local-image-missing` / exit 1**：
+  恢复前置 = 获准窗口重建 `aios/api`/`aios/web`/`aios/minio` 三自建
+  镜像（本工具与恢复路径均绝不 pull/build），再 `restore-required` →
+  既有 `production_recovery.py --dry-run` → enforce；公网 404 属公网
+  边缘面，恢复后按 §9 `public_edge_preflight.py` + frpc status 独立
+  验收，`public_ready` 口径不变。
+- 验证：聚焦 `services/api/tests/test_production_restore_preflight.py`
+  **31 passed**（FakeRunner/FakeProbe 全离线：分类矩阵、secret 全链路
+  零泄漏、报告零绝对路径、--apply 守卫链、源码契约与
+  production_recovery/compose 常量交叉锁定）；ops/release 邻居
+  **703 passed / 1 skipped**（canonical venv Python 3.11.15）；compileall、
+  ruff、`git diff --check`、新增行敏感值/本机路径扫描干净。证据：
+  `docs/evidence/m14-231-production-restore-preflight/README.md`。
+
 ### M14-229 状态更新（Android 公网真机冒烟 focus 探针修复，launch 门真机实证通过）
 
 - 修复 M14-214 链 focus 探针的两层 EMUI 10（HUAWEI MGA-AL00，Android

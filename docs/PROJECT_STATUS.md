@@ -9,6 +9,35 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-231 生产恢复前置检查与受控执行计划（只读 fail-closed 分类 + 守卫式 --apply；真实机器 preflight 定位 stack-absent + 自建镜像全缺，未执行任何生产动作）**
+worktree `ai-learning-os-worktrees/m14-231-production-restore`，分支
+`ops/m14-231-production-restore`，基于 worktree 基座 `f814c101`（与
+remote main merge `4b8ed1e0` 同树）。新增
+`tools/ops/production_restore_preflight.py`：本机生产彩排栈恢复前的
+只读分类（env pin 九键形状——只报键名不报值；compose config +
+六服务锚点漂移；镜像预检——env tag 派生 `aios/api`/`aios/web` +
+`aios/minio` 自建锚点缺失阻塞、registry 锚点缺失仅提示；容器五分类
+stack-absent/stopped/partial/degraded/healthy；API/Web 监听交叉分类
+——运行中端口不通 = `listener-missing`（web 指向 M14-157
+production_web_gateway）、未运行端口被占 = `port-conflict`）；公网边缘
+恒 `uncertain` 不阻塞不探测、绝不重启 frpc；verdict blocked（exit 1）/
+restore-required（exit 0）/healthy（exit 0）。守卫式 `--apply`：仅
+restore-required + 精确短语 `APPLY PRODUCTION RESTORE` 才纯委托既有
+`tools/ops/production_recovery.py`（先 `--dry-run` 门后 enforce，其自身
+fail-closed 语义原样生效），本工具绝不构造
+up/stop/rm/kill/down/restart/pull/build、绝不删卷/容器、绝不触碰无关
+项目。真实机器只读 preflight 实证（零生产动作）：AIOS 容器完全不在场
+（`docker ps -a` 仅 uniterm-mysql）、全部 AIOS 镜像缺失、8000/3012 无
+监听、canonical env pin 九键齐全——blockers=`[local-image-missing]`
+（exit 1），恢复前置 = 获准窗口重建三个自建镜像；公网 404 属公网边缘
+面，恢复后另走 §9 验收，`public_ready` 口径不变。验证：聚焦 31 项新
+离线契约测试全过（分类矩阵/secret 抑制/守卫链/源码契约/常量交叉
+锁定）；ops/release 邻居 703 passed / 1 skipped（canonical venv
+`..\..\.venv`，Python 3.11.15）；compileall/ruff/
+`git diff --check` 干净。证据：
+`docs/evidence/m14-231-production-restore-preflight/README.md`
+（原始输出 gitignored `.verify/m14-231/`）。
+
 **M14-229 Android 公网真机冒烟 focus 探针修复（EMUI 10 windows dump 缺焦点行 + 全量 dump 缩进焦点行；修复真机实证 launch 门通过；链最终 blocked 于公网 API 面缺失）**
 worktree `ai-learning-os-worktrees/m14-229-android-focus-probe`，分支
 `ops/m14-229-android-focus-probe`，基于 content-current 基座 `7ef3d51`

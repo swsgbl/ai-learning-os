@@ -1,5 +1,66 @@
 # Changelog
 
+## M14-231 — 生产恢复前置检查与受控执行计划（只读 fail-closed 分类 + 守卫式 --apply 纯委托既有恢复路径；真实机器 preflight 定位 stack-absent + 自建镜像全缺）
+
+- 新增 `tools/ops/production_restore_preflight.py`（M14-231）：本机生产
+  彩排栈（compose 项目 `aios-m14-03-production-rehearsal`、`--profile
+  local` 六服务）的**恢复前置检查**——env pin 形状（九键
+  `PIN_KEYS`/模板占位/compose 开发默认 secret 回落值，只报键名绝不报
+  值）、compose config 有效性 + 渲染服务集对六服务锚点漂移（stderr
+  摘要经 env secret 防御性脱敏）、镜像预检（env tag 派生
+  `aios/api`/`aios/web` + `aios/minio` 自建锚点缺失 =
+  `local-image-missing` 阻塞；postgres/redis/livekit registry 锚点缺失
+  仅提示）、当前容器状态五分类（`stack-absent`/`stack-stopped`/
+  `stack-partial`/`stack-degraded`/`stack-healthy`，`docker ps -a` 按
+  compose project label 过滤）、API/Web 本地监听交叉分类（运行中而端口
+  不通 = `listener-missing:<svc>`——web 动作指向 M14-157
+  `production_web_gateway.py` stale 映射形态；未运行而端口被占 =
+  `port-conflict:<svc>`，人工排查、绝不杀进程）。verdict：
+  `blocked`（exit 1）/`restore-required`（exit 0）/`healthy`（exit 0）。
+- 公网边缘恒 `uncertain`（不阻塞、不探测）：本地恢复不验证也不该验证
+  `https://…/aios` 公网链路（frps/VPS Nginx/frpc 在本地 Docker 面外），
+  动作指向 §9 `public_edge_preflight.py` +
+  `frpc_windows_controller.py status`；本工具**绝不重启 frpc**、不触碰
+  frpc 计划任务/进程。零 secret：env 值只进内存，一切回显经 secret 值→
+  标签脱敏（含 `run_preflight` 自带脱敏，不依赖调用方配置）；JSON 报告
+  原子写、不含本机绝对路径、不含非 loopback 绑定 IP。
+- 守卫式 `--apply`：仅当 verdict=`restore-required` **且**精确短语
+  `--confirm-phrase "APPLY PRODUCTION RESTORE"` 才动作，纯委托既有文档化
+  恢复路径 `tools/ops/production_recovery.py`（先 `--dry-run` 只读计划门、
+  非零即中止，后 enforce——幂等 `up -d --no-build` + 健康等待 + 语音
+  受控调和，该脚本自身 pin check/镜像预检/fail-closed 语义原样生效）；
+  blocked/healthy 拒绝执行零动作；本工具自身绝不构造任何
+  up/stop/rm/kill/down/restart/pull/build argv（源码契约测试锁定），
+  绝不删除卷/容器、绝不 factory reset、绝不触碰无关项目。
+- 真实机器只读 preflight（本切片**未执行任何生产动作**：未起停/创建/
+  删除任何容器、未碰卷、未碰 frpc/uniterm-mysql）：任务上下文怀疑
+  「AIOS compose 栈停止」，实证更严重——`docker ps -a` 仅 uniterm-mysql
+  （AIOS 容器完全不在场）、`docker compose ls` 无项目、**全部 AIOS 镜像
+  缺失**（`aios/api`/`aios/web`/`aios/minio` 自建锚点与 postgres/redis/
+  livekit registry 锚点均不在本机）、8000/3012 无监听；canonical 的
+  `infra/env.production-recovery` 在场且九键齐全（worktree 中被
+  gitignore）。preflight 结论：env 九键 OK（值不回显）、
+  `stack-absent (0/6)`、listeners closed、**blockers=
+  `[local-image-missing]`（exit 1）**——按既有恢复路径恢复的前置是先在
+  获准窗口重建三个自建镜像（本工具与恢复路径均绝不 pull/build），公网
+  404 属公网边缘面、恢复后另走 §9 验收。
+- 新增 31 项离线契约测试（
+  `services/api/tests/test_production_restore_preflight.py`，全
+  FakeRunner/FakeProbe 注入真实 Runner/Probe 协议，零网络/零 Docker/零
+  真实 env）：env 四形态、compose 无效（stderr 脱敏）+ 漂移、镜像
+  自建/registry 分流、容器五分类、port-conflict vs listener-missing 交叉、
+  公网边缘恒 uncertain、secret marker 全链路（日志/stdout/JSON 报告）
+  零泄漏、报告零绝对路径、--apply 守卫链（confirm-gate/blocked/healthy
+  拒绝零动作、dry-run 门中止、argv 转发、enforce 失败传播）、源码契约
+  （无破坏性子命令字面量、恢复只经 RECOVERY_SCRIPT 委托）与
+  `production_recovery.py`/`infra/docker-compose.yml` 常量交叉锁定。
+  验证：聚焦 31 passed；ops/release 邻居（recovery/preflight/web_gateway/
+  public_edge/searxng/ops_snapshot/monitor/rc_smoke/soak）**703 passed,
+  1 skipped**（canonical venv Python 3.11.15——worktree 既定
+  `..\..\.venv` 模式；3.12.13 亦通过）；compileall/ruff 干净。证据：
+  `docs/evidence/m14-231-production-restore-preflight/README.md`
+  （原始输出在 gitignored `.verify/m14-231/`）。
+
 ## M14-229 — Android 公网真机冒烟 focus 探针修复（EMUI 10 双层取证缺陷；launch 门真机实证通过；链最终 blocked 于公网 API 面缺失）
 
 - 修复 `tools/android_release/public_device_smoke.py` 焦点探针的两层
