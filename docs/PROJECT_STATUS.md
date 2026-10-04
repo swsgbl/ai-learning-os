@@ -32,6 +32,47 @@ ruff `F,E9` / compileall / `git diff --check` 干净。R3 设备链：唯一在�
 不变。证据：`docs/evidence/m14-233-harmony-unsigned-build-restore/README.md`
 （原始输出 gitignored `.verify/m14-230h-harmony-settings-diag/R3_*`）。
 
+**M14-232 逻辑恢复前置检查（只读判定缺失持久卷能否安全由 M14-193 逻辑备份分阶段重建；无 --execute、零 Docker 变更；真实机器实证 blocked 于持久卷已在场）**
+worktree `ai-learning-os-worktrees/m14-231-production-reuse`，分支
+`ops/m14-232-logical-restore-preflight`，基于 remote main merge
+`9307918`（M14-231 收口，#318）。新增
+`tools/ops/logical_restore_preflight.py`：只读回答「M14-231 实证缺失的
+两个持久卷（`aios-m14-03-production-rehearsal_postgres-data`/
+`_minio-data`）能否安全用 M14-193 已验证逻辑备份（aios-backup-v1）分
+阶段重建」。备份校验 fail-closed：位置仅限本 checkout 与 canonical 主
+checkout（`.git` gitdir 运行时推导，零硬编码绝对路径）的 gitignored
+artifacts/temp、未批准 fail-fast 不遍历内容；symlink/junction 与嵌套
+链接形态全拒绝；schema/manifest SHA256 锚点（381C4987…0612EC 与
+M14-193 证据交叉锁定）/精确 30 表集合（声明+database.json 双侧）/
+精确 4 文件集合/逐表行数与 41 总数/逐文件 SHA256 任何漂移即
+`backup-invalid`；env/compose 备份只做字节哈希永不解码（报告零
+secret，仅表名/文件名/计数/尺寸/哈希）。Docker 面仅 version/volume
+ls/image inspect 三只读命令（引擎/卷探测复用 M14-231 probe 函数）：
+不可用或任何查询失败 → `docker-state-unreadable` 不下任何卷/镜像结论；
+任一持久卷在场 → `existing-data-must-not-be-overwritten`（searxng-cache
+缺失仅提示）；必需镜像 = aios/minio 自建锚点 + postgres:17-alpine
+（与 M14-231/compose 交叉锁定）缺失 → `required-image-missing` 绝不
+pull/build；API/Web 全栈就绪委托 M14-231；唯一放行 = 备份有效 + Docker
+可读 + 两卷均缺 + 镜像齐备 → `ready-to-reconstruct`（exit 0）。输出
+11 阶段 runbook（备份复核→镜像→卷缺失复核→显式且仅创建两命名卷→仅启
+postgres/minio→alembic→`app.ops.cli restore` 恢复 DB/对象→哈希/行数
+对账→既有恢复路径全栈→M14-231 preflight+本地/公网/语音验收）但**永不
+执行**（无 --execute，源码契约测试锁定无破坏性子命令 token、无直接
+subprocess）；日志/报告零本机绝对路径（盘符/UNC 抹除）。真实机器只读
+实证（零 Docker/生产动作）：备份有效（30 表/41 行/4 文件、锚点匹配、
+四哈希全过、位置批准）；Docker 可读（29.8.1）但**两持久卷现已重新
+在场**（M14-231 取证后机器状态已变化）、必需镜像均在场——终态
+**exit 1 / blocked / `[existing-data-must-not-be-overwritten]`**：
+对在场数据的正确结论是不要重建覆盖；任务书预期的「Docker 不可用 →
+blocked」仅当实时状态仍如此时成立，本轮如实记录新状态，绝不为凑
+ready 改动 Docker。验证：聚焦 41 项离线契约测试全过（合成备份
+fixture + FakeRunner；canonical venv Python 3.11.15，3.12.13 亦通过）；
+ops/release 邻居 1010 passed / 1 skipped（含 M14-231 preflight/
+recovery/minio×3 等 14 文件）；compileall/ruff/`git diff --check`/
+新增行敏感值·本机路径·U+FFFD 扫描干净。证据：
+`docs/evidence/m14-232-logical-restore-preflight/README.md`（原始输出
+gitignored `.verify/m14-232/`）。
+
 **M14-231 生产恢复前置检查与受控执行计划（只读 fail-closed 分类 + 守卫式 --apply；真实机器 preflight 定位 stack-absent + 自建镜像全缺 + 持久数据卷全缺【Codex 评审修正轮】；未执行任何生产动作）**
 worktree `ai-learning-os-worktrees/m14-231-production-restore`，分支
 `ops/m14-231-production-restore`，基于 worktree 基座 `f814c101`（与

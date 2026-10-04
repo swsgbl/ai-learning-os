@@ -79,6 +79,53 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-232 状态更新（逻辑恢复前置检查：只读判定缺失持久卷能否安全由 M14-193 逻辑备份重建；真实机器实证 blocked 于持久卷已在场）
+
+- 新增 `tools/ops/logical_restore_preflight.py`（分支
+  `ops/m14-232-logical-restore-preflight`，基于 remote main merge
+  `9307918`，worktree `m14-231-production-reuse`）：M14-231 实证两
+  持久卷缺失后的**只读重建决策**工具——备份校验 fail-closed（位置仅限
+  本/canonical checkout 的 gitignored artifacts/temp 且 canonical 根由
+  `.git` gitdir 运行时推导、未批准 fail-fast 不遍历；symlink/junction
+  全树拒绝；schema=`aios-backup-v1`、manifest 锚点 `381C4987…0612EC`
+  与 M14-193 证据字面量交叉锁定、精确 30 表/41 行/4 文件/逐文件
+  SHA256，env/compose 备份只做字节哈希永不解码）+ Docker 面仅
+  version/volume ls/image inspect 三只读命令（复用 M14-231 probe）：
+  任何查询失败 `docker-state-unreadable` 不下结论、任一持久卷在场
+  `existing-data-must-not-be-overwritten`、必需镜像（aios/minio 自建
+  锚点 + postgres:17-alpine，与 M14-231/compose 交叉锁定）缺失
+  `required-image-missing` 绝不 pull/build、API/Web 就绪委托 M14-231；
+  唯一放行形态 = 备份有效 + Docker 可读 + 两卷均缺 + 镜像齐备 =
+  `ready-to-reconstruct`（exit 0）。输出 11 阶段 runbook（备份复核→
+  镜像→卷缺失复核→显式且仅创建两命名卷→仅启 postgres/minio→alembic→
+  `app.ops.cli restore`→完整性对账→既有恢复路径全栈→M14-231 preflight
+  + 公网/语音验收）**永不执行**（无 --execute；源码契约测试锁定无
+  破坏性子命令 token、无直接 subprocess）；日志/报告零 secret 零本机
+  绝对路径（盘符/UNC 抹除）。
+- 真实机器只读实证（本切片零 Docker/生产动作：未起停/创建/删除容器与
+  卷、未 pull/build、未碰 frpc/无关项目）：备份侧有效（30 表/41 行/
+  4 文件、锚点匹配、四文件哈希全过、位置批准，路径仅以仓库相对形式
+  回显）；Docker 侧引擎可读（29.8.1）但**两持久卷现已重新在场**
+  （`aios-m14-03-production-rehearsal_postgres-data`/`_minio-data` 均
+  在 volume ls，searxng-cache 亦在场）、必需镜像均在场——终态
+  **exit 1 / blocked / `[existing-data-must-not-be-overwritten]`**。
+  任务书预期「backup-valid 但 Docker 不可用 → blocked」仅在实时状态
+  仍如此时成立；M14-231 取证后机器状态已变化（Docker 恢复可用且卷被
+  重建），本轮如实记录新状态，**绝不为凑 ready 而改动 Docker**——对
+  在场数据的正确结论就是不要重建覆盖。
+- 验证：聚焦 `services/api/tests/test_logical_restore_preflight.py`
+  **41 passed**（合成备份 fixture + FakeRunner 全离线：放行形态/批准基
+  边界/未批准 fail-fast/junction 与 symlink 三形态实测/备份校验全矩阵/
+  Docker 三类失败 fail-closed/单双卷在场阻塞/镜像缺失/runbook 阶段
+  覆盖/marker secret 全链路零泄漏/零绝对路径/源码契约/常量交叉锁定）；
+  ops/release 邻居 **1010 passed / 1 skipped**（canonical venv Python
+  3.11.15；3.12.13 聚焦亦通过）；compileall、ruff、
+  `git diff --check`、新增行敏感值/本机路径/U+FFFD 扫描干净。证据：
+  `docs/evidence/m14-232-logical-restore-preflight/README.md`（原始输出
+  gitignored `.verify/m14-232/`）。诚实边界：本切片交付决策+分阶段计划
+  能力，未重建任何东西；`ready-to-reconstruct` 仅离线测试覆盖（在本机
+  制造该状态需删除现有数据卷，正是本工具禁止的变更）。
+
 ### M14-231 状态更新（生产恢复前置检查 + 守卫式 --apply；真实机器定位 stack-absent + 自建镜像全缺 + 持久数据卷全缺【Codex 评审修正轮】）
 
 - 新增 `tools/ops/production_restore_preflight.py`（分支
