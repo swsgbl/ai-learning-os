@@ -177,6 +177,28 @@
   剩余阻塞：需用户批准清除遗留 debug 安装（`adb uninstall
   com.ailearningos.app`）后重跑；设备连通性已不是阻塞。
 
+### M14-233 状态更新（Harmony 可构建 unsigned 默认边界修复）
+
+- 基于 `origin/main` `930791849...` 与 rebase 后 M14-230H
+  `69d7a760...` 交付一个追加 commit：`build-profile.json5` 恢复
+  `signingConfigs: []` 且 default product 无绑定；preflight 默认 /
+  `--expect-unsigned` 拒绝非空 `{name,type}` 半结构（该形状导致 hvigor
+  clean 要求 `material`），同时保留额外键 fail-closed 秘密卫生；
+  `--expect-signed` 与外部 `AIOS_HARMONY_*` 材料门不放宽；AGC gap
+  当前 checkout 如实报告 `signing_configs_empty` +
+  `product_binding_missing`。
+- 验证：聚焦 preflight + AGC gap **85 passed**；全套
+  `tests/harmony_release/` **799 passed, 1 skipped**；ruff `F,E9`、
+  compileall、`git diff --check`、敏感行扫描干净。真实 preflight 为
+  count=0 / `blocked_by_external_materials`；真实 clean release build
+  通过，HAP 236292 bytes，SHA256
+  `E49780730ED666C33BF47E0712EEED108363E1A8F60CD533E682331464489CB0`。
+- R3 设备验证在安装门 blocked：`127.0.0.1:15566` 对 unsigned HAP 返回
+  `no signature file`（hdc 进程 rc 0 但语义失败），未安装/未启动 UI、
+  无请求计数或截图可声称；清理后 bundle 不存在、目标仍在线。未伪造
+  签名或材料，不声称 signed HAP。证据：
+  `docs/evidence/m14-233-harmony-unsigned-build-restore/README.md`。
+
 ### M14-230H 状态更新（Harmony Settings 一次性连接诊断）
 
 - 基于 current main `7ef3d51c`（PR #316 merge）交付：SettingsPane

@@ -9,6 +9,29 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-233 Harmony 可构建 unsigned 默认边界修复（真实 clean release build 通过；15566 安装门诚实 blocked，无 UI 假象）**
+worktree `ai-learning-os-worktrees/m14-230h-harmony-release-provenance`，分支
+`harmony/m14-230h-release-provenance`，基于 `origin/main`
+`9307918490819d95b9e4dcdf23eccf6f5c04a06e`；rebase 后 M14-230H 为
+`69d7a76079aa3187dc1c1e52c3c01e9ce66bf778`，本切片恰好追加一个本地
+commit，不 push、不开 PR、不合并。修复 R2 暴露的 M14-228 半结构
+signingConfig 问题：默认 `build-profile.json5` 恢复 `signingConfigs: []`
+且 default product 无签名绑定；preflight 默认 / `--expect-unsigned` 对
+非空 `{name,type}` 半结构 fail-closed 报 `signing_configs_not_empty`，
+携带 material/storePath/password 等值仍叠加
+`signing_config_carries_values`；`--expect-signed` 继续要求非空 value-free
+结构 + 三项外部材料，AGC gap 当前 checkout 如实回到 unsigned structure
+failure。真实验证：preflight exit 0 / `blocked_by_external_materials`
+且 count=0；`release_build.py` 真实 clean + assembleHap 全过，HAP
+236292 bytes，SHA256 `E49780730ED666C33BF47E0712EEED108363E1A8F60CD533E682331464489CB0`；
+聚焦 85 passed，全套 `tests/harmony_release/` **799 passed, 1 skipped**，
+ruff `F,E9` / compileall / `git diff --check` 干净。R3 设备链：唯一在线
+`127.0.0.1:15566` 拒绝 unsigned HAP（hdc 语义错误 `no signature file`，
+进程 rc 0 不可信），未安装成功、未进入 Settings UI；清理后 bundle 不存在
+且目标仍在线。无 signed HAP、不伪造签名/材料，`production_ready=false`
+不变。证据：`docs/evidence/m14-233-harmony-unsigned-build-restore/README.md`
+（原始输出 gitignored `.verify/m14-230h-harmony-settings-diag/R3_*`）。
+
 **M14-231 生产恢复前置检查与受控执行计划（只读 fail-closed 分类 + 守卫式 --apply；真实机器 preflight 定位 stack-absent + 自建镜像全缺 + 持久数据卷全缺【Codex 评审修正轮】；未执行任何生产动作）**
 worktree `ai-learning-os-worktrees/m14-231-production-restore`，分支
 `ops/m14-231-production-restore`，基于 worktree 基座 `f814c101`（与

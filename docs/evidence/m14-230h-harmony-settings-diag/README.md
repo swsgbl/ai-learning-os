@@ -39,7 +39,7 @@
 - 不变量：`tests/harmony_release/test_harmony_default_url.py`
   的 SettingsPane 契约（默认 URL 初始值/placeholder）零破坏。
 
-## 2. 验证（父仓 venv `D:\AI Learning OS\ai-learning-os\.venv`）
+## 2. 验证（父仓 venv）
 
 - 聚焦：`pytest tests/harmony_release/test_harmony_settings_diag.py`
   → **21 passed**（7 类：显式门 3 / 端点使用 4 / 结果映射 6 /
@@ -61,3 +61,14 @@
   `production_ready=false` 不变。
 - 诊断行为受 AiosApi 既有层约束（超时/错误文案收敛在 API 层），
   本切片未改动 `AiosApi.ets` / `UrlPolicy.ets` / `SettingsStore.ets`。
+
+## 4. 后续 R3 修正记录
+
+- M14-233 在本切片 rebase 后修复 M14-228 遗留的半结构 signingConfig：
+  默认 checkout 恢复 `signingConfigs: []`，真实 clean release build 通过。
+  详细契约与 HAP provenance 见
+  `docs/evidence/m14-233-harmony-unsigned-build-restore/README.md`。
+- R3 设备链在 `127.0.0.1:15566` 安装门 blocked（该目标拒绝 unsigned
+  HAP：`no signature file`），未进入 Settings UI 诊断触发，因此本文件
+  第 2 节的“源码契约级验证、无设备运行”边界仍适用于 M14-230H 原提交；
+  M14-233 README 另行记录真实构建与安装门事实。
