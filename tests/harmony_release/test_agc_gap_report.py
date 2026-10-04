@@ -400,16 +400,18 @@ def test_signed_hap_name_derived_from_unsigned_canonical():
 
 
 def test_current_checkout_reports_gaps_not_failure_pretense():
-    # Real checkout (M14-228): a value-free release signingConfig bound to
-    # the default product is structurally canonical, so the structure
-    # dimension is now ok; the report stays blocked (exit 2) on external
-    # materials and must never claim a signed HAP exists.
+    # Real checkout (M14-233): the buildable default is an honest unsigned
+    # profile. The AGC report must expose that as a structure failure rather
+    # than treating a partial signing declaration as release readiness.
     result, exit_code = gap.run_gap_report(REPO_ROOT)
-    assert exit_code in (1, 2)
+    assert exit_code == 1
     assert result["production_ready"] is False
     structure = result["dimensions"]["signing_structure"]
-    assert structure["status"] == "ok"
-    assert structure["failure_codes"] == []
+    assert structure["status"] == "failure"
+    assert set(structure["failure_codes"]) == {
+        "signing_configs_empty",
+        "product_binding_missing",
+    }
     signature = result["dimensions"]["signature_evidence"]
     assert signature["signed_hap_present"] is False
     assert result["signed_hap_generated"] is False
