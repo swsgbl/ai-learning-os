@@ -9,6 +9,47 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-231 生产恢复前置检查与受控执行计划（只读 fail-closed 分类 + 守卫式 --apply；真实机器 preflight 定位 stack-absent + 自建镜像全缺 + 持久数据卷全缺【Codex 评审修正轮】；未执行任何生产动作）**
+worktree `ai-learning-os-worktrees/m14-231-production-restore`，分支
+`ops/m14-231-production-restore`，基于 worktree 基座 `f814c101`（与
+remote main merge `4b8ed1e0` 同树）。新增
+`tools/ops/production_restore_preflight.py`：本机生产彩排栈恢复前的
+只读分类（env pin 九键形状——只报键名不报值；compose config +
+六服务锚点漂移；镜像预检——env tag 派生 `aios/api`/`aios/web` +
+`aios/minio` 自建锚点缺失阻塞、registry 锚点缺失仅提示；**持久数据卷
+预检（Codex 评审修正轮）——`docker volume ls` 只读普查 + compose
+--volumes 声明核对，postgres-data/minio-data 持久缺失即阻塞
+（`persistent-volume-missing:<key>`，up 会静默建空卷），searxng-cache
+缺失仅提示，查询失败/未分类/持久未声明 fail-closed，命名约定
+`<project>_<key>` 与 M14-41/M14-46 实证锚定**；容器五分类
+stack-absent/stopped/partial/degraded/healthy；API/Web 监听交叉分类
+——运行中端口不通 = `listener-missing`（web 指向 M14-157
+production_web_gateway）、未运行端口被占 = `port-conflict`）；公网边缘
+恒 `uncertain` 不阻塞不探测、绝不重启 frpc；verdict blocked（exit 1）/
+restore-required（exit 0）/healthy（exit 0）。守卫式 `--apply`：仅
+restore-required + 精确短语 `APPLY PRODUCTION RESTORE` 才纯委托既有
+`tools/ops/production_recovery.py`（先 `--dry-run` 门后 enforce，其自身
+fail-closed 语义原样生效），本工具绝不构造
+up/stop/rm/kill/down/restart/pull/build、绝不创建/删除卷或容器、绝不
+触碰无关项目；持久卷缺失时动作明确「不要执行 compose up/恢复：先经
+校验备份恢复数据卷或显式全新安装决策留证」，任何阻塞在场时恢复命令
+建议被抑制。真实机器只读 preflight 实证（零生产动作）：AIOS 容器完全
+不在场（`docker ps -a` 仅 uniterm-mysql）、全部 AIOS 镜像缺失、**全部
+AIOS 命名卷缺失**（仅剩无关匿名卷与 freellmapi 卷）、8000/3012 无监听、
+canonical env pin 九键齐全——终态 blockers=`[local-image-missing,
+persistent-volume-missing:postgres-data, persistent-volume-missing:
+minio-data]`（exit 1）：只重建镜像就 up 会静默创建空生产数据卷（Codex
+评审缺口，已闭合）；恢复前置 = 数据卷决策（备份恢复/显式全新安装留证）
+先行，再获准窗口重建三个自建镜像；公网 404 属公网边缘面，恢复后另走
+§9 验收，`public_ready` 口径不变。验证：聚焦 40 项离线契约测试全过
+（首轮 31 + 修正轮 9：卷分类矩阵/查询失败 fail-closed/恢复建议抑制/
+命名与 compose+M14-41/M14-46 交叉锁定/卷面源码契约——唯一卷子命令
+ls）；ops/release 邻居 712 passed / 1 skipped（canonical venv
+`..\..\.venv`，Python 3.11.15）；compileall/ruff/
+`git diff --check` 干净。证据：
+`docs/evidence/m14-231-production-restore-preflight/README.md`
+（原始输出 gitignored `.verify/m14-231/`）。
+
 **M14-229 Android 公网真机冒烟 focus 探针修复（EMUI 10 windows dump 缺焦点行 + 全量 dump 缩进焦点行；修复真机实证 launch 门通过；链最终 blocked 于公网 API 面缺失）**
 worktree `ai-learning-os-worktrees/m14-229-android-focus-probe`，分支
 `ops/m14-229-android-focus-probe`，基于 content-current 基座 `7ef3d51`
