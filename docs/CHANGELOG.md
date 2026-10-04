@@ -1,5 +1,75 @@
 # Changelog
 
+## M14-232 — 逻辑恢复前置检查（只读判定缺失持久卷能否安全由 M14-193 逻辑备份分阶段重建；无 --execute、零 Docker 变更；真实机器实证 blocked 于持久卷已在场）
+
+- 新增 `tools/ops/logical_restore_preflight.py`（M14-232）：M14-231 实证
+  `<project>_postgres-data`/`<project>_minio-data` 两持久卷缺失后，本工具
+  只读回答「能否安全地用 M14-193 已验证逻辑备份（aios-backup-v1）分阶段
+  重建」。**本切片无 --execute 模式**：输出分阶段 runbook 但永不执行；
+  Docker 面仅三个只读命令（version/volume ls/image inspect，引擎与卷探测
+  经 importlib 复用 M14-231 probe 函数），绝不创建/删除卷、绝不 compose
+  up/down、绝不 pull/build、绝不覆盖任何现有数据（源码契约测试锁定）。
+- 备份校验 fail-closed（任何漂移即 `backup-invalid`）：位置必须位于本
+  checkout **与 canonical 主 checkout**（根由 worktree `.git` gitdir 指针
+  运行时推导，源码零硬编码绝对路径）的 gitignored `artifacts/temp` 之下，
+  未批准位置 fail-fast 连内容都不遍历；备份根/树内任何条目
+  symlink/junction（reparse point）一律拒绝；schema 精确 `aios-backup-v1`；
+  manifest SHA256 精确等于锚点 `381C4987…0612EC`（与 M14-193 证据字面量
+  交叉锁定）；精确 30 表集合/计数（声明与 database.json 双侧）；精确
+  4 文件集合/计数（树内多出未声明与声明缺失均阻塞）；逐表声明=实际行数
+  且总数 41；逐文件 SHA256 字节复算一致。env/compose 备份文件**只做字节
+  哈希永不解码**——报告仅含表名/文件名/计数/尺寸/SHA256，零 secret。
+- 只读 Docker 语义：引擎不可用**或任何查询失败**（含 image inspect 传输
+  失败）→ `docker-state-unreadable`（不下任何卷/镜像结论）；任一持久卷
+  已在场 → `existing-data-must-not-be-overwritten`（重建绝不能演成对现有
+  数据的覆盖；searxng-cache 可重建，缺失仅提示）；必需镜像 = 精确
+  `aios/minio:RELEASE.2025-10-15T17-29-55Z` 自建锚点（复用
+  production_recovery.LOCAL_BUILD_IMAGE_REFS）+ `postgres:17-alpine`（与
+  M14-231/compose 锚点交叉锁定）缺失 → `required-image-missing`（绝不
+  pull/build）；API/Web 全栈就绪委托 M14-231。唯一放行形态 = 备份有效 +
+  Docker 可读 + 两持久卷均缺失 + 镜像齐备 → `ready-to-reconstruct`
+  （exit 0），其余 `blocked`（exit 1）。
+- 分阶段 runbook（仅输出永不执行、零 secret/零绝对路径、11 阶段）：备份
+  复核 → 获准窗口镜像构建/采纳 → 即时复核两数据卷仍缺失 → **显式创建且
+  仅创建**两个命名数据卷 → 仅启动 postgres/minio → alembic 迁移 → 既有
+  `app.ops.cli restore` 恢复 DB/对象（其 manifest 完整性校验先行）→
+  行数/文件/锚点/对象哈希对账 → 既有恢复路径拉全栈（或 M14-231 守卫
+  --apply）→ M14-231 preflight + 本地/公网/语音验收。日志/报告零本机
+  绝对路径（盘符/UNC 一律抹除为 `<path>`，URL 不误伤）。
+- 真实机器只读 preflight（本切片**未执行任何 Docker/生产动作**）：备份侧
+  有效——30 表/41 行/4 文件、manifest 锚点匹配、四文件哈希全过、位置
+  批准；Docker 侧引擎可读（29.8.1），但 **两个持久卷现已重新在场**
+  （M14-231 取证后机器状态已变化）、必需镜像均在场——终态 **exit 1 /
+  blocked / blockers=`[existing-data-must-not-be-overwritten]`**：对在场
+  数据的正确结论是「不要重建覆盖」；任务书预期的「Docker 不可用 →
+  blocked」仅在实时状态仍如此时成立，本轮如实记录新状态，**绝不为凑
+  ready 而改动 Docker**。
+- 新增 41 项离线契约测试
+  （`services/api/tests/test_logical_restore_preflight.py`，合成备份
+  fixture + FakeRunner 全离线，零网络/零 Docker/零真实备份读取）：放行
+  形态、缓存卷提示、批准基边界、未批准 fail-fast、目录缺失、
+  junction/symlink（根/嵌套目录/嵌套文件，Windows mklink /J 实测）、
+  schema/锚点/表集（多/少/计数）/行数（逐表+仅总数）/文件集（多出/
+  缺失/计数）/逐文件哈希/manifest 非法全矩阵阻塞、引擎/卷/镜像传输
+  失败与查询失败 fail-closed 不下结论、单/双持久卷在场阻塞且动作含
+  卷名、必需镜像缺失、阻塞确定性排序、runbook 阶段覆盖（恰两次
+  volume create、up -d --no-build postgres minio、alembic、cli restore、
+  对账、既有恢复路径、M14-231+公网/语音验收）、marker secret（env 文件
+  + database 行值）全链路零泄漏、报告零绝对路径、抹除器单测（URL 不
+  误伤）、原子写抹除、parser 默认值与推导默认目录落在批准基内、退出码
+  0/1、源码契约（docker argv token ⊆ version/volume/image 且子命令恒
+  ls/inspect 含 M14-231 委托面、无破坏性子命令 token 字面量、无直接
+  subprocess、自身无 --execute/--apply/--confirm-phrase）、常量与
+  M14-231/production_recovery/compose/M14-193 锚点字面量交叉锁定、
+  30/41/4 期望事实钉死。验证：聚焦 **41 passed**（canonical venv
+  Python 3.11.15，worktree 既定模式；3.12.13 亦通过）；ops/release
+  邻居（restore_preflight/recovery/production_preflight/web_gateway/
+  public_edge/searxng/ops_snapshot/monitor/rc_smoke/soak/minio×3）
+  **1010 passed, 1 skipped**；compileall/ruff/`git diff --check`/
+  新增行敏感值·本机路径·U+FFFD 扫描干净。证据：
+  `docs/evidence/m14-232-logical-restore-preflight/README.md`（原始输出
+  在 gitignored `.verify/m14-232/`）。
+
 ## M14-231 — 生产恢复前置检查与受控执行计划（只读 fail-closed 分类 + 守卫式 --apply 纯委托既有恢复路径；真实机器 preflight 定位 stack-absent + 自建镜像全缺 + 持久数据卷全缺【Codex 评审修正轮】）
 
 - 新增 `tools/ops/production_restore_preflight.py`（M14-231）：本机生产
