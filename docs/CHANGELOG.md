@@ -1,5 +1,53 @@
 # Changelog
 
+## M14-236 — 当前生产 preflight 证据（docs-only：PR #322 合并后 canonical checkout 上 supervisor 只读 preflight 快照——merged_at 后约 12m29s——verdict=blocked；仅证明 generated_at 时点状态，不授权恢复、不证明 production readiness）
+
+- 纯文档取证切片（worktree
+  `ai-learning-os-worktrees/m14-236-current-production-preflight-evidence`，
+  分支 `ops/m14-236-current-production-preflight-evidence`，基于当前
+  main `7ab13940bede10a3971ee07a3ca2b878d5b5249c`（PR #322 merge
+  commit，parents `eac1e09` + `72c424d`），单本地 commit，不 push）：
+  记录 supervisor 以 `tools/ops/production_restore_preflight.py`
+  **只读模式**（`apply=False`）在 canonical checkout 新跑的机器快照，
+  时点锚定（UTC）：PR #322 merged_at 2026-10-05T04:03:20Z → 快照
+  `generated_at` 2026-10-05T04:15:49Z（晚约 12m29s）——**合并后当前
+  机器状态证据，且仅截至 generated_at 时点；此后任何时点状态须以
+  新一轮只读 preflight 重新确立，不得从本快照推断**。快照内容：
+  schema `aios-production-restore-preflight/2`、Docker 29.8.1 可用、
+  compose `config_ok=true` 零服务漂移、容器分类 **stack-absent**
+  （必需在场 0/6、`optional_services` 空）、api `127.0.0.1:8000` /
+  web `127.0.0.1:3011` 均 closed、本地镜像缺
+  `aios/minio:RELEASE.2025-10-15T17-29-55Z` /
+  `aios/api:m14-211-production` / `aios/web:m14-193-production`、
+  持久卷缺 postgres-data 与 minio-data、缓存卷缺 searxng-cache、
+  verdict **blocked**（blockers：local-image-missing、
+  persistent-volume-missing:postgres-data / minio-data）。与 M14-235
+  合并前快照逐字段一致（log 逐字节相同、JSON 仅 `generated_at`
+  一字段不同）——blocked Docker 数据面状态跨 PR #321/#322 两次合并
+  持续存在（仅就该时间区间的观察而言）；M14-235 仍是独立合并前
+  快照，不改写、不弱化、不取代。
+- 源工件只读锚定（canonical checkout gitignored
+  `.verify/m14-236-current-machine-preflight/`，仅读取 + 切片时独立
+  重算哈希/字节数，未重跑 preflight）：`machine-preflight.json`
+  SHA-256 `4f3f4be1c39750c1e44b31c0d525e04638e7d94da9b5c9bf368c516eccd15113`
+  （3142 字节）；`machine-preflight.log`
+  `96b5dec1d08704020be0d70ff4f898ba73aa936f5fae8f8eab2aa555ce1e9b85`
+  （1607 字节）。本切片零 Docker 突变（未 pull/build、未 compose up、
+  未做任何卷操作）、零生产动作、零 frpc/WSL/公网边缘触碰、零代码/
+  测试/workflow/infra/Docker 文件/`.gitignore`/旧任务 tracked
+  evidence 改动；变更面恰四个 Markdown 文件（新证据 README +
+  PROJECT_STATUS / ROADMAP / CHANGELOG 三台账）。
+- 下一步指引：**本证据不授权恢复、不构成恢复进展、不证明
+  production readiness**——生产恢复持续 blocked，直至外部 Docker
+  数据面恢复完成（经校验备份恢复持久卷或显式全新安装决策留证；
+  获准窗口重建 pin 自建镜像——工具与恢复路径绝不 pull/build）
+  **且**新一轮只读 preflight 判 healthy；此前不得 compose up、不得
+  生产恢复、不得做任何验收宣称；`production_ready=false` 不变。验证
+  （docs-only）：源工件 SHA-256/字节独立重算并逐项核对 JSON/log
+  事实；时间线锚点对照本地 git（`7ab1394` parents 与 committer 时刻）
+  与权威 merged_at；`git diff --check` 干净；新增行敏感值/本机绝对
+  路径/U+FFFD 扫描零命中，不跑 pytest。
+
 ## M14-235 — 生产状态漂移证据（docs-only：M14-234 feature worktree 上 supervisor 只读 preflight 漂移快照——feature commit 后、PR 合并前——verdict=blocked；非代码回归，亦非合并后机器状态证明）
 
 - 纯文档取证切片（worktree `ai-learning-os-worktrees/m14-235-production-state-drift`，
