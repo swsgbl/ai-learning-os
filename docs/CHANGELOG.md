@@ -1,5 +1,51 @@
 # Changelog
 
+## M14-240 — 当前公网移动证据缺口报告（M14-238 planner × 真实清单；docs-only；非就绪声明）
+
+- 证据/缺口切片（worktree
+  `ai-learning-os-worktrees/m14-240-public-mobile-evidence-gap`，分支
+  `ops/m14-240-public-mobile-evidence-gap`，基于 current main
+  `2005412c1be2085422196e3ad4f00ac6e33dd49c`（PR #326 merge，即
+  M14-239），单本地 commit，不 push、不开 PR、不合并）：把已合并的
+  M14-238 计划器（`tools/android_release/public_mobile_evidence_plan.py`）
+  跑在**真实当前证据清单**上，对 M14-237 公网移动发布聚合门六个证据
+  角色出**文件面**缺口报告。这不是 readiness 切片：`complete=false`
+  与 blockers 是预期且如实的输出。
+- 真实清单（gitignored
+  `.verify/m14-240-public-mobile-evidence-gap/`）：源文件在场时逐字节
+  拷贝（13 个文件源↔拷贝字节同一、SHA-256 双侧独立重算一致），
+  manifest 只用相对 POSIX 路径。角色：restore_preflight **present**
+  （M14-236 快照，3142 B，verdict=blocked）；edge_preflight
+  **present**（2026-10-04 partial，3211 B，exit 1——**仓库级出处
+  锚点缺失，歧义如实报告而非发明**）；device_smoke **present**
+  （M14-229 run 2 report.json + 8 个同目录证据文件整目录拷贝，
+  3979 B，status=blocked）；release_evidence **present**（M14-219
+  release-check 导出，2489 B，all_green=true 本机隔离环境）；
+  cloudflare_preflight **null**（可选，工具从未真实 execute）；
+  attestation **MISSING**（人工签认从未产生；无占位内容，缺席保持
+  缺席）。
+- 计划器真实运行：**exit 1（BLOCKERS）**，`complete=false`，blockers
+  恰 `['missing-file:attestation']`；五在场角色 bytes/SHA-256 与独立
+  重算一致；出口语义复跑等价（同 blocker 集，角色事实与 replay 命令
+  逐字段一致，仅 generated_at 随真实时钟不同）。报告与控制台转录
+  均留 `.verify/`（不入 git）。
+- 边界：**计划器只做文件面盘点，绝不解析子报告语义；权威语义门仍
+  是 M14-237**——README 如实列出各在场角色的语义事实（restore
+  blocked、edge exit 1 + mobile_attestation pending、smoke blocked
+  且早于 generated_at 字段增补、attestation 缺席），M14-237 回放时
+  均会 blocker；本切片不运行 M14-237 门，不授权任何生产/设备/发布
+  动作。
+- 下一步闭合形式四组：(a) 外部 Docker 数据面恢复（他处所有）→ 新
+  只读 preflight 至 healthy；(b) 仅健康生产后可再生的证据；(c) 真机/
+  公网/语音/TURN/APK 人工 attestation（不得代拟）；(d) 可选
+  Cloudflare 真实 execute（凭据永不经 agent）。
+- 验证（docs-only）：拷贝字节同一 + 独立哈希核验（exit 0）；生成
+  JSON 37 项断言全过（含复跑等价与脱敏扫描，exit 0）；`git diff
+  --check` 干净；变更行 secret/本地绝对路径/Windows 用户名/U+FFFD
+  扫描零命中；仓库无既有 docs/markdown 校验命令，如实注明未运行；
+  docs-only 不跑 pytest。变更面恰 4 个 Markdown 文件（新证据 README
+  + 三台账）。
+
 ## M14-239 — Harmony 公开发布缺口证据回填（docs-only；非生产就绪声明）
 
 - 纯文档证据回填（worktree
