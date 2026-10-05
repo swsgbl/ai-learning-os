@@ -9,6 +9,29 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-238 公网移动证据编排计划器（plan-only 缺口报告 + 精确 M14-237 回放命令）**
+worktree `ai-learning-os-worktrees/m14-238-public-mobile-evidence-orchestrator`，分支
+`ops/m14-238-public-mobile-evidence-orchestrator`，基于 current main
+`d41c9bf0c79537c20a2b2614e3203c744d0a5241`（PR #324 merge，即 M14-237）。
+新增 `tools/android_release/public_mobile_evidence_plan.py` + 聚焦离线契约
+测试：读一份显式 manifest v1（角色路径一律相对清单目录），对 M14-237 六
+证据角色（restore/edge/device_smoke/可选 cloudflare/release_evidence/
+attestation + 可选 freshness_hours）做**文件面**盘点——present/basename/
+bytes/SHA-256——产出脱敏 JSON+Markdown 缺口报告与 shlex.quote 精确引用的
+M14-237 回放命令。边界：**绝不解析子报告语义**（角色文件只读字节，垃圾
+内容零 blocker）、零子进程/网络/真机/容器/环境/凭据（ast 源码守卫锁定）、
+报告只含 basename/哈希/固定词汇 code（脱敏断言锁定）、原子写+重读校验+
+拒绝零残留。invalid（exit 2）：schema/未知键/重复键/缺必需角色/绝对或
+遍历或反斜杠或冒号路径/超长路径/角色同目标/freshness 越界（bool 拒绝，
+[1,720] 与 M14-237 对齐，缺省 24）；blockers（exit 1）：missing/symlink/
+reparse/directory/empty/unreadable，可选 cloudflare 缺席不是 blocker。
+固定时间与 Store 注入测试。验证：聚焦 **56 passed**、
+`tests/android_release` **354 passed / 4 skipped**、ruff、compileall、
+`git diff --check`、新增行敏感扫描全过。真实 CLI 演示（合成数据，
+gitignored `.verify/m14-238-demo/`）：complete exit 0、缺 attestation →
+`missing-file:attestation` exit 1。证据：
+`docs/evidence/m14-238-public-mobile-evidence-orchestrator/README.md`。
+
 **M14-237 Public mobile release gate（公网移动发布聚合门——只读、fail-closed、聚合专用：把既有机器导出证据（production restore preflight / public edge preflight / Android public device smoke / 可选 cloudflare ingress preflight / release evidence）+ 受约束人工 attestation（4G/5G 实网、跨源 cookie、真实语音、TURN、APK 下载安装五项必需）合成为 public_mobile_ready 专门结论；绝不重复子工具探测语义，绝不伪造 human release approval 或 production readiness；含 supervisor Round-1 review 两项阻断缺陷修正：评估时刻时间锚 + release-evidence 权威白名单）**
 worktree `ai-learning-os-worktrees/m14-237-public-mobile-release-gate`，分支
 `ops/m14-237-public-mobile-release-gate`，基于当前 main

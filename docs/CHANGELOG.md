@@ -1,5 +1,40 @@
 # Changelog
 
+## M14-238 — 公网移动证据编排计划器（plan-only 缺口报告 + 精确 M14-237 回放命令；零代码改动面之外的新工具切片）
+
+- 交付 `python tools/android_release/public_mobile_evidence_plan.py
+  --manifest <manifest.json> --output <dir>`：读一份显式 manifest v1
+  （角色路径一律相对清单目录），对 M14-237 公网移动发布聚合门所需六个
+  证据角色（restore_preflight / edge_preflight / device_smoke / 可选
+  cloudflare_preflight / release_evidence / attestation，另可选
+  freshness_hours）做**文件面**盘点——present / basename / bytes /
+  SHA-256——并产出脱敏 JSON+Markdown 缺口报告与一条可直接复制的精确
+  引用（shlex.quote）M14-237 回放命令（freshness 取 manifest 值或 24，
+  cloudflare 仅在提供时出现，`--output` 诚实占位）。
+- 只读计划层边界（测试锁定）：**绝不解析子报告语义**——角色文件只按
+  字节读做哈希锚定，非 JSON/二进制垃圾内容照样锚定且零 blocker；零
+  子进程/网络/真机/容器/环境变量/凭据访问（ast 源码守卫 + 全文件敏感
+  词扫描）；报告脱敏——只含 basename/bytes/SHA-256/角色名/固定词汇
+  code，绝无绝对本地路径（sanitize 断言）；唯一写入为显式报告目录
+  （同目录 tmp+fsync+os.replace 原子写 + 写后重读校验，拒绝零残留）。
+- 校验分层：exit 2 invalid（manifest 契约违规——schema 不符/未知键/
+  顶层重复键（object_pairs_hook）/缺或 null 必需角色/绝对、遍历、反斜
+  杠、冒号、控制字符、>200 字符路径/两角色同目标/freshness_hours 非
+  int（bool 拒绝）或越 [1,720]/输出写出或重读校验失败——零报告写入）；
+  exit 1 blockers（文件面缺口——missing/symlink/reparse/directory/
+  empty/unreadable per role；可选 cloudflare 缺席或 null 与 M14-237 一
+  致**不算** blocker）；exit 0 complete。generated_at 来自注入时钟
+  （CLI 真实 UTC，测试固定 2026-10-05T12:00:00Z）；文件面全经共享
+  Store 协议注入。
+- 验证：聚焦 `test_public_mobile_evidence_plan.py` **56 passed**；
+  `tests/android_release` **354 passed / 4 skipped** 零回归；ruff 通过；
+  compileall 通过；`git diff --check` 通过；新增行 secret/本地绝对路
+  径/U+FFFD 扫描干净。真实 CLI 演示（合成数据，gitignored
+  `.verify/m14-238-demo/`）：complete → exit 0；移除 attestation 后 →
+  `missing-file:attestation`、exit 1，报告含完整 replay 命令。证据：
+  `docs/evidence/m14-238-public-mobile-evidence-orchestrator/README.md`
+  （6 工件 bytes+SHA256）。1 个本地 commit，不 push、不 PR、不合并。
+
 ## M14-237 — Public mobile release gate（公网移动发布聚合门：只读、fail-closed、聚合专用——把既有机器导出证据 + 受约束人工 attestation 合成为 public_mobile_ready 专门结论，替代人工拼装；含 supervisor Round-1 review 两项阻断缺陷修正：评估时刻时间锚 + release-evidence 权威白名单）
 
 - 新增 `tools/android_release/public_mobile_release_gate.py`（单文件、

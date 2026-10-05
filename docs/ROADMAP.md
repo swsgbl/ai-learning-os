@@ -79,6 +79,23 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-238 状态更新（公网移动证据编排计划器，plan-only 缺口报告）
+
+- 新增 `tools/android_release/public_mobile_evidence_plan.py`：读一份
+  manifest v1（角色路径相对清单目录），对 M14-237 六证据角色做文件面
+  盘点（present/basename/bytes/SHA-256），产出脱敏 JSON+Markdown 缺口
+  报告与精确引用（shlex.quote）的 M14-237 回放命令。
+- 边界：不解析子报告语义（角色文件只读字节，垃圾内容零 blocker）、
+  零子进程/网络/真机/容器/环境/凭据（ast 守卫）、报告零绝对路径；
+  exit 0 complete / 1 blockers（missing/symlink/reparse/directory/
+  empty/unreadable；可选 cloudflare 缺席不算）/ 2 invalid（shape/
+  freshness/重复键/绝对或遍历路径/角色同目标，零报告写入）。
+- 验证：聚焦 56 passed（固定时间+Store 注入）；`tests/android_release`
+  354 passed / 4 skipped；ruff/compileall/`git diff --check`/敏感扫描
+  通过。真实 CLI 演示（合成数据）：complete exit 0、缺 attestation →
+  `missing-file:attestation` exit 1。证据：
+  `docs/evidence/m14-238-public-mobile-evidence-orchestrator/README.md`。
+
 ### M14-237 状态更新（Public mobile release gate：公网移动发布聚合门——只读、fail-closed、聚合专用，把既有机器导出证据 + 受约束人工 attestation 合成为 public_mobile_ready 专门结论；绝不重复子工具探测语义，绝不伪造人工发布批准；含 supervisor Round-1 review 两项阻断缺陷修正）
 
 - 工具+测试切片（worktree
