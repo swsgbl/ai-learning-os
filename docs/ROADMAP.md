@@ -79,6 +79,55 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-235 状态更新（生产状态漂移证据：M14-234 feature worktree 上 supervisor 只读 preflight 漂移快照——feature commit 后、PR 合并前——verdict=blocked；非代码回归，亦非合并后机器状态证明）
+
+- docs-only 取证切片（worktree
+  `ai-learning-os-worktrees/m14-235-production-state-drift`，分支
+  `ops/m14-235-production-state-drift`，基于 PR #321 merge `eac1e09`
+  （parents `2ad62a4` + `f5eea42`），单本地 commit，不 push、不开 PR、
+  不合并）：supervisor 在 M14-234 feature worktree 上以
+  `tools/ops/production_restore_preflight.py` **只读模式**
+  （`apply=False`）复跑机器，时点锚定（UTC）：feature commit
+  `f5eea42`（`f5eea421648d909aed010bfca6dd9d1283fc5905`，committer
+  2026-10-04T12:19:18Z）→ 快照 `generated_at` 2026-10-04T17:17:45Z
+  （晚约 4h58m）→ PR #321 merged_at 2026-10-05T03:29:01Z（权威 GitHub
+  合并时刻，再晚约 10h11m）——**快照属合并前 PR 评审窗口观察，不证明
+  合并后（当前）机器状态**。快照内容：schema
+  `aios-production-restore-preflight/2`、Docker 29.8.1 可用、compose
+  `config_ok=true` 零服务漂移、容器分类 **stack-absent**（必需在场
+  0/6、`optional_services` 空）、api `127.0.0.1:8000` / web
+  `127.0.0.1:3011` 均 closed、本地镜像缺
+  `aios/minio:RELEASE.2025-10-15T17-29-55Z` /
+  `aios/api:m14-211-production` / `aios/web:m14-193-production`、
+  持久卷缺 postgres-data 与 minio-data、缓存卷缺 searxng-cache、
+  **verdict=blocked**（blockers：local-image-missing、
+  persistent-volume-missing:postgres-data / minio-data）——定性为
+  **外部 Docker 数据面状态漂移，非 M14-234 或任何已合并切片的代码
+  回归**（M14-234 健康 evidence 随 `f5eea42` 入库，快照晚于其入库
+  时点，两次观察各自在其时点为真，不改写、不弱化）。
+- 源工件只读锚定（M14-234 feature worktree gitignored
+  `.verify/m14-234-supervisor/`，本切片仅读取 + 独立重算哈希/字节数，
+  未重跑 preflight）：`machine-preflight.json` SHA-256
+  `5d59a343683a2bb24b95441746aa41881ccc35ca5333eca9868358bf14a6e91e`
+  （3142 字节）；`machine-preflight.log`
+  `96b5dec1d08704020be0d70ff4f898ba73aa936f5fae8f8eab2aa555ce1e9b85`
+  （1607 字节）。本切片零 Docker 突变（未 pull/build、未 compose up、
+  未做任何卷操作）、零生产动作、零旧任务 tracked evidence 改动、零
+  代码/测试/workflow/infra/Docker 文件/`.gitignore` 改动；变更面恰
+  四个 Markdown 文件。
+- **当前生产阻塞边界**：本快照不确立合并后机器状态（当前状态须以
+  新一轮只读 preflight 重新确立，不得从本快照推断）；生产恢复持续
+  blocked，直至外部 Docker 数据面恢复完成（经校验备份恢复
+  postgres-data/minio-data 持久卷，或完成显式全新安装决策并留证——
+  绝不 compose up 静默建空卷；获准窗口重建 pin 自建镜像——工具与
+  恢复路径绝不 pull/build）**且**新一轮只读 preflight 判 healthy；
+  此前不得 compose up、不得生产恢复、不得做任何验收宣称。
+  `production_ready=false` 不变。验证（docs-only）：源工件 SHA-256/
+  字节独立重算并逐项核对 JSON/log 事实；时间线锚点对照本地 git 与
+  权威 merged_at；`git diff --check` 干净；新增行敏感值/本机绝对
+  路径/U+FFFD 扫描零命中。证据：
+  `docs/evidence/m14-235-production-state-drift/README.md`。
+
 ### M14-234 状态更新（恢复 preflight 可选 search-profile 服务契约修复；真实机器七容器全健康复跑 verdict=healthy）
 
 - 窄契约修复 `tools/ops/production_restore_preflight.py`（分支
