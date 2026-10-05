@@ -1,5 +1,40 @@
 # Changelog
 
+## M14-239 — Harmony 公开发布缺口证据回填（docs-only；非生产就绪声明）
+
+- 纯文档证据回填（worktree
+  `ai-learning-os-worktrees/m14-239-harmony-public-gap-evidence`，分支
+  `harmony/m14-239-harmony-public-gap-evidence`，基于 current main
+  `a0b5c6803105224f521c4c2d2929b0839c1cfe74`（PR #325 merge，即
+  M14-238），单本地 commit，不 push、不开 PR、不合并）：把 2026-10-05
+  M14-238H Harmony 公开发布缺口审计（基础提交 `d41c9bf`）的权威
+  HMHarness 审计事实落入
+  `docs/evidence/m14-239-harmony-public-gap-audit/README.md`。这不是
+  生产就绪声明：`production_ready=false`（reason
+  `gap_report_is_not_release_readiness`）不变。
+- 缺口分级原样保持、不得弱化：**P0** AGC 证书/profile/密钥库缺失、
+  无已签名 HAP、`signing_configs_count=0`（三材料环境变量全部
+  `not_set`，`unsigned_boundary=true`，`signed_hap_generated=false`、
+  `signing_performed=false`、`agc_access=false`）；**P1** Harmony HAP
+  公共分发 / AGC 通道未验证（上传未尝试、release manifest 未下载、
+  公共通道要求已签名 release HAP）；**P2** 真实设备与公共分发证据
+  缺失（审计只读：无设备冒烟、无签名验证、无发布证据采集）。先前
+  审计观察到模拟器 `127.0.0.1:15566` 在线仅作上下文，本轮未安装、
+  未验证任何应用；M14-237 门禁面向 Android APK，不能替代 Harmony
+  HAP 发布链路。
+- 五份源工件（REPORT.md / summary.json / preflight_default.json /
+  preflight_req.json / agc_gap.json）只读锚定 bytes+SHA-256，未拷贝
+  入仓库；文档零本地绝对路径、零 Windows 用户名、零凭据（环境变量
+  仅公开契约名，值本就全部缺席）；本切片不授权任何签名/上传/分发/
+  发布动作。
+- 验证（docs-only）：源工件哈希独立重算逐项核对；审计事实对照源
+  JSON/REPORT 核验；`git diff --check` 干净；变更行 secret/绝对路径/
+  用户名/U+FFFD 扫描零命中；仓库无既有 docs/markdown 校验命令
+  （根 package.json scripts 仅 apps/web dev/build/lint/typecheck 与
+  pytest，无 markdownlint 配置或依赖），该项如实注明未运行；
+  docs-only 不跑 pytest。变更面恰 4 个 Markdown 文件（新证据 README +
+  PROJECT_STATUS / ROADMAP / CHANGELOG 三台账）。
+
 ## M14-238 — 公网移动证据编排计划器（plan-only 缺口报告 + 精确 M14-237 回放命令；零代码改动面之外的新工具切片）
 
 - 交付 `python tools/android_release/public_mobile_evidence_plan.py
