@@ -28,6 +28,7 @@ import tempfile
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
 from urllib.parse import urljoin, urlsplit
@@ -1011,6 +1012,10 @@ def run_smoke(
     result = {
         "schema_version": SCHEMA_VERSION,
         "tool": TOOL_NAME,
+        # M14-237：机器导出报告的时间锚（ISO UTC）。纯增量字段——
+        # 不改变任何探测/判定语义，只让下游聚合门（public_mobile_release_gate）
+        # 能做新鲜度/时序校验；旧快照证据不受影响（历史证据不改写）。
+        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "status": status,
         "exit_code": exit_code,
         "public_ready": False,
