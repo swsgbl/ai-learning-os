@@ -9,6 +9,38 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-234 恢复 preflight 可选 search-profile 服务契约修复（searxng 不再把七容器全健康误判 stack-partial/restore-required；真实机器只读复跑 verdict=healthy，零 Docker 突变）**
+worktree `ai-learning-os-worktrees/m14-234-restore-preflight-optional-search`，
+分支 `ops/m14-234-restore-preflight-optional-search`，原基于 origin/main
+`9307918490819d95b9e4dcdf23eccf6f5c04a06e`，rebase 后基座为 M14-232
+feature commit `c4dc3f4`（remote main merge `2ad62a4` 同树）。窄契约修复
+`tools/ops/production_restore_preflight.py`：线上项目现跑七容器全健康
+（必需 `--profile local` 六服务 + 可选 `--profile search` 的 searxng，同
+project label），M14-231 五分类把每个 project label 容器计入
+`EXPECTED_SERVICES` 比对 → 全七健康被误判 `stack-partial`/
+`restore-required`，阻塞诚实生产验收。修复：五分类**只按必需六服务
+锚点**（`recovery.EXPECTED_STACK_SERVICES` 原样）判定；新增
+`OPTIONAL_PROFILE_SERVICES={"searxng"}`（与 compose
+`profiles: ["search"]` 声明源码契约双向锁定），可选服务单独上报于
+`containers.optional_services`，任何形态（健康/停/不健康/缺席）不改变
+必需栈分类，未达健康仅提示 `optional-service-not-healthy:searxng`；
+未知多余服务照旧 fail-closed `stack-partial`；必需缺失/不健康照旧
+partial/degraded；`optional` 为空时与 M14-231 逐分支等价（单测锁定）；
+`containers.unknown_services` 新增，`SCHEMA` 升 `/2`；只读面/阻塞集/
+`--apply` 守卫链/卷与镜像与监听保护全部不变。真实机器只读复跑
+（worktree 以相对路径引用 canonical env pin，原文件不复制、值不回显）：
+**exit 0 / verdict=healthy / blockers=[]**——必需 6/6 running-healthy、
+`optional_services={'searxng': 'running-healthy'}`、api 8000 /health=200、
+web 3011 open、卷/镜像/env 全就绪、公网边缘恒 uncertain；运行前后
+`docker ps -a` 七容器 uptime 38→39 min 连续无重启、三命名卷齐在——
+**零 Docker 突变**，`--apply` 未用、frpc/无关项目未触碰；报告 JSON
+断言零 secret 零绝对路径。验证：聚焦
+`test_production_restore_preflight.py` **47 passed**（40+7）；ops/release
+邻居 **719 passed / 1 skipped**（canonical venv Python 3.11.15）；
+compileall/ruff/`git diff --check`/新增行敏感值·本机路径·U+FFFD 扫描
+干净。证据：`docs/evidence/m14-234-restore-preflight-optional-search/
+README.md`（原始输出 gitignored `.verify/m14-234/`）。
+
 **M14-233 Harmony 可构建 unsigned 默认边界修复（真实 clean release build 通过；15566 安装门诚实 blocked，无 UI 假象）**
 worktree `ai-learning-os-worktrees/m14-230h-harmony-release-provenance`，分支
 `harmony/m14-230h-release-provenance`，基于 `origin/main`

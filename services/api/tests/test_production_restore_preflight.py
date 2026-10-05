@@ -14,7 +14,13 @@ r"""M14-231 tools/ops/production_restore_preflight.py 契约测试：只读分�
   卷 fail-closed；命名约定 <project>_<key> 与 M14-41/M14-46 证据交叉锁定；
   源码契约：唯一卷子命令 ls，绝不 rm/prune/create；
 - 容器五分类：stack-absent / stack-stopped / stack-partial /
-  stack-degraded / stack-healthy；
+  stack-degraded / stack-healthy；**可选 profile 服务轮（M14-234）**：
+  五分类只按必需六服务锚点判定——searxng（compose profiles: ["search"]，
+  源码契约与 docker-compose.yml 交叉锁定）在场无论健康/停止/不健康都
+  不把必需栈翻成 partial/restore-required（不健康仅提示
+  optional-service-not-healthy:searxng，单独上报于 containers.
+  optional_services）；未知多余服务仍 fail-closed 归 stack-partial；
+  必需服务缺失/不健康仍照旧 fail-closed；
 - 监听交叉分类：未运行而端口被占 = port-conflict；运行中而端口不通 =
   listener-missing（web 动作指向 production_web_gateway）；公网边缘恒
   uncertain（不阻塞、不探测）；
@@ -468,6 +474,136 @@ def test_stack_absent_with_foreign_listener_is_port_conflict(tmp_path: Path) -> 
     report, _ = _assess(FakeRunner(), probe, env)
     assert "port-conflict:api" in report["blockers"]
     assert report["verdict"] == pr.VERDICT_BLOCKED
+
+
+# ---------------------------------------------------------------- 可选 profile 服务（M14-234）
+
+def _seven_container_states(searxng: tuple[str, str]) -> dict[str, tuple[str, str]]:
+    """线上真实形态：必需六服务健康 + 同 project label 的可选 searxng。"""
+    states = _healthy_containers()
+    states["searxng"] = searxng
+    return states
+
+
+def test_optional_searxng_healthy_keeps_required_stack_healthy(tmp_path: Path) -> None:
+    """七容器全健康（六必需 + search profile 的 searxng）= stack-healthy——
+    M14-234 修复的误判形态：同 project label 的可选服务绝不把必需栈翻成
+    stack-partial / restore-required。"""
+    env = tmp_path / "pin.env"
+    env.write_text(_env_text(), encoding="utf-8")
+    probe = FakeProbe(open_ports=frozenset({API_PORT, WEB_PORT}), health_status=200)
+    report, _ = _assess(
+        FakeRunner(containers=_seven_container_states(("running", "Up 3 hours (healthy)"))),
+        probe, env)
+    assert report["containers"]["classification"] == pr.STACK_HEALTHY
+    assert report["verdict"] == pr.VERDICT_HEALTHY
+    assert report["blockers"] == []
+    assert report["containers"]["optional_services"] == {"searxng": "running-healthy"}
+    assert report["containers"]["unknown_services"] == []
+    assert not any(note.startswith(pr.NOTE_OPTIONAL_SERVICE_NOT_HEALTHY) for note in report["notes"])
+
+
+def test_optional_searxng_stopped_or_unhealthy_still_healthy_with_note(tmp_path: Path) -> None:
+    """可选 searxng 停止/不健康：必需六服务健康 → verdict 仍 healthy，
+    仅显式提示 optional-service-not-healthy:searxng（不阻塞、不翻 partial）。"""
+    env = tmp_path / "pin.env"
+    env.write_text(_env_text(), encoding="utf-8")
+    probe = FakeProbe(open_ports=frozenset({API_PORT, WEB_PORT}), health_status=200)
+    for searxng_state in (("exited", "Exited (0) 1 hour ago"),
+                          ("running", "Up 3 hours (unhealthy)"),
+                          ("running", "health: starting")):
+        report, _ = _assess(
+            FakeRunner(containers=_seven_container_states(searxng_state)), probe, env)
+        assert report["containers"]["classification"] == pr.STACK_HEALTHY, searxng_state
+        assert report["verdict"] == pr.VERDICT_HEALTHY, searxng_state
+        assert report["blockers"] == [], searxng_state
+        assert f"{pr.NOTE_OPTIONAL_SERVICE_NOT_HEALTHY}:searxng" in report["notes"], searxng_state
+        assert report["containers"]["optional_services"] == {
+            "searxng": pr.derive_service_state(*searxng_state)}, searxng_state
+
+
+def test_unknown_extra_service_still_fail_closed_partial(tmp_path: Path) -> None:
+    """未知多余服务（既非必需六服务也非可选 searxng）无豁免——照旧
+    fail-closed 归 stack-partial（verdict restore-required，人工裁决）。"""
+    env = tmp_path / "pin.env"
+    env.write_text(_env_text(), encoding="utf-8")
+    containers = _healthy_containers()
+    containers["extra-worker"] = ("running", "Up 2 hours (healthy)")
+    probe = FakeProbe(open_ports=frozenset({API_PORT, WEB_PORT}), health_status=200)
+    report, _ = _assess(FakeRunner(containers=containers), probe, env)
+    assert report["containers"]["classification"] == pr.STACK_PARTIAL
+    assert report["verdict"] == pr.VERDICT_RESTORE_REQUIRED
+    assert report["containers"]["unknown_services"] == ["extra-worker"]
+    assert report["containers"]["optional_services"] == {}
+
+
+def test_missing_required_service_still_partial_with_searxng_present(tmp_path: Path) -> None:
+    """必需服务缺失不因可选 searxng 在场而放宽——照旧 fail-closed partial。"""
+    env = tmp_path / "pin.env"
+    env.write_text(_env_text(), encoding="utf-8")
+    containers = {svc: ("running", "Up (healthy)") for svc in STACK_SERVICES[:5]}  # 缺 web
+    containers["searxng"] = ("running", "Up (healthy)")
+    probe = FakeProbe(open_ports=frozenset({API_PORT}), health_status=200)  # web 不在→不开不通
+    report, _ = _assess(FakeRunner(containers=containers), probe, env)
+    assert report["containers"]["classification"] == pr.STACK_PARTIAL
+    assert report["verdict"] == pr.VERDICT_RESTORE_REQUIRED
+
+
+def test_unhealthy_required_still_degraded_with_searxng_healthy(tmp_path: Path) -> None:
+    """必需服务不健康不因可选 searxng 健康而放宽——照旧 stack-degraded。"""
+    env = tmp_path / "pin.env"
+    env.write_text(_env_text(), encoding="utf-8")
+    containers = _seven_container_states(("running", "Up 3 hours (healthy)"))
+    containers["redis"] = ("running", "Up 3 hours (unhealthy)")
+    probe = FakeProbe(open_ports=frozenset({API_PORT, WEB_PORT}), health_status=200)
+    report, _ = _assess(FakeRunner(containers=containers), probe, env)
+    assert report["containers"]["classification"] == pr.STACK_DEGRADED
+    assert report["verdict"] == pr.VERDICT_RESTORE_REQUIRED
+
+
+def test_classify_stack_pure_optional_edges() -> None:
+    """纯函数边界：仅可选服务在场 ≠ absent/healthy（partial）；必需齐而
+    全停 + 可选在跑 = stopped（恢复路径可拉起必需六服务）。"""
+    states = {"searxng": "running-healthy"}
+    assert pr.classify_stack(states, pr.EXPECTED_SERVICES,
+                             pr.OPTIONAL_PROFILE_SERVICES) == pr.STACK_PARTIAL
+    stopped = {svc: "not-running" for svc in STACK_SERVICES}
+    stopped["searxng"] = "running-healthy"
+    assert pr.classify_stack(stopped, pr.EXPECTED_SERVICES,
+                             pr.OPTIONAL_PROFILE_SERVICES) == pr.STACK_STOPPED
+    # optional 为空时与既有判定逐分支等价（六健康即 healthy、七容器即 partial）
+    six = {svc: "running-healthy" for svc in STACK_SERVICES}
+    assert pr.classify_stack(six, pr.EXPECTED_SERVICES) == pr.STACK_HEALTHY
+    seven = dict(six, searxng="running-healthy")
+    assert pr.classify_stack(seven, pr.EXPECTED_SERVICES) == pr.STACK_PARTIAL
+
+
+def test_optional_services_cross_locked_with_compose_profiles() -> None:
+    """searxng ↔ compose profiles: ["search"] 双向锁定：可选分类的依据是
+    compose 显式 profile 声明（不挂 local/hybrid/cloud），不是容器名猜测；
+    升级 compose profile 归属必须同步改 OPTIONAL_PROFILE_SERVICES。"""
+    assert pr.OPTIONAL_PROFILE_SERVICES == frozenset({"searxng"})
+    assert not (pr.OPTIONAL_PROFILE_SERVICES & pr.EXPECTED_SERVICES)
+    assert "searxng" not in STACK_SERVICES
+    for name in pr.OPTIONAL_PROFILE_SERVICES:
+        block = _compose_service_block(name)
+        assert 'profiles: ["search"]' in block, f"{name} 未锚定 --profile search"
+        profiles_value = block.split("profiles:", 1)[1].split("\n", 1)[0]
+        assert '"local"' not in profiles_value, f"{name} 不得挂 local profile"
+    # CACHE_VOLUME_KEYS 的 searxng-cache 与可选服务同名族（M14-66 搜索栈）
+    assert "searxng-cache" in pr.CACHE_VOLUME_KEYS
+
+
+def _compose_service_block(name: str) -> str:
+    """按两空格缩进键边界截取 compose 服务块（top-level 键 0 缩进收尾）。"""
+    lines = COMPOSE_FILE.read_text(encoding="utf-8").splitlines()
+    start = lines.index(f"  {name}:")
+    block: list[str] = []
+    for line in lines[start + 1:]:
+        if line.strip() and len(line) - len(line.lstrip(" ")) <= 2:
+            break
+        block.append(line)
+    return "\n".join(block)
 
 
 # ---------------------------------------------------------------- 公网边缘
