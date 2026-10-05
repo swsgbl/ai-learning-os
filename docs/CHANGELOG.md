@@ -1,5 +1,62 @@
 # Changelog
 
+## M14-237 — Public mobile release gate（公网移动发布聚合门：只读、fail-closed、聚合专用——把既有机器导出证据 + 受约束人工 attestation 合成为 public_mobile_ready 专门结论，替代人工拼装；含 supervisor Round-1 review 两项阻断缺陷修正：评估时刻时间锚 + release-evidence 权威白名单）
+
+- 新增 `tools/android_release/public_mobile_release_gate.py`（单文件、
+  纯标准库、Store 注入 I/O、原子写 + 写后字节级重读校验、零网络/零
+  设备/零 Docker/零子进程/零 env）：显式消费六类输入——
+  production restore preflight 报告（`verdict=healthy` 才通过）、
+  public edge preflight 报告（`exit_code=0 ∧ summary.failed=0 ∧
+  mobile_attestation=attested` 三者一致）、Android public device smoke
+  报告（`status=passed` 且其自带 `evidence.files` 清单与同目录实际文件
+  逐字节 SHA-256 复核）、cloudflare ingress preflight 已脱敏报告
+  （可选；`status=pass` 且 zone 与 edge 端点 host 归属域一致；**本门
+  绝不读凭据**）、release evidence（**仓库既有权威导出器精确白名单**，
+  Round-1 缺陷修正：① `provider-smoke-aggregate`
+  （`services/api/app/ops/provider_smoke_evidence.py`）：tool
+  `provider-smoke-evidence` + schema_version `provider-smoke-evidence-v1`
+  + gate `provider-smoke`，voice/search/llm 三槽位全部 executed=true 且
+  result=pass；② `release-check`（`services/api/app/ops/release_check.py`）：
+  tool/gate `release-check` + all_green=true——任意其他 tool 字符串一律
+  拒绝，不发明未来导出器）、受约束人工 attestation（五项必需
+  覆盖：4G/5G 实网、跨源 cookie、真实语音、TURN relay、APK 下载安装；
+  结论=pass、有效期覆盖评估时刻、`evidence_files` 至少与本门实际消费
+  的输入 (basename, SHA-256) 全等锚定——拒绝自声明）。时间语义
+  （Round-1 缺陷修正）：评估时刻 `evaluation_time` 可注入（CLI 为真实
+  当前 UTC、契约测试注入固定 UTC）；报告顶层 `generated_at` = 真实
+  评估时间，`reference.evidence_frontier` = 机器报告 `generated_at`
+  最大值，两者语义分离；三重新鲜度全部以评估时刻为锚——每份机器输入
+  距 frontier ≤ freshness、机器时间戳 > 评估时刻+300s 即
+  `future-timestamp` 拒绝、`评估时刻−frontier > freshness` 即
+  `stale-frontier`（整批陈旧互相背书不放行）、attestation observed_at
+  ≤ 评估时刻+300s 且距评估时刻 ≤ freshness、valid_until ≥ 评估时刻；
+  malformed/缺失时间戳的机器输入自带 blocker，不参与前沿也不可能
+  放行。缺失/损坏/schema 错/tool 错/哈希错/矛盾/过期/partial/blocked/
+  白名单外 一律 **blocked**（exit 1，报告照写，blockers 与下一步
+  只读命令逐条列出，命令参数取自既有报告；release-evidence 重建命令
+  指向真实导出器 `python -m app.ops.cli provider-smoke-aggregate ...`
+  / `release-check`）；symlink/reparse/目录/零时间锚/naive 评估时刻/
+  写出失败 → **拒绝**（exit 2，零写入或清理半成品）。输出固定携带
+  `release_authorization.human_release_approval="not-asserted"` 与
+  `production_readiness="not-asserted"`——即使 ready 也不伪造人工
+  发布批准或整体生产就绪。
+- `tools/android_release/public_device_smoke.py` 最小增量：报告顶层
+  新增 `generated_at`（ISO UTC）时间锚（+2 行；零探测/判定语义变化；
+  旧证据不改写）。
+- 新增 39 项契约测试
+  `tests/android_release/test_public_mobile_release_gate.py`（全合成
+  fixture、评估时刻注入固定 UTC；覆盖全 pass（generated_at/前沿语义
+  分离）/缺输入/schema·tool 错/哈希错/机器未来时间戳/stale-frontier/
+  malformed 时间戳不可绕过/naive 评估拒绝/attestation 未来·陈旧·过期/
+  状态 blocked·pending·槽位 fail·all_green 非 true/release-evidence
+  白名单（任意 tool 拒绝、schema·gate 错位、槽位未执行、release-check
+  接受与拒绝、next-action 指向真实导出器）/跨报告矛盾/路径·symlink
+  拒绝/输出 fail-closed/下一步命令/无副作用静态断言）。验证（修正轮
+  全部重跑）：聚焦 39 passed；android_release 全包 298 passed+4
+  skipped；ops 全包 229 passed；全 tests 树 1621 passed+6 skipped；
+  ruff 全过；compileall 过；`git diff --check` 干净。证据与验证记录
+  见 `docs/evidence/m14-237-public-mobile-release-gate/README.md`。
+
 ## M14-236 — 当前生产 preflight 证据（docs-only：PR #322 合并后 canonical checkout 上 supervisor 只读 preflight 快照——merged_at 后约 12m29s——verdict=blocked；仅证明 generated_at 时点状态，不授权恢复、不证明 production readiness）
 
 - 纯文档取证切片（worktree

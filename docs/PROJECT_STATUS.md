@@ -9,6 +9,51 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-237 Public mobile release gate（公网移动发布聚合门——只读、fail-closed、聚合专用：把既有机器导出证据（production restore preflight / public edge preflight / Android public device smoke / 可选 cloudflare ingress preflight / release evidence）+ 受约束人工 attestation（4G/5G 实网、跨源 cookie、真实语音、TURN、APK 下载安装五项必需）合成为 public_mobile_ready 专门结论；绝不重复子工具探测语义，绝不伪造 human release approval 或 production readiness；含 supervisor Round-1 review 两项阻断缺陷修正：评估时刻时间锚 + release-evidence 权威白名单）**
+worktree `ai-learning-os-worktrees/m14-237-public-mobile-release-gate`，分支
+`ops/m14-237-public-mobile-release-gate`，基于当前 main
+`e96640ab6d0780b07c5072c6db52c3cf62d1ec95`（PR #323 merge
+commit），本地 commit（9a1bbdd + 修正 commit）、不 push、不开 PR、
+不合并。交付：`tools/android_release/public_mobile_release_gate.py`
+（单文件、纯标准库、Store 注入 I/O、tmp+fsync+os.replace 原子写 +
+写后字节级重读校验、零网络/零设备/零 Docker/零子进程/零 env）+ 39
+项契约测试（全合成 fixture、评估时刻注入固定 UTC）+ 证据 README +
+三本台账。判定语义：每类输入只消费其机器导出字段（schema/tool
+自标识、时间戳、该工具自己的成功语义），聚合层做字节级 SHA-256
+锚定、attestation (basename, sha256) 全等锚定（拒绝自声明）、
+评估时刻为锚的三重新鲜度（CLI 真实当前 UTC / 契约测试注入固定
+UTC；顶层 `generated_at`=真实评估时间、`reference.evidence_frontier`
+=机器报告 `generated_at` 最大值，语义分离；机器时间戳 >
+评估时刻+300s 即 future-timestamp 拒绝、评估时刻−frontier >
+freshness 即 stale-frontier 整批陈旧不放行、每份机器输入距
+frontier ≤ freshness、attestation observed_at ≤ 评估时刻+300s 且
+距评估时刻 ≤ freshness、valid_until ≥ 评估时刻；malformed/缺失
+时间戳的机器输入自带 blocker 不放行）、release evidence 仓库既有
+权威导出器精确白名单（provider-smoke-aggregate：tool
+`provider-smoke-evidence`+schema `provider-smoke-evidence-v1`+gate
+`provider-smoke`、voice/search/llm 三槽位全 executed 且 result=pass；
+或 release-check：tool/gate `release-check`+all_green=true；任意其他
+tool 一律拒绝）、cloudflare zone 与 edge 端点 host 归属域一致性；
+缺失/损坏/篡改/矛盾/过期/partial/blocked/白名单外一律 blocked
+（exit 1，blockers + 下一步只读命令逐条列出，release-evidence
+重建命令指向真实导出器）；symlink/reparse/目录/零时间锚/naive
+评估时刻/写出失败一律拒绝（exit 2，零写入）。输出固定
+`human_release_approval="not-asserted"` 与
+`production_readiness="not-asserted"`。附带
+`public_device_smoke.py` 最小增量（报告顶层 `generated_at` 时间锚，
++2 行零语义变化，旧证据不改写）。验证（修正轮全部重跑）：聚焦 39
+passed；android_release 全包 298 passed+4 skipped；ops 全包 229
+passed；全 tests 树 1621 passed+6 skipped；ruff/compileall/
+`git diff --check` 全过；pytest basetemp 置于仓库外
+`D:\AI Learning OS\.pytest-tmp\m14-237-public-mobile-release-gate\`。
+证据与完整验证矩阵：
+`docs/evidence/m14-237-public-mobile-release-gate/README.md`。
+未覆盖风险：真实六类证据的首次聚合运行尚未发生（工具零生产触碰，
+真实证据到位后由 operator 只读重放）；`mobile-exam-flow`/
+`mobile-harmony-pwa` 不在本门必需覆盖范围。
+
+### 前一任务快照（M14-236 当前生产 preflight 证据——已随 PR #323 合并，详见 docs/evidence/m14-236-current-production-preflight/README.md；本切片不改写、不弱化该证据）
+
 **M14-236 当前生产 preflight 证据（docs-only；PR #322 合并后 supervisor 在 canonical checkout 只读 preflight 快照——merged_at 2026-10-05T04:03:20Z 后约 12m29s、generated_at 2026-10-05T04:15:49Z——verdict=blocked；仅证明该时点 blocked 状态，不授权恢复、不证明 production readiness；M14-235 保持独立的合并前快照，不改写、不弱化）**
 worktree `ai-learning-os-worktrees/m14-236-current-production-preflight-evidence`，分支
 `ops/m14-236-current-production-preflight-evidence`，基于当前 main
