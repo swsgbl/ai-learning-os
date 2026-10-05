@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any, Protocol
+from urllib.error import HTTPError
 from urllib.parse import urljoin, urlsplit
 from urllib.request import Request, urlopen
 
@@ -408,6 +409,8 @@ def _read_bounded(
 ) -> bytes:
     try:
         response = transport.get(url, timeout_seconds)
+    except HTTPError:
+        raise SmokeFailure(stage, f"{stage}_http_error")
     except (OSError, ValueError):
         raise SmokeFailure(stage, f"{stage}_network_unavailable", blocked=True) from None
     try:
@@ -447,6 +450,8 @@ def _read_bounded(
         return b"".join(chunks)
     except SmokeFailure:
         raise
+    except HTTPError:
+        raise SmokeFailure(stage, f"{stage}_http_error")
     except (OSError, ValueError):
         raise SmokeFailure(stage, f"{stage}_network_unavailable", blocked=True) from None
     finally:

@@ -9,6 +9,23 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-241 Public device smoke HTTP 错误分类修复（最小闭环）**
+worktree `ai-learning-os-worktrees/m14-241-public-device-http-error-classification`，
+分支 `ops/m14-241-public-device-http-error-classification`，基于 current main
+`7693c082369cb1eb6cf0ec93663369387fbf4726`。修复
+`tools/android_release/public_device_smoke.py` 中 `HTTPError` 因继承
+`OSError` 而被误归为 `{stage}_network_unavailable` 的分类缺陷：请求返回
+与响应读取两个路径均优先映射既有稳定码 `{stage}_http_error`，普通
+`OSError`/URI 错误/`ValueError` 仍映射 blocked 的
+`{stage}_network_unavailable`。新增两个纯离线 transport 注入测试分别锁定
+两类结果（HTTPError 用例覆盖 404/503），零网络/设备/生产触碰。验证：
+聚焦注入 **3 passed / 36 deselected**；目标测试文件 **39 passed**；
+ruff、compileall、`git diff --check` 通过。证据：
+`docs/evidence/m14-241-public-device-http-error-classification/README.md`。
+本切片不 push、不开 PR、不合并，也不声明公网移动发布就绪。
+
+### 前一任务快照（M14-240 当前公网移动证据缺口报告——详见 docs/evidence/m14-240-public-mobile-evidence-gap/README.md；本切片不改写、不弱化该证据）
+
 **M14-240 当前公网移动证据缺口报告（M14-238 planner × 真实清单；docs-only；非就绪声明）**
 worktree `ai-learning-os-worktrees/m14-240-public-mobile-evidence-gap`，
 分支 `ops/m14-240-public-mobile-evidence-gap`，基于 current main

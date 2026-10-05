@@ -79,6 +79,21 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-241 状态更新（public device smoke HTTP 错误分类修复——最小闭环）
+
+- 修复 `tools/android_release/public_device_smoke.py` 的错误分类：`HTTPError`
+  继承 `OSError`，原先会被误归为 blocked 的
+  `{stage}_network_unavailable`；现在请求返回与响应读取路径均优先映射
+  既有稳定码 `{stage}_http_error`，普通 `OSError`/URI 错误/`ValueError`
+  仍映射 blocked 的 `{stage}_network_unavailable`。
+- 新增两个纯离线 transport 注入测试分别锁定 `HTTPError -> http_error`
+  （404/503）与 `OSError -> network_unavailable`；零网络、零设备、
+  零生产触碰。
+- 验证：聚焦注入 3 passed / 36 deselected；目标测试文件 39 passed；
+  ruff、compileall、`git diff --check` 通过。单本地 commit，不 push、
+  不开 PR、不合并；本切片不声明公网移动发布就绪。证据：
+  `docs/evidence/m14-241-public-device-http-error-classification/README.md`。
+
 ### M14-240 状态更新（当前公网移动证据缺口报告——M14-238 planner × 真实清单，docs-only，非就绪声明）
 
 - 证据/缺口切片（worktree

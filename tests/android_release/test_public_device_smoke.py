@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 
@@ -733,6 +734,35 @@ def test_network_failure_is_honest_blocked_without_retry(tmp_path):
     assert "manifest_network_unavailable" in codes(result)
     assert http.urls == [MANIFEST_URL]
     monkeypatch.undo()
+
+
+@pytest.mark.parametrize("status", [404, 503])
+def test_read_bounded_maps_http_error_to_stable_http_error(status):
+    class Transport:
+        def get(self, url: str, timeout_seconds: int):
+            raise HTTPError(url, status, "HTTP Error", {}, None)
+
+    with pytest.raises(smoke.SmokeFailure) as caught:
+        smoke._read_bounded(
+            Transport(), MANIFEST_URL, 1, 1024, None, "manifest"
+        )
+
+    assert caught.value.code == "manifest_http_error"
+    assert caught.value.blocked is False
+
+
+def test_read_bounded_maps_plain_os_error_to_network_unavailable():
+    class Transport:
+        def get(self, url: str, timeout_seconds: int):
+            raise OSError("network unavailable")
+
+    with pytest.raises(smoke.SmokeFailure) as caught:
+        smoke._read_bounded(
+            Transport(), MANIFEST_URL, 1, 1024, None, "manifest"
+        )
+
+    assert caught.value.code == "manifest_network_unavailable"
+    assert caught.value.blocked is True
 
 
 def test_markdown_and_json_are_atomic_value_free_and_deterministic(tmp_path):
