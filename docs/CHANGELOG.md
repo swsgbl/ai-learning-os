@@ -1,5 +1,31 @@
 # Changelog
 
+## M14-242 — Current main release evidence（M14-241 后代码绑定门刷新；docs-only；非生产就绪声明）
+
+- 刷新代码绑定发布证据：M14-219 证据绑定 `df3d9969`，M14-241 合并后
+  current main 为 `82a8d02a6fe0c45785c9464fdf394cdcb05061d0`，且发布
+  工具与测试发生真实变更，因此 ci-main 与 release-check 必须 rebind。
+- ci-main：main push run **37380086771**（run_number 796）5/5 jobs
+  success；PR #328 head run **37379245926**（run_number 795）同样
+  5/5 success；raw GitHub API 身份链 26/26 断言通过后派生 canonical。
+- release-check：从零 Python 3.12 + Node 隔离环境真实重跑，exit 0 /
+  all_green=true / **10/10 pass**；API 测试 **5812 passed / 42 skipped /
+  1 warning**，migration、backup、本地语音、license 与 e2e 全部通过。
+  canonical 与工具产物逐字节一致。
+- 只读复用边界保持诚实：provider-smoke 仍为 M14-209 真实失败聚合
+  （voice pass / search fail / llm fail）；long-soak 为历史 pass 窗口；
+  六个 production-state 源仅按 bytes+SHA-256 原样 staging。复用校验
+  **61/61 passed**。
+- evidence-cockpit：current-head 与 release-check declared head 均为
+  `82a8d02...`，10 个 staged 文件逐字节一致；结论
+  `cockpit_ready=false`、blockers=`provider-smoke:blocked`、
+  readiness pass=8 / blocked=1 / missing=2。`release_ready=false` 与
+  `production_ready=false` 不变，不授权部署或公网分发。
+- 验证与卫生：cockpit 14/14、最终契约 34/34、`SHA256SUMS` 57 文件
+  全量 rehash bad=0 / coverage_delta=0；credential_hits=0、
+  replacement_char_files=0。证据：
+  `docs/evidence/m14-242-current-main-release-evidence/README.md`。
+
 ## M14-241 — Public device smoke HTTP 错误分类修复（最小闭环）
 
 - 根因修复：`urllib.error.HTTPError` 是 `OSError` 子类，

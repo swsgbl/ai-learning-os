@@ -79,6 +79,28 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-242 状态更新（current main release evidence——M14-241 后代码绑定门刷新，docs-only，非生产就绪声明）
+
+- 基于 current main
+  `82a8d02a6fe0c45785c9464fdf394cdcb05061d0`（PR #328 merge）刷新
+  M14-219 之后已 stale 的代码绑定发布证据：M14-241 修改发布工具与测试，
+  docs-only 例外不适用于该 runtime/test 变更。
+- ci-main 换绑 main push run **37380086771**（5/5 success），并归档
+  PR #328 head run **37379245926**（5/5 success）与 raw GitHub API
+  身份链；release-check 在从零 Python 3.12 + Node 隔离环境真实重跑，
+  **10/10 pass**，canonical 与工具产物逐字节一致。
+- provider-smoke / long-soak / production-state 不重跑、不改写：provider
+  仍为 M14-209 真实失败聚合，long-soak 仍为历史 pass 窗口，六个
+  production-state 源按 bytes+SHA-256 原样 staging；复用校验 61/61。
+- evidence-cockpit 在 tracked docs 修改前运行，代码绑定门 current；
+  诚实结论 `cockpit_ready=false`、唯一 blocker
+  `provider-smoke:blocked`、readiness pass=8 / blocked=1 / missing=2。
+  `release_ready=false` / `production_ready=false` 不变，本切片不部署、
+  不发布、不声明公网移动就绪。
+- 验证：raw CI 26/26、复用证据 61/61、cockpit 14/14、最终契约 34/34、
+  SHA 索引 57 文件 rehash bad=0 / coverage_delta=0、敏感值扫描 0 命中。
+  证据：`docs/evidence/m14-242-current-main-release-evidence/README.md`。
+
 ### M14-241 状态更新（public device smoke HTTP 错误分类修复——最小闭环）
 
 - 修复 `tools/android_release/public_device_smoke.py` 的错误分类：`HTTPError`

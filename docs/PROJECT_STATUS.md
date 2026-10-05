@@ -9,6 +9,30 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-242 Current main release evidence（M14-241 后代码绑定门刷新；docs-only 取证，非生产就绪声明）**
+worktree `ai-learning-os-worktrees/m14-241-public-device-http-error-classification`，
+分支 `ops/m14-242-current-main-release-evidence`，基于 current main
+`82a8d02a6fe0c45785c9464fdf394cdcb05061d0`（PR #328 merge）。动因：
+M14-219 发布证据绑定 `df3d9969`，其后 M14-241 真实修改发布工具与测试，
+旧 ci-main / release-check 证据 stale。本轮从零搭建 Python 3.12 与 Node
+隔离环境，full isolated release-check **10/10 pass**（API 5812 passed /
+42 skipped / 1 warning；migration、backup、local voice、license、e2e 全
+过）；归档 current main CI run **37380086771** 与 PR #328 head run
+**37379245926**，两者均 5/5 success。provider-smoke 只读复用 M14-209
+真实失败聚合（voice pass / search fail / llm fail），long-soak 复用历史
+pass 窗口，六个 production-state 源按 bytes+SHA-256 复核后 staging。
+evidence-cockpit 在 tracked docs 修改前运行：**pass=8 / blocked=1 /
+missing=2**，唯一 blocker `provider-smoke:blocked`；`cockpit_ready=false`、
+`release_ready=false`、`production_ready=false` 全程不变。验证：raw CI
+身份链 26/26、复用证据 61/61、cockpit 14/14、最终契约 34/34、
+`SHA256SUMS` 57 文件全量 rehash bad=0 / coverage_delta=0、敏感值扫描
+0 命中。证据：
+`docs/evidence/m14-242-current-main-release-evidence/README.md`。
+零 Docker/生产容器/DB/MinIO/语音服务/设备/代理触碰；本切片不部署、
+不发布、不声明公网移动就绪。
+
+### 前一任务快照（M14-241 public device smoke HTTP 错误分类修复——详见 docs/evidence/m14-241-public-device-http-error-classification/README.md；本切片不改写、不弱化该证据）
+
 **M14-241 Public device smoke HTTP 错误分类修复（最小闭环）**
 worktree `ai-learning-os-worktrees/m14-241-public-device-http-error-classification`，
 分支 `ops/m14-241-public-device-http-error-classification`，基于 current main
