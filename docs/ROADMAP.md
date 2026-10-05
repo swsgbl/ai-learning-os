@@ -79,6 +79,25 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-239 状态更新（Harmony 公开发布缺口证据回填——docs-only，非生产就绪声明）
+
+- 纯文档证据回填：把 2026-10-05 M14-238H Harmony 公开发布缺口审计
+  （基 `d41c9bf`）的权威 HMHarness 审计事实落入
+  `docs/evidence/m14-239-harmony-public-gap-audit/README.md`，分级
+  原样保持、不得弱化：**P0** AGC 证书/profile/密钥库缺失、无已签名
+  HAP、`signing_configs_count=0`；**P1** Harmony HAP 公共分发 / AGC
+  通道未验证；**P2** 真实设备与公共分发证据缺失。
+- 先前审计观察到模拟器 `127.0.0.1:15566` 在线仅作上下文，本轮未
+  安装、未验证任何应用；M14-237 门禁面向 Android APK，不能替代
+  Harmony HAP 发布链路。
+- 五份源工件（REPORT.md / summary.json / preflight_default.json /
+  preflight_req.json / agc_gap.json）只读锚定 bytes+SHA-256；
+  `production_ready=false`（reason `gap_report_is_not_release_readiness`）
+  不变，不授权任何签名/上传/分发/发布动作。
+- 验证（docs-only）：源工件哈希独立重算逐项核对；`git diff --check`
+  干净；变更行 secret/绝对路径/用户名/U+FFFD 扫描零命中；仓库无既有
+  docs/markdown 校验命令，如实注明未运行；不跑 pytest。
+
 ### M14-238 状态更新（公网移动证据编排计划器，plan-only 缺口报告）
 
 - 新增 `tools/android_release/public_mobile_evidence_plan.py`：读一份
