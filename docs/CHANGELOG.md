@@ -1,5 +1,51 @@
 # Changelog
 
+## M14-235 — 生产状态漂移证据（docs-only：M14-234 feature worktree 上 supervisor 只读 preflight 漂移快照——feature commit 后、PR 合并前——verdict=blocked；非代码回归，亦非合并后机器状态证明）
+
+- 纯文档取证切片（worktree `ai-learning-os-worktrees/m14-235-production-state-drift`，
+  分支 `ops/m14-235-production-state-drift`，基于 PR #321 merge
+  `eac1e09`（parents `2ad62a4` + `f5eea42`），单本地 commit，不 push）：
+  记录 supervisor 在 M14-234 feature worktree 上以
+  `tools/ops/production_restore_preflight.py` **只读模式**
+  （`apply=False`）复跑的机器漂移快照，时点锚定（UTC）：feature
+  commit `f5eea42`（committer 2026-10-04T12:19:18Z）→ 快照
+  `generated_at` 2026-10-04T17:17:45Z（晚约 4h58m）→ PR #321
+  merged_at 2026-10-05T03:29:01Z（权威 GitHub 合并时刻，再晚约
+  10h11m）——**快照属合并前 PR 评审窗口观察，不证明合并后（当前）
+  机器状态**。快照内容：schema `aios-production-restore-preflight/2`、
+  Docker 29.8.1 可用、compose `config_ok=true` 零服务漂移、容器分类
+  **stack-absent**（必需在场 0/6、`optional_services` 空）、api
+  `127.0.0.1:8000` / web `127.0.0.1:3011` 均 closed、本地镜像缺
+  `aios/minio:RELEASE.2025-10-15T17-29-55Z` /
+  `aios/api:m14-211-production` / `aios/web:m14-193-production`、持久卷
+  缺 postgres-data 与 minio-data、缓存卷缺 searxng-cache、verdict
+  **blocked**（blockers：local-image-missing、
+  persistent-volume-missing:postgres-data / minio-data）。定性：**外部
+  Docker 数据面状态漂移，非任何已合并切片的代码回归**；历史 M14-234
+  健康 evidence 随 `f5eea42` 入库、在其观察时点原样有效（快照晚于其
+  入库时点，两次观察各自在其时点为真），不改写、不弱化。
+- 源工件只读锚定（M14-234 feature worktree gitignored
+  `.verify/m14-234-supervisor/`，仅读取 + 切片时独立重算哈希/字节数，
+  未重跑 preflight）：`machine-preflight.json` SHA-256
+  `5d59a343683a2bb24b95441746aa41881ccc35ca5333eca9868358bf14a6e91e`
+  （3142 字节）；`machine-preflight.log`
+  `96b5dec1d08704020be0d70ff4f898ba73aa936f5fae8f8eab2aa555ce1e9b85`
+  （1607 字节）。本切片零 Docker 突变（未 pull/build、未 compose up、
+  未做任何卷操作）、零生产动作、零代码/测试/workflow/infra/Docker
+  文件/`.gitignore`/旧任务 tracked evidence 改动；变更面恰四个
+  Markdown 文件（新证据 README + PROJECT_STATUS / ROADMAP /
+  CHANGELOG 三台账）。
+- 下一步指引：**生产恢复持续 blocked**——合并后机器状态未由本快照
+  确立，须以新一轮只读 preflight 重新确立、不得从本快照推断；外部
+  Docker 数据面恢复完成（经校验备份恢复持久卷或显式全新安装决策
+  留证；获准窗口重建 pin 自建镜像——工具与恢复路径绝不 pull/build）
+  **且**新一轮只读 preflight 判 healthy 之前，不得 compose up、不得
+  生产恢复、不得做任何验收宣称；`production_ready=false` 不变。验证
+  （docs-only）：源工件 SHA-256/字节独立重算并逐项核对 JSON/log 事实；
+  时间线锚点对照本地 git（`f5eea42` committer 时刻、`eac1e09`
+  parents）与权威 merged_at；`git diff --check` 干净；新增行敏感值/
+  本机绝对路径/U+FFFD 扫描零命中，不跑 pytest。
+
 ## M14-234 — 恢复 preflight 可选 search-profile 服务契约修复（searxng 不再把七容器全健康误判 stack-partial/restore-required；必需六服务口径 + 未知多余服务照旧 fail-closed；真实机器只读复跑 verdict=healthy）
 
 - `tools/ops/production_restore_preflight.py` 窄契约修复（M14-231 工具，
