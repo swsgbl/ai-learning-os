@@ -9,6 +9,40 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-240 当前公网移动证据缺口报告（M14-238 planner × 真实清单；docs-only；非就绪声明）**
+worktree `ai-learning-os-worktrees/m14-240-public-mobile-evidence-gap`，
+分支 `ops/m14-240-public-mobile-evidence-gap`，基于 current main
+`2005412c1be2085422196e3ad4f00ac6e33dd49c`（PR #326 merge，即
+M14-239）。证据/缺口切片：把已合并的 M14-238 计划器跑在**真实当前
+证据清单**上（gitignored
+`.verify/m14-240-public-mobile-evidence-gap/`，源文件逐字节拷贝 +
+双侧独立 SHA-256 核验），对 M14-237 六证据角色出文件面缺口报告。
+角色盘点（只取权威、在场、本地可得的最新可证明工件；歧义报告不
+发明）：restore_preflight **present**（M14-236 快照，2026-10-05T04:15:49Z，
+verdict=blocked）；edge_preflight **present**（2026-10-04T06:34:27Z
+exit 1 partial；**仓库级出处锚点缺失——歧义如实报告**）；
+device_smoke **present**（M14-229 run 2，status=blocked，止步公网
+health 探测；整目录拷贝保住 evidence.files 哈希复核可回放）；
+release_evidence **present**（M14-219 release-check 导出，all_green=true
+隔离环境）；cloudflare_preflight **null**（可选，从未真实 execute）；
+attestation **MISSING**（人工签认从未产生，无占位内容）。计划器
+**exit 1**、`complete=false`、blockers 恰 `['missing-file:attestation']`；
+出口语义复跑等价。**计划器只做文件面盘点、绝不解析子报告语义；
+权威语义门仍是 M14-237**（README 已列各在场角色的语义事实：restore
+blocked/edge exit 1+attestation pending/smoke blocked 且无 generated_at
+字段/attestation 缺席——M14-237 回放时均会 blocker）。下一步闭合
+形式四组：(a) 外部 Docker 数据面恢复（他处所有）→ 只读 preflight 至
+healthy；(b) 仅健康生产后可再生的证据（edge preflight、provider-smoke
+聚合或 release-check、公网 API 面部署后 device smoke 至 passed）；
+(c) 真机/公网/语音/TURN/APK 人工 attestation（不得代拟）；
+(d) 可选 Cloudflare 真实 execute（凭据永不经 agent）。验证（docs-only）：
+13 拷贝文件字节同一+哈希一致、生成 JSON 37 项断言全过（含复跑等价
+与报告脱敏）、`git diff --check` 干净、变更行 secret/绝对路径/用户名/
+U+FFFD 扫描零命中；docs-only 不跑 pytest。变更面恰 4 个 Markdown
+文件（新证据 README + 三台账）。
+
+### 前一任务快照（M14-239 Harmony 公开发布缺口证据回填——已随 PR #326 合并，详见 docs/evidence/m14-239-harmony-public-gap-audit/README.md；本切片不改写、不弱化该证据）
+
 **M14-239 Harmony 公开发布缺口证据回填（docs-only；非生产就绪声明）**
 worktree `ai-learning-os-worktrees/m14-239-harmony-public-gap-evidence`，
 分支 `harmony/m14-239-harmony-public-gap-evidence`，基于 current main

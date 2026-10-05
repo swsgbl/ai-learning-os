@@ -79,6 +79,46 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-240 状态更新（当前公网移动证据缺口报告——M14-238 planner × 真实清单，docs-only，非就绪声明）
+
+- 证据/缺口切片（worktree
+  `ai-learning-os-worktrees/m14-240-public-mobile-evidence-gap`，分支
+  `ops/m14-240-public-mobile-evidence-gap`，基于 current main
+  `2005412c1be2085422196e3ad4f00ac6e33dd49c`，即 PR #326 merge/M14-239）：
+  把已合并的 M14-238 计划器跑在**真实当前证据清单**上（gitignored
+  `.verify/m14-240-public-mobile-evidence-gap/`，源文件逐字节拷贝 +
+  双侧独立 SHA-256 核验，manifest 只用相对 POSIX 路径），对 M14-237
+  公网移动发布聚合门的六个证据角色出**文件面**缺口报告。
+- 角色盘点结果：restore_preflight / edge_preflight / device_smoke /
+  release_evidence 四角色 **present**（分别取 M14-236 快照
+  verdict=blocked、2026-10-04 边缘 preflight exit 1 partial【仓库级
+  出处锚点缺失，歧义如实报告】、M14-229 run 2 status=blocked、
+  M14-219 release-check all_green=true 隔离环境）；cloudflare_preflight
+  **null**（可选角色，工具从未真实 execute）；attestation **MISSING**
+  （受约束人工签认从未产生，目录保持为空、无占位内容）。计划器
+  **exit 1 / complete=false / blockers 恰
+  `['missing-file:attestation']`**；出口语义复跑等价（同 blocker 集、
+  角色事实与 replay 命令逐字段一致）。
+- 边界：计划器只做文件面盘点（present/basename/bytes/SHA-256），
+  **绝不解析子报告语义**；权威语义门仍是 M14-237——README 已如实
+  列出各在场角色的语义事实（restore blocked、edge exit 1 +
+  mobile_attestation pending、smoke blocked 且无 generated_at 字段、
+  attestation 缺席），M14-237 回放时它们均会 blocker。本切片不声称
+  任何公网移动就绪，不授权任何生产/设备/发布动作。
+- 下一步闭合形式四组：(a) 外部 Docker 数据面恢复（他处所有）+
+  新只读 preflight 至 healthy；(b) 仅健康生产后可再生的证据
+  （edge preflight 至 exit 0/failed=0/attested、provider-smoke 完整
+  聚合或 release-check 重导、公网 API 面部署后 device smoke 至
+  passed）；(c) 真机/公网/语音/TURN/APK 人工 attestation（五项必需
+  覆盖 + (basename, SHA-256) 锚定，不得代拟）；(d) 可选 Cloudflare
+  真实 execute（凭据永不经 agent）。
+- 验证（docs-only）：13 拷贝文件字节同一 + 哈希双侧一致；生成 JSON
+  37 项断言全过（含复跑等价与报告脱敏）；`git diff --check` 干净；
+  变更行 secret/本地绝对路径/Windows 用户名/U+FFFD 扫描零命中；
+  docs-only 不跑 pytest。变更面恰 4 个 Markdown 文件（新证据 README
+  `docs/evidence/m14-240-public-mobile-evidence-gap/README.md` +
+  PROJECT_STATUS / ROADMAP / CHANGELOG 三台账）。
+
 ### M14-239 状态更新（Harmony 公开发布缺口证据回填——docs-only，非生产就绪声明）
 
 - 纯文档证据回填：把 2026-10-05 M14-238H Harmony 公开发布缺口审计
