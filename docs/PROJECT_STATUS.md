@@ -9,6 +9,27 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-243 CI runner/action 稳定性钉定（ubuntu-24.04 + wrapper-validation v6）**
+worktree `ai-learning-os-worktrees/m14-243-ci-runner-pin`，
+分支 `ops/m14-243-ci-runner-pin`，基于 current main
+`4013807f23af41f3b24b45149b12b7948699fca3`（PR #329 merge，即 M14-242）。
+动因：GitHub 已公告 ubuntu-latest 于 2026-10-19 起向 Ubuntu 26.04 迁移
+（actions/runner-images #14748 与 GitHub Blog 2026-09-17），且
+gradle/actions/wrapper-validation@v4 仍是旧 node20 runtime 主版本。
+变更面：ci.yml 五个 job 与 release-candidate.yml 单 job 的 `runs-on`
+全部钉定 ubuntu-24.04（共 6 处），wrapper-validation 升钉 v6；契约测试
+test_workflow_actions_runtime.py 新增 test_all_jobs_pin_ubuntu_24_04
+（参数化两 workflow，断言 job 集合与全部 runs-on 恒为 ubuntu-24.04），
+WRAPPER_VALIDATION_MAJOR 升 6，既有 action/版本策略/RC 不变量断言不变。
+验证：全文件 **17 passed**（聚焦 3 passed）、ruff、compileall、
+`git diff --check` 通过；`rg "runs-on: ubuntu-latest" .github/workflows`
+与 `rg "wrapper-validation@v4" .github/workflows` 均零命中；敏感值扫描
+0 命中。证据：`docs/evidence/m14-243-ci-runner-pin/README.md`。零应用/
+运行时代码、生产配置、Docker、DB、语音服务、隧道、设备与凭据触碰；
+本切片不部署、不发布、不声明任何就绪，不 push、不开 PR、不合并。
+
+### 前一任务快照（M14-242 current main release evidence——详见 docs/evidence/m14-242-current-main-release-evidence/README.md；本切片不改写、不弱化该证据）
+
 **M14-242 Current main release evidence（M14-241 后代码绑定门刷新；docs-only 取证，非生产就绪声明）**
 worktree `ai-learning-os-worktrees/m14-241-public-device-http-error-classification`，
 分支 `ops/m14-242-current-main-release-evidence`，基于 current main
