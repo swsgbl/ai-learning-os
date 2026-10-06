@@ -5,9 +5,45 @@
 
 ## 当前里程碑
 
-M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/11）→ M3 Student Model（✅ 7/7）
+经 M14-245 能力真相审计对账（基点 `748b522d`，证据
+`docs/evidence/m14-245-capability-roadmap-truth/README.md`）：backlog
+M0–M7 共 63 项任务中 **implemented 59 / partial 4**（M0-01 monorepo
+编排、M0-03 API 可观测性、M1-04 多 parser、M4-09 客户端时延埋件）/
+not-implemented 0。旧表述「M1 ✅ 8/8、M2 ✅ 11/11、M3 ✅ 7/7」为
+过度声明（M1-04 实为 partial），已修正。**该判定仅为代码+仓库内测试
+口径，不等于 production_ready / release_ready / public_ready**；生产、
+公网、真机、真实 provider 边界与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-245 能力路线图真相对账（capability roadmap truth reconciliation；docs-only）**
+worktree 复用 `ai-learning-os-worktrees/m14-244-current-provider-smoke-refresh`，
+分支 `docs/m14-245-capability-roadmap-truth`，基于 current main
+`748b522d0a0bf9a747963351d113641a55517640`（PR #331 merge，即
+M14-244）。动因：Codex 评审发现 docs/ROADMAP.md 顶层 M3/M4/M5 勾选
+状态与实现明显脱节（M1 五项/M3 四项/M5 四项全未勾、M4 仅 1/5、M0
+远程仓库/CI/PostgreSQL repository 未勾——而代码+测试均已实现）；
+同时 PROJECT_STATUS 旧里程碑行「M1 ✅ 8/8、M2 ✅ 11/11、M3 ✅ 7/7」
+属过度声明（M1-04 实为 partial）。本轮对 11_IMPLEMENTATION_BACKLOG
+M0–M7 全部 63 项逐项审计（六路只读取证+关键结论亲验复核，不以任何
+checkbox/✅ 声明为准）：**implemented 59 / partial 4（M0-01、M0-03、
+M1-04、M4-09）/ not-implemented 0 / externally-blocked 0（任务粒度）**。
+产出：新增能力真相矩阵证据
+`docs/evidence/m14-245-capability-roadmap-truth/README.md`（63 项逐项
+判定+证据路径+测试计数、ROADMAP 顶层 21 行对账表、产品能力三层口径
+边界、12 项代码侧剩余缺口、6 项外部验收缺口、7 个可执行代码切片
+候选）；同步修订 ROADMAP 顶层勾选（改勾 13 行、2 行保持未勾并注明
+部分与替代设计）、PROJECT_STATUS 里程碑行、CHANGELOG。生产口径不变：
+provider-smoke 门仍 blocked（M14-209 聚合权威），production_ready=
+false / release_ready=false / public_ready=false。零 Python/TS/ArkTS/
+配置/CI 变更；未运行真实 provider、未启停 Docker/WSL/Ollama/ASR/TTS、
+未触碰 DB/MinIO/设备/生产服务/凭据；gitignored artifacts 不删除不入库。
+验证：`git diff --check` 干净；新增 tracked 行卫生扫描 secret/token/
+password/key 赋值形态 0 命中、U+FFFD 0、绝对本地路径 0、Windows
+用户名 0；docs-only 无代码测试，如实说明不运行测试套件。单本地
+commit，不 push、不开 PR、不合并。
+
+### 前一任务快照（M14-244 current main provider-smoke 新鲜刷新——详见 docs/evidence/m14-244-current-provider-smoke/README.md；本切片不改写、不弱化该证据）
 
 **M14-244 Current main provider-smoke 新鲜刷新（preflight blocked；search 真实 pass；llm/local-voice/aggregate 诚实未执行）**
 worktree `ai-learning-os-worktrees/m14-244-current-provider-smoke-refresh`，

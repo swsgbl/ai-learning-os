@@ -1,54 +1,61 @@
 # 实施路线
 
+> 顶层勾选状态经 **M14-245 能力真相审计**对账(基点 `748b522d`,2026-10-06):
+> 勾选=对应能力已有代码+仓库内测试实现并满足 backlog 验收语义;**不等于
+> production_ready / release_ready / public_ready**(生产/公网/真机/真实
+> provider 证据边界不变,见 §M14-244 与 M14-242 权威口径)。逐项判定、证据
+> 路径、测试计数与剩余缺口见
+> `docs/evidence/m14-245-capability-roadmap-truth/README.md`。
+
 ## M0 工程基线
 
-- [x] monorepo 与 Next.js/FastAPI 分层
+- [x] monorepo 与 Next.js/FastAPI 分层（packages/schemas 缺位、根脚本仅编排 web——M0-01 partial,边界见证据矩阵）
 - [x] Grok 视觉资产迁移
 - [x] 服务端权威考试 API 草案
 - [x] Docker Compose 基础设施
 - [x] Git 初始化
-- [ ] 远程仓库
-- [ ] CI
-- [ ] PostgreSQL repository
+- [x] 远程仓库（origin=github.com/swsgbl/ai-learning-os,PR #331 merge 为本审计基点）
+- [x] CI（ci.yml 五 job+release-candidate.yml;M14-243 钉定 ubuntu-24.04;M14-242 ci-main 5/5）
+- [x] PostgreSQL repository（repositories/postgres.py 全量持久化,0001 起 27 迁移,部署默认 PG）
 
 ## M1 内容与来源
 
-- [ ] Source Registry
-- [ ] License State Machine
-- [ ] 文件上传与 hash 去重
-- [ ] Docling/MinerU/Marker/olmOCR adapter
-- [ ] Evidence 与页码定位
+- [x] Source Registry（M1-01;robots/rate_limit 为快照落库,执行在 M5-03 web gate）
+- [x] License State Machine（M1-02,12 项矩阵测试）
+- [x] 文件上传与 hash 去重（M1-03,SHA-256+MinIO 真实 boto3）
+- [ ] Docling/MinerU/Marker/olmOCR adapter（**部分**:框架+Docling(真实,依赖默认未装)+JSON 已实现;MinerU/Marker/olmOCR 未实现——M1-04 partial）
+- [x] Evidence 与页码定位（M1-05/M1-06）
 
 ## M2 考试与评分
 
-- [x] 内存版 ExamSession
+- [x] 内存版 ExamSession（与 PG 双实现并存,行为一致参数化测试）
 - [x] 答案事件序列
 - [x] 幂等提交
-- [ ] PostgreSQL FSM 持久化
-- [ ] Redis timeout worker
-- [ ] 数学/主观题 grader
+- [x] PostgreSQL FSM 持久化（exam_sessions/answer_events/submissions 自 alembic 0001 起;postgres repository 513 行）
+- [ ] Redis timeout worker（未实现;由读时懒翻转 EXPIRED+提交时 min(now,end_at) 结算替代,M2-04 验收已满足;后台主动收卷语义仍是可选开发缺口）
+- [x] 数学/主观题 grader（numeric 纲量换算+math sympy 恒等+rubric 双审/evidence gate;coding 题判分恒 False 为已知缺口）
 
 ## M3 学习模型
 
-- [ ] LearningEvent 标准化
-- [ ] Concept DAG
-- [ ] StudentConceptState 重放
-- [ ] FSRS-like scheduler
+- [x] LearningEvent 标准化（M3-01,事件源投影可重放）
+- [x] Concept DAG（M3-02,版本化不可变快照+环校验）
+- [x] StudentConceptState 重放（M3-03,BKT-like+幂等重算,真 PG 集成测试）
+- [x] FSRS-like scheduler（M3-05,提前/延迟策略专项测试;不落库为 ADR 29 设计）
 
 ## M4 语音
 
 - [x] 浏览器本地语音过渡实现
-- [ ] LiveKit server/token
-- [ ] FunASR/CosyVoice 本地 adapter
-- [ ] 在线 provider fallback
-- [ ] VoiceSession FSM 与打断恢复
+- [x] LiveKit server/token（M4-01,livekit-api 签发/验签+web livekit-client;m14-38 LAN cutover 彩排栈实证;默认拓扑存在间歇性 ICE 失败受控 flag 规避）
+- [x] FunASR/CosyVoice 本地 adapter（M4-02,LocalFunAsr/LocalCosyVoice 真实 HTTP+tools/voice bootstrap;生产栈曾 managed-running[m14-117/124];无 Whisper）
+- [x] 在线 provider fallback（M4-02,cloud-openai ASR/TTS+三模式路由 fallback 透出不虚报）
+- [x] VoiceSession FSM 与打断恢复（M4-03/06/07,8 状态×15 事件+resume 权威续接;**Web UI 与服务端语音链未合并、M4-09 客户端时延埋点缺——见证据矩阵缺口 3/4**）
 
 ## M5 检索
 
-- [ ] 多源搜索
-- [ ] 去重排序
-- [ ] 受控抓取
-- [ ] 课程/试卷导入审核
+- [x] 多源搜索（M5-01,local-corpus+cloud-web 可插拔;m14-66 本地 SearXNG live+m14-244 search 单步真实 pass;一等 provider 仅两源,广度依赖 SearXNG 上游）
+- [x] 去重排序（M5-04,official>oer>platform>community+理由可审计）
+- [ ] 受控抓取（**部分**:SSRF/robots/rate-limit 预检门已实现为 fetch-check API[M5-03 验收达标];真实抓取管线未落地、门暂无消费者）
+- [x] 课程/试卷导入审核（M5-05/M5-06,双人工审核队列+license 门禁;课程生成八阶段为零 LLM 确定性管线[M5-07]）
 
 ## M12 原生 Android
 
