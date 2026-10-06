@@ -1,5 +1,49 @@
 # Changelog
 
+## M14-245 — 能力路线图真相对账（capability roadmap truth reconciliation；docs-only）
+
+- 动因：Codex 评审发现 `docs/ROADMAP.md` 顶层 M3/M4/M5 勾选状态与
+  当前实现明显脱节。对 `11_IMPLEMENTATION_BACKLOG` M0–M7 全部 63 项
+  任务逐项审计（六路只读取证+关键推翻性结论亲验复核，以代码/测试/
+  alembic/evidence 为准，不以 checkbox 或 ✅ 声明为准）。
+- 矩阵总判定：**implemented 59 / partial 4（M0-01 monorepo 编排、
+  M0-03 API 可观测性、M1-04 多 parser、M4-09 客户端时延埋件）/
+  not-implemented 0 / externally-blocked 0（任务粒度；外部阻塞集中在
+  生产验收层）**。发现并修正两处文档互相矛盾：ROADMAP 顶层大量
+  已实现项未勾（远程仓库/CI/PostgreSQL repository/M1 四项/M2 两项/
+  M3 四项/M4 四项/M5 三项），PROJECT_STATUS 旧里程碑行
+  「M1 ✅ 8/8、M2 ✅ 11/11、M3 ✅ 7/7」为过度声明（M1-04 实为
+  partial）。
+- 新增证据 `docs/evidence/m14-245-capability-roadmap-truth/README.md`：
+  63 项矩阵（判定+证据路径+测试计数+边界）、ROADMAP 顶层 21 行对账、
+  产品能力三层口径（代码+测试/本地真实栈/生产公网真机）、12 项代码侧
+  剩余缺口（MinerU/Marker/olmOCR parser、coding grader、Web 语音 UI
+  与服务端链未合并、M4-09 Web 埋件、受控抓取管线、readiness/结构化
+  日志、packages/schemas、rubric 异构双审、真实音频评测集、provider
+  广度、后台超时 worker、exam 域 REPORT_READY 写路径）、6 项外部验收
+  缺口（AGC 签名/真机、公网真机冒烟、provider-smoke 聚合三输入环境、
+  release-approval human-only 门、公网分发、生产复验窗口）、7 个
+  可执行代码切片候选。
+- ROADMAP 顶层修订：改勾 13 行（远程仓库、CI、PostgreSQL repository、
+  M1 Source Registry/License SM/hash 去重/Evidence、M2 PostgreSQL FSM
+  持久化+数学/主观题 grader、M3 四项、M4 四项、M5 多源搜索/去重排序/
+  导入审核）；2 行保持未勾并如实注明（M1 adapter 部分——MinerU/
+  Marker/olmOCR 未实现；M5 受控抓取部分——预检门在、抓取管线未落地；
+  M2 Redis timeout worker 未实现——由懒翻转+提交结算替代且 M2-04
+  验收已满足）。已在勾选项行内保留关键边界。
+- **边界不变**：一切 implemented/partial 判定仅为代码+仓库内测试口径，
+  不等于、不可引用为 `production_ready` / `release_ready` /
+  `public_ready`；provider-smoke 门仍 blocked（M14-209 聚合仍为最近
+  完整聚合），M14-124 时点 release_ready=true 为历史时点证据不延续。
+- docs-only：零 Python/TS/ArkTS/配置/CI 变更；未运行真实 provider、
+  未启停 Docker/WSL/Ollama/ASR/TTS、未触碰 DB/MinIO/设备/模拟器/
+  生产服务/凭据；gitignored artifacts 不删除不入库。验证：
+  `git diff --check` 干净；新增 tracked 行卫生扫描 secret/token/
+  password/key 赋值形态 0 命中、U+FFFD 0、绝对本地路径 0、Windows
+  用户名 0；docs-only 无代码测试,如实说明不运行测试套件。证据：
+  `docs/evidence/m14-245-capability-roadmap-truth/README.md`。单本地
+  commit，不 push、不开 PR、不合并。
+
 ## M14-244 — Current main provider-smoke 新鲜刷新（preflight blocked；search 真实 pass；llm/local-voice/aggregate 诚实未执行）
 
 - 在 current main `6756ba9b`（PR #330 merge）重跑 provider-smoke 刷新：
