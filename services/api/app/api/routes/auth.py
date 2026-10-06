@@ -95,6 +95,7 @@ async def require_user(request: Request) -> None:
     path = request.url.path
     exempt = path in (
         "/health",
+        "/readyz",  # M14-246: readiness 探针与 /health 同为基础设施面（探针无凭据）
         "/docs",
         "/redoc",
         "/openapi.json",

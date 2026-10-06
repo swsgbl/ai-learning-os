@@ -86,6 +86,55 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-246 状态更新（API 可观测性——M0-03 三项缺项关闭：/readyz + 结构化 JSON 日志 + 全局异常处理）
+
+- 基于 current main `0d96991`（PR #332 merge，即 M14-245）实施
+  M14-245 矩阵切片候选 6（api-readiness-logging），关闭 §5 缺口 6；
+  M14-245 矩阵 M0-03 行同步改判 ✅（现行口径 implemented 60 /
+  partial 3，审计基点原判定以注记保留）。
+- `/readyz`（新 `app/ops/readiness.py` + main.py 端点）：与 `/health`
+  liveness 语义分离的 readiness——默认检查=启动装配完成（repository
+  已接线，内存/DB 模式皆可判），部署级依赖检查经
+  `app.state.readiness_checks` 注入（同步/异步均可，单测用假检查，
+  绝不依赖真实 DB/Redis/voice/LiveKit）；检查全过 200 / 任一失败
+  503，单项检查异常按 not_ready 记账、reason 只取异常类名（不透出
+  异常文本/连接串）；**reason 安全面**（复审追加）：`sanitize_reason`
+  净化一切 reason——安全文案与异常类名保留，控制字符/URL/连接串形态
+  （`://` 或 user:pass@host）/敏感标记/超长/不透明长串（无空白且
+  >48 字符，终审追加——随机凭据形态保守拒绝，含空白长文案保留）
+  一律固定安全回退，部署检查误写凭据不会经未认证的 `/readyz` 泄出；
+  **空注册表 fail-closed**（终审追加）：`{}`/None → 503 + 固定安全
+  诊断条目，绝不 `all([])` 恒真虚报 ready；认证开启时与 `/health`
+  同为豁免路径。
+- 结构化 JSON 日志（新 `app/core/logging.py`，bootstrap 路径
+  `create_app` 幂等安装）：单行 JSON 固定字段 ts/level/logger/
+  message + request_id 请求关联（record 属性优先，request-id 中间件
+  写入的 ContextVar 兜底）；extra_fields 敏感键脱敏 `***`；**异常不落
+  原始形态**（复审追加）：exc_info 只结构化为异常类型 + 净化栈位置
+  （函数名/文件 basename/行号，栈帧上限 64）——原始异常消息、完整
+  traceback 文本、源码行与完整路径不进序列化输出；不记录请求头/
+  请求体/响应体；新 Settings 字段 `LOG_LEVEL`（env）未配置 = 不改变
+  既有 logger 级别（零漂移）、非法值拒绝启动；uvicorn 自身 logger
+  （uvicorn/uvicorn.error/uvicorn.access）不在本切片范围。
+- 全局异常处理（新 `app/api/error_handlers.py`，create_app 注册）：
+  DomainError 族 HTTP 映射（NotFoundError→404、ConflictError→409、
+  其余→400，响应体与 HTTPException 同形 `{"detail":...}`）；未捕获
+  异常 500 固定脱敏 detail，服务端结构化日志只落异常类型与净化栈
+  位置（原始异常消息/traceback 不落日志）并带 request_id 关联 +
+  X-Request-ID 回填（ServerErrorMiddleware 层响应不经内层中间件）；
+  HTTPException / RequestValidationError（422）不重新注册——既有
+  契约不变；处理后异常继续上抛。
+- 新增契约测试 `services/api/tests/test_api_observability.py`
+  （21 项，含复审追加的 reason 净化与异常日志脱敏契约、终审追加的
+  空注册表 fail-closed 与不透明长串拒绝契约；测试凭据
+  形态字符串均为自造无效哨兵）。**边界**：仅为代码+仓库内测试口径，
+  不等于 production_ready / release_ready / public_ready；未做生产/
+  部署级验证，未启停容器/服务，未触碰 DB/Redis/voice/LiveKit/凭据；
+  生产口径（provider-smoke 门 blocked 等）不变。验证命令与结果、
+  source-to-test 映射见
+  `docs/evidence/m14-246-api-observability/README.md`。单本地
+  commit（复审修正 amend 原提交），不 push、不开 PR、不合并。
+
 ### M14-244 状态更新（current main provider-smoke 新鲜刷新——search 首次真实 pass，门整体仍 blocked）
 
 - 基于 current main `6756ba9b`（PR #330 merge）执行 M14-242 遗留

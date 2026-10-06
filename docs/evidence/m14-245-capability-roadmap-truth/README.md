@@ -15,6 +15,10 @@
 - **矩阵总判定(63 项)**:implemented **59** / partial **4**(M0-01、
   M0-03、M1-04、M4-09)/ not-implemented **0** / externally-blocked
   **0**(任务粒度上无外部阻塞项;外部阻塞集中在生产验收层,见 §4/§6)。
+  (**2026-10-07 M14-246 更新**:M0-03 三项缺项——独立 readiness 端点、
+  结构化 JSON 日志、全局 exception handler——已由 M14-246 实现并以契约
+  测试锚定,本矩阵 M0-03 行同步改判 ✅,现行口径 implemented 60 /
+  partial 3;证据 `docs/evidence/m14-246-api-observability/README.md`。)
 - **发现的两处文档互相矛盾,本切片一并修正**:ROADMAP 顶层 M1 五项全
   未勾、M3 四项全未勾、M5 四项全未勾、M4 仅 1/5、M0 的「远程仓库/CI/
   PostgreSQL repository」未勾——而代码与测试均已实现(详见 §2/§3);
@@ -61,13 +65,13 @@
 ⛔ externally-blocked。测试数为该任务主证据文件的 `def test_` 实测数
 (括号为关联文件)。
 
-### M0 Foundation(7 项:5 ✅ / 2 🟡)
+### M0 Foundation(7 项:6 ✅ / 1 🟡;M0-03 已由 M14-246 改判 ✅)
 
 | ID | 任务 | 判定 | 证据(代码 / 测试) | 理由与边界 |
 |---|---|---|---|---|
 | M0-01 | 生产 monorepo | 🟡 | `apps/{web,android,harmony}`、`services/api`、`infra/`、根 `package.json` | 骨架在且 compose 统一启动;但 backlog 字面的 `packages/schemas` 不存在,根脚本 workspaces 仅 `apps/web`(统一启动靠 `infra/docker-compose.yml` 而非 npm 脚本) |
 | M0-02 | Docker Compose 基础设施 | ✅ | `infra/docker-compose.yml` / `test_compose_profiles.py`(17)、`test_compose_restart_policy.py`(7) | postgres/redis/minio/api/web/livekit/searxng 七服务全 healthcheck+restart 策略;三数据卷持久化;livekit 挂 local/hybrid/cloud 三 profile、searxng 挂 search;CI docker job 真实构建冒烟 |
-| M0-03 | FastAPI skeleton | 🟡 | `services/api/app/main.py`、`app/core/{config,security,errors}.py` | `/health`、request-id 中间件(X-Request-ID 透传+格式校验)、Settings+validators、错误类型在;**缺**:独立 readiness 端点、结构化(JSON)日志、全局 exception handler 注册 |
+| M0-03 | FastAPI skeleton | ✅ | `services/api/app/main.py`、`app/core/{config,security,errors,logging}.py`、`app/ops/readiness.py`、`app/api/error_handlers.py` / `test_api_observability.py`(21) | `/health`、request-id 中间件(X-Request-ID 透传+格式校验)、Settings+validators、错误类型在;**M14-246(2026-10-07)补齐三项缺项并改判 ✅**:`/readyz` readiness(检查可注入,与 liveness 语义分离;reason 经安全面净化+空注册表 fail-closed)、bootstrap 路径结构化 JSON 日志(单行 JSON+request_id 关联+敏感键脱敏+异常只落类型与净化栈位置+级别语义保留)、全局 exception handler(DomainError→400/404/409 映射+未捕获异常 500 固定脱敏兜底,HTTPException/422 契约不变);uvicorn 自身 logger 不在本切片范围(见 m14-246 证据边界) |
 | M0-04 | Next.js skeleton | ✅ | `apps/web/src/app/`(login/首页今日学习/exam/voice/review/library/progress/governance/download) / vitest 11 文件 140 例(含 `public-routes.test.ts` 路由契约) | 登录/今日学习/考试/语音四路由独立可渲染;「课程」无独立 /courses 路由,由 /library+/progress 承担(产品形态差异,非缺失) |
 | M0-05 | Alembic 基线 | ✅ | `services/api/alembic/versions/`(27 个迁移)、`alembic/env.py`(offline dry-run) / `test_migrations.py`(4) | up/down/dry-run 具备;CI api job 实证 upgrade head→downgrade base→upgrade head |
 | M0-06 | CI 门禁 | ✅ | `.github/workflows/ci.yml`(5 job)、`release-candidate.yml` | lint/typecheck/unit/migration 四门禁全在;另有 docker 构建冒烟、android、release-tools 与手动 RC 流水线;M14-243 已钉定 ubuntu-24.04 |
@@ -233,7 +237,8 @@ ROADMAP 顶层行与 backlog 粒度不同,单独对账(勾选=代码+测试已�
 5. **受控抓取管线未落地**:web_gate(fetch-check)预检门无消费者,
    「多源搜索→受控抓取→解析入库」链路缺中段。
 6. **M0-03 API 可观测性缺项**:独立 readiness 端点、结构化 JSON 日志、
-   全局 exception handler。
+   全局 exception handler。(**2026-10-07 已由 M14-246 关闭**,见
+   `docs/evidence/m14-246-api-observability/README.md`。)
 7. **M0-01 monorepo 统一编排缺项**:packages/schemas 不存在;根脚本
    仅编排 web workspace。
 8. **rubric 异构双审**:内置 KeywordRubricJudge 双审自一致;异构双审
@@ -282,7 +287,8 @@ ROADMAP 顶层行与 backlog 粒度不同,单独对账(勾选=代码+测试已�
 5. **web-fetch-pipeline(缺口 5)**:受控抓取器消费 fetch-check
   (gate 通过才抓)+内容进解析管线;验收=SSRF 负例端到端拒绝。
 6. **api-readiness-logging(M0-03)**:/readyz+JSON 日志 formatter+
-  全局 exception handler;验收=对应契约测试。
+  全局 exception handler;验收=对应契约测试。(**2026-10-07 已由 M14-246
+  交付**,21 项契约测试,见 `docs/evidence/m14-246-api-observability/`。)
 7. **llm-rubric-judge-default(缺口 8)**:rubric_judge=llm 配置文档
   化+异构双审集成测试(注入假 LLM judge 断言不一致进复核)。
 

@@ -83,6 +83,10 @@ class Settings(BaseSettings):
     # M2-10 主观题判分：keyword=内置确定性 judge；空=无 judge（essay 全部进复核）
     rubric_judge: str = "keyword"
 
+    # M14-246 结构化日志级别（env LOG_LEVEL）：None = 不改变既有 logger 级别
+    # （零漂移）；有效值为标准 logging 级别名（大小写不敏感，空白归一为 None）
+    log_level: str | None = None
+
     # M9-01 认证：AUTH_SECRET 未配置 = 认证关闭（status 如实透出，不虚报受保护）；
     # 生产 compose 显式注入。key 只放部署 secret/.env，不入库不入码。
     auth_secret: str | None = None
@@ -145,6 +149,26 @@ class Settings(BaseSettings):
         if isinstance(value, str) and not value.strip():
             return None
         return value
+
+    @field_validator("log_level", mode="before")
+    @classmethod
+    def blank_log_level_to_none(cls, value: object) -> object:
+        # M14-246: 空值形态（如 compose `${AIOS_LOG_LEVEL:-}`）归一为
+        # None（未配置语义 = 不改变既有 logger 级别）
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
+    @field_validator("log_level")
+    @classmethod
+    def known_log_level(cls, value: str | None) -> str | None:
+        # M14-246: 只接受标准 logging 级别名（大小写不敏感，归一为大写）
+        if value is None:
+            return None
+        upper = value.strip().upper()
+        if upper not in {"CRITICAL", "ERROR", "WARNING", "INFO", "DEBUG", "NOTSET"}:
+            raise ValueError("LOG_LEVEL 必须是 CRITICAL/ERROR/WARNING/INFO/DEBUG/NOTSET 之一")
+        return upper
 
     @field_validator("llm_timeout_seconds")
     @classmethod
