@@ -79,6 +79,34 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-244 状态更新（current main provider-smoke 新鲜刷新——search 首次真实 pass，门整体仍 blocked）
+
+- 基于 current main `6756ba9b`（PR #330 merge）执行 M14-242 遗留
+  provider-smoke 阻塞面的新鲜刷新：preflight（exit 1，blocked）报告
+  voice `not_ready/endpoint_absent`、search `ready`（200/9，上游
+  brave/duckduckgo/google cse unresponsive，错误类 CAPTCHA/timeout）、
+  llm `not_ready/transport_error`（11434 `/api/ps` 传输层失败、模型
+  不驻留——相对 M14-222 的 llm ready 为环境回退）。
+- 按预检选择性执行：search export 真实 **pass**（exit 0，11037ms，
+  5 条合法 http 结果，单次零重试）——**M14-207 以来 search 冒烟首次
+  真实 pass**，验证 M14-223 探针界对齐（10s→30s）消除工具性假阴性
+  后上游部分恢复即可通过；llm 与 local-voice 诚实未执行（预检
+  not_ready；边界禁启 Ollama/ASR/TTS/WSL/voice 服务）；aggregate
+  诚实未执行（契约要求恰好三份单步证据，缺两份），failure-closeout
+  如实落盘。
+- 门结论不变：**provider-smoke 仍 blocked**；M14-209 聚合（voice
+  pass / search fail / llm fail）仍是最近完整聚合与权威结论；本轮
+  无新 `provider-smoke.json`。聚合解锁前置：voice（ASR/TTS 端点）
+  与 llm（Ollama 端点/模型驻留）预检同时就绪后由显式切片全新三输入
+  重跑。
+- 零代码/脚本/配置变更（docs-only）；未复用旧 JSON、未重试、未调
+  预算/超时；真实 provider 请求只经仓库 provider-smoke 工具（search
+  恰一次）。验证：聚焦契约套件 **202 passed**（基线精确吻合）、
+  ruff 0 个变更 .py 文件、`git diff --check` 干净、新增行卫生扫描
+  credential 形态 1 命中（变量名占位符）/U+FFFD 0/本地绝对路径 0。
+  单本地 commit，不 push、不开 PR、不合并。证据：
+  `docs/evidence/m14-244-current-provider-smoke/README.md`。
+
 ### M14-243 状态更新（CI runner/action 稳定性钉定——ubuntu-24.04 + wrapper-validation v6）
 
 - 防漂移钉定：GitHub 已公告 ubuntu-latest 于 2026-10-19 起向 Ubuntu

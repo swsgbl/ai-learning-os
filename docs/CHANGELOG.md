@@ -1,5 +1,32 @@
 # Changelog
 
+## M14-244 — Current main provider-smoke 新鲜刷新（preflight blocked；search 真实 pass；llm/local-voice/aggregate 诚实未执行）
+
+- 在 current main `6756ba9b`（PR #330 merge）重跑 provider-smoke 刷新：
+  全新 preflight（exit 1，overall blocked）——voice
+  `not_ready/endpoint_absent`、search `ready`（200/9 结果，上游
+  brave/duckduckgo/google cse unresponsive）、llm
+  `not_ready/transport_error`（11434 `/api/ps` 传输层失败）。
+- 按预检选择性执行：`provider-smoke-export search` 真实执行
+  **pass**（exit 0，11037ms，5 条合法 http 结果，单次未重试）——
+  **M14-207 以来 search 冒烟首次真实 pass**（M14-223 探针界 10s→30s
+  对齐 + 上游部分恢复）；llm 与 local-voice 因预检 not_ready **未执行**
+  （任务边界禁止启动 Ollama/ASR/TTS/WSL）；aggregate 因缺两份单步
+  证据**未执行**（契约要求恰好三份输入），诚实落 failure-closeout。
+- provider-smoke 门**仍 blocked**：本轮无新 `provider-smoke.json`，
+  M14-209 聚合（voice pass / search fail / llm fail）仍是最近完整
+  聚合与权威结论；`production_ready=false`/`release_ready=false`/
+  `public_ready=false` 不变。
+- 零代码/脚本/配置变更（docs-only）；未复用旧 JSON、未重试、未调
+  预算/超时；真实 provider 请求只经仓库 provider-smoke 工具（search
+  恰一次）。验证：聚焦 provider-smoke 契约套件 **202 passed**
+  （M14-223 基线精确吻合）；ruff 无变更 .py 文件（0 个）；`git diff
+  --check` 干净；新增行卫生扫描 credential 形态 1 命中（命令矩阵
+  `LLM_API_KEY` 变量名接文档占位符，非真实值）、U+FFFD 0、绝对本地
+  路径 0。证据：
+  `docs/evidence/m14-244-current-provider-smoke/README.md`。单本地
+  commit，不 push、不开 PR、不合并。
+
 ## M14-243 — CI runner/action 稳定性钉定（ubuntu-24.04 + wrapper-validation v6）
 
 - 防平台漂移：GitHub 已公告 ubuntu-latest 于 2026-10-19 起向 Ubuntu

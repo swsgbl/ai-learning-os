@@ -9,6 +9,29 @@ M0 Foundation（✅）→ M1 Content（✅ 8/8）→ M2 Exam + Grading（✅ 11/
 
 ## 当前任务
 
+**M14-244 Current main provider-smoke 新鲜刷新（preflight blocked；search 真实 pass；llm/local-voice/aggregate 诚实未执行）**
+worktree `ai-learning-os-worktrees/m14-244-current-provider-smoke-refresh`，
+分支 `ops/m14-244-current-provider-smoke-refresh`，基于 current main
+`6756ba9b3d7b70da4945f460f4ff3d9f60457c03`（PR #330 merge，即 M14-243）。
+动因：M14-242 遗留技术阻塞面为 provider-smoke（M14-209 完整聚合 voice
+pass / search fail / llm fail）；M14-218（LLM 预算 1024）、M14-222（llm
+真实 pass 复验）、M14-223（search 探针界 30s 对齐 + 根因定界）后需要
+一次 current-main 新鲜刷新。本轮：preflight exit 1 overall blocked
+（voice endpoint_absent；search ready 200/9；llm transport_error）；
+仅 search 槽就绪故只执行 search export——真实 **pass**（exit 0，
+11037ms，5 条合法结果，单次未重试，M14-207 以来首次）；llm/
+local-voice 未执行（预检 not_ready，边界禁启 Ollama/ASR/TTS/WSL）；
+aggregate 未执行（缺两份单步证据，契约不满足），failure-closeout
+如实落盘。provider-smoke 门**仍 blocked**（M14-209 仍为最近完整
+聚合，无新 provider-smoke.json）。零代码变更（docs-only）；验证：
+聚焦 provider-smoke 契约套件 **202 passed**（基线精确吻合）、ruff
+0 个变更 .py 文件、`git diff --check` 干净、卫生扫描 credential
+形态 1 命中（变量名占位符，非真实值）/U+FFFD 0/本地绝对路径 0。
+证据：`docs/evidence/m14-244-current-provider-smoke/README.md`。
+不部署、不发布、不声明任何就绪，不 push、不开 PR、不合并。
+
+### 前一任务快照（M14-243 CI runner/action 稳定性钉定——详见 docs/evidence/m14-243-ci-runner-pin/README.md；本切片不改写、不弱化该证据）
+
 **M14-243 CI runner/action 稳定性钉定（ubuntu-24.04 + wrapper-validation v6）**
 worktree `ai-learning-os-worktrees/m14-243-ci-runner-pin`，
 分支 `ops/m14-243-ci-runner-pin`，基于 current main
