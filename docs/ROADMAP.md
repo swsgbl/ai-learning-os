@@ -79,6 +79,24 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-243 状态更新（CI runner/action 稳定性钉定——ubuntu-24.04 + wrapper-validation v6）
+
+- 防漂移钉定：GitHub 已公告 ubuntu-latest 于 2026-10-19 起向 Ubuntu
+  26.04 迁移（actions/runner-images #14748 与 GitHub Blog 2026-09-17）。
+  ci.yml 五个 job（web/api/docker/android/release-tools）与
+  release-candidate.yml 单 job 的 runs-on 全部钉定 ubuntu-24.04；
+  gradle/actions/wrapper-validation 升钉 v6（v4 为旧 node20 runtime
+  主版本）。
+- 契约测试同步扩展：test_workflow_actions_runtime.py 新增
+  test_all_jobs_pin_ubuntu_24_04（参数化两 workflow，断言 job 集合与
+  全部 runs-on 恒为 ubuntu-24.04，防新增 job 绕过钉定），
+  WRAPPER_VALIDATION_MAJOR 升 6。
+- 验证：全文件 **17 passed**（聚焦 3 passed）；ruff、compileall、
+  `git diff --check` 通过；`rg "runs-on: ubuntu-latest" .github/workflows`
+  与 `rg "wrapper-validation@v4" .github/workflows` 零命中；敏感值扫描
+  0 命中。单本地 commit，不 push、不开 PR、不合并。证据：
+  `docs/evidence/m14-243-ci-runner-pin/README.md`。
+
 ### M14-242 状态更新（current main release evidence——M14-241 后代码绑定门刷新，docs-only，非生产就绪声明）
 
 - 基于 current main

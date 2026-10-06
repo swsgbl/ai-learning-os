@@ -8,6 +8,14 @@ setup-node v7.0.0、setup-python v7.0.0）切换到 node24 runtime。本切片�
 不改触发条件、权限、runner、job 结构、构建/测试命令、Node 22 /
 Python 3.11 版本策略，也不升级 actions/upload-artifact（仍在 v4）。
 
+M14-243 增量（CI runner/action 稳定性钉定）：
+5. 两个 workflow 全部 job 的 ``runs-on:`` 恒为 ubuntu-24.04——GitHub
+   已公告 ubuntu-latest 于 2026-10-19 起向 Ubuntu 26.04 迁移
+   （actions/runner-images #14748 与 GitHub Blog 2026-09-17），禁止
+   依赖 latest 标签让 runner 镜像随平台漂移；
+6. gradle/actions/wrapper-validation 升钉 v6（v4 为旧 node20 runtime
+   主版本）。
+
 覆盖矩阵：
 1. 两个 workflow 中三个目标 action 的全部 ``uses:`` 引用（YAML 解析后
    遍历 jobs.steps 断言，不做脆弱全文 substring）主版本恰为 v7——
@@ -63,12 +71,22 @@ EXPECTED_USES = {
 # node24 v7 批量升级漂移回不存在的 v7。
 SETUP_JAVA_MAJOR = 6
 
-# M12-01：Gradle wrapper 校验 action 的钉定主版本（官方 gradle/actions
-# 的 wrapper-validation 当前主流稳定主版本）。
+# M12-01：Gradle wrapper 校验 action 的钉定主版本。M14-243：升钉 v6
+# （上游当前稳定主版本；v4 为旧 node20 runtime 主版本，GitHub 已对其
+# 打 Node.js 20 deprecation 警告）。
 WRAPPER_VALIDATION_ACTION = "gradle/actions/wrapper-validation"
-WRAPPER_VALIDATION_MAJOR = 4
+WRAPPER_VALIDATION_MAJOR = 6
 ANDROID_JOB_NAME = "android"
 ANDROID_GRADLE_TASKS = ("testDebugUnitTest", "lintDebug", "assembleDebug")
+
+# M14-243：GitHub 已公告 ubuntu-latest 于 2026-10-19 起向 Ubuntu 26.04
+# 迁移（actions/runner-images #14748 与 GitHub Blog 2026-09-17）。两个
+# workflow 全部 job 钉定 ubuntu-24.04，杜绝 latest 标签漂移。
+RUNNER_LABEL = "ubuntu-24.04"
+EXPECTED_JOBS = {
+    CI_WORKFLOW: {"web", "api", "docker", "android", "release-tools"},
+    RC_WORKFLOW: {"build-release-candidate"},
+}
 
 PUBLISH_VERBS = (
     "docker push", "docker login", "git push", "git tag", "gh release",
@@ -270,6 +288,34 @@ def test_release_tools_job_stays_tooling_only() -> None:
     for token in RELEASE_TOOLS_FORBIDDEN_TOKENS:
         assert token not in lowered, (
             f"release-tools 是纯 Python 检查 job，不得出现 {token!r}: {lowered}"
+        )
+
+
+# --- 1d. M14-243 runner 钉定 ubuntu-24.04（ubuntu-latest 绝迹）------------------
+
+
+@pytest.mark.parametrize(
+    "path", [CI_WORKFLOW, RC_WORKFLOW], ids=["ci", "release-candidate"]
+)
+def test_all_jobs_pin_ubuntu_24_04(path: Path) -> None:
+    """M14-243：全部 job 的 ``runs-on:`` 恒为 ubuntu-24.04。
+
+    ubuntu-latest 已进入 Ubuntu 26.04 迁移窗口（2026-10-19 起生效），
+    依赖 latest 标签会让 runner 镜像随平台静默漂移；job 集合也必须与
+    契约一致，防新增 job 绕过钉定。
+    """
+    data = _load_workflow(path)
+    jobs = data.get("jobs")
+    assert isinstance(jobs, dict) and jobs, "workflow 必须有 jobs"
+    assert set(jobs) == EXPECTED_JOBS[path], (
+        f"{path.name} job 集合与契约不符: {sorted(jobs)}"
+    )
+    for name, job in jobs.items():
+        assert isinstance(job, dict)
+        assert job.get("runs-on") == RUNNER_LABEL, (
+            f"{path.name} job {name} 必须钉 runs-on: {RUNNER_LABEL}，"
+            f"发现 {job.get('runs-on')!r}（ubuntu-latest 自 2026-10-19 起"
+            "迁移 Ubuntu 26.04，禁止依赖 latest 标签）"
         )
 
 

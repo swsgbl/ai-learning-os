@@ -1,5 +1,25 @@
 # Changelog
 
+## M14-243 — CI runner/action 稳定性钉定（ubuntu-24.04 + wrapper-validation v6）
+
+- 防平台漂移：GitHub 已公告 ubuntu-latest 于 2026-10-19 起向 Ubuntu
+  26.04 迁移（actions/runner-images #14748 与 GitHub Blog 2026-09-17）。
+  ci.yml 五个 job（web/api/docker/android/release-tools）与
+  release-candidate.yml 单 job 的 `runs-on` 全部由 ubuntu-latest 钉定
+  为 ubuntu-24.04，共 6 处。
+- gradle/actions/wrapper-validation 由 @v4 升钉 v6（v4 为旧 node20
+  runtime 主版本）。
+- 契约测试 test_workflow_actions_runtime.py 同步扩展：新增
+  test_all_jobs_pin_ubuntu_24_04（参数化两 workflow，断言 job 集合与
+  全部 runs-on 恒为 ubuntu-24.04），WRAPPER_VALIDATION_MAJOR 升 6。
+  全文件 **17 passed**（聚焦 3 passed）；ruff、compileall、
+  `git diff --check` 通过；`rg "runs-on: ubuntu-latest"` 与
+  `rg "wrapper-validation@v4"` 于 .github/workflows 均零命中；敏感值
+  扫描 0 命中。证据：
+  `docs/evidence/m14-243-ci-runner-pin/README.md`。本切片只动 workflow
+  YAML、契约测试与 docs，不碰应用/运行时代码与生产面，不 push、
+  不开 PR、不合并。
+
 ## M14-242 — Current main release evidence（M14-241 后代码绑定门刷新；docs-only；非生产就绪声明）
 
 - 刷新代码绑定发布证据：M14-219 证据绑定 `df3d9969`，M14-241 合并后
