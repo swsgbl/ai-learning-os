@@ -1,5 +1,79 @@
 # Changelog
 
+## M14-249 — Web voice-studio 接入权威 VoiceSession（apps/web only，零服务端变更）
+
+- 动因：M14-248 已备 Web 侧服务端 VoiceSession 契约层，但
+  voice-studio 仍走本地自主流程——`api.saveAnswer` 直提（客户端自管
+  序号）、本地 answers record 当权威、`parseSpokenAnswer` 客户端猜
+  答案。本切片把 voice-studio 改为消费服务端权威 VoiceSession：
+  浏览器 SpeechRecognition/speechSynthesis 只是输入输出设备，状态、
+  题面、已提交答案、规范化结果、FSM、resume/report 全以服务端为
+  唯一权威。
+- 新增 `apps/web/src/lib/voice-session-flow.ts` 编排层：
+  `startVoiceSession`（**启动顺序** startExam 成功 → create →
+  resume；startExam 失败绝不创建 VoiceSession；404 如实失败不伪造
+  可用）、`speakQuestionWithEvents`（朗读拆题面/选项两段，各段真实
+  完成（resolve）后才发 `question_read`/`options_read`，失败/中断
+  不发不谎报；还欠哪个回执由服务端已记录的 status 决定，已确认完成
+  的部分纯重放零事件）、`submitAnswerForSession`（/answers 权威
+  提交——transcript 原文上送由服务端解析+规范化；event_id 一次逻辑
+  答案恰生成一次，5xx/网络错误**同键重试**至多 3 次、4xx 不重试）、
+  `reconcileSession`（409 后 resume 重新对齐；终态 resume 409 → get
+  会话本体分流收尾；404 原样抛出）、`advanceFlow`（推进命令按服务端
+  status 选择 commit_confirmed/skip，下题 vs 全卷完成判定只用服务端
+  question_index/question_total；REPORT_READY → submitExam +
+  权威语音报告）、`finishVoiceExam`（先提交判分再取报告投影，不自行
+  评分）、`tracedSpeak`/`tracedListen`（asr/tts 埋点携带 create
+  回传的**真实 session_id**）。客户端不复制 FSM 转移表、不推演新
+  状态——目标状态一律取自服务端响应。
+- 新增 `apps/web/src/lib/browser-speech.ts`（speakUtterance/
+  listenOnce 浏览器 IO 薄封装，可注入替换）；`voice-studio.tsx` 重写
+  接入：权威 `VoiceFlowView` 驱动渲染（进度/状态徽标用服务端
+  question_index/question_total/status，选项选中态用服务端
+  committed_answer，澄清文案展示服务端 clarified_question）；语音/
+  文字/选项点击统一 `submitTranscript` → /answers（选项点击转服务端
+  可靠解析 transcript：mcq「选 {key}」、判断题选项文本）；accepted
+  自动推进 + accepted=false 澄清停留（不猜答案）；409 → resume
+  重新对齐后按服务端状态继续；REPORT_READY 收尾后权威报告进入
+  state/视图模型（`data-testid="voice-report"`）并保留跳转
+  `/review/{examId}` 既有体验。M14-189 约束保持：唯一 effect 为启动
+  链（状态更新全在 promise 回调），朗读只在启动回调/切题回调/重复
+  读题按钮发起，零 set-state-in-effect。
+- `parse-answer.ts` 收窄：删除 `parseSpokenAnswer`+KEY_WORDS（客户端
+  猜答案）与整段 `speakableQuestion`，新增 `questionHeadText`/
+  `optionsTailText`（两段朗读文案）/`optionClickTranscript`；
+  `optionLabel`/`answerLabel` 原样保留（review-view 在用）。
+  `voice-trace.ts` 过时注释更新（session_id 不再恒缺省）。
+- 新增 `voice-session-flow.test.ts` **27 项行为测试**（stub 全局
+  fetch 实证 URL/method/body/顺序/时序，无源码字符串断言）：create→
+  resume 启动顺序与 startExam 失败零创建、create/resume 404 如实
+  失败、TTS 完成后才发读题事件（deferred 门控逐步实证，含失败不发）、
+  /answers 重试 event_id 恒等（三次 body 逐键一致）/新逻辑答案新键/
+  4xx 不重试/澄清透传、409 后 resume 对齐（active/终态分流/404）、
+  REPORT_READY 先 submitExam 再 report（顺序实证）+ advanceFlow 三
+  形态、trace asr/tts 携带真实 session_id、optionClickTranscript
+  形态。`react-hooks-hygiene.test.ts` voice-studio 段更新为等价
+  约束（37→38 项：唯一 effect 启动链/effect 体内零同步状态更新/
+  首题朗读在启动回调/切题朗读在 advanceFrom 且完成分支不朗读/
+  重复读题按钮直调/speaking 生命周期与 TTS 取消/started 守卫）；
+  `voice-session-api.test.ts` 零改动 30 项全绿。
+- **边界**：不声明 M4-09 或 capability gap 3 关闭——缺口 3 进一步
+  收窄为「权威链已接、IO 仍浏览器原生（服务端 ASR/TTS/LiveKit 未进
+  Web UI）」；M4-09 维持 partial（vad/llm/first_audio 无 Web 埋点），
+  矩阵计数不变 implemented 60 / partial 3。播报期提交/跳过按服务端
+  边界 409 如实提示并 realign（barge_in/pause/resume UI 入口为后续
+  空间）；语音报告完整分层播报为后续空间。零服务端/生产变更（未重跑
+  pytest，服务端语义以既有契约为准）、未启停容器/服务、未触碰
+  DB/LiveKit/凭据、`production_ready=false`/`release_ready=false`/
+  `public_ready=false` 不变。验证（2026-10-08 worktree 内真实执行）：
+  focused 27+30+38 passed；全套 `npm run test --workspace apps/web`
+  **14 files / 240 passed**（零回归）；typecheck 0 error；lint
+  0 error 0 warning；build 编译成功（路由划分与基点一致）；
+  `git diff --check` 干净；新增/改动行扫描（1316 行）0 secret /
+  0 绝对本地路径 / 0 U+FFFD。证据：
+  `docs/evidence/m14-249-web-voice-session-ui/README.md`。单本地
+  commit，不 push、不开 PR。
+
 ## M14-248 — Web authoritative VoiceSession API contract / adapter（契约层；apps/web only，不接 UI）
 
 - 动因：M14-245 矩阵缺口 3（Web UI 与服务端语音链未合并）的前置件

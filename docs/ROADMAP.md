@@ -48,7 +48,7 @@
 - [x] LiveKit server/token（M4-01,livekit-api 签发/验签+web livekit-client;m14-38 LAN cutover 彩排栈实证;默认拓扑存在间歇性 ICE 失败受控 flag 规避）
 - [x] FunASR/CosyVoice 本地 adapter（M4-02,LocalFunAsr/LocalCosyVoice 真实 HTTP+tools/voice bootstrap;生产栈曾 managed-running[m14-117/124];无 Whisper）
 - [x] 在线 provider fallback（M4-02,cloud-openai ASR/TTS+三模式路由 fallback 透出不虚报）
-- [x] VoiceSession FSM 与打断恢复（M4-03/06/07,8 状态×15 事件+resume 权威续接;**Web UI 与服务端语音链未合并——Web 侧契约层已备[m14-248:types+api.voiceSessions 八方法+30 项契约测试]但 UI 未接入;M4-09 客户端时延埋点仅覆盖浏览器 asr/tts 两边界[m14-247],vad/llm/first_audio 仍无 Web 埋点——见证据矩阵缺口 3/4,M4-09 仍 partial**）
+- [x] VoiceSession FSM 与打断恢复（M4-03/06/07,8 状态×15 事件+resume 权威续接;**缺口 3 收窄中:Web 契约层已备[m14-248],voice-studio UI 已接入服务端权威 VoiceSession[m14-249:resume/commands/answers/report+读题回执时序+event_id 幂等+409 realign+权威报告],但 IO 仍浏览器原生 SpeechRecognition/speechSynthesis——服务端 ASR/TTS/LiveKit 链未进 Web UI;M4-09 客户端时延埋点仅覆盖浏览器 asr/tts 两边界[m14-247],vad/llm/first_audio 仍无 Web 埋点——见证据矩阵缺口 3/4,M4-09 仍 partial**）
 
 ## M5 检索
 
@@ -85,6 +85,46 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+
+### M14-249 状态更新（Web voice-studio 接入权威 VoiceSession——权威链已接，IO 仍浏览器原生）
+
+- 基于 current main `25bebb6c`（PR #335 merge，即 M14-248）实施：
+  M14-248 契约层（types + api.voiceSessions 八方法）的第一个消费者
+  ——voice-studio 从本地自主流程（saveAnswer 直提 + 本地 answers
+  record + parseSpokenAnswer 猜答案）改为消费服务端权威
+  VoiceSession；浏览器 SpeechRecognition/speechSynthesis 降格为纯
+  输入输出设备。
+- 新增 `apps/web/src/lib/voice-session-flow.ts` 编排层：
+  startExam 成功 → create → resume 启动链（404 如实不可用）；
+  朗读拆题面/选项两段、各段真实完成才发 question_read/options_read
+  （失败/中断不发不谎报）；语音/文字/选项点击统一走 /answers
+  （transcript 原文上送服务端解析规范化，event_id 一次逻辑答案恰
+  一键、网络重试同键）；409 后 resume 重新对齐（不本地覆盖 FSM）；
+  REPORT_READY → submitExam + 权威语音报告（不自行评分）；asr/tts
+  trace 携带真实 session_id。客户端不复制 FSM 转移表、不推演新
+  状态——status 分支只用于选择「还欠哪些读题回执/哪个推进命令」，
+  目标状态一律取自服务端响应。
+- voice-studio 重写接入（权威 VoiceFlowView 驱动渲染；M14-189
+  约束保持：唯一 effect 启动链、朗读全程事件化、零
+  set-state-in-effect）；parse-answer 删除客户端猜答案
+  （parseSpokenAnswer/KEY_WORDS）与整段 speakableQuestion，新增
+  分段朗读文案与 optionClickTranscript；新增 browser-speech.ts
+  IO 薄封装。新增 voice-session-flow.test.ts 27 项行为测试；
+  react-hooks-hygiene voice-studio 段更新为等价约束（37→38）；
+  voice-session-api.test.ts 零改动全绿。
+- **边界**：不声明 M4-09 或缺口 3 关闭——缺口 3 进一步收窄为
+  「权威链已接、IO 仍浏览器原生（服务端 ASR/TTS/LiveKit 未进
+  Web UI）」；播报期提交/跳过按服务端 409 边界如实提示并 realign
+  （barge_in/pause/resume UI 入口、语音报告完整分层播报为后续
+  空间）；M4-09 维持 partial，矩阵计数不变 implemented 60 /
+  partial 3；零服务端/生产变更（未重跑 pytest；未启停容器/服务、
+  未触碰 DB/LiveKit/凭据；production_ready=false /
+  release_ready=false / public_ready=false 不变）。验证（focused
+  27+30+38 passed、全套 14 files/240 passed、typecheck/lint 0
+  error、build 编译成功、git diff --check 干净、新增行 0 secret/
+  0 绝对路径/0 U+FFFD）见
+  `docs/evidence/m14-249-web-voice-session-ui/README.md`。单本地
+  commit，不 push、不开 PR、不合并。
 
 ### M14-248 状态更新（Web authoritative VoiceSession API contract / adapter——契约层就位，UI 不接入）
 

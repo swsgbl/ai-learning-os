@@ -15,8 +15,10 @@ export const MIN_TRACE_DURATION_MS = 1;
 // 服务端 duration_ms 上限 10 分钟（超出会被 422 拒绝），客户端不截断不虚报
 export const MAX_TRACE_DURATION_MS = 600_000;
 
-// 可选上下文 ID：仅在真实上下文可用时由调用方携带（voice-studio 流程无
-// VoiceSession，故 session_id 恒缺省；exam_id/question_id 来自当前考试）
+// 可选上下文 ID：仅在真实上下文可用时由调用方携带。M14-249 起
+// voice-studio 接入服务端权威 VoiceSession：session_id 来自
+// api.voiceSessions.create 回传（真实会话 ID，不编造不缺省）；
+// exam_id/question_id 来自当前考试与当前题。
 export type VoiceTraceContext = {
   session_id?: string;
   exam_id?: string;

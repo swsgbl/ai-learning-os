@@ -218,26 +218,38 @@ describe("数据加载组件：load/reload 拆分（mount effect 零同步 setSt
   });
 });
 
-describe("voice-studio.tsx：朗读事件化（自动朗读不经 effect）", () => {
+// M14-249：voice-studio 接入服务端权威 VoiceSession 后的等价约束——
+// 朗读仍全程事件化（启动/切题/重复读题按钮），唯一的 effect 是启动链；
+// 行为级验证（create→resume 顺序、读题事件时序、event_id 幂等、409
+// realign、REPORT_READY 收尾、trace session_id）在 voice-session-flow.test.ts。
+describe("voice-studio.tsx：朗读事件化（自动朗读不经 effect）+ 服务端权威接入", () => {
   it("原「question?.id 变化即重读」的自动朗读 effect 已移除", () => {
     expect(VOICE_SOURCE).not.toMatch(/useEffect\(\(\) => \{\s*if \(question\)/);
   });
 
-  it("首题自动朗读在 startExam 完成回调内（题目就绪即读）", () => {
-    expect(VOICE_SOURCE).toMatch(/const first = result\.questions\[0\];/);
-    expect(VOICE_SOURCE).toMatch(/void speak\(first, 0, result\.questions\.length\)/);
+  it("唯一 effect 为启动链：startExam→create→resume 全在 promise 回调（effect 体内零同步状态更新）", () => {
+    const effectMatch = VOICE_SOURCE.match(/useEffect\(\(\) => \{[\s\S]*?\n  \}, \[/);
+    expect(effectMatch).not.toBeNull();
+    expect(effectMatch![0]).toContain("startVoiceSession(paperId)");
+    const beforeThen = effectMatch![0].slice(0, effectMatch![0].indexOf(".then"));
+    expect(beforeThen).not.toMatch(/set[A-Z]\w*\(/);
   });
 
-  it("切题自动朗读在 next() 的 setIndex 分支内（提交分支不朗读）", () => {
-    const nextMatch = VOICE_SOURCE.match(/async function next\(\) \{[\s\S]*?\n  \}/);
-    expect(nextMatch).not.toBeNull();
-    expect(nextMatch![0]).toContain("void speak(upcoming, index + 1, session.questions.length)");
-    const submitBranch = nextMatch![0].slice(nextMatch![0].indexOf("if (submitted.current)"));
-    expect(submitBranch).not.toContain("speak(");
+  it("首题自动朗读在启动完成回调内（resume 投影就绪即读）", () => {
+    expect(VOICE_SOURCE).toMatch(/const first = initial\.question;/);
+    expect(VOICE_SOURCE).toMatch(/void speakQuestion\(first, initial\.session\.question_index, initial\.questionTotal\)/);
   });
 
-  it("重复读题按钮仍可用（speak 直接以当前题调用）", () => {
-    expect(VOICE_SOURCE).toMatch(/onClick=\{\(\) => void speak\(question, index, session\.questions\.length\)\}/);
+  it("切题自动朗读在 advanceFrom 的下一题分支内（完成分支不朗读）", () => {
+    const advanceMatch = VOICE_SOURCE.match(/async function advanceFrom\(authoritative: VoiceSession\) \{[\s\S]*?\n  \}/);
+    expect(advanceMatch).not.toBeNull();
+    expect(advanceMatch![0]).toContain("void speakQuestion(upcoming, outcome.view.session.question_index, outcome.view.questionTotal)");
+    const finishBranch = advanceMatch![0].slice(advanceMatch![0].indexOf('outcome.kind === "finished"'));
+    expect(finishBranch).not.toContain("speakQuestion(");
+  });
+
+  it("重复读题按钮仍可用（speakQuestion 直接以当前题调用）", () => {
+    expect(VOICE_SOURCE).toMatch(/onClick=\{\(\) => void speakQuestion\(question, view\.session\.question_index, view\.questionTotal\)\}/);
   });
 
   it("speaking 状态生命周期（开始/结束/失败文案）与提交时 TTS 取消保留", () => {
