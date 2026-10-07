@@ -19,11 +19,57 @@ voice-studio 浏览器真实边界 asr/tts 两处时延埋点 + 尽力而为上�
 `POST /api/v1/voice/trace`，15 项 vitest 锚定）；M4-09 仍为 partial——
 vad/llm/first_audio 在 Web 无可观测边界（LiveKit/服务端语音链未并入
 同一 UI，矩阵缺口 3 未动），计数不变 implemented 60 / partial 3。
+**2026-10-07 M14-248 补上 Web 侧服务端 VoiceSession 契约层**
+（apps/web types + `api.voiceSessions` 八方法 + event_id 幂等
+helper + 30 项 vitest 契约测试，snake_case 与 services/api
+voice.py 一一对应，status 原词透传不推演 FSM）——仅契约层，
+不接入不替换 voice-studio UI；缺口 3 收窄为「Web 契约层已备、
+UI 未接入」，M4-09 与矩阵判定均不变（implemented 60 /
+partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-248 Web authoritative VoiceSession API contract / adapter（契约层，不接 UI）**
+worktree `ai-learning-os-worktrees/m14-248-web-voice-session-client`，
+分支 `m14-248-web-voice-session-client`，基于 current main `9cdffa5`
+（PR #334 merge，即 M14-247）。动因：M14-245 矩阵缺口 3 的前置件
+——服务端 VoiceSession 契约（sessions/commands/intents/answers/
+resume/report，voice.py）真实存在且 Android 已接（M12-03），但
+apps/web 零客户端契约面。本切片交付：types.ts 新增与 Pydantic
+snake_case 一一对应的 VoiceSession contract types（status 保留服务端
+原词、未知值按 string 接收、客户端不推演 FSM 转移；请求可空字段与
+`str | None = None` 一一对应）；api.ts 新增 `api.voiceSessions`
+create/list/get/resume/command/intent/answer/report 八方法（路径/
+method/payload 与 voice.py 逐端点一致，不增服务端不存在的字段，均经
+既有 request() 继承 credentials/headers/ApiError 语义；**R1**：六个
+动态路径统一经 voiceSessionPath helper——encodeURIComponent 恒单
+segment，`sess/1?x#y` 类危险字符不拆 route/不注入 query/fragment）与
+`newVoiceAnswerEventId()` 幂等键 helper（**R1 运行时安全降级链**：
+randomUUID → getRandomValues+版本/变体位置位 → Math.random，恒合法
+UUID v4 36 字符 ∈ [4,64]，非安全上下文 LAN/公网 HTTP 与 SSR 不崩溃；
+event_id 必由调用方传入，API 层绝不隐式生成——重试复用同一键，
+契约测试实证 500 失败后重试 body 逐字节不变，降级环境同样实证）。
+新增 voice-session-api.test.ts 30 项 vitest 契约测试（TDD RED 先行：
+首轮 26/26 失败实证缺失、R1 追加 4 项先 4/4 失败实证路径未编码与
+旧 helper 依赖 randomUUID，修正后转绿；每方法 URL/method/body 键集/
+继承行为/响应透传/helper 格式唯一性重试稳定性/六动态路径危险字符
+单 segment 编码/getRandomValues-only 与无 WebCrypto 环境 200 唯一/
+零虚增字段/ApiError 不吞错）。
+voice-studio.tsx 零改动；不声明 M4-09 或缺口 3 关闭（缺口 3 仅收窄
+为契约层已备、UI 未接入）；生产口径不变：production_ready=false /
+release_ready=false / public_ready=false；零服务端变更（未重跑
+pytest，服务端语义以既有契约为准），未启停容器/服务，未触碰
+DB/LiveKit/凭据。验证与结果（focused 30 passed、全套 13 files/
+212 passed、typecheck 0 error、lint 0 error 0 warning、build 12
+路由、git diff --check 干净、新增行 0 secret/0 绝对路径/0 U+FFFD）
+见 `docs/evidence/m14-248-web-voice-session-client/README.md`。
+单本地 commit（supervisor R1 修正 amend 回原提交，仍恰一个），
+不 push、不开 PR、不合并。
+
+### 前一任务快照（M14-247 Web 客户端语音时延埋点——详见 docs/evidence/m14-247-web-voice-trace/README.md；本切片不改写、不弱化该证据）
 
 **M14-247 Web 客户端语音时延埋点（M4-09 诚实可测切片：浏览器边界 asr/tts）**
 worktree `ai-learning-os-worktrees/m14-247-web-voice-trace`，分支

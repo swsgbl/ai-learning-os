@@ -1,5 +1,65 @@
 # Changelog
 
+## M14-248 — Web authoritative VoiceSession API contract / adapter（契约层；apps/web only，不接 UI）
+
+- 动因：M14-245 矩阵缺口 3（Web UI 与服务端语音链未合并）的前置件
+  ——服务端 VoiceSession 契约（M4-03/04/05/07/08）真实存在且
+  Android 已接（M12-03），但 apps/web 零客户端契约面。本切片只补
+  契约层（types + API 方法 + 契约测试），**不接入、不替换现有
+  voice-studio UI 流程**。
+- `apps/web/src/lib/types.ts` 新增与服务端 Pydantic snake_case 一一
+  对应的 VoiceSession contract types：create/list/get/resume/
+  command/intent/answer/report 全链（`VoiceSession` 七字段、
+  `VoiceSessionResume` 当前题公开投影、`VoiceSessionReport` 播报投影
+  等）；`status: string` 保留服务端 8 状态原词——客户端不定义状态
+  集合、不推演转移，未知状态按 string 原样接收；请求可空字段与
+  服务端 `str | None = None` 一一对应（显式传 null = 缺省语义）。
+- `apps/web/src/lib/api.ts` 新增 `api.voiceSessions` 八方法：
+  create（POST `/api/v1/voice/sessions`，body 恰 `exam_id`）、list
+  （GET `?exam_id=`，必填 query 经 encodeURIComponent）、get/resume/
+  report（GET 动态路径）、command/intent/answer（POST 动态路径，
+  body 原样序列化零虚增字段）；全部经既有 `request()` 统一 client
+  （credentials=include + JSON + no-store + ApiError 语义继承）。
+  **R1**：六个动态路径统一经 `voiceSessionPath` 私有 helper——
+  encodeURIComponent 恒单 segment，session_id 含 `/ ? # 空格` 等
+  危险字符时不拆 route、不注入 query/fragment（契约测试用
+  `sess/1?x#y`→`sess%2F1%3Fx%23y` 六路径逐一实证）。
+  新增 `newVoiceAnswerEventId()`：answers 幂等键 helper——**R1
+  运行时安全降级链**（`globalThis.crypto?.randomUUID` →
+  `getRandomValues` 逐字节 + 版本/变体位置位 → `Math.random`
+  fallback，恒合法 UUID v4 36 字符 ∈ 服务端 [4,64] 界内；非安全
+  上下文（LAN/公网 HTTP——randomUUID 为 secure-context-only）与
+  SSR/无 WebCrypto 环境不崩溃；与 Android 同策略）；
+  **event_id 必由调用方传入**——API 层绝不隐式生成（隐式生成会让
+  重试换键、破坏服务端幂等去重），一次逻辑事件生成一次、重试复用
+  同一值（契约测试实证失败后重试 body 逐字节不变，降级环境同样
+  实证）。
+- 新增 `apps/web/src/lib/voice-session-api.test.ts` 30 项 vitest 契约
+  测试（TDD RED 先行——首轮 26/26 失败实证 `api.voiceSessions`
+  缺失；R1 追加 4 项先 4/4 失败实证缺陷后转绿）：每方法 URL/
+  method/body（全字段 + 最小载荷键集恰等）、query 编码、八方法
+  credentials/headers/cache 继承、响应 JSON 原样透传（含未知
+  status 原词与 resume/report 投影）、helper UUID v4 格式/长度
+  界内/200 次唯一/重试稳定、六动态路径危险字符单 segment 编码、
+  getRandomValues-only（mulberry32 确定性 PRNG 模拟）与完全无
+  WebCrypto 环境 200 唯一、载荷 deep equal 零添加键、非 2xx 经
+  ApiError 原样抛出。不为 UI 行为写伪测试（voice-studio 零改动）。
+- **边界**：不声明 M4-09 或 capability gap 3 关闭——缺口 3 仅收窄
+  为「Web 契约层已备、UI 未接入」，M4-09 维持 partial（vad/llm/
+  first_audio 仍无 Web 埋点），矩阵计数不变 implemented 60 /
+  partial 3。零服务端/生产变更：未改任何 API 行为（未重跑 pytest，
+  服务端语义以既有契约为准）、未启停容器/服务、未触碰 DB/LiveKit/
+  凭据、`production_ready=false` / `release_ready=false` /
+  `public_ready=false` 不变。验证（2026-10-07 worktree 内真实执行）：
+  focused 30 passed；全套 `npm run test --workspace apps/web`
+  **13 files / 212 passed**（零回归）；typecheck 0 error；lint 0
+  error 0 warning；build 12 路由编译成功；`git diff --check` 干净；
+  新增/改动行扫描（初版 201 + R1 增量 158 diff insertions）0
+  secret / 0 绝对本地路径 / 0 U+FFFD。证据：
+  `docs/evidence/m14-248-web-voice-session-client/README.md`。单本地
+  commit（supervisor R1 修正 amend 回原提交，仍恰一个），不 push、
+  不开 PR。
+
 ## M14-247 — Web 客户端语音时延埋点（M4-09 诚实可测切片：浏览器边界 asr/tts；apps/web only）
 
 - 动因：M14-245 能力真相矩阵判定 M4-09（Latency tracing）为 partial——

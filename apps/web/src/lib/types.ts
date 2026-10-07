@@ -361,3 +361,137 @@ export type VoiceTokenResponse = {
   expires_at: string;
   ws_url: string;
 };
+
+// --- M14-248 服务端权威 VoiceSession 契约（services/api voice.py） ---
+// snake_case 与服务端 Pydantic 契约一一对应（VoiceSessionOut 族），字段
+// 不增不减。status 保留服务端原词（8 状态 FSM：SESSION_READY /
+// READING_QUESTION / READING_OPTIONS / WAITING_ANSWER / CLARIFYING /
+// ANSWER_COMMITTED / NEXT_QUESTION / REPORT_READY），客户端不定义状态
+// 集合、不推演转移——未知值按 string 原样接收，不猜语义；FSM 校验与
+// 状态/答案/判分一律以服务端为唯一真相源。
+
+// 会话（POST /sessions、GET /sessions?exam_id=、GET /sessions/{id}）
+export type VoiceSession = {
+  session_id: string;
+  exam_id: string;
+  status: string;
+  question_index: number;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+};
+
+export type VoiceSessions = {
+  items: VoiceSession[];
+};
+
+export type VoiceSessionCreateRequest = {
+  exam_id: string;
+};
+
+// 恢复（GET /sessions/{id}/resume）：question 为当前题公开字段投影
+// （id/type/stem/options——不含 answer/explanation），终态会话 409 无此视图
+export type VoiceResumeQuestion = {
+  id: string;
+  type: string;
+  stem: string;
+  options: QuestionOption[];
+};
+
+export type VoiceSessionResume = {
+  session: VoiceSession;
+  question: VoiceResumeQuestion | null;
+  committed_answer: string | null;
+  question_total: number;
+};
+
+// 命令（POST /sessions/{id}/commands）：type 为服务端 15 事件原词
+// （start_reading/read_options/repeat/answer_proposed/…），事件合法性由
+// 服务端 FSM 校验（未知命令 422、非法迁移 409）。可空字段与服务端
+// `str | None = None` 一一对应（显式传 null = 缺省语义）
+export type VoiceSessionCommandRequest = {
+  type: string;
+  question_id?: string | null;
+  answer?: string | null;
+  ambiguous?: boolean;
+  expected_revision?: number | null;
+};
+
+export type VoiceSessionCommandResult = {
+  applied_event: string;
+  from_status: string;
+  session: VoiceSession;
+  clarified_question?: string | null;
+  question_total?: number | null;
+};
+
+// 意图（POST /sessions/{id}/intents）：transcript 由服务端解析并直接应用
+// 到 FSM；unknown/pause/resume 不应用（fsm_applied=false）
+export type VoiceSessionIntentRequest = {
+  transcript: string;
+  expected_revision?: number | null;
+};
+
+export type VoiceSessionIntentResult = {
+  transcript: string;
+  intent: string;
+  letter?: string | null;
+  ordinal?: number | null;
+  ambiguous: boolean;
+  fsm_command?: string | null;
+  fsm_applied: boolean;
+  applied_event?: string | null;
+  session?: VoiceSession | null;
+  clarified_question?: string | null;
+};
+
+// 规范化答案（POST /sessions/{id}/answers）：event_id 为客户端幂等键
+// （一次逻辑事件生成一次、重试复用同一值——服务端凭它去重，见
+// newVoiceAnswerEventId）；服务端从 transcript 重新规范化，不信任
+// normalized_answer/confidence 参考值。可空字段与服务端
+// `str | None = None` 一一对应（显式传 null = 缺省语义）
+export type VoiceSessionAnswerRequest = {
+  transcript: string;
+  event_id: string;
+  question_id?: string | null;
+  normalized_answer?: string | null;
+  confidence?: number;
+};
+
+export type VoiceSessionAnswerResult = {
+  event_id: string;
+  idempotent: boolean;
+  accepted: boolean;
+  normalized_answer?: string | null;
+  intent: string;
+  question_id: string;
+  session?: VoiceSession | null;
+  clarified_question?: string | null;
+};
+
+// 语音报告（GET /sessions/{id}/report）：REPORT_READY + 判分完成后的播报
+// 投影——只投影不判定，分数/错题/补救全部来自服务端判分结果
+export type VoiceMistakeSummary = {
+  question_id: string;
+  stem_preview: string;
+  your_answer: string;
+  correct_answer: string;
+  concepts: string[];
+  diagnosis: string;
+};
+
+export type VoiceRemediationSummary = {
+  concept: string;
+  actions: string[];
+  detail: string;
+  question_ids: string[];
+};
+
+export type VoiceSessionReport = {
+  session_id: string;
+  exam_id: string;
+  spoken_text: string;
+  mistake_summary: VoiceMistakeSummary[];
+  remediation_summary: VoiceRemediationSummary[];
+  written_report_url: string;
+};
