@@ -5,7 +5,9 @@ from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.responses import JSONResponse
 
+from app.api.error_handlers import register_exception_handlers
 from app.api.routes.auth import require_user
 from app.api.routes.citation_eval import router as citation_eval_router
 from app.api.routes.concepts import router as concepts_router
@@ -30,10 +32,12 @@ from app.api.routes.voice import router as voice_router
 from app.api.routes.voice_eval import router as voice_eval_router
 from app.api.routes.web import router as web_router
 from app.core.config import get_settings
+from app.core.logging import configure_logging, request_id_var
 from app.core.security import validate_auth_secret, validate_exposure
 from app.db.session import create_engine, is_sqlite, make_sessionmaker, prepare_database
 from app.domain.rubric_grader import make_rubric_judge
 from app.domain.web_gate import RateLimiter
+from app.ops.readiness import Check, CheckOutcome, evaluate_checks
 from app.parsing.registry import make_default_registry
 from app.parsing.worker import ParseWorker
 from app.repositories.audit import AuditRepository
@@ -63,6 +67,9 @@ from app.storage.objectstore import make_object_store
 
 def create_app(database_url: str | None = None) -> FastAPI:
     settings = get_settings()
+    # M14-246 结构化 JSON 日志：bootstrap 路径幂等安装；LOG_LEVEL 未配置
+    # = 不改变既有 logger 级别语义（零漂移）
+    configure_logging(settings.log_level)
     validate_auth_secret(settings.auth_secret, app_env=settings.app_env)  # M9-04 fail-closed
     validate_exposure(  # M9-06/M9-07 公开暴露 fail-closed；M14-37 增媒体面独立绑定
         host_bind_ip=settings.host_bind_ip,
@@ -196,6 +203,10 @@ def create_app(database_url: str | None = None) -> FastAPI:
 
         M9-05: 客户端值只接受 ≤64 字符的 [A-Za-z0-9-_]，非法/超长一律重新生成
         （防日志注入与超大 header 滥用）。
+
+        M14-246: request id 同步写入日志上下文（ContextVar）——请求期间的
+        应用日志经 JSON formatter 自动携带同一关联 id；异常路径下仍先复位
+        上下文再上抛（不吞异常、不改状态语义）。
         """
         import re as _re
         import uuid
@@ -205,8 +216,12 @@ def create_app(database_url: str | None = None) -> FastAPI:
             request.state.request_id = incoming
         else:
             request.state.request_id = f"req-{uuid.uuid4().hex[:12]}"
-        response = await call_next(request)
-        response.headers["X-Request-ID"] = request.state.request_id
+        token = request_id_var.set(request.state.request_id)
+        try:
+            response = await call_next(request)
+            response.headers["X-Request-ID"] = request.state.request_id
+        finally:
+            request_id_var.reset(token)
         return response
     app.include_router(paper_extractor_router)
     app.include_router(papers_router)
@@ -245,10 +260,39 @@ def create_app(database_url: str | None = None) -> FastAPI:
     app.include_router(web_router)
     # M5-03 抓取预检频率限制（per-IP 固定窗口，内存实现，无 DB 也可用）
     app.state.fetch_limiter = RateLimiter(settings.fetch_rate_limit_per_minute)
+    # M14-246 全局异常处理（DomainError HTTP 映射 + 未捕获异常 500 兜底）
+    register_exception_handlers(app)
 
     @app.get("/health", tags=["system"])
     async def health() -> dict[str, str]:
         return {"status": "ok", "service": "ai-learning-os-api"}
+
+    # M14-246: /readyz readiness（与 /health liveness 语义分离）。默认检查 =
+    # 启动装配完成（repository 已接线，内存/DB 模式皆可判）；部署级依赖检查
+    # （DB/Redis/voice/LiveKit）经 app.state.readiness_checks 注入，单测用假
+    # 检查，绝不依赖真实外部服务；reason 经 sanitize_reason 净化面——安全
+    # 文案/异常类名保留，连接串/敏感标记等不安全形态固定安全回退；检查
+    # 注册表为空时 fail-closed（503，绝不 all([]) 恒真虚报 ready）。
+    async def _repository_wired() -> CheckOutcome:
+        if getattr(app.state, "repository", None) is None:
+            return CheckOutcome(ready=False, reason="startup incomplete: repository not wired")
+        return CheckOutcome(ready=True)
+
+    app.state.readiness_checks: dict[str, Check] = {"repository": _repository_wired}
+
+    @app.get("/readyz", tags=["system"])
+    async def readyz(request: Request) -> JSONResponse:
+        checks: dict[str, Check] = getattr(request.app.state, "readiness_checks", {}) or {}
+        results = await evaluate_checks(checks)
+        if results:
+            ready = all(bool(entry["ready"]) for entry in results.values())
+        else:
+            # fail-closed：检查注册表为空 = 无任何就绪证明，绝不因
+            # all([]) 恒真而虚报 ready；诊断条目为固定安全文案。
+            ready = False
+            results = {"readiness": {"ready": False, "reason": "no readiness checks registered"}}
+        body = {"status": "ready" if ready else "not_ready", "checks": results}
+        return JSONResponse(body, status_code=200 if ready else 503)
 
     return app
 

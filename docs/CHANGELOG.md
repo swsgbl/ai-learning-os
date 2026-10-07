@@ -1,5 +1,67 @@
 # Changelog
 
+## M14-246 — API 可观测性（M0-03 缺口关闭：/readyz + 结构化 JSON 日志 + 全局异常处理）
+
+- 动因：M14-245 能力真相矩阵判定 M0-03（FastAPI skeleton）为 partial，
+  缺口为独立 readiness 端点、结构化（JSON）日志、全局 exception handler
+  注册（矩阵 §5 缺口 6 / §7 切片 6）。本切片按切片候选 6 实施，三缺项
+  全部补齐并以后述契约测试锚定；M14-245 矩阵 M0-03 行同步改判 ✅
+  （现行口径 implemented 60 / partial 3，注记保留审计基点原判定）。
+- `/readyz` readiness 端点（与 `/health` liveness 语义分离）：默认检查
+  = 启动装配完成（repository 已接线，内存/DB 模式皆可判、不依赖外部
+  服务）；依赖检查经 `app.state.readiness_checks` 注入（同步/异步均可），
+  检查全过 200 `{"status":"ready","checks":{...}}`、任一失败 503
+  not_ready；单项检查抛异常不炸端点，reason 只取异常类名（不透出异常
+  文本/连接串）；**reason 安全面**（复审追加）：`sanitize_reason` 在
+  readiness 边界净化一切 reason——安全文案与异常类名保留，含控制字符/
+  URL/连接串形态（`://` 或 user:pass@host）/敏感标记（token/secret/
+  password 等，裸 "key" 不算——KeyError 放行）/超长（>128）/不透明
+  长串（无空白且 >48 字符，终审追加——随机凭据形态可不含敏感词或 URL
+  语法，保守拒绝；含空白的人类可读长文案保留）的 reason 一律固定安全
+  回退，部署检查误写凭据不会经未认证的 `/readyz` 泄出；**空注册表
+  fail-closed**（终审追加）：检查注册表为空（`{}`/None）→ 503 + 固定
+  安全诊断条目，绝不因 `all([])` 恒真虚报 ready；认证开启时与
+  `/health` 同为豁免路径（探针无凭据）。
+- 结构化 JSON 日志（bootstrap 路径 `create_app` 幂等安装，新
+  `app/core/logging.py`）：单行 JSON 固定字段 ts/level/logger/message；
+  请求关联 request_id（record 属性优先、request-id 中间件写入的
+  ContextVar 兜底）；extra_fields 敏感键（authorization/cookie/token/
+  secret/password/api_key/credential）脱敏为 `***`；**异常不落原始
+  形态**（复审追加）：exc_info 只结构化为异常类型 + 净化栈位置（函数名/
+  文件 basename/行号，栈帧上限 64），原始异常消息、完整 traceback 文本、
+  源码行与完整路径一律不进序列化输出；不记录请求头/请求体/响应体；
+  `LOG_LEVEL`（env，新 Settings 字段）未配置 = 不改变既有 logger 级别
+  语义（零漂移），非法值拒绝启动；uvicorn 自身 logger 不在本切片范围。
+- 全局异常处理（新 `app/api/error_handlers.py`，create_app 注册）：
+  DomainError 族 HTTP 映射 NotFoundError→404、ConflictError→409、其余
+  DomainError→400（响应体与 HTTPException 同形 `{"detail":...}`，此前
+  这类异常以 500 逃逸）；未捕获异常 500 固定脱敏 detail，服务端结构化
+  日志只落异常类型与净化栈位置（原始异常消息/traceback 不落日志），带
+  request_id 关联，并回填 X-Request-ID（该响应由最外层
+  ServerErrorMiddleware 生成、不经内层中间件）；HTTPException 与
+  RequestValidationError（422）不重新注册——既有契约不变；处理后异常
+  继续上抛（uvicorn/测试客户端仍可见）。
+- 新契约测试 `services/api/tests/test_api_observability.py`（21 项）：
+  /readyz 成功/未就绪/同步检查/检查异常脱敏/reason 不安全形态固定回退
+  与净化面边界/不透明长串拒绝（自造无效哨兵端到端）/空注册表
+  fail-closed/与 /health 语义分离/认证豁免；JSON 日志固定字段/
+  request-id 关联（record+ContextVar）/敏感键脱敏/exc_info 结构化脱敏/
+  安装幂等与级别保留/LOG_LEVEL 归一校验；DomainError 三态映射/未捕获
+  异常 500 契约与日志关联（哨兵值不进响应与序列化日志）/既有 404 与
+  422 契约不变。
+- **边界**：仅为代码+仓库内测试口径，不等于、不可引用为
+  `production_ready` / `release_ready` / `public_ready`；未做任何生产/
+  部署级验证，未启停任何容器/服务，未触碰 DB/Redis/voice/LiveKit/
+  凭据（测试中凭据形态字符串均为自造无效哨兵，仅用于断言脱敏/不泄出）；
+  uvicorn logger 格式、部署级依赖检查（DB/Redis/voice/LiveKit
+  连通性）为后续切片空间。验证：聚焦契约套件 21 passed、聚焦回归
+  38 passed、全套 services/api 测试与 ruff 结果见
+  `docs/evidence/m14-246-api-observability/README.md`（含分支级卫生
+  扫描精确口径：真实/可生效凭据形态 0 命中；2 处良性 ContextVar
+  句柄 + 3 处自造无效哨兵键值命中，均如实分类）；
+  `git diff --check` 干净。单本地 commit（supervisor 复审修正后
+  amend 原提交，仍恰一个 commit），不 push、不开 PR、不合并。
+
 ## M14-245 — 能力路线图真相对账（capability roadmap truth reconciliation；docs-only）
 
 - 动因：Codex 评审发现 `docs/ROADMAP.md` 顶层 M3/M4/M5 勾选状态与
