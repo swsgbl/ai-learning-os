@@ -11,6 +11,16 @@ import type {
   Submission,
   UserProfile,
   VariantDraft,
+  VoiceSession,
+  VoiceSessionAnswerRequest,
+  VoiceSessionAnswerResult,
+  VoiceSessionCommandRequest,
+  VoiceSessionCommandResult,
+  VoiceSessionIntentRequest,
+  VoiceSessionIntentResult,
+  VoiceSessionReport,
+  VoiceSessionResume,
+  VoiceSessions,
   VoiceTokenResponse,
 } from "./types";
 import { normalizeBasePath } from "./base-path";
@@ -63,6 +73,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(message, response.status);
   }
   return response.json() as Promise<T>;
+}
+
+// M14-248(R1): VoiceSession 动态路径统一构造——session_id 必须经
+// encodeURIComponent 保持单 segment：含 "/"、"?"、"#"、空格等字符时
+// 直接插值会把一个 path segment 拆成错误 route / 注入 query / fragment。
+function voiceSessionPath(sessionId: string): string {
+  return `/api/v1/voice/sessions/${encodeURIComponent(sessionId)}`;
 }
 
 // 四类草稿端点同构（list / get / approve / reject，均经统一 client）
@@ -120,6 +137,98 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ room }),
     }),
+  // M14-248: 服务端权威 VoiceSession 契约面（services/api voice.py）。
+  // 路径/method/payload 与服务端一一对应、不增字段；status 等响应字段
+  // 原样透传——客户端不推演 FSM、不缓存答案、不虚报语音结果；响应即
+  // 新状态。仅契约层，现有 voice-studio 流程不接入（不替换、不迁移）。
+  voiceSessions: {
+    create: (examId: string) =>
+      request<VoiceSession>("/api/v1/voice/sessions", {
+        method: "POST",
+        body: JSON.stringify({ exam_id: examId }),
+      }),
+    list: (examId: string) =>
+      request<VoiceSessions>(
+        `/api/v1/voice/sessions?exam_id=${encodeURIComponent(examId)}`,
+      ),
+    get: (sessionId: string) => request<VoiceSession>(voiceSessionPath(sessionId)),
+    resume: (sessionId: string) =>
+      request<VoiceSessionResume>(`${voiceSessionPath(sessionId)}/resume`),
+    command: (sessionId: string, payload: VoiceSessionCommandRequest) =>
+      request<VoiceSessionCommandResult>(
+        `${voiceSessionPath(sessionId)}/commands`,
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        },
+      ),
+    intent: (sessionId: string, payload: VoiceSessionIntentRequest) =>
+      request<VoiceSessionIntentResult>(
+        `${voiceSessionPath(sessionId)}/intents`,
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        },
+      ),
+    // event_id 为客户端幂等键：payload 必须由调用方显式传入（本层绝不
+    // 隐式生成——隐式生成会让重试换键、破坏服务端幂等去重）；一次逻辑
+    // 事件生成一次（newVoiceAnswerEventId），重试复用同一 payload。
+    answer: (sessionId: string, payload: VoiceSessionAnswerRequest) =>
+      request<VoiceSessionAnswerResult>(
+        `${voiceSessionPath(sessionId)}/answers`,
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        },
+      ),
+    report: (sessionId: string) =>
+      request<VoiceSessionReport>(`${voiceSessionPath(sessionId)}/report`),
+  },
 };
+
+// M14-248: answers 幂等键 helper——为「一次逻辑提交事件」生成 event_id
+// （UUID v4，36 字符，落在服务端 Field(min_length=4, max_length=64) 界内）。
+// 生成时机 = 发起事件前，一次事件恰一次；重试必须复用同一 event_id
+// （服务端凭它幂等去重：同键重放返回既有结果不重复落库，换键 = 新事件）。
+// 与 Android 端 UUID.randomUUID().toString() 同策略。
+// R1: 运行时安全降级链——浏览器非安全上下文（LAN HTTP / 公网 HTTP）
+// 无 crypto.randomUUID（secure-context-only），SSR/测试环境可能整个
+// WebCrypto 缺席；逐级降级 randomUUID → getRandomValues → Math.random，
+// 任何环境都能产出合法 36 字符 UUID v4，绝不因环境崩溃。
+type WebCryptoLike = {
+  randomUUID?: () => string;
+  getRandomValues?: <T extends Uint8Array>(array: T) => T;
+};
+
+function currentCrypto(): WebCryptoLike | undefined {
+  if (typeof globalThis === "undefined") return undefined;
+  return (globalThis as { crypto?: WebCryptoLike }).crypto;
+}
+
+/** 16 随机字节 → 36 字符 UUID v4（版本/变体位强制置位；纯函数） */
+function uuidV4FromBytes(bytes: Readonly<Uint8Array>): string {
+  const b = bytes.slice();
+  b[6] = (b[6] & 0x0f) | 0x40; // version 4
+  b[8] = (b[8] & 0x3f) | 0x80; // variant 10xx
+  const hex = Array.from(b, (v) => v.toString(16).padStart(2, "0")).join("");
+  return [
+    hex.slice(0, 8),
+    hex.slice(8, 12),
+    hex.slice(12, 16),
+    hex.slice(16, 20),
+    hex.slice(20, 32),
+  ].join("-");
+}
+
+export function newVoiceAnswerEventId(): string {
+  const cryptoApi = currentCrypto();
+  if (typeof cryptoApi?.randomUUID === "function") return cryptoApi.randomUUID();
+  if (typeof cryptoApi?.getRandomValues === "function") {
+    return uuidV4FromBytes(cryptoApi.getRandomValues(new Uint8Array(16)));
+  }
+  const bytes = new Uint8Array(16);
+  for (let i = 0; i < bytes.length; i += 1) bytes[i] = Math.floor(Math.random() * 256);
+  return uuidV4FromBytes(bytes);
+}
 
 export { API_BASE, BASE_PATH };

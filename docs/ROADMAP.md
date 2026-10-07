@@ -48,7 +48,7 @@
 - [x] LiveKit server/token（M4-01,livekit-api 签发/验签+web livekit-client;m14-38 LAN cutover 彩排栈实证;默认拓扑存在间歇性 ICE 失败受控 flag 规避）
 - [x] FunASR/CosyVoice 本地 adapter（M4-02,LocalFunAsr/LocalCosyVoice 真实 HTTP+tools/voice bootstrap;生产栈曾 managed-running[m14-117/124];无 Whisper）
 - [x] 在线 provider fallback（M4-02,cloud-openai ASR/TTS+三模式路由 fallback 透出不虚报）
-- [x] VoiceSession FSM 与打断恢复（M4-03/06/07,8 状态×15 事件+resume 权威续接;**Web UI 与服务端语音链未合并、M4-09 客户端时延埋点仅覆盖浏览器 asr/tts 两边界[m14-247],vad/llm/first_audio 仍无 Web 埋点——见证据矩阵缺口 3/4,M4-09 仍 partial**）
+- [x] VoiceSession FSM 与打断恢复（M4-03/06/07,8 状态×15 事件+resume 权威续接;**Web UI 与服务端语音链未合并——Web 侧契约层已备[m14-248:types+api.voiceSessions 八方法+30 项契约测试]但 UI 未接入;M4-09 客户端时延埋点仅覆盖浏览器 asr/tts 两边界[m14-247],vad/llm/first_audio 仍无 Web 埋点——见证据矩阵缺口 3/4,M4-09 仍 partial**）
 
 ## M5 检索
 
@@ -85,6 +85,46 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+
+### M14-248 状态更新（Web authoritative VoiceSession API contract / adapter——契约层就位，UI 不接入）
+
+- 基于 current main `9cdffa5`（PR #334 merge，即 M14-247）实施
+  M14-245 矩阵缺口 3 的前置件：服务端 VoiceSession 契约
+  （sessions/commands/intents/answers/resume/report，voice.py）
+  真实存在且 Android 已接（M12-03），但 apps/web 零客户端契约面。
+  本切片补齐 Web 契约层——**不接入、不替换 voice-studio UI 流程**
+  （voice-studio.tsx 零改动）。
+- `apps/web/src/lib/types.ts`：新增与 Pydantic snake_case 一一对应的
+  contract types（create/list/get/resume/command/intent/answer/
+  report 全链）；`status: string` 保留服务端原词，客户端不定义状态
+  集合、不推演转移，未知状态按 string 原样接收（契约测试用非白名单
+  原词实证透传）；请求可空字段与服务端 `str | None = None` 一一
+  对应。
+- `apps/web/src/lib/api.ts`：新增 `api.voiceSessions` 八方法（路径/
+  method/payload 与 voice.py 逐端点一致、不增服务端不存在的字段，
+  均经既有 request() 继承 credentials/headers/ApiError 语义）与
+  `newVoiceAnswerEventId()` 幂等键 helper（UUID v4 ∈ 服务端 [4,64]
+  界内；event_id 必由调用方传入，API 层绝不隐式生成——重试复用
+  同一键，契约测试实证失败后重试 body 逐字节不变）。**R1 修正**：
+  六个动态路径统一经 `voiceSessionPath` helper（encodeURIComponent
+  恒单 segment，`sess/1?x#y` 类危险字符不拆 route/不注入 query/
+  fragment）；helper 改运行时安全降级链（randomUUID →
+  getRandomValues+版本/变体位置位 → Math.random，非安全上下文
+  LAN/公网 HTTP 与 SSR 不崩溃）。
+- 新增 `voice-session-api.test.ts` 30 项 vitest 契约测试（TDD RED
+  先行：首轮 26/26 失败实证缺失、R1 追加 4 项先 4/4 失败实证缺陷
+  后转绿）；零 UI 伪测试。**边界**：不声明
+  M4-09 或缺口 3 关闭——缺口 3 仅收窄为「Web 契约层已备、UI 未
+  接入」，M4-09 维持 partial，矩阵计数不变 implemented 60 /
+  partial 3；零服务端/生产变更（未重跑 pytest，服务端语义以既有
+  契约为准；未启停容器/服务、未触碰 DB/LiveKit/凭据；
+  production_ready=false / release_ready=false / public_ready=false
+  不变）。验证（focused 30 passed、全套 13 files/212 passed、
+  typecheck/lint 0 error、build 12 路由、git diff --check 干净、
+  新增行 0 secret/0 绝对路径/0 U+FFFD）见
+  `docs/evidence/m14-248-web-voice-session-client/README.md`。单本地
+  commit（supervisor R1 修正 amend 回原提交，仍恰一个），不 push、
+  不开 PR、不合并。
 
 ### M14-246 状态更新（API 可观测性——M0-03 三项缺项关闭：/readyz + 结构化 JSON 日志 + 全局异常处理）
 
