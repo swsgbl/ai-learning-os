@@ -26,11 +26,66 @@ voice.py 一一对应，status 原词透传不推演 FSM）——仅契约层，
 不接入不替换 voice-studio UI；缺口 3 收窄为「Web 契约层已备、
 UI 未接入」，M4-09 与矩阵判定均不变（implemented 60 /
 partial 3）。
+**2026-10-08 M14-249 把 voice-studio 接入服务端权威
+VoiceSession**（M14-248 契约层的第一个消费者：startExam 成功 →
+create → resume 启动链；题面/状态/已提交答案/规范化结果/澄清/
+报告全以服务端返回为准；TTS 分段真实完成才发 question_read/
+options_read；语音/文字/选项点击统一走 /answers（event_id 网络
+重试同键）；409 后 resume 重新对齐；REPORT_READY 后 submitExam+
+权威语音报告；asr/tts trace 携带真实 session_id；客户端
+parseSpokenAnswer 猜答案逻辑删除；27 项行为测试 + hygiene 等价
+更新全绿）——缺口 3 进一步收窄为「权威链已接、IO 仍浏览器原生
+（服务端 ASR/TTS/LiveKit 未进 Web UI）」，M4-09 仍 partial
+（vad/llm/first_audio 无 Web 埋点），计数不变 implemented 60 /
+partial 3。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-249 Web voice-studio 接入权威 VoiceSession**
+worktree `ai-learning-os-worktrees/m14-249-web-voice-session-integration`，
+分支 `web/m14-249-voice-session-ui`，基于 current main `25bebb6c`
+（PR #335 merge，即 M14-248）。动因：M14-248 契约层已备但
+voice-studio 仍走本地自主流程（saveAnswer 直提 + 本地序号/答案
+record + 客户端 parseSpokenAnswer 猜答案）。本切片交付：新增
+`apps/web/src/lib/voice-session-flow.ts` 编排层——startVoiceSession
+（startExam 成功→create→resume 顺序，失败/404 如实暴露不伪造）、
+speakQuestionWithEvents（题面/选项两段朗读，各段 speechSynthesis
+真实完成才发 question_read/options_read，失败/中断不发不谎报）、
+submitAnswerForSession（语音/文字统一走 /answers，event_id 一次
+逻辑答案恰一键、5xx/网络错误同键重试至多 3 次、4xx 不重试）、
+reconcileSession（409 后 resume 重新对齐；终态 resume 409→get 本体
+分流收尾）、advanceFlow（推进命令按服务端 status 选择
+commit_confirmed/skip，下题/完成判定只用服务端 question_index/
+question_total，REPORT_READY→submitExam+report）、finishVoiceExam
+（先提交判分再取权威报告，不自行评分）、tracedSpeak/tracedListen
+（asr/tts span 携带 create 回传的真实 session_id）；新增
+browser-speech.ts（浏览器 IO 薄封装可注入）；voice-studio 重写接入
+——权威 VoiceFlowView 驱动渲染（进度/状态徽标/选项选中态/澄清文案
+全来自服务端），选项点击转服务端可靠解析 transcript（mcq「选 {key}」/
+判断题选项文本）统一走 /answers，M14-189 约束保持（唯一 effect 启动
+链、朗读全程事件化、零 set-state-in-effect）；parse-answer 删除
+parseSpokenAnswer/KEY_WORDS 猜答案与整段 speakableQuestion，新增
+questionHeadText/optionsTailText/optionClickTranscript；voice-trace
+过时注释更新。新增 voice-session-flow.test.ts 27 项行为测试（stub
+fetch 实证启动顺序/读题事件时序/幂等键重试/409 realign/收尾链/trace
+session_id/404 如实），react-hooks-hygiene voice-studio 段更新为
+等价约束（37→38），voice-session-api.test.ts 零改动 30 项全绿。
+不声明 M4-09 或缺口 3 关闭：IO 仍浏览器原生（服务端 ASR/TTS/
+LiveKit 未进 Web UI），M4-09 维持 partial，计数不变 implemented 60 /
+partial 3；播报期提交/跳过按服务端边界 409 如实提示并 realign
+（barge_in/pause/resume UI 入口为后续空间）；零服务端变更（未重跑
+pytest），未启停容器/服务，未触碰 DB/LiveKit/凭据，生产口径不变
+（production_ready=false / release_ready=false / public_ready=false）。
+验证与结果（focused 27+30+38 passed、全套 14 files/240 passed、
+typecheck 0 error、lint 0 error 0 warning、build 编译成功路由划分与
+基点一致、git diff --check 干净、新增行 0 secret/0 绝对路径/
+0 U+FFFD）见 `docs/evidence/m14-249-web-voice-session-ui/README.md`。
+单本地 commit，不 push、不开 PR、不合并。
+
+### 前一任务快照（M14-248 Web authoritative VoiceSession API contract / adapter——详见 docs/evidence/m14-248-web-voice-session-client/README.md；本切片不改写、不弱化该证据）
 
 **M14-248 Web authoritative VoiceSession API contract / adapter（契约层，不接 UI）**
 worktree `ai-learning-os-worktrees/m14-248-web-voice-session-client`，
