@@ -48,7 +48,7 @@
 - [x] LiveKit server/token（M4-01,livekit-api 签发/验签+web livekit-client;m14-38 LAN cutover 彩排栈实证;默认拓扑存在间歇性 ICE 失败受控 flag 规避）
 - [x] FunASR/CosyVoice 本地 adapter（M4-02,LocalFunAsr/LocalCosyVoice 真实 HTTP+tools/voice bootstrap;生产栈曾 managed-running[m14-117/124];无 Whisper）
 - [x] 在线 provider fallback（M4-02,cloud-openai ASR/TTS+三模式路由 fallback 透出不虚报）
-- [x] VoiceSession FSM 与打断恢复（M4-03/06/07,8 状态×15 事件+resume 权威续接;**Web UI 与服务端语音链未合并、M4-09 客户端时延埋点缺——见证据矩阵缺口 3/4**）
+- [x] VoiceSession FSM 与打断恢复（M4-03/06/07,8 状态×15 事件+resume 权威续接;**Web UI 与服务端语音链未合并、M4-09 客户端时延埋点仅覆盖浏览器 asr/tts 两边界[m14-247],vad/llm/first_audio 仍无 Web 埋点——见证据矩阵缺口 3/4,M4-09 仍 partial**）
 
 ## M5 检索
 

@@ -1,5 +1,55 @@
 # Changelog
 
+## M14-247 — Web 客户端语音时延埋点（M4-09 诚实可测切片：浏览器边界 asr/tts；apps/web only）
+
+- 动因：M14-245 能力真相矩阵判定 M4-09（Latency tracing）为 partial——
+  服务端 asr/tts/intent/fsm 自动埋点与 p50/p95 聚合视图已在，但
+  `apps/web` 无任何调用 `POST /api/v1/voice/trace` 的代码（矩阵缺口 4），
+  客户端时延闭环未打通。本切片只补 Web 浏览器**真实可观测**的边界，
+  不虚报测不到的环节，也不声称完整 LiveKit/ASR/TTS 会话覆盖。
+- 新增 `apps/web/src/lib/voice-trace.ts`：`TRACE_STAGES` 七阶段白名单
+  （vad/asr/intent/fsm/llm/tts/first_audio，与 services/api
+  `app/domain/voice_trace.py` 同口径）；`buildTraceSpanPayload` 纯函数——
+  `duration_ms` 四舍五入为整数后必须落在 [1,600000]，**越界返回 null
+  不截断不虚报**（与 Android 端 coerceIn 截断不同，为有意选择）；
+  可选 `session_id/exam_id/question_id` 仅真实上下文可用时携带（空串/
+  undefined 一律不进载荷）；`submitVoiceTrace` 专用 fetch POST
+  `/api/v1/voice/trace`（credentials include + JSON，**不走 api.ts
+  request()**——401 登录跳转语义对观测上报是错误行为；网络失败/非 2xx
+  静默 resolve 绝不 reject）；`withVoiceTrace` 计时包装——成功完成后
+  fire-and-forget 上报，业务异常原样透传且零上报（失败调用不构成时延
+  样本），埋点永不改变主流程语义。
+- `voice-studio.tsx` 仅两处真实边界插桩：`listenOnce()` 外围 `asr`
+  （SpeechRecognition 听写耗时）、`speakLocal()` 外围 `tts`
+  （speechSynthesis 朗读耗时）；`exam_id` 经 `examIdRef`/`session.exam_id`
+  真实在位，`question_id` 为当前题；**`session_id` 不携带**——该流程走
+  `/papers/{id}/exams`（mode=voice）不创建 VoiceSession（FSM），无真实
+  来源。M14-189 契约钉住的三处 `speak(...)` 调用字符串零改动
+  （`react-hooks-hygiene.test.ts` 全绿）。
+- 不虚报 vad/llm/first_audio：三阶段发生在 LiveKit/服务端语音链与上游
+  模型（矩阵缺口 3——Web UI 与服务端语音链未合并），浏览器流程测不到，
+  本切片不为其提供调用面。**M4-09 维持 🟡 partial**（M14-245 矩阵
+  M4-09 行不改判；缺口 4 的「apps/web 零调用」收窄为 asr/tts 已接、
+  vad/llm/first_audio 仍无 Web 埋点），计数不变 implemented 60 /
+  partial 3。
+- 新增 `voice-trace.test.ts` 15 项 vitest（TDD RED 先行，先实证模块
+  缺失失败再实现转绿）：载荷构造、七阶段白名单与非法 stage、duration
+  取整/界内边界/越界拒绝、可选 ID 携带/省略/空串、POST 端点方法凭据、
+  无上下文请求体恰两键、非法载荷零网络、网络失败与非 2xx 静默、
+  withVoiceTrace 成功透传+上报、失败原错误引用透传+零上报、上报通道
+  故障不影响业务结果。
+- 验证（worktree 内真实执行，2026-10-07）：`npm run test --workspace
+  apps/web` **12 files / 182 tests passed**；`npm run typecheck` 0
+  error；`npm run lint` 0 error / 0 warning；`npm run build --workspace
+  apps/web` 12 路由编译成功；`git diff --check` 干净；新增行扫描
+  （361 行）0 secret / 0 绝对本地路径 / 0 U+FFFD。零服务端/生产变更：
+  未改任何 API 契约（服务端行为以既有 `test_voice_trace.py` 契约为准，
+  未重跑 pytest）、未启停容器/服务、未触碰 DB/凭据、未改 readiness
+  标志（production_ready=false / release_ready=false / public_ready=
+  false 不变）、未做生产/部署/真实浏览器级验证。证据：
+  `docs/evidence/m14-247-web-voice-trace/README.md`。单本地 commit，
+  不 push、不开 PR。
+
 ## M14-246 — API 可观测性（M0-03 缺口关闭：/readyz + 结构化 JSON 日志 + 全局异常处理）
 
 - 动因：M14-245 能力真相矩阵判定 M0-03（FastAPI skeleton）为 partial，

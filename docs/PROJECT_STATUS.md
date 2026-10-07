@@ -14,46 +14,64 @@ not-implemented 0。旧表述「M1 ✅ 8/8、M2 ✅ 11/11、M3 ✅ 7/7」为
 M0-03 三项缺项**（/readyz、结构化 JSON 日志、全局 exception handler，
 21 项契约测试锚定），现行口径 **implemented 60 / partial 3**（M0-01、
 M1-04、M4-09），M14-245 矩阵 M0-03 行已同步改判并保留审计基点注记。
+**2026-10-07 M14-247 补上 M4-09 的 Web 客户端可测切片**（apps/web
+voice-studio 浏览器真实边界 asr/tts 两处时延埋点 + 尽力而为上报
+`POST /api/v1/voice/trace`，15 项 vitest 锚定）；M4-09 仍为 partial——
+vad/llm/first_audio 在 Web 无可观测边界（LiveKit/服务端语音链未并入
+同一 UI，矩阵缺口 3 未动），计数不变 implemented 60 / partial 3。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
 
-**M14-246 API 可观测性（M0-03 缺口关闭：/readyz + 结构化 JSON 日志 + 全局异常处理）**
-worktree `ai-learning-os-worktrees/m14-246-api-observability`，分支
-`ops/m14-246-api-observability`，基于 current main
-`0d96991`（PR #332 merge，即 M14-245）。动因：M14-245 能力真相矩阵
-判定 M0-03 为 partial，缺独立 readiness 端点、结构化（JSON）日志、
-全局 exception handler 注册（矩阵 §5 缺口 6 / §7 切片候选 6）。本轮
-按候选切片实施：新增 `/readyz`（与 `/health` liveness 语义分离；
-默认检查=启动装配完成，依赖检查经 app.state.readiness_checks 注入、
-同步/异步均可，检查异常按 not_ready 记账且 reason 只取异常类名，
-reason 安全面 sanitize_reason——安全文案/异常类名保留，控制字符/URL/
-连接串形态/敏感标记/超长/不透明长串（无空白且 >48 字符）一律固定
-安全回退，空注册表（{}/None）fail-closed 503+固定安全诊断条目，
-认证开启时与 /health 同豁免）；新增 `app/core/logging.py`（bootstrap
-路径 create_app 幂等
-安装：单行 JSON 固定字段 ts/level/logger/message、request_id 关联
-（record 属性优先+request-id 中间件 ContextVar 兜底）、extra_fields
-敏感键脱敏、exc_info 只结构化为异常类型+净化栈位置（函数名/文件
-basename/行号——原始异常消息与 traceback 文本不落日志）、不记录请求
-头/请求体、LOG_LEVEL 未配置=级别零漂移+非法值拒绝启动）；新增
-`app/api/error_handlers.py`（DomainError 族→400/404/409 映射、响应体
-与 HTTPException 同形；未捕获异常 500 固定脱敏 detail+X-Request-ID
-回填+服务端日志只落类型与净化栈位置；HTTPException/
-RequestValidationError 422 契约不重新注册、不变弱）。新增契约测试
-`test_api_observability.py`（21 项，含 supervisor 复审追加的 reason
-净化 2 项与异常日志脱敏 1 项、终审追加的空注册表 fail-closed 1 项
-与不透明长串拒绝 1 项；测试中凭据形态字符串均为自造无效
-哨兵，仅用于断言不泄出）。M14-245 矩阵 M0-03 行同步改判 ✅（现行
-implemented 60 / partial 3，注记保留审计基点）。
-生产口径不变：production_ready=false / release_ready=false /
-public_ready=false；未做生产/部署级验证，未启停容器/服务，未触碰
-DB/Redis/voice/LiveKit/凭据；uvicorn 自身 logger 与部署级依赖检查为
-后续切片空间。验证与结果见
-`docs/evidence/m14-246-api-observability/README.md`。单本地 commit
-（复审修正 amend 原提交，仍恰一个），不 push、不开 PR、不合并。
+**M14-247 Web 客户端语音时延埋点（M4-09 诚实可测切片：浏览器边界 asr/tts）**
+worktree `ai-learning-os-worktrees/m14-247-web-voice-trace`，分支
+`web/m14-247-voice-trace`，基于 current main `84072e1`（M14-246）。
+动因：M14-245 矩阵 M4-09 判 partial——服务端 asr/tts/intent/fsm
+自动埋点与聚合已在，但 apps/web 无任何调用 /api/v1/voice/trace 的
+代码（矩阵缺口 4），客户端时延闭环未打通。本切片只补 Web 浏览器
+**真实可观测**的两处边界，不虚报测不到的环节：新增
+`apps/web/src/lib/voice-trace.ts`（TRACE_STAGES 七阶段白名单与
+services/api 同口径；duration_ms 取整后必须落在 [1,600000]，越界
+返回 null 不截断不虚报；可选 session_id/exam_id/question_id 仅真实
+上下文可用时携带；submitVoiceTrace 专用 fetch 尽力而为上报——网络
+失败/非 2xx 静默吞掉，且不经 api.ts 的 401 登录跳转语义；withVoiceTrace
+计时包装：成功 span 才上报、业务异常原样透传、上报永不阻塞主流程）；
+voice-studio 仅两处插桩——listenOnce() 外围 asr、speakLocal() 外围
+tts（exam_id/question_id 真实在位；session_id 本流程走 /papers/{id}/exams
+不创建 VoiceSession，无真实来源，不携带）。新增 vitest 15 项（TDD
+RED 先行；载荷构造/白名单与界内处理/可选 ID/静默失败/不阻塞主流程）；
+M14-189 钉住的 speak 调用契约字符串零改动。M4-09 维持 partial：
+vad/llm/first_audio 属 LiveKit/服务端链路（缺口 3 未动），本切片
+不声称完整 LiveKit/ASR/TTS 会话覆盖；计数不变 implemented 60 /
+partial 3，M14-245 矩阵 M4-09 行不改判。生产口径不变：
+production_ready=false / release_ready=false / public_ready=false；
+未做生产/部署/真实浏览器级验证，未启停容器/服务，未触碰
+DB/Redis/voice/LiveKit/凭据，未改任何 readiness 标志。验证与结果
+（test 12 files/182 passed、typecheck/lint 0 error 0 warning、
+build 12 路由、git diff --check 干净、新增行 0 secret/0 绝对路径/
+0 U+FFFD）见 `docs/evidence/m14-247-web-voice-trace/README.md`。
+单本地 commit，不 push、不开 PR、不合并。
+
+### 前一任务快照（M14-246 API 可观测性——详见 docs/evidence/m14-246-api-observability/README.md；本切片不改写、不弱化该证据）
+
+**M14-246 API 可观测性（M0-03 缺口关闭：/readyz + 结构化 JSON 日志 +
+全局异常处理）** worktree `ai-learning-os-worktrees/m14-246-api-observability`，
+分支 `ops/m14-246-api-observability`，基于 current main `0d96991`
+（PR #332 merge，即 M14-245）。新增 /readyz（与 /health liveness
+语义分离；依赖检查经 app.state.readiness_checks 注入，reason 经
+sanitize_reason 净化——控制字符/URL/连接串/敏感标记/超长/不透明长串
+一律安全回退，空注册表 fail-closed 503）；新增 app/core/logging.py
+（create_app 幂等安装：单行 JSON 固定字段、request_id 关联、extra_fields
+敏感键脱敏、exc_info 只结构化为异常类型+净化栈位置）；新增
+app/api/error_handlers.py（DomainError 族→400/404/409 映射、未捕获
+异常 500 固定脱敏 detail+X-Request-ID 回填）。21 项契约测试锚定。
+M14-245 矩阵 M0-03 行改判 ✅（现行 implemented 60 / partial 3）。
+生产口径不变（production_ready=false / release_ready=false /
+public_ready=false），未做生产级验证；uvicorn 自身 logger 与部署级
+依赖检查为后续切片空间。单本地 commit（复审修正 amend，仍恰一个），
+不 push、不开 PR。
 
 ### 前一任务快照（M14-245 能力路线图真相对账——详见 docs/evidence/m14-245-capability-roadmap-truth/README.md；本切片不改写、不弱化该证据）
 

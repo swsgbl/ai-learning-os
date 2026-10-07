@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Mic, Pause, Play, Repeat } from "lucide-react";
 import { api } from "@/lib/api";
+import { withVoiceTrace } from "@/lib/voice-trace";
 import { optionLabel, parseSpokenAnswer, speakableQuestion } from "@/lib/parse-answer";
 import type { ExamSession, PublicQuestion } from "@/lib/types";
 import { ErrorState, LoadingState } from "@/components/states";
@@ -81,6 +82,9 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
   const started = useRef(false);
   const sequence = useRef(0);
   const submitted = useRef(false);
+  // M14-247: 时延埋点用的考试 ID（speak 回调依赖数组为空，见 M14-189 注记，
+  // 不经闭包读 session state——会话就绪时写入 ref，随 speak 调用点读取）
+  const examIdRef = useRef<string | null>(null);
 
   // M14-189: 朗读改为参数化的纯异步入口（目标题/序号/总数由调用方传入），
   // 三个调用点全部在事件/异步回调链中：首题（startExam .then）、切题
@@ -90,7 +94,12 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
   const speak = useCallback(async (target: PublicQuestion, order: number, total: number) => {
     setSpeaking(true);
     try {
-      await speakLocal(speakableQuestion(target, order, total));
+      // M14-247: tts 边界真实可观测（浏览器 speechSynthesis 朗读耗时）——
+      // 尽力而为上报，失败不影响朗读主流程；session_id 本流程无真实来源，不携带
+      await withVoiceTrace("tts", () => speakLocal(speakableQuestion(target, order, total)), {
+        exam_id: examIdRef.current ?? undefined,
+        question_id: target.id,
+      });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "语音朗读失败");
     } finally {
@@ -104,6 +113,7 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
     api
       .startExam(paperId, "voice")
       .then((result) => {
+        examIdRef.current = result.exam_id;
         setSession(result);
         setAnswers(result.answers);
         // M14-189: 首题自动朗读移入加载回调（事件回调路径）——朗读不再经
@@ -159,7 +169,12 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
     setBusy(true);
     setError(null);
     try {
-      const transcript = await listenOnce();
+      // M14-247: asr 边界真实可观测（浏览器 SpeechRecognition 听写耗时）——
+      // 尽力而为上报，失败/不支持不影响作答主流程；session_id 同上不携带
+      const transcript = await withVoiceTrace("asr", () => listenOnce(), {
+        exam_id: session.exam_id,
+        question_id: question.id,
+      });
       setHeard(transcript);
       const parsed = parseSpokenAnswer(transcript, question);
       if (!parsed) {
