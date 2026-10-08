@@ -220,8 +220,11 @@ describe("数据加载组件：load/reload 拆分（mount effect 零同步 setSt
 
 // M14-249：voice-studio 接入服务端权威 VoiceSession 后的等价约束——
 // 朗读仍全程事件化（启动/切题/重复读题按钮），唯一的 effect 是启动链；
+// M14-250：朗读链切到服务端 TTS 通道（speechSynthesis 退出、收尾改
+// stopServerTtsPlayback、通道身份经 providers 视图透出）。
 // 行为级验证（create→resume 顺序、读题事件时序、event_id 幂等、409
-// realign、REPORT_READY 收尾、trace session_id）在 voice-session-flow.test.ts。
+// realign、REPORT_READY 收尾、trace session_id、服务端 TTS 通道契约）
+// 在 voice-session-flow.test.ts 与 server-tts.test.ts。
 describe("voice-studio.tsx：朗读事件化（自动朗读不经 effect）+ 服务端权威接入", () => {
   it("原「question?.id 变化即重读」的自动朗读 effect 已移除", () => {
     expect(VOICE_SOURCE).not.toMatch(/useEffect\(\(\) => \{\s*if \(question\)/);
@@ -252,11 +255,23 @@ describe("voice-studio.tsx：朗读事件化（自动朗读不经 effect）+ 服
     expect(VOICE_SOURCE).toMatch(/onClick=\{\(\) => void speakQuestion\(question, view\.session\.question_index, view\.questionTotal\)\}/);
   });
 
-  it("speaking 状态生命周期（开始/结束/失败文案）与提交时 TTS 取消保留", () => {
+  it("speaking 状态生命周期（开始/结束/失败文案）与提交时 TTS 停止保留", () => {
     expect(VOICE_SOURCE).toMatch(/setSpeaking\(true\)/);
     expect(VOICE_SOURCE).toMatch(/setSpeaking\(false\)/);
     expect(VOICE_SOURCE).toContain("语音朗读失败");
-    expect(VOICE_SOURCE).toMatch(/speechSynthesis\?\.cancel\(\)/);
+    expect(VOICE_SOURCE).toMatch(/stopServerTtsPlayback\(\)/);
+  });
+
+  it("M14-250：朗读链零浏览器 speechSynthesis/speakUtterance 残留（服务端 TTS 为唯一朗读通道）", () => {
+    expect(VOICE_SOURCE).not.toContain("speechSynthesis");
+    expect(VOICE_SOURCE).not.toContain("speakUtterance");
+    expect(VOICE_SOURCE).toContain("stopServerTtsPlayback");
+  });
+
+  it("M14-250：通道身份徽标透出 providers 视图（tone 降级如实标注，不谎报真实语音）", () => {
+    expect(VOICE_SOURCE).toContain("api.voiceProviders()");
+    expect(VOICE_SOURCE).toContain('data-testid="tts-channel"');
+    expect(VOICE_SOURCE).toContain("降级替身");
   });
 
   it("once-only 会话申请守卫保留（started ref 防重复开考）", () => {

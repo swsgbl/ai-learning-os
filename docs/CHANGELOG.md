@@ -1,5 +1,85 @@
 # Changelog
 
+## M14-250 — Web voice-studio 服务端 TTS 通道（apps/web only，零服务端变更）
+
+- 动因：M14-249 后 voice-studio 已消费服务端权威 VoiceSession，但
+  朗读链仍是浏览器 speechSynthesis 本地输出设备；服务端 TTS
+  adapter（`POST /api/v1/voice/synthesize`，M4-02/M14-01 三模式
+  路由 + fallback 透出）与 providers 视图在 Web 侧零消费者。本切片
+  把朗读切换为服务端 TTS 通道——与 Android M12-03 announce 链
+  （synthesize → 播放 → 真实完成才发读题回执）同构。
+- 新增 `apps/web/src/lib/server-tts.ts` 通道模块：
+  `synthesizeSpeech`（POST /synthesize——credentials include、401
+  跳登录、非 2xx → ApiError 携服务端 detail，错误语义与 request()
+  一致；响应体为 WAV 字节非 JSON；X-Voice-Provider/
+  X-Voice-Fallback 头原样透出；空字节如实拒绝，绝不把空合成当
+  可播放语音）、`playWavAudio`（object URL + HTMLAudioElement：
+  **ended 才 resolve**，error 事件/play() 拒绝（如自动播放策略）
+  如实 reject，object URL 无论成败恒回收；新播放开始时切断上一段
+  未完成播放——被放弃链的 promise 不再结算，对应读题回执事件
+  不发不谎报）、`stopServerTtsPlayback`（收尾停止：pause + 回收，
+  替代浏览器朗读时代的 cancel；未决播放不再结算）、
+  `speakWithServerTts`（合成→播放组合，播放真实完成才 resolve）。
+- `voice-session-flow.ts`：**R1 修正（supervisor Round 1）——移除
+  客户端 tts 埋点**：`tracedSpeak`（withVoiceTrace("tts") 包装）
+  整个删除，voice-studio speakPhase 直连 `speakWithServerTts`；
+  成功/失败的服务端 TTS 朗读**只发 `/synthesize`、零
+  `/voice/trace` 请求**——tts 时延以服务端 /synthesize 内自动埋点
+  （source=server，仅合成耗时）为唯一权威，避免 /trace/summary
+  同 stage 双计数。`tracedListen`（asr span）原样保留；
+  `voice-trace.ts` 头注释同步（客户端可观测边界收窄为 asr 一处；
+  TRACE_STAGES 仍完整镜像服务端白名单）。读题回执事件时序（各段
+  真实完成才发 question_read/options_read，失败/中断不发）语义零
+  改动。`browser-speech.ts` 移除已无消费者的 `speakUtterance`，
+  保留 `listenOnce`（听写仍浏览器原生输入设备）。
+- `voice-studio.tsx` 接入：speakPhase 直连 `speakWithServerTts`；
+  启动链 promise 回调内尽力而为拉取 providers 视图（失败缺省——
+  徽标缺席不阻塞作答不伪造通道），进度卡透出 TTS 通道徽标
+  （`data-testid="tts-channel"`；tone 降级如实标注「降级替身，非
+  真实语音」，照播不静默换回浏览器 TTS——通道事实不虚报）；
+  `completeExam` 改 `stopServerTtsPlayback()`。M14-189 约束保持：
+  唯一 effect 启动链（providers/徽标更新全在 promise 回调）、朗读
+  全程事件化、零 set-state-in-effect。
+- `types.ts`/`api.ts`：新增 `VoiceProvidersView`/`VoiceProviderView`
+  契约类型与 `api.voiceProviders()`（GET /api/v1/voice/providers，
+  snake_case 一一对应、provider/fallback 原样透出不虚报）。
+- 新增 `server-tts.test.ts` **17 项行为测试**（stub 全局
+  fetch/Audio/URL 实证：synthesize HTTP 契约（URL/method/body 恰
+  text/credentials/JSON 头）+ provider/fallback 头三态、422/502 →
+  ApiError 携 detail、401 跳登录、空字节拒绝、ended 才 resolve/
+  error/play 拒绝/URL 恒回收/新播放切断旧播放、stopServerTts
+  Playback 停止与幂等、合成失败零播放、api.voiceProviders 契约、
+  **R1 零客户端 tts 埋点**（成功/失败均只发 /synthesize、零
+  /voice/trace——迟到的 fire-and-forget 上报亦实证为零））。
+  `react-hooks-hygiene.test.ts` voice-studio 段更新为等价约束
+  （38→40：收尾改 stopServerTtsPlayback、朗读链零 speechSynthesis/
+  speakUtterance 残留、通道徽标透出 providers）；
+  `voice-session-api.test.ts` **零改动**（30 项全绿）；
+  `voice-session-flow.test.ts` 随 R1 更新（27→26：删 tts span 两
+  项、补听写失败零上报一项——M14-249 钉住的客户端 tts span 行为
+  由 R1 判定废除，服务端埋点为唯一权威）。
+- **边界**：不声明 M4-09 或 capability gap 3 关闭——缺口 3 进一步
+  收窄为「朗读已走服务端 TTS、听写仍浏览器原生（服务端 ASR/
+  LiveKit 未进 Web UI）」；M4-09 维持 partial（vad/llm/
+  first_audio 无 Web 埋点），矩阵计数不变 implemented 60 /
+  partial 3。服务端 TTS 在 local 未配置引擎时降级 tone 替身
+  （headers/徽标如实透出；Web 照播不谎报，是否配置真实引擎为
+  服务端部署决策）；真实 provider（local-cosyvoice/cloud-openai-tts）
+  端到端音频质量未在本切片验证（无真实服务端/浏览器冒烟，与仓库
+  测试口径一致）。零服务端/生产变更（未重跑 pytest，服务端语义以
+  既有契约为准）、未启停容器/服务、未触碰 DB/LiveKit/凭据、
+  `production_ready=false`/`release_ready=false`/`public_ready=false`
+  不变。验证（2026-10-08 worktree 内真实执行，R1 修正后复跑）：
+  focused 17+26+30+40 passed；全套 `npm run test --workspace
+  apps/web` **15 files / 258 passed**（14 files/240 基点 +1 文件
+  +17 通道测试 +2 hygiene −1 R1 移除的 tts span 测试净额，零回归）；
+  typecheck 0 error；lint 0 error 0 warning；build 编译成功（13
+  路由与基点一致）；`git diff --check` 干净；新增/改动行扫描
+  0 secret / 0 绝对本地路径 / 0 U+FFFD。证据：
+  `docs/evidence/m14-250-web-voice-server-tts/README.md`。单本地
+  commit（supervisor R1 修正 amend 回原提交，仍恰一个），不 push、
+  不开 PR。
+
 ## M14-249 — Web voice-studio 接入权威 VoiceSession（apps/web only，零服务端变更）
 
 - 动因：M14-248 已备 Web 侧服务端 VoiceSession 契约层，但

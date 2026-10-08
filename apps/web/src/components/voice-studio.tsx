@@ -1,16 +1,21 @@
 "use client";
 
 // M14-249：voice-studio 接入服务端权威 VoiceSession（M14-248 契约层的
-// 第一个消费者）。浏览器 SpeechRecognition/speechSynthesis 只是输入
-// 输出设备：题面、会话状态、已提交答案、规范化结果、澄清文案、语音
-// 报告全部以服务端 resume/commands/answers/report 的返回为唯一权威——
-// 本组件不维护答案序号、不复制 FSM 转移表、不预解析答案、不自行评分。
+// 第一个消费者）。题面、会话状态、已提交答案、规范化结果、澄清文案、
+// 语音报告全部以服务端 resume/commands/answers/report 的返回为唯一权威
+// ——本组件不维护答案序号、不复制 FSM 转移表、不预解析答案、不自行
+// 评分。M14-250：朗读链切到服务端 TTS 通道（speakWithServerTts：
+// POST /synthesize → WAV → 播放真实完成才 resolve，读题回执事件时序
+// 语义不变；R1：零客户端 tts 埋点——tts 时延由服务端 /synthesize 内
+// 自动埋点权威记录，客户端零 /voice/trace 请求）；通道身份经
+// GET /providers 透出（tone 降级如实标注，不谎报真实语音）；收尾停止
+// 服务端播放。听写（ASR）仍为浏览器原生输入设备（tracedListen 埋点）。
 // M14-189 朗读事件化约束保持：朗读只在启动完成回调、切题回调、重复
 // 读题按钮的事件链中发起，无 effect 驱动的自动朗读，无 set-state-in-effect。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Mic, Pause, Play, Repeat } from "lucide-react";
-import { ApiError } from "@/lib/api";
+import { ApiError, api } from "@/lib/api";
 import { optionClickTranscript } from "@/lib/parse-answer";
 import type {
   ExamSession,
@@ -27,10 +32,10 @@ import {
   startVoiceSession,
   submitAnswerForSession,
   tracedListen,
-  tracedSpeak,
   voiceUnavailableText,
   type VoiceFlowView,
 } from "@/lib/voice-session-flow";
+import { speakWithServerTts, stopServerTtsPlayback } from "@/lib/server-tts";
 import { ErrorState, LoadingState } from "@/components/states";
 import { Waveform } from "@/components/voice/waveform";
 import { Button } from "./ui/button";
@@ -46,6 +51,9 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
   const [busy, setBusy] = useState(false);
   const [speaking, setSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // M14-250：服务端 TTS 通道身份（providers 视图只读透出；尽力而为，
+  // 失败缺省 null——徽标缺席不阻塞作答，也不伪造通道事实）
+  const [ttsChannel, setTtsChannel] = useState<{ provider: string; fallback: boolean } | null>(null);
   const started = useRef(false);
   const submitted = useRef(false);
   // 异步回调链读取最新权威上下文（M14-247 同款 ref 模式；render 期不读
@@ -69,11 +77,12 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
   }, []);
 
   // 收尾（验收 7）：权威语音报告进入视图模型（可断言渲染），保留既有
-  // 跳转 review 体验；提交路径的 TTS 取消保持。
+  // 跳转 review 体验；提交路径停止服务端 TTS 播放（M14-250：离场后
+  // 未决播放不再结算、不发读题回执，替代浏览器朗读时代的取消语义）。
   const completeExam = useCallback((authoritativeReport: VoiceSessionReport) => {
     submitted.current = true;
     setReport(authoritativeReport);
-    window.speechSynthesis?.cancel();
+    stopServerTtsPlayback();
     const examId = examIdRef.current;
     if (examId) router.push(`/review/${examId}`);
   }, [router]);
@@ -132,7 +141,9 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
   // M14-189（保持）：朗读为参数化异步入口，仅在启动完成回调、切题回调、
   // 重复读题按钮的事件链调用——无 effect 驱动。M14-249：朗读拆为题面/
   // 选项两段，各段真实完成后才由 flow 层发 question_read/options_read；
-  // 朗读失败/中断不发事件不谎报（flow 层保证）。
+  // 朗读失败/中断不发事件不谎报（flow 层保证）。M14-250 R1：朗读直连
+  // 服务端 TTS 通道（speakWithServerTts，零客户端 tts 埋点——tts 时延
+  // 由服务端 /synthesize 自动埋点权威记录）。
   const speakQuestion = useCallback(
     async (target: VoiceResumeQuestion, order: number, total: number) => {
       const sessionId = sessionIdRef.current;
@@ -147,12 +158,7 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
           question: target,
           index: order,
           total,
-          speakPhase: (text) =>
-            tracedSpeak(text, {
-              session_id: sessionId,
-              exam_id: examIdRef.current ?? undefined,
-              question_id: target.id,
-            }),
+          speakPhase: (text) => speakWithServerTts(text),
         });
         if (session) applyServerSession(session);
       } catch (cause) {
@@ -177,6 +183,13 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
         sessionIdRef.current = initial.session.session_id;
         setExam(startedExam);
         applyServerView(initial);
+        // M14-250：服务端 TTS 通道身份（providers 只读视图）——尽力
+        // 而为，失败缺省（徽标缺席不阻塞作答）；promise 回调内更新，
+        // 非 effect 同步 setState
+        void api.voiceProviders().then(
+          (providers) => setTtsChannel({ provider: providers.tts.provider, fallback: providers.tts.fallback }),
+          () => setTtsChannel(null),
+        );
         // M14-189（保持）：首题自动朗读在启动完成回调内（题目就绪即读）
         const first = initial.question;
         if (first) void speakQuestion(first, initial.session.question_index, initial.questionTotal);
@@ -308,6 +321,12 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
             {view.session.question_index + 1}/{view.questionTotal}
           </p>
           <p className="mt-1 text-[10px] text-muted">{view.session.status}</p>
+          {ttsChannel && (
+            <p className="mt-1 text-[10px] text-muted" data-testid="tts-channel">
+              TTS {ttsChannel.provider}
+              {ttsChannel.fallback ? "（降级替身，非真实语音）" : ""}
+            </p>
+          )}
         </div>
       </div>
 

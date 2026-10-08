@@ -1,9 +1,13 @@
 // M14-247：M4-09 Web 客户端时延埋点（诚实切片）。
-// 浏览器真实可观测的边界只有两处——SpeechRecognition 听写（asr）与
-// speechSynthesis 朗读（tts）；vad/llm/first_audio 发生在 LiveKit/服务端
-// 链路，本模块不提供调用面，绝不虚报测不到的阶段（M14-245 矩阵缺口 3/4）。
-// 上报尽力而为：构造失败零网络、网络失败/非 2xx 静默吞掉，绝不阻塞或
-// 破坏作答/朗读主流程；失败的业务调用不计入时延样本（只统计成功 span）。
+// M14-250 R1 后客户端真实可观测的边界只有一处——SpeechRecognition
+// 听写（asr）；tts 时延以服务端 /synthesize 内自动埋点（source=server，
+// 仅合成耗时）为唯一权威，客户端不上报 tts span（避免 /trace/summary
+// 同 stage 双计数）；vad/llm/first_audio 发生在 LiveKit/服务端链路，
+// 本模块不提供调用面，绝不虚报测不到的阶段（M14-245 矩阵缺口 3/4）。
+// TRACE_STAGES 仍完整镜像服务端白名单（契约真值），不因客户端只用
+// asr 而收窄。上报尽力而为：构造失败零网络、网络失败/非 2xx 静默
+// 吞掉，绝不阻塞或破坏作答/朗读主流程；失败的业务调用不计入时延
+// 样本（只统计成功 span）。
 import { API_BASE } from "./api";
 
 // 与 services/api app/domain/voice_trace.py TRACE_STAGES 同口径（七阶段白名单）

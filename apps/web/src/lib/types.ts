@@ -362,6 +362,24 @@ export type VoiceTokenResponse = {
   ws_url: string;
 };
 
+// --- M14-250 服务端 TTS 通道（services/api voice.py providers 视图） ---
+// snake_case 与服务端 ProvidersOut/ProviderView 一一对应：provider 是
+// 当前 VOICE_MODE 路由的实际选择，fallback=true 表示想用的 provider
+// 未配置已降级零依赖替身（tone，非真实语音）——原样透出不虚报。
+export type VoiceProviderView = {
+  requested: string | null;
+  provider: string;
+  fallback: boolean;
+};
+
+export type VoiceProvidersView = {
+  voice_mode: string;
+  asr: VoiceProviderView;
+  tts: VoiceProviderView;
+  privacy_store_audio: boolean;
+  privacy_send_context_to_cloud: boolean;
+};
+
 // --- M14-248 服务端权威 VoiceSession 契约（services/api voice.py） ---
 // snake_case 与服务端 Pydantic 契约一一对应（VoiceSessionOut 族），字段
 // 不增不减。status 保留服务端原词（8 状态 FSM：SESSION_READY /
