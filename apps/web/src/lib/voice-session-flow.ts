@@ -6,8 +6,11 @@
 // 转移表、不推演新状态、不猜答案。模块内对 status 字符串的分支只用于
 // 决定「还欠哪些读题回执事件 / 选哪个推进命令」，目标状态一律取自
 // 服务端响应（非法迁移由服务端 409 拒绝，调用方 resume 重新对齐）。
+// M14-250：朗读通道切到服务端 TTS（synthesize → WAV 播放，真实完成
+// 才 resolve）——浏览器 speechSynthesis 退出朗读链，听写（ASR）仍为
+// 浏览器原生输入设备。
 import { ApiError, api, newVoiceAnswerEventId } from "./api";
-import { listenOnce, speakUtterance } from "./browser-speech";
+import { listenOnce } from "./browser-speech";
 import { optionsTailText, questionHeadText } from "./parse-answer";
 import { withVoiceTrace, type VoiceTraceContext } from "./voice-trace";
 import type {
@@ -226,17 +229,14 @@ export function describeVoiceStartError(cause: unknown): string {
   return cause instanceof Error ? cause.message : "无法开始语音练习";
 }
 
-// M14-247→M14-249（验收 8）：asr/tts 时延 span 携带真实 voice
-// session_id（由 api.voiceSessions.create 回传；无会话上下文时调用方
-// 不伪造——session_id 缺省即省略）。trace 尽力而为，不影响主流程。
-export function tracedSpeak(
-  text: string,
-  context: VoiceTraceContext,
-  speakImpl: (t: string) => Promise<void> = speakUtterance,
-): Promise<void> {
-  return withVoiceTrace("tts", () => speakImpl(text), context);
-}
-
+// M14-247（验收 8）：asr 时延 span 携带真实 voice session_id（由
+// api.voiceSessions.create 回传；无会话上下文时调用方不伪造——
+// session_id 缺省即省略）。trace 尽力而为，不影响主流程。
+// M14-250 R1：客户端 tts 埋点移除——tts 时延以服务端 /synthesize
+// 内自动埋点（source=server，仅合成耗时）为唯一权威，客户端不再
+// 上报 tts span（避免 /trace/summary 同 stage 双计数）；tracedSpeak
+// 随之删除，朗读直接走 server-tts 通道（speakWithServerTts，零
+// /voice/trace 请求）。
 export function tracedListen(
   context: VoiceTraceContext,
   listenImpl: () => Promise<string> = listenOnce,

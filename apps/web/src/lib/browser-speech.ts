@@ -2,6 +2,10 @@
 // SpeechRecognition / speechSynthesis 只是输入输出设备——会话状态、
 // 题面、答案规范化、报告全部以服务端 VoiceSession 为唯一权威，本模块
 // 不做任何解析或判定。导出纯浏览器能力供 flow 层与组件注入使用。
+// M14-250：朗读（TTS）已切到服务端通道（server-tts.ts——synthesize
+// → WAV 播放），speechSynthesis 的 speakUtterance 封装随之移除；本
+// 模块保留听写（listenOnce）——ASR 仍是浏览器原生输入设备（缺口 3
+// 的剩余边界）。
 type RecognitionEvent = {
   results: ArrayLike<ArrayLike<{ transcript: string }>>;
 };
@@ -23,23 +27,6 @@ function recognitionConstructor(): RecognitionConstructor | null {
   if (typeof window === "undefined") return null;
   const target = window as Window & { SpeechRecognition?: RecognitionConstructor; webkitSpeechRecognition?: RecognitionConstructor };
   return target.SpeechRecognition ?? target.webkitSpeechRecognition ?? null;
-}
-
-/** 单段朗读：onend 才 resolve（真实完成），onerror/不支持则 reject——
- * 调用方（flow 层）只在 resolve 后发对应的读题完成事件，绝不谎报。 */
-export function speakUtterance(text: string) {
-  return new Promise<void>((resolve, reject) => {
-    if (typeof window === "undefined" || !("speechSynthesis" in window)) {
-      reject(new Error("当前浏览器不支持语音朗读"));
-      return;
-    }
-    window.speechSynthesis.cancel();
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = "zh-CN";
-    utterance.onend = () => resolve();
-    utterance.onerror = () => reject(new Error("语音朗读失败"));
-    window.speechSynthesis.speak(utterance);
-  });
 }
 
 /** 单次听写：返回原始 transcript（不解析、不猜答案——解析与规范化

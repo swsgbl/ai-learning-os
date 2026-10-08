@@ -11,6 +11,7 @@ import type {
   Submission,
   UserProfile,
   VariantDraft,
+  VoiceProvidersView,
   VoiceSession,
   VoiceSessionAnswerRequest,
   VoiceSessionAnswerResult,
@@ -137,6 +138,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ room }),
     }),
+  // M14-250: provider 配置视图（GET /api/v1/voice/providers）——当前
+  // VOICE_MODE 下 ASR/TTS 的实际路由与 fallback 事实，只读不判定；
+  // voice-studio 以 tts.provider/fallback 透出服务端 TTS 通道身份。
+  voiceProviders: () => request<VoiceProvidersView>("/api/v1/voice/providers"),
   // M14-248: 服务端权威 VoiceSession 契约面（services/api voice.py）。
   // 路径/method/payload 与服务端一一对应、不增字段；status 等响应字段
   // 原样透传——客户端不推演 FSM、不缓存答案、不虚报语音结果；响应即

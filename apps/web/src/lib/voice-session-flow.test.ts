@@ -19,7 +19,6 @@ import {
   startVoiceSession,
   submitAnswerForSession,
   tracedListen,
-  tracedSpeak,
 } from "./voice-session-flow";
 import type { ExamSession, VoiceResumeQuestion, VoiceSession, VoiceSessionResume } from "./types";
 
@@ -622,9 +621,11 @@ describe("finishVoiceExam / advanceFlow：全卷完成收尾", () => {
   });
 });
 
-// --- 验收 8：trace asr/tts 携带真实 session_id ---
+// --- 验收 8：trace asr 携带真实 session_id（M14-250 R1：客户端 tts
+// 埋点移除——tts 时延以服务端 /synthesize 自动埋点为唯一权威，客户端
+// 朗读链零 /voice/trace，见 server-tts.test.ts R1 段） ---
 
-describe("tracedSpeak / tracedListen：时延埋点携带真实 session_id", () => {
+describe("tracedListen：asr 时延埋点携带真实 session_id", () => {
   it("asr span 成功后上报 POST /api/v1/voice/trace，body 含真实 session_id/exam_id/question_id", async () => {
     const fetch = queueFetch([]);
     vi.stubGlobal("fetch", fetch);
@@ -649,29 +650,14 @@ describe("tracedSpeak / tracedListen：时延埋点携带真实 session_id", () 
     expect(typeof payload.duration_ms).toBe("number");
   });
 
-  it("tts span 同样携带真实 session_id", async () => {
-    const fetch = queueFetch([]);
-    vi.stubGlobal("fetch", fetch);
-    await tracedSpeak(
-      "第 1 题，共 3 题。",
-      { session_id: "sess-1", question_id: "q-1" },
-      async () => {
-        await new Promise((resolve) => setTimeout(resolve, 3));
-      },
-    );
-    await flush();
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(bodiesOf(fetch)[0]).toMatchObject({ stage: "tts", session_id: "sess-1", question_id: "q-1" });
-  });
-
-  it("失败调用不上报 span（失败不构成时延样本），错误原样透传", async () => {
+  it("听写失败不上报 span（失败不构成时延样本），错误原样透传", async () => {
     const fetch = queueFetch([]);
     vi.stubGlobal("fetch", fetch);
     await expect(
-      tracedSpeak("题干", { session_id: "sess-1" }, async () => {
-        throw new Error("语音朗读失败");
+      tracedListen({ session_id: "sess-1" }, async () => {
+        throw new Error("没有听到声音");
       }),
-    ).rejects.toThrow("语音朗读失败");
+    ).rejects.toThrow("没有听到声音");
     await flush();
     expect(fetch).not.toHaveBeenCalled();
   });
