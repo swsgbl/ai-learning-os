@@ -1,18 +1,21 @@
 // M14-249：Web voice-studio 的服务端权威 VoiceSession 编排层
-// （M14-248 契约层的第一个消费者）。浏览器 SpeechRecognition /
-// speechSynthesis 只是输入输出设备——状态（FSM status）、当前题公开
-// 字段、已提交答案、规范化结果、澄清文案、语音报告全部以服务端
-// resume/commands/answers/report 的返回为唯一权威；本模块不复制 FSM
-// 转移表、不推演新状态、不猜答案。模块内对 status 字符串的分支只用于
-// 决定「还欠哪些读题回执事件 / 选哪个推进命令」，目标状态一律取自
-// 服务端响应（非法迁移由服务端 409 拒绝，调用方 resume 重新对齐）。
+// （M14-248 契约层的第一个消费者）。浏览器录音/播放只是输入输出
+// 设备——状态（FSM status）、当前题公开字段、已提交答案、规范化
+// 结果、澄清文案、语音报告全部以服务端 resume/commands/answers/
+// report 的返回为唯一权威；本模块不复制 FSM 转移表、不推演新状态、
+// 不猜答案。模块内对 status 字符串的分支只用于决定「还欠哪些读题
+// 回执事件 / 选哪个推进命令」，目标状态一律取自服务端响应（非法
+// 迁移由服务端 409 拒绝，调用方 resume 重新对齐）。
 // M14-250：朗读通道切到服务端 TTS（synthesize → WAV 播放，真实完成
-// 才 resolve）——浏览器 speechSynthesis 退出朗读链，听写（ASR）仍为
-// 浏览器原生输入设备。
+// 才 resolve）——浏览器 speechSynthesis 退出朗读链。
+// M14-251：听写通道切到服务端 ASR（录音 → 本地 WAV → /transcribe
+// → 服务端 transcript）——浏览器 SpeechRecognition（listenOnce/
+// tracedListen）退出作答链并整体移除，asr 时延以服务端 /transcribe
+// 内自动埋点为唯一权威（客户端零 /voice/trace 请求）。
 import { ApiError, api, newVoiceAnswerEventId } from "./api";
-import { listenOnce } from "./browser-speech";
 import { optionsTailText, questionHeadText } from "./parse-answer";
-import { withVoiceTrace, type VoiceTraceContext } from "./voice-trace";
+import { transcribeAudioWav, type ServerAsrTranscript } from "./server-asr";
+import { recordAndEncodeWav } from "./wav-recorder";
 import type {
   ExamSession,
   Submission,
@@ -229,17 +232,28 @@ export function describeVoiceStartError(cause: unknown): string {
   return cause instanceof Error ? cause.message : "无法开始语音练习";
 }
 
-// M14-247（验收 8）：asr 时延 span 携带真实 voice session_id（由
-// api.voiceSessions.create 回传；无会话上下文时调用方不伪造——
-// session_id 缺省即省略）。trace 尽力而为，不影响主流程。
-// M14-250 R1：客户端 tts 埋点移除——tts 时延以服务端 /synthesize
-// 内自动埋点（source=server，仅合成耗时）为唯一权威，客户端不再
-// 上报 tts span（避免 /trace/summary 同 stage 双计数）；tracedSpeak
-// 随之删除，朗读直接走 server-tts 通道（speakWithServerTts，零
-// /voice/trace 请求）。
-export function tracedListen(
-  context: VoiceTraceContext,
-  listenImpl: () => Promise<string> = listenOnce,
+// M14-251：听写通道编排——浏览器录音 + 本地 WAV 编码 + 服务端转写
+// 一段链（wav-recorder → server-asr → transcript.text）。text 是
+// 服务端返回的唯一 transcript 权威，本层不解析不猜答案（解析与
+// 规范化由服务端 intent parser / answer normalizer 执行）。失败
+// （不支持/权限被拒/零数据/网络/4xx/5xx）原样抛出，绝不静默回退
+// 浏览器 SpeechRecognition（已移除）。asr 时延以服务端 /transcribe
+// 内自动埋点为唯一权威——本链零 /voice/trace 请求（M14-250 R1 的
+// tts 同口径，避免 /trace/summary 同 stage 双计数）。onRecorded 在
+// 录音收尾、上送开始之间触发（UI 观察阶段转换：recording →
+// transcribing）；recordImpl/transcribeImpl 仅供测试注入。
+export async function recordTranscriptViaServerAsr(
+  options: {
+    onRecorded?: (wav: Blob) => void;
+    recordImpl?: () => Promise<Blob>;
+    transcribeImpl?: (wav: Blob) => Promise<ServerAsrTranscript>;
+  } = {},
 ): Promise<string> {
-  return withVoiceTrace("asr", () => listenImpl(), context);
+  const wav = await (options.recordImpl ?? recordAndEncodeWav)();
+  options.onRecorded?.(wav);
+  const transcribe =
+    options.transcribeImpl ??
+    (async (audio: Blob) => (await transcribeAudioWav(audio)).transcript);
+  const transcript = await transcribe(wav);
+  return transcript.text;
 }
