@@ -9,12 +9,17 @@
 // 语义不变；R1：零客户端 tts 埋点——tts 时延由服务端 /synthesize 内
 // 自动埋点权威记录，客户端零 /voice/trace 请求）；通道身份经
 // GET /providers 透出（tone 降级如实标注，不谎报真实语音）；收尾停止
-// 服务端播放。听写（ASR）仍为浏览器原生输入设备（tracedListen 埋点）。
+// 服务端播放。M14-251：听写链切到服务端 ASR（recordTranscriptVia
+// ServerAsr：浏览器录音 → 本地 WAV → POST /transcribe → 服务端
+// transcript 唯一权威；浏览器本地听写通道整体移除，asr 时延由
+// 服务端 /transcribe 自动埋点权威记录，客户端零 /voice/trace 请求）；
+// 录音期间麦克风按钮复用为「停止并提交」（不被禁用），录音/识别/
+// 权限失败/不支持/服务端失败状态如实可辨。
 // M14-189 朗读事件化约束保持：朗读只在启动完成回调、切题回调、重复
 // 读题按钮的事件链中发起，无 effect 驱动的自动朗读，无 set-state-in-effect。
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Mic, Pause, Play, Repeat } from "lucide-react";
+import { Mic, Pause, Play, Repeat, Square } from "lucide-react";
 import { ApiError, api } from "@/lib/api";
 import { optionClickTranscript } from "@/lib/parse-answer";
 import type {
@@ -27,15 +32,16 @@ import {
   advanceFlow,
   describeVoiceStartError,
   finishVoiceExam,
+  recordTranscriptViaServerAsr,
   reconcileSession,
   speakQuestionWithEvents,
   startVoiceSession,
   submitAnswerForSession,
-  tracedListen,
   voiceUnavailableText,
   type VoiceFlowView,
 } from "@/lib/voice-session-flow";
 import { speakWithServerTts, stopServerTtsPlayback } from "@/lib/server-tts";
+import { stopActiveRecording } from "@/lib/wav-recorder";
 import { ErrorState, LoadingState } from "@/components/states";
 import { Waveform } from "@/components/voice/waveform";
 import { Button } from "./ui/button";
@@ -48,7 +54,9 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
   const [report, setReport] = useState<VoiceSessionReport | null>(null);
   const [heard, setHeard] = useState("");
   const [clarify, setClarify] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
+  // M14-251：麦克风阶段如实三态——idle / recording（按钮复用为
+  // 「停止并提交」，保持可用）/ transcribing（上传转写中，不可停）
+  const [micPhase, setMicPhase] = useState<"idle" | "recording" | "transcribing">("idle");
   const [speaking, setSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // M14-250：服务端 TTS 通道身份（providers 视图只读透出；尽力而为，
@@ -272,26 +280,39 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
     }
   }
 
+  // M14-251：语音作答 = 录音（服务端 ASR 通道）→ 服务端 transcript →
+  // 既有 /answers 权威链。录音期间麦克风按钮复用为「停止并提交」
+  // （stopActiveRecording 触发录音收尾，promise 链自然继续转写）；
+  // asr 时延由服务端 /transcribe 自动埋点权威记录——此处零
+  // /voice/trace 请求。权限失败/不支持/录音失败/服务端失败如实提示
+  // （错误消息可辨来源），不静默回退浏览器听写。
   async function listen() {
     const current = view;
-    if (!current?.question || busy) return;
-    setBusy(true);
+    if (!current?.question || micPhase !== "idle") return;
     setError(null);
+    setMicPhase("recording");
     try {
-      // M14-249（验收 8）：asr span 携带真实 voice session_id（create
-      // 回传，不再缺省）；trace 尽力而为不影响作答主流程
-      const transcript = await tracedListen({
-        session_id: current.session.session_id,
-        exam_id: examIdRef.current ?? undefined,
-        question_id: current.question.id,
+      const transcript = await recordTranscriptViaServerAsr({
+        onRecorded: () => setMicPhase("transcribing"),
       });
       setHeard(transcript);
       await submitTranscript(transcript);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "听写失败");
+      setError(cause instanceof Error ? cause.message : "语音作答失败");
     } finally {
-      setBusy(false);
+      setMicPhase("idle");
     }
+  }
+
+  // 录音中的麦克风按钮点击 = 请求停止录音并进入提交链（幂等——
+  // stopActiveRecording 对无活跃录音 no-op）
+  function onMicClick() {
+    if (micPhase === "recording") {
+      stopActiveRecording();
+      return;
+    }
+    if (micPhase === "transcribing") return; // 识别中不可停，按钮已禁用
+    void listen();
   }
 
   async function next() {
@@ -358,7 +379,7 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
       </Card>
 
       <Card className="p-4">
-        <Waveform active={busy} className="mb-3" />
+        <Waveform active={micPhase !== "idle"} className="mb-3" />
         <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
@@ -369,9 +390,28 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
           >
             <Repeat className={speaking ? "animate-pulse" : undefined} aria-hidden="true" />
           </Button>
-          <Button onClick={() => void listen()} disabled={busy} className="flex-1">
-            {busy ? <Pause aria-hidden="true" /> : <Mic aria-hidden="true" />}
-            {busy ? "聆听中" : "语音作答"}
+          {/* M14-251：录音期间按钮保持可用并复用为「停止并提交」；
+              仅识别阶段（上传转写不可中断）禁用 */}
+          <Button
+            onClick={onMicClick}
+            disabled={micPhase === "transcribing"}
+            className="flex-1"
+            aria-label={
+              micPhase === "recording"
+                ? "停止录音并提交识别"
+                : micPhase === "transcribing"
+                  ? "正在识别语音"
+                  : "语音作答"
+            }
+          >
+            {micPhase === "recording" ? (
+              <Square aria-hidden="true" />
+            ) : micPhase === "transcribing" ? (
+              <Pause aria-hidden="true" />
+            ) : (
+              <Mic aria-hidden="true" />
+            )}
+            {micPhase === "recording" ? "停止并提交" : micPhase === "transcribing" ? "识别中" : "语音作答"}
           </Button>
           <Button variant="outline" onClick={() => void next()}>
             <Play aria-hidden="true" />

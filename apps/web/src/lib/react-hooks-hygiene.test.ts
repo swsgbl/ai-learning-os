@@ -221,10 +221,13 @@ describe("数据加载组件：load/reload 拆分（mount effect 零同步 setSt
 // M14-249：voice-studio 接入服务端权威 VoiceSession 后的等价约束——
 // 朗读仍全程事件化（启动/切题/重复读题按钮），唯一的 effect 是启动链；
 // M14-250：朗读链切到服务端 TTS 通道（speechSynthesis 退出、收尾改
-// stopServerTtsPlayback、通道身份经 providers 视图透出）。
+// stopServerTtsPlayback、通道身份经 providers 视图透出）；
+// M14-251：听写链切到服务端 ASR 通道（SpeechRecognition/tracedListen
+// 退出作答链并移除，麦克风按钮录音期间复用为「停止并提交」）。
 // 行为级验证（create→resume 顺序、读题事件时序、event_id 幂等、409
-// realign、REPORT_READY 收尾、trace session_id、服务端 TTS 通道契约）
-// 在 voice-session-flow.test.ts 与 server-tts.test.ts。
+// realign、REPORT_READY 收尾、服务端 ASR/TTS 通道契约与零 trace）
+// 在 voice-session-flow.test.ts、server-asr.test.ts、server-tts.test.ts
+// 与 wav-recorder.test.ts。
 describe("voice-studio.tsx：朗读事件化（自动朗读不经 effect）+ 服务端权威接入", () => {
   it("原「question?.id 变化即重读」的自动朗读 effect 已移除", () => {
     expect(VOICE_SOURCE).not.toMatch(/useEffect\(\(\) => \{\s*if \(question\)/);
@@ -272,6 +275,29 @@ describe("voice-studio.tsx：朗读事件化（自动朗读不经 effect）+ 服
     expect(VOICE_SOURCE).toContain("api.voiceProviders()");
     expect(VOICE_SOURCE).toContain('data-testid="tts-channel"');
     expect(VOICE_SOURCE).toContain("降级替身");
+  });
+
+  it("M14-251：听写链零浏览器 SpeechRecognition/tracedListen 残留（服务端 ASR 为唯一听写通道）", () => {
+    expect(VOICE_SOURCE).not.toContain("SpeechRecognition");
+    expect(VOICE_SOURCE).not.toContain("tracedListen");
+    expect(VOICE_SOURCE).not.toContain("listenOnce");
+    expect(VOICE_SOURCE).toContain("recordTranscriptViaServerAsr");
+  });
+
+  it("M14-251：录音期间麦克风按钮保持可用（复用为停止并提交），仅识别阶段禁用", () => {
+    expect(VOICE_SOURCE).toContain("stopActiveRecording");
+    // 禁用只允许绑定「识别中」单态——录音阶段绝不能整段禁用
+    expect(VOICE_SOURCE).toMatch(/disabled=\{micPhase === "transcribing"\}/);
+    expect(VOICE_SOURCE).not.toMatch(/disabled=\{(busy|micPhase !== "idle")\}/);
+    expect(VOICE_SOURCE).toContain("停止并提交");
+    expect(VOICE_SOURCE).toContain("识别中");
+  });
+
+  it("M14-251：录音/识别两阶段如实可辨（micPhase 状态机驱动按钮与波形）", () => {
+    expect(VOICE_SOURCE).toMatch(/setMicPhase\("recording"\)/);
+    expect(VOICE_SOURCE).toMatch(/setMicPhase\("transcribing"\)/);
+    expect(VOICE_SOURCE).toMatch(/setMicPhase\("idle"\)/);
+    expect(VOICE_SOURCE).toMatch(/active=\{micPhase !== "idle"\}/);
   });
 
   it("once-only 会话申请守卫保留（started ref 防重复开考）", () => {

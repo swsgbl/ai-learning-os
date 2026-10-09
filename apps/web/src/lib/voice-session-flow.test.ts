@@ -2,10 +2,11 @@
 // （voice-session-flow.ts）的行为测试。只锚定真实行为——通过 stub 全局
 // fetch 实证 HTTP 请求的 URL/method/body/顺序与时序（create→resume 启动
 // 顺序、TTS 完成后才发读题事件、answers 幂等键重试稳定、409 后 resume
-// 对齐、REPORT_READY 后 submitExam+report、trace 携带真实 session_id、
-// 404 如实失败），不做源码字符串断言。契约真值以 services/api
-// app/api/routes/voice.py + voice_session_fsm.py 为准：客户端不推演 FSM，
-// 所有期望的目标状态都来自 stub 的服务端响应。
+// 对齐、REPORT_READY 后 submitExam+report、M14-251 服务端 ASR 听写链
+// （录音→WAV→/transcribe）零 /voice/trace、404 如实失败），不做源码
+// 字符串断言。契约真值以 services/api app/api/routes/voice.py +
+// voice_session_fsm.py 为准：客户端不推演 FSM，所有期望的目标状态都
+// 来自 stub 的服务端响应。
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { API_BASE, ApiError } from "./api";
@@ -14,11 +15,11 @@ import {
   advanceFlow,
   describeVoiceStartError,
   finishVoiceExam,
+  recordTranscriptViaServerAsr,
   reconcileSession,
   speakQuestionWithEvents,
   startVoiceSession,
   submitAnswerForSession,
-  tracedListen,
 } from "./voice-session-flow";
 import type { ExamSession, VoiceResumeQuestion, VoiceSession, VoiceSessionResume } from "./types";
 
@@ -621,45 +622,97 @@ describe("finishVoiceExam / advanceFlow：全卷完成收尾", () => {
   });
 });
 
-// --- 验收 8：trace asr 携带真实 session_id（M14-250 R1：客户端 tts
-// 埋点移除——tts 时延以服务端 /synthesize 自动埋点为唯一权威，客户端
-// 朗读链零 /voice/trace，见 server-tts.test.ts R1 段） ---
+// --- M14-251：听写通道 = 录音 → 本地 WAV → 服务端 /transcribe ---
+// 浏览器 SpeechRecognition（listenOnce/tracedListen）已移除；asr 时延
+// 以服务端 /transcribe 内自动埋点为唯一权威——本链零 /voice/trace
+// 请求（M14-250 R1 的 tts 同口径；tracedListen 的客户端 asr span
+// 行为由 M14-251 判定废除）。transcript 唯一权威 = 服务端返回的 text。
 
-describe("tracedListen：asr 时延埋点携带真实 session_id", () => {
-  it("asr span 成功后上报 POST /api/v1/voice/trace，body 含真实 session_id/exam_id/question_id", async () => {
-    const fetch = queueFetch([]);
-    vi.stubGlobal("fetch", fetch);
-    const transcript = await tracedListen(
-      { session_id: "sess-1", exam_id: "exam-1", question_id: "q-1" },
-      async () => {
-        await new Promise((resolve) => setTimeout(resolve, 3)); // span ≥ 1ms
-        return "选 A";
-      },
-    );
-    expect(transcript).toBe("选 A");
-    await flush();
-    expect(fetch).toHaveBeenCalledTimes(1);
-    expect(urlsOf(fetch)[0]).toBe(`${API_BASE}/api/v1/voice/trace`);
-    const payload = bodiesOf(fetch)[0];
-    expect(payload).toMatchObject({
-      stage: "asr",
-      session_id: "sess-1",
-      exam_id: "exam-1",
-      question_id: "q-1",
-    });
-    expect(typeof payload.duration_ms).toBe("number");
+describe("recordTranscriptViaServerAsr：录音 → WAV → 服务端转写", () => {
+  const WAV = new Blob([new Uint8Array([0x52, 0x49, 0x46, 0x46, 1, 2, 3, 4])], {
+    type: "audio/wav",
   });
 
-  it("听写失败不上报 span（失败不构成时延样本），错误原样透传", async () => {
+  it("完整链：录得的 WAV 以 multipart 上送 /transcribe，服务端 text 原样返回；零 /voice/trace", async () => {
+    const fetch = queueFetch([
+      () =>
+        new Response(
+          JSON.stringify({
+            id: 7,
+            text: "选 A",
+            confidence: 0.9,
+            provider: "local-funasr",
+            latency_ms: 812,
+            audio_bytes: WAV.size,
+            audio_stored: false,
+            audio_object_key: null,
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+    ]);
+    vi.stubGlobal("fetch", fetch);
+    const transcript = await recordTranscriptViaServerAsr({ recordImpl: async () => WAV });
+    expect(transcript).toBe("选 A");
+    const [url, init] = fetch.mock.calls[0] as [string, RequestInit];
+    expect(url).toBe(`${API_BASE}/api/v1/voice/transcribe`);
+    expect(init.method).toBe("POST");
+    expect((init.body as FormData).get("audio")).toBeInstanceOf(File);
+    await flush(); // 排空任何迟到上报
+    expect(urlsOf(fetch)).toEqual([`${API_BASE}/api/v1/voice/transcribe`]); // 零 trace
+  });
+
+  it("onRecorded 在录音收尾与上送之间触发（UI 观察 recording → transcribing 转换）", async () => {
+    const order: string[] = [];
+    const fetch = queueFetch([
+      () =>
+        new Response(JSON.stringify({ text: "选 B" }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        }),
+    ]);
+    vi.stubGlobal("fetch", fetch);
+    const transcript = await recordTranscriptViaServerAsr({
+      recordImpl: async () => {
+        order.push("recorded");
+        return WAV;
+      },
+      onRecorded: (wav) => {
+        order.push(`onRecorded:${wav.type}:${wav.size}`);
+      },
+    });
+    expect(transcript).toBe("选 B");
+    expect(order).toEqual(["recorded", `onRecorded:audio/wav:${WAV.size}`]);
+  });
+
+  it("录音失败（权限被拒等）原样抛出、零网络请求、零 trace", async () => {
     const fetch = queueFetch([]);
     vi.stubGlobal("fetch", fetch);
     await expect(
-      tracedListen({ session_id: "sess-1" }, async () => {
-        throw new Error("没有听到声音");
+      recordTranscriptViaServerAsr({
+        recordImpl: async () => {
+          throw new Error("未获得麦克风权限，请在浏览器中允许麦克风后重试");
+        },
       }),
-    ).rejects.toThrow("没有听到声音");
+    ).rejects.toThrow("未获得麦克风权限");
     await flush();
     expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("服务端转写失败（4xx/5xx）原样抛出 ApiError、零 trace（失败不构成样本也不双计数）", async () => {
+    const fetch = queueFetch([
+      () => new Response(JSON.stringify({ detail: "音频内容为空" }), { status: 422 }),
+    ]);
+    vi.stubGlobal("fetch", fetch);
+    const cause = await recordTranscriptViaServerAsr({ recordImpl: async () => WAV }).then(
+      () => {
+        throw new Error("422 应 reject");
+      },
+      (error: ApiError) => error,
+    );
+    expect(cause).toBeInstanceOf(ApiError);
+    expect(cause.status).toBe(422);
+    await flush();
+    expect(fetch).toHaveBeenCalledTimes(1); // 仅 /transcribe，零 trace
   });
 });
 

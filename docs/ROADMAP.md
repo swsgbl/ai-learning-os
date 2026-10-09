@@ -48,7 +48,7 @@
 - [x] LiveKit server/token（M4-01,livekit-api 签发/验签+web livekit-client;m14-38 LAN cutover 彩排栈实证;默认拓扑存在间歇性 ICE 失败受控 flag 规避）
 - [x] FunASR/CosyVoice 本地 adapter（M4-02,LocalFunAsr/LocalCosyVoice 真实 HTTP+tools/voice bootstrap;生产栈曾 managed-running[m14-117/124];无 Whisper）
 - [x] 在线 provider fallback（M4-02,cloud-openai ASR/TTS+三模式路由 fallback 透出不虚报）
-- [x] VoiceSession FSM 与打断恢复（M4-03/06/07,8 状态×15 事件+resume 权威续接;**缺口 3 收窄中:Web 契约层已备[m14-248],voice-studio UI 已接入服务端权威 VoiceSession[m14-249:resume/commands/answers/report+读题回执时序+event_id 幂等+409 realign+权威报告],朗读已切服务端 TTS 通道[m14-250:POST /synthesize→WAV 播放真实完成才发读题回执,通道身份经 providers 视图透出,浏览器 speechSynthesis 退出朗读链],但听写仍浏览器原生 SpeechRecognition——服务端 ASR/LiveKit 链未进 Web UI;M4-09 客户端时延埋点边界为 asr 一处[m14-247;m14-250 R1 移除客户端 tts span——tts 时延以服务端 /synthesize 自动埋点(source=server)为唯一权威,避免 /trace/summary 同 stage 双计数],vad/llm/first_audio 仍无 Web 埋点——见证据矩阵缺口 3/4,M4-09 仍 partial**）
+- [x] VoiceSession FSM 与打断恢复（M4-03/06/07,8 状态×15 事件+resume 权威续接;**缺口 3 收窄中:Web 契约层已备[m14-248],voice-studio UI 已接入服务端权威 VoiceSession[m14-249:resume/commands/answers/report+读题回执时序+event_id 幂等+409 realign+权威报告],朗读已切服务端 TTS 通道[m14-250:POST /synthesize→WAV 播放真实完成才发读题回执,通道身份经 providers 视图透出,浏览器 speechSynthesis 退出朗读链],听写已切服务端 ASR 通道[m14-251:浏览器录音→本地 WAV(PCM/mono/16-bit)→multipart POST /transcribe,服务端 TranscriptionOut 为唯一 transcript 权威,浏览器 SpeechRecognition 整体移除,录音期麦克风按钮复用为停止并提交],但 LiveKit 流式链(VAD/barge-in/pause/resume)未进 Web UI——这是浏览器录音上送桥接而非流式;M4-09 客户端时延埋点边界归零[m14-247→m14-250 R1 移除客户端 tts span→m14-251 移除客户端 asr span——asr/tts 时延均以服务端 /transcribe、/synthesize 内自动埋点(source=server)为唯一权威,避免 /trace/summary 同 stage 双计数],vad/llm/first_audio 仍无 Web 埋点——见证据矩阵缺口 3/4,M4-09 仍 partial**）
 
 ## M5 检索
 
@@ -85,6 +85,79 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+
+### M14-251 状态更新（Web voice-studio 服务端 ASR 听写通道——浏览器录音→WAV 上送 /transcribe，浏览器 SpeechRecognition 移除）
+
+- 基于 current main `3c941558`（PR #337 merge，即 M14-250）实施：
+  M14-250 后 voice-studio 朗读已走服务端 TTS，但听写链仍是浏览器
+  SpeechRecognition 本地设备；服务端 ASR adapter（M4-02/M14-01
+  `POST /api/v1/voice/transcribe`）在 Web 侧零消费者。本切片把
+  听写切换为服务端 ASR 通道——首个消费该端点的 Web 代码，与
+  Android 语音链同构。**这是浏览器录音上送桥接，刻意不是
+  LiveKit**：流式 VAD/barge-in/pause/resume 仍为后续切片。
+- 新增 `apps/web/src/lib/server-asr.ts` 通道模块：
+  `transcribeAudioWav`（multipart FormData POST /transcribe——
+  file part 名 `audio`、filename `answer.wav`、MIME `audio/wav`、
+  credentials include、cache no-store、不手写 Content-Type 让
+  浏览器生成 multipart boundary；错误语义与 request() 一致——
+  401 跳登录、非 2xx → ApiError 携服务端 detail（非字符串落
+  安全通用文案）；服务端 TranscriptionOut（id/text/confidence/
+  provider/latency_ms/audio_bytes/audio_stored/audio_object_key）
+  忠实映射 + X-Voice-Provider/X-Voice-Fallback 头原样透出
+  （缺席不猜：unknown/false））。
+- 新增 `apps/web/src/lib/wav-recorder.ts` 录音/编码模块：
+  `recordAndEncodeWav`（getUserMedia audio-only → MediaRecorder →
+  Web Audio 解码容器 → 本地重编码 RIFF/WAV：PCM、多声道均值
+  混缩 mono、16-bit 小端；默认 60s 上限到点自动停止并产出有效
+  WAV；不支持 API/权限被拒/设备缺失/零数据/解码失败/超 20MB
+  （与服务端 413 上限同口径）均如实 reject，绝不静默回退浏览器
+  识别）、`stopActiveRecording`（活跃录音手动停止面，幂等）、
+  `encodeWavMono16`（纯函数编码器）。资源诚实回收：定时器/
+  recorder 监听/音轨流/AudioContext 在成功/失败/手动停止/超时
+  四路恒清理。
+- `voice-session-flow.ts`：新增 `recordTranscriptViaServerAsr`
+  （录音 → WAV → /transcribe → 服务端 text 唯一权威；onRecorded
+  阶段回调供 UI 观察 recording → transcribing 转换）；
+  **`tracedListen` 删除**——asr 时延以服务端 /transcribe 内自动
+  埋点（_record_trace stage="asr"）为唯一权威，客户端听写链零
+  /voice/trace 请求（M14-250 R1 的 tts 同口径，避免 /trace/
+  summary 同 stage 双计数）。`browser-speech.ts` 整体删除
+  （listenOnce 无消费者，不留死回退）；`voice-trace.ts` 注释同步
+  （客户端可上报边界归零，通用模块为未来 vad/llm/first_audio
+  保留，行为零改动）。
+- `voice-studio.tsx`：busy 单态改 micPhase 三态（idle/recording/
+  transcribing）——录音期间麦克风按钮复用为「停止并提交」
+  （stopActiveRecording，保持可用不被禁用；仅识别阶段禁用），
+  录音/识别/权限失败/不支持/服务端失败状态可辨、错误如实提示；
+  既有权威 /answers、event_id 重试、409 realign、澄清、文字
+  作答、选项点击流零改动。M14-189 约束保持（唯一 effect 启动
+  链、零 set-state-in-effect、朗读全程事件化）。
+- 新增 server-asr.test.ts 12 项 + wav-recorder.test.ts 22 项
+  行为测试（stub fetch/getUserMedia/MediaRecorder/AudioContext
+  实证 HTTP 契约、multipart 字段、WAV 头/格式/样本映射/混缩、
+  手动停止/超时/资源四路清理、诚实拒绝、零 /voice/trace）；
+  voice-session-flow.test.ts 更新（tracedListen 两项废除、
+  recordTranscriptViaServerAsr 四项新增）；react-hooks-hygiene
+  voice-studio 段新增三项等价约束；voice-session-api.test.ts
+  零改动全绿。
+- **supervisor review 修正（两项缺陷 amend 回原提交）**：①
+  MediaRecorder 构造失败时 getUserMedia 已授予的音轨原先不会被
+  停止（麦克风占用泄漏）——构造调用纳入独立 try/catch，失败先
+  track.stop() 再抛「无法启动录音：…」，活跃录音引用不残留；
+  ② multipart 上送原先继承入参 Blob 的 MIME——无类型 Blob 的
+  File MIME 为空串，违反恒 audio/wav 契约——以显式类型重新
+  装包，MIME 恒定不依赖入参、字节原样。两项各补一项行为测试
+  （11+21 → 12+22，均 RED→GREEN 实证），全套 17 files/297
+  passed。
+- 不声明 M4-09 或缺口 3 关闭：缺口 3 进一步收窄为「读与写均
+  已走服务端 ASR/TTS（浏览器录音→WAV 上送桥接）、LiveKit 流式
+  链（VAD/barge-in/pause/resume）未进 Web UI」；M4-09 维持
+  partial（客户端已无可上报边界；vad/llm/first_audio 无 Web
+  埋点），计数不变 implemented 60 / partial 3。真实 provider/
+  真实浏览器麦克风端到端冒烟仍缺位（仓库测试口径：vitest node
+  环境 stub 行为断言）；零服务端变更，生产口径不变
+  （production_ready=false / release_ready=false /
+  public_ready=false）。
 
 ### M14-250 状态更新（Web voice-studio 服务端 TTS 通道——朗读走服务端合成播报，听写仍浏览器原生；R1 修正后定稿）
 
