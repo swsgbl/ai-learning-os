@@ -66,11 +66,97 @@ focused 行为测试全绿）——缺口 3 进一步收窄为「读与
 partial（客户端已无可上报边界——asr/tts 均以服务端自动埋点为
 唯一权威；vad/llm/first_audio 无 Web 埋点），计数不变
 implemented 60 / partial 3。
+**2026-10-09 M14-252 把 voice-studio 语音输入升级为 LiveKit 管理**
+（新增 apps/web livekit-voice-input.ts——首次语音作答懒连接：
+session 绑定确定性房间（服务端 URL-safe 契约前置校验）→
+api.voiceToken → Room.connect → 单本地音轨 publish，token 只作
+connect 局部参数（state/错误零泄漏，sanitizeError 脱敏）；房间/
+音轨跨题复用，utterance 用已发布轨录音（不再 republish），完卷/
+unmount 经幂等 disconnect 收尾；wav-recorder 拆出提供流入口
+recordAndEncodeWavFromStream，音轨所有权显式化（LiveKit 轨
+utterance 完不停轨）；LiveKit 失败如实提示可重试，不静默回退
+直接浏览器录音；19+28 项新/扩展行为测试 + hygiene 等价更新
+全绿）——缺口 3 进一步收窄为「Web 输入传输已 LiveKit 管理、
+服务端订阅/流式 ASR/VAD/barge-in/pause/resume 未接入
+（utterance 录制仍整段上送 /transcribe）」，M4-09 维持 partial
+（vad/llm/first_audio 无 Web 埋点），计数不变 implemented 60 /
+partial 3。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-252 Web VoiceStudio LiveKit 管理语音输入**
+worktree `ai-learning-os-worktrees/m14-252-voice-livekit-input`，
+分支 `web/m14-252-voice-livekit-input`，基于 current main `f8259b07`
+（PR #338 merge，即 M14-251）。动因：M14-251 的浏览器录音桥接
+（getUserMedia → WAV → /transcribe）每次作答独立开关麦克风，
+LiveKit 房间/轨道零接入——本切片把语音输入传输升级为 LiveKit
+管理：首次语音作答懒获取一条本地麦克风音轨、连接房间、发布该轨，
+同一已发布轨贯穿整场练习的每段 utterance 录音与既有 /transcribe
+上送。**这是 Web 输入传输集成切片，刻意不声明服务端订阅、流式
+ASR、VAD、barge-in、pause/resume 或 M4-09/缺口 3 关闭。**
+本切片交付：新增 `apps/web/src/lib/livekit-voice-input.ts` 控制器
+——voiceRoomName（session_id → `voice-<id>` 确定性房间名，请求
+token 前对照服务端 `^[A-Za-z0-9_-]{3,64}$` 契约校验，不安全 id
+零网络拒绝）、connectVoiceInput（token → Room.connect →
+createLocalAudioTrack → publishTrack 顺序编排；token 只作 connect
+局部参数，绝不进入控制器 state/DOM/日志/错误——错误经
+sanitizeError JWT 脱敏 + 200 字符截断；token/connect/mic/publish/
+超时失败先释放已获资源（停麦克风、断房间）再抛；各步 withTimeout
+兜底绝不挂起）、控制器（recordWav——从已发布轨的
+mediaStreamTrack 构造流走 recordAndEncodeWavFromStream，不再
+republish；state——只读投影（status/room/identity/error，无
+token）；disconnect——幂等收尾：停麦克风 + 断房间恰一次，安全
+用于 finish/unmount）、getOrCreateVoiceInput（existing 已连接
+原样复用零新请求；stale/断连先收尾再显式新建，不静默复用）；
+`wav-recorder.ts` 重构——拆出共享核心 recordStreamToWav 与提供流
+入口 recordAndEncodeWavFromStream（音轨所有权显式化：ownsTracks
+缺省 false=调用方/LiveKit 拥有，utterance 完不停轨；true=本次
+调用拥有恒停止），recordAndEncodeWav 直接路径与 M14-251 行为零
+改动（仍拥有并恒停自己的轨），60s 默认/20MB 上限/PCM-mono-16bit/
+诚实错误/stopActiveRecording 全保留（两入口共用同一模块级占用面）；
+voice-studio 集成——语音按钮改走 getOrCreateVoiceInput（首次点击
+懒连接，页面加载/渲染零麦克风请求），recordImpl 注入
+controller.recordWav（onRecorded 切 transcribing），micPhase 扩四态
+（idle/connecting/recording/transcribing；connecting 短暂且各步
+超时兜底绝不永久禁用按钮，recording 期按钮仍复用「停止并提交」
+保持可用），LiveKit 失败/断连如实提示可重试（失败清 stale 引用，
+下次点击显式重连）——绝不静默回退直接浏览器录音；完卷
+（completeExam）与 unmount（纯清理 effect：零 setState/零麦克风
+请求/零答案流）双路径 releaseVoiceInput 幂等收尾；权威 /answers、
+event_id 重试、409 realign、澄清、文字作答、选项点击、TTS 零改动；
+语音索引页文案更新（如实描述 LiveKit 管理输入 + 服务端 ASR/TTS
++ 剩余流式边界）。新增 livekit-voice-input.test.ts 19 项行为测试
+（stub fetch + 注入 createRoom/createLocalAudioTrack + 设备桩，
+实证房间名确定性/契约拒绝、token 只作 connect 参数（state/
+错误零泄漏、JWT 脱敏）、token→connect→localTrack→publish 顺序
+与单轨复用、record 用已发布轨不 republish、token/connect/mic/
+publish/超时失败零活资源残留、断连/轨 ended 失效、disconnect
+幂等恰一次、getOrCreate 复用/重建）+ wav-recorder.test.ts 增 6 项
+提供流行为测试（零 getUserMedia、LiveKit 所有权不停轨、ownsTracks
+恒停、stopActiveRecording 生效复位、超时不停调用方轨）；
+react-hooks-hygiene voice-studio 段等价更新（effect 集恰两个：
+启动链 + unmount 纯清理；M14-252 三项新增：语音按钮走 LiveKit
+控制器零直接录音回退、完卷/unmount 双路径收尾、失败如实不回退）。
+不声明服务端订阅、流式 ASR、VAD、barge-in、pause/resume 或
+M4-09/缺口 3 关闭：缺口 3 收窄为「Web 输入传输已 LiveKit 管理、
+服务端订阅/流式链未接入」，utterance 仍整段录制上送 /transcribe
+（非流式）；真实 LiveKit 服务/真实浏览器麦克风端到端冒烟仍缺位
+（仓库测试口径：vitest node 环境 stub + 注入点行为断言）；
+M4-09 维持 partial（vad/llm/first_audio 无 Web 埋点），计数不变
+implemented 60 / partial 3；零服务端/生产变更（未启停任何容器/
+服务/代理，未触碰 DB/LiveKit 服务端/凭据；token 测试值为结构
+相同的假 JWT，真凭据零入库）。验证与结果（focused
+19+28+46 passed、全套 18 files/325 passed、typecheck 0 error、
+lint 0 error 0 warning、build 编译成功路由与基点一致、
+git diff --check 干净、新增行 0 secret/0 本地绝对路径/0 U+FFFD/
+0 readiness 置 true）见
+`docs/evidence/m14-252-voice-livekit-input/README.md`。单本地
+commit，不 push、不开 PR、不合并。
+
+### 前一任务快照（M14-251 Web voice-studio 服务端 ASR 听写通道——详见 docs/evidence/m14-251-web-voice-server-asr/README.md；本切片不改写、不弱化该证据）
 
 **M14-251 Web voice-studio 服务端 ASR 听写通道**
 worktree `ai-learning-os-worktrees/m14-251-web-voice-server-asr`，

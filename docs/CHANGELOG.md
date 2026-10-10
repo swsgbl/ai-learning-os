@@ -24,6 +24,85 @@
     warnings 为既有 aiosqlite 线程清理时序告警，与本改动无关）；
   - `git diff --check` 干净；新增行无敏感值/本机绝对路径/U+FFFD。
 
+## M14-252 — Web VoiceStudio LiveKit 管理语音输入（apps/web only，零服务端/生产变更；输入传输切片，非流式）
+## M14-252 — Web VoiceStudio LiveKit 管理语音输入（apps/web only，零服务端/生产变更；输入传输切片，非流式）
+
+- 动因：M14-251 的浏览器录音桥接每次作答独立开关麦克风，LiveKit
+  房间/轨道零接入。本切片把语音输入传输升级为 LiveKit 管理：首次
+  语音作答懒获取一条本地麦克风音轨、连接房间、发布该轨，同一已
+  发布轨贯穿整场练习的每段 utterance 录音与既有
+  `POST /api/v1/voice/transcribe` 上送；房间/音轨跨题存活，完卷/
+  unmount 清理。**不声明服务端订阅、流式 ASR、VAD、barge-in、
+  pause/resume 或 M4-09/缺口 3 关闭。**
+- 新增 `apps/web/src/lib/livekit-voice-input.ts` 控制器：
+  `voiceRoomName`（session_id → `voice-<id>` 确定性房间名，请求
+  token 前对照服务端 `^[A-Za-z0-9_-]{3,64}$` 契约校验，不安全
+  id 零网络拒绝）、`connectVoiceInput`（token → `Room.connect` →
+  `createLocalAudioTrack` → `publishTrack` 顺序编排；**token 只作
+  connect 局部参数**——绝不进入控制器 state/DOM/日志/错误，错误
+  经 sanitizeError JWT 脱敏 + 200 字符截断；token/connect/mic/
+  publish/超时失败先释放已获资源（停麦克风、断房间）再抛；各步
+  withTimeout 兜底 10–20s 绝不挂起；复用 livekit-check.ts 的
+  超时/脱敏/常量，不重复造轮）、控制器三面（`recordWav`——从
+  已发布轨的 mediaStreamTrack 构造流走提供流录音入口，不再
+  republish；`state`——只读投影（status/room/identity/error，
+  无 token）；`disconnect`——幂等收尾恰一次停麦克风+断房间，
+  安全用于 finish/unmount；断连事件/轨 ended 即失效——recordWav
+  如实拒绝要求显式重连，不静默复用 stale 控制器）、
+  `getOrCreateVoiceInput`（existing 已连接原样复用零新请求；
+  stale 先收尾再显式新建）。`createRoom`/`createLocalAudioTrack`
+  为单元测试注入点（零真实 LiveKit 服务）。
+- `wav-recorder.ts` 重构（M14-251 行为零改动）：拆出共享核心
+  `recordStreamToWav` 与**提供流入口** `recordAndEncodeWavFromStream`
+  （零 getUserMedia；音轨所有权显式化——`ownsTracks` 缺省
+  false=调用方/LiveKit 拥有，utterance 完成不停轨；true=本次
+  调用拥有恒停止）；直接路径 `recordAndEncodeWav` 仍拥有并恒停
+  自己的轨；60s 默认/20MB 上限/PCM-mono-16bit/全部诚实错误保留；
+  `stopActiveRecording` 对两入口共用同一模块级占用面照常生效。
+- `voice-studio.tsx` 集成：语音按钮改走 `getOrCreateVoiceInput`
+  （**首次点击懒连接，页面加载/渲染零麦克风请求**），
+  `recordImpl: () => active.recordWav()` 注入既有
+  `recordTranscriptViaServerAsr` 编排（WAV → /transcribe → 服务端
+  transcript → /answers 权威链零改动）；micPhase 扩四态
+  （idle/connecting/recording/transcribing——connecting 短暂且
+  各步超时兜底**绝不永久禁用按钮**，recording 期按钮仍复用
+  「停止并提交」保持可用）；LiveKit 失败/断连如实提示可重试
+  （失败清 stale 引用，下次点击显式重连）——**绝不静默回退
+  直接浏览器录音**；文字作答与选项点击零改动；完卷
+  （completeExam）与 unmount（纯清理 effect：零 setState/零
+  麦克风请求/零答案流——effect 集恰两个：启动链 + 本清理）双
+  路径 `releaseVoiceInput` 幂等收尾；语音索引页文案如实更新
+  （LiveKit 管理输入 + 服务端 ASR/TTS + 剩余流式边界）。
+- 新增 `livekit-voice-input.test.ts` **19 项行为测试**（stub
+  fetch + 注入 createRoom/createLocalAudioTrack + MediaRecorder/
+  AudioContext/MediaStream 桩：房间名确定性/不同 session 不同名/
+  不安全 id 拒绝；token → connect → localTrack → publish 顺序、
+  token 恰作 connect 参数（state JSON 零 JWT）、单轨复用（二次
+  utterance 零 token/connect/publish）、record 用已发布轨
+  不 republish 且 utterance 完不停轨；token 失败/connect 失败
+  （含 JWT 脱敏）/mic 失败/publish 失败/token 超时各自零活资源
+  残留；断连事件/轨 ended 失效；disconnect 幂等恰一次；
+  getOrCreate 复用/stale 重建/null 新建）。`wav-recorder.test.ts`
+  增 **6 项**提供流行为测试（零 getUserMedia 录制上传既有字节、
+  默认所有权不停轨、ownsTracks=true 恒停（成功/失败）、
+  stopActiveRecording 生效与模块引用复位、超时自动停止不停
+  调用方轨）。`react-hooks-hygiene.test.ts` voice-studio 段等价
+  更新（effect 集恰两个：启动链 + unmount 纯清理——体内零
+  setState/零 getUserMedia；M14-252 三项新增：语音按钮走 LiveKit
+  控制器**零直接录音回退**、完卷/unmount 双路径收尾、失败如实
+  不静默回退；既有权威链断言全部保持）。
+- 诚实边界：**这是 Web 输入传输集成切片——服务端订阅、流式
+  ASR、VAD、barge-in、pause/resume 均未接入**，utterance 仍整段
+  录制上送 /transcribe（非流式）；不声明 M4-09 或缺口 3 关闭
+  （缺口 3 收窄为「Web 输入传输已 LiveKit 管理、服务端订阅/流式
+  链未接入」），M4-09 维持 partial，计数不变 implemented 60 /
+  partial 3。真实 LiveKit 服务/真实浏览器麦克风端到端冒烟仍
+  缺位（vitest node 环境 stub + 注入点行为断言）；零服务端变更
+  （未启停 Docker/WSL/LiveKit/API/Web/ASR/TTS/代理/模拟器或任何
+  生产服务，未触碰 DB/凭据——token 测试值为结构相同的假 JWT，
+  真凭据零入库零打印）；`production_ready`/`release_ready`/
+  `public_ready` 均 false 不变。
+
 ## M14-251 — Web voice-studio 服务端 ASR 听写通道（apps/web only，零服务端变更）
 
 - 动因：M14-250 后 voice-studio 朗读已走服务端 TTS，但听写链仍是

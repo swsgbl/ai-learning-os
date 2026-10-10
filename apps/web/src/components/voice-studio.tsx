@@ -15,6 +15,13 @@
 // 服务端 /transcribe 自动埋点权威记录，客户端零 /voice/trace 请求）；
 // 录音期间麦克风按钮复用为「停止并提交」（不被禁用），录音/识别/
 // 权限失败/不支持/服务端失败状态如实可辨。
+// M14-252：听写输入传输升级为 LiveKit 管理——首次语音作答懒连接
+// （getOrCreateVoiceInput：session 绑定房间 → token → connect →
+// 单音轨 publish，页面加载/渲染零麦克风请求），房间与音轨跨题
+// 复用，utterance 录制用已发布轨（recordImpl 注入 controller
+// .recordWav，音轨归控制器不停轨）；完卷/unmount 经 releaseVoice
+// Input 幂等收尾（停麦克风+断房间）。LiveKit 失败如实提示可重试
+// ——绝不静默回退直接浏览器录音；文字作答与选项点击零改动。
 // M14-189 朗读事件化约束保持：朗读只在启动完成回调、切题回调、重复
 // 读题按钮的事件链中发起，无 effect 驱动的自动朗读，无 set-state-in-effect。
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -41,6 +48,7 @@ import {
   type VoiceFlowView,
 } from "@/lib/voice-session-flow";
 import { speakWithServerTts, stopServerTtsPlayback } from "@/lib/server-tts";
+import { getOrCreateVoiceInput, type LiveKitVoiceInput } from "@/lib/livekit-voice-input";
 import { stopActiveRecording } from "@/lib/wav-recorder";
 import { ErrorState, LoadingState } from "@/components/states";
 import { Waveform } from "@/components/voice/waveform";
@@ -54,9 +62,11 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
   const [report, setReport] = useState<VoiceSessionReport | null>(null);
   const [heard, setHeard] = useState("");
   const [clarify, setClarify] = useState<string | null>(null);
-  // M14-251：麦克风阶段如实三态——idle / recording（按钮复用为
-  // 「停止并提交」，保持可用）/ transcribing（上传转写中，不可停）
-  const [micPhase, setMicPhase] = useState<"idle" | "recording" | "transcribing">("idle");
+  // M14-251：麦克风阶段如实三态。M14-252 扩为四态——idle / connecting
+  // （懒连接 LiveKit，短暂且各步有超时兜底，绝不永久停留）/
+  // recording（按钮复用为「停止并提交」，保持可用）/ transcribing
+  // （上传转写中，不可停）
+  const [micPhase, setMicPhase] = useState<"idle" | "connecting" | "recording" | "transcribing">("idle");
   const [speaking, setSpeaking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // M14-250：服务端 TTS 通道身份（providers 视图只读透出；尽力而为，
@@ -64,6 +74,9 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
   const [ttsChannel, setTtsChannel] = useState<{ provider: string; fallback: boolean } | null>(null);
   const started = useRef(false);
   const submitted = useRef(false);
+  // M14-252：LiveKit 语音输入控制器（跨题复用；回调链取最新值——
+  // render 期不读 ref，与既有 ref 模式一致）
+  const voiceInputRef = useRef<LiveKitVoiceInput | null>(null);
   // 异步回调链读取最新权威上下文（M14-247 同款 ref 模式；render 期不读
   // ref——会话/题目展示一律走 view state，ref 只供回调链取最新值）
   const examIdRef = useRef<string | null>(null);
@@ -84,16 +97,26 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
     setView((current) => (current ? { ...current, session } : current));
   }, []);
 
+  // M14-252：LiveKit 输入收尾（完卷/离场/unmount 共用）——停本地
+  // 麦克风 + 断开房间（控制器幂等保证恰一次），ref 即时置空防重复。
+  const releaseVoiceInput = useCallback(async () => {
+    const controller = voiceInputRef.current;
+    voiceInputRef.current = null;
+    if (controller) await controller.disconnect();
+  }, []);
+
   // 收尾（验收 7）：权威语音报告进入视图模型（可断言渲染），保留既有
   // 跳转 review 体验；提交路径停止服务端 TTS 播放（M14-250：离场后
-  // 未决播放不再结算、不发读题回执，替代浏览器朗读时代的取消语义）。
+  // 未决播放不再结算、不发读题回执，替代浏览器朗读时代的取消语义）；
+  // M14-252：同时断开 LiveKit 语音输入（停麦克风+断房间）。
   const completeExam = useCallback((authoritativeReport: VoiceSessionReport) => {
     submitted.current = true;
     setReport(authoritativeReport);
     stopServerTtsPlayback();
+    void releaseVoiceInput();
     const examId = examIdRef.current;
     if (examId) router.push(`/review/${examId}`);
-  }, [router]);
+  }, [router, releaseVoiceInput]);
 
   // 终态会话收尾：REPORT_READY 后 submitExam + 权威报告（不自行评分）
   const finishFlow = useCallback(async () => {
@@ -205,6 +228,15 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
       .catch((cause: Error) => setError(describeVoiceStartError(cause)));
   }, [paperId, applyServerView, speakQuestion]);
 
+  // M14-252：unmount 收尾——断开 LiveKit 房间并停止本地麦克风（幂等，
+  // 与 completeExam 共用 releaseVoiceInput）。纯清理 effect：体内零
+  // setState、零麦克风请求、零答案流驱动（不违反 M14-189 事件化约束）。
+  useEffect(() => {
+    return () => {
+      void releaseVoiceInput();
+    };
+  }, [releaseVoiceInput]);
+
   const question = view?.question ?? null;
 
   // 答案提交后的推进（验收 5/7）：以 answers 响应回传的权威 session 为
@@ -280,19 +312,36 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
     }
   }
 
-  // M14-251：语音作答 = 录音（服务端 ASR 通道）→ 服务端 transcript →
-  // 既有 /answers 权威链。录音期间麦克风按钮复用为「停止并提交」
-  // （stopActiveRecording 触发录音收尾，promise 链自然继续转写）；
-  // asr 时延由服务端 /transcribe 自动埋点权威记录——此处零
-  // /voice/trace 请求。权限失败/不支持/录音失败/服务端失败如实提示
-  // （错误消息可辨来源），不静默回退浏览器听写。
+  // M14-252：语音作答 = LiveKit 管理输入 → 服务端 ASR → 既有 /answers
+  // 权威链。首次点击懒连接（页面加载零麦克风请求）；连接成功后每段
+  // utterance 复用已发布轨录音（controller.recordWav）→ 本地 WAV →
+  // POST /transcribe → 服务端 transcript。录音期间麦克风按钮复用为
+  // 「停止并提交」（stopActiveRecording 触发录音收尾，promise 链自然
+  // 继续转写）；asr 时延由服务端 /transcribe 自动埋点权威记录——此处
+  // 零 /voice/trace 请求。LiveKit 失败/断连如实提示可重试（下次点击
+  // 走 getOrCreateVoiceInput 显式重连），绝不静默回退直接浏览器录音。
   async function listen() {
     const current = view;
     if (!current?.question || micPhase !== "idle") return;
     setError(null);
+    let controller = voiceInputRef.current;
+    if (!controller || controller.state().status !== "connected") {
+      setMicPhase("connecting");
+      try {
+        controller = await getOrCreateVoiceInput(controller, current.session.session_id);
+        voiceInputRef.current = controller;
+      } catch (cause) {
+        voiceInputRef.current = null; // 失败不留 stale 控制器
+        setError(cause instanceof Error ? cause.message : "语音连接失败，请重试");
+        setMicPhase("idle");
+        return;
+      }
+    }
+    const active = controller;
     setMicPhase("recording");
     try {
       const transcript = await recordTranscriptViaServerAsr({
+        recordImpl: () => active.recordWav(),
         onRecorded: () => setMicPhase("transcribing"),
       });
       setHeard(transcript);
@@ -305,13 +354,14 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
   }
 
   // 录音中的麦克风按钮点击 = 请求停止录音并进入提交链（幂等——
-  // stopActiveRecording 对无活跃录音 no-op）
+  // stopActiveRecording 对无活跃录音 no-op）；connecting/transcribing
+  // 阶段不可中断（按钮已禁用，各步有超时兜底绝不永久停留）
   function onMicClick() {
     if (micPhase === "recording") {
       stopActiveRecording();
       return;
     }
-    if (micPhase === "transcribing") return; // 识别中不可停，按钮已禁用
+    if (micPhase === "connecting" || micPhase === "transcribing") return;
     void listen();
   }
 
@@ -391,27 +441,36 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
             <Repeat className={speaking ? "animate-pulse" : undefined} aria-hidden="true" />
           </Button>
           {/* M14-251：录音期间按钮保持可用并复用为「停止并提交」；
-              仅识别阶段（上传转写不可中断）禁用 */}
+              M14-252：connecting/transcribing（不可中断且各有超时兜底）
+              阶段禁用——录音阶段绝不整段禁用 */}
           <Button
             onClick={onMicClick}
-            disabled={micPhase === "transcribing"}
+            disabled={micPhase === "connecting" || micPhase === "transcribing"}
             className="flex-1"
             aria-label={
               micPhase === "recording"
                 ? "停止录音并提交识别"
-                : micPhase === "transcribing"
-                  ? "正在识别语音"
-                  : "语音作答"
+                : micPhase === "connecting"
+                  ? "正在连接语音服务"
+                  : micPhase === "transcribing"
+                    ? "正在识别语音"
+                    : "语音作答"
             }
           >
             {micPhase === "recording" ? (
               <Square aria-hidden="true" />
-            ) : micPhase === "transcribing" ? (
+            ) : micPhase === "connecting" || micPhase === "transcribing" ? (
               <Pause aria-hidden="true" />
             ) : (
               <Mic aria-hidden="true" />
             )}
-            {micPhase === "recording" ? "停止并提交" : micPhase === "transcribing" ? "识别中" : "语音作答"}
+            {micPhase === "recording"
+              ? "停止并提交"
+              : micPhase === "connecting"
+                ? "连接中"
+                : micPhase === "transcribing"
+                  ? "识别中"
+                  : "语音作答"}
           </Button>
           <Button variant="outline" onClick={() => void next()}>
             <Play aria-hidden="true" />
