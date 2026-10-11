@@ -1,4 +1,62 @@
 # Changelog
+## M14-255 — 服务端 LiveKit 订阅基础（域层 foundation，fake-only 行为覆盖；非流式 ASR、非运行时集成）
+
+- 动因：M14-252/M14-254 打通了 Web 侧 LiveKit 管理输入，但服务端
+  对学习者已发布音轨零订阅能力。本切片交付第一个窄后端基础件：
+  subscribe-only 内部 token 角色 + 单房间订阅控制器（纯域层，
+  全部行为用注入 fake 验证——零网络/零浏览器/零运行时服务）。
+  **不声明运行时 LiveKit 连接、流式 ASR、VAD、barge-in、
+  pause/resume 或缺口 3/M4-09 关闭。**
+- `voice_tokens.py`：新增 `ROLE_SERVER_SUBSCRIBER =
+  "server-subscriber"` 与 `_server_subscriber_grants`——**恰好
+  join + subscribe**（`can_publish=False`、`can_publish_data=False`
+  显式固定；管理/录制/agent/hidden 全部默认空）；签发域
+  `VOICE_ROLES` 扩为两角色；新增 `PUBLIC_VOICE_ROLES=(ROLE_
+  STUDENT,)`——公开 `POST /api/v1/voice/token` 改用后者校验，外部
+  请求 server-subscriber 依旧 422「未知角色」（公开行为零变化，
+  student grants 与端点行为零改动，邻居 test_voice_tokens 全绿）。
+- 新增 `services/api/app/domain/voice_subscription.py`（域层
+  控制器，零 FastAPI startup/lifespan 接线、零 HTTP 端点新增/
+  改动）：`ServerVoiceSubscriber` 构造注入 room/identity/token
+  provider/Room 工厂/AudioStream 工厂/事件汇；`start()` 幂等
+  （active 期 no-op；终态重启抛 VoiceSubscriptionError——单实例
+  单连接）；`stop()` 幂等且按**确定顺序**清理（先全部音频流按
+  sid 排序关闭、后房间断开）；`state()` 有界净化投影（环形事件
+  64 条 + 全量计数；无 token/帧字节/凭据字段）。安全契约：token
+  只存在内存局部变量并直达 room.connect——绝不进入 state/事件/
+  日志/错误（失败消息为白名单通用文案，不拼接 cause——注入异常
+  消息携带 JWT 形态与帧字节亦无法穿透）；音频帧原样转发 sink，
+  控制器不缓存不保留。失败契约：token/connect/audio_stream
+  失败先清全部已获资源（流→房间）再 failed 终态 + 安全类别
+  （token/connect/audio_stream/cleanup）+ 通用净化消息；cleanup
+  失败尽力而为不阻塞 stopped；仅消费 `kind=="audio"` 轨，非
+  audio 轨安全忽略（track_ignored 只记 kind 标签）；**supervisor
+  修正（amend 回原提交）**：轨退订 close 失败由「仅发事件保持
+  active」改为 fail-closed（清剩余流 + 断房间 + failed 终态 +
+  通用净化消息）；远端断开后清空死房间引用；有界测试的恒真
+  断言替换为严格滚动断言。
+- `services/api/app/api/routes/voice.py`（一行集合切换）：端点
+  角色校验 `VOICE_ROLES` → `PUBLIC_VOICE_ROLES`（server-
+  subscriber 原本就不在旧集合中，422 语义逐字保持）。
+- 新增 `services/api/tests/test_voice_subscription.py` **20 项
+  fake-only 契约测试**：grants 边界（恰好 join+subscribe、管理
+  七项全空、student 不受侵蚀、公开端点 422/200 零变化）；happy
+  path（token 只作 connect 参数、帧直转不保留、非 audio 忽略、
+  退订关流、stop 确定顺序（ops 序列断言）+ 幂等、远端断开自动
+  清理）；失败路径（token/connect/audio_stream 零活资源 + 类别
+  + 通用消息 + 零泄漏、cleanup 双失败仍达 stopped、终态不可
+  重启）；幂等有界（active 重复 start 零新连接、事件环形 64）。
+  有效性 RED 抽查：临时移除 `_fail` 清理两行即两项失败测试
+  立即失败、恢复后 19 全绿。
+- 验证：focused **20 passed** + 邻居 `test_voice_tokens.py` +
+  `test_voice_providers.py` 合计 **65 passed**（零回归）；ruff
+  （changed 路径）All checks passed；`git diff --check` 干净。
+- **诚实边界：未交付运行时 LiveKit 连接（控制器未接 FastAPI、
+  未连真实服务）、流式 ASR（帧只转发注入 sink，无消费者）、VAD、
+  barge-in、pause/resume**；未启停任何生产/运行时服务，未触碰
+  DB/凭据（测试 JWT 均为合成假值，签发纯本地不触网）；矩阵计数
+  不变 implemented 60 / partial 3；`production_ready`/
+  `release_ready`/`public_ready` 均 false 不变。
 
 ## M14-254 — VoiceStudio LiveKit 输入真实浏览器验收 harness（DOM 契约 + harness + 零网络契约测试；真实栈运行保留给 supervisor）
 

@@ -31,8 +31,8 @@ from app.domain.voice_tokens import (
     DEFAULT_TTL_SECONDS,
     MAX_TTL_SECONDS,
     MIN_TTL_SECONDS,
+    PUBLIC_VOICE_ROLES,
     ROLE_STUDENT,
-    VOICE_ROLES,
     VoiceTokenError,
     build_voice_token,
     new_identity,
@@ -137,7 +137,9 @@ async def issue_voice_token(payload: VoiceTokenRequest, request: Request) -> Voi
         raise HTTPException(status_code=503, detail="Voice requires LiveKit configuration")
     if not _ROOM_RE.fullmatch(payload.room):
         raise HTTPException(status_code=422, detail="room 需为 3-64 位字母数字/-/_")
-    if payload.role not in VOICE_ROLES:
+    # M14-255：公开端点只接受 student——server-subscriber 是内部
+    # subscribe-only 角色，外部请求它依旧 422「未知角色」（行为零变化）
+    if payload.role not in PUBLIC_VOICE_ROLES:
         raise HTTPException(status_code=422, detail=f"未知角色: {payload.role}")
     identity = payload.identity or new_identity()
     try:

@@ -85,6 +85,26 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-255 状态更新（服务端 LiveKit 订阅基础——域层 foundation，fake-only 行为覆盖；非流式 ASR、非运行时集成）
+
+- 基于 current main `0f89567b`（PR #341 merge，即 M14-254）实施：
+  服务端对学习者已发布音轨零订阅能力——本切片补第一个窄基础件。
+- `voice_tokens.py`：新增 subscribe-only 内部角色
+  `ROLE_SERVER_SUBSCRIBER`（恰好 join+subscribe，无发布/数据/
+  管理/录制/agent/hidden）；公开 /token 端点经新
+  `PUBLIC_VOICE_ROLES` 依旧只接受 student（行为零变化）。
+- 新增域层 `voice_subscription.py` `ServerVoiceSubscriber`（注入
+  token provider/Room 工厂/AudioStream 工厂/事件汇；start/stop
+  幂等、确定顺序清理、失败零活资源+安全类别+通用净化消息、
+  token 只在内存、帧直转不缓存、仅 audio 轨）；零 FastAPI 接线、
+  零端点变更。
+- 新增 20 项 fake-only 契约测试（含两项 RED 抽查；supervisor
+  三项修正——轨退订 close 失败 fail-closed、死房间引用清理、恒真
+  断言修正——amend 回原提交）；邻居 token/
+  providers 65 passed 零回归。**未交付**：运行时 LiveKit 连接、
+  流式 ASR、VAD、barge-in、pause/resume、缺口 3/M4-09 关闭；
+  production_ready=false / release_ready=false / public_ready=
+  false 不变。
 
 ### M14-254 状态更新（VoiceStudio LiveKit 输入真实浏览器验收 harness——仅交付 harness 与 mock 契约验证，真实栈运行保留给 supervisor）
 
