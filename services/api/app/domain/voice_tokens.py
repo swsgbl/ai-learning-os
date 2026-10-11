@@ -2,6 +2,9 @@
 
 - 角色 grants 显式固定（student = join + 发布/订阅/数据通道），管理类权限
   （room_admin/room_create/room_record/agent/recorder/hidden）一律不授予；
+- M14-255 新增内部角色 server-subscriber = 仅 join + 订阅（不发布、
+  不发数据、无管理/录制/agent/hidden 权限）——服务端订阅控制器的
+  最小权限面；公开 /token 端点仍只接受 student（行为零变化）；
 - TTL 显式传入 → JWT exp 可精确断言（验收「token 过期可测试」）；
 - 验证用 livekit-api TokenVerifier：过期抛 jwt.ExpiredSignatureError、
   签名不符抛 jwt.InvalidSignatureError（验收「权限边界可测试」的服务端等价）。
@@ -17,7 +20,12 @@ import jwt as pyjwt
 from livekit import api as lk_api
 
 ROLE_STUDENT = "student"
-VOICE_ROLES = (ROLE_STUDENT,)
+ROLE_SERVER_SUBSCRIBER = "server-subscriber"
+#: 签发域允许的全部角色（内部）。
+VOICE_ROLES = (ROLE_STUDENT, ROLE_SERVER_SUBSCRIBER)
+#: 公开 /token 端点可请求的角色（M14-255：server-subscriber 仅内部
+#: 签发面使用，外部请求它依旧 422「未知角色」——端点行为零变化）。
+PUBLIC_VOICE_ROLES = (ROLE_STUDENT,)
 ROOM_PATTERN_MAX = 64
 MIN_TTL_SECONDS = 30
 MAX_TTL_SECONDS = 86400
@@ -45,16 +53,21 @@ def build_voice_token(
     ttl_seconds: int = DEFAULT_TTL_SECONDS,
     role: str = ROLE_STUDENT,
 ) -> VoiceToken:
-    """签发学生角色的房间 token（本地 JWT，不依赖 server）。"""
+    """签发指定角色的房间 token（本地 JWT，不依赖 server）。"""
     if role not in VOICE_ROLES:
         raise VoiceTokenError(f"未知角色: {role}")
     if not identity.strip():
         raise VoiceTokenError("identity 不能为空")
+    grants = (
+        _server_subscriber_grants(room)
+        if role == ROLE_SERVER_SUBSCRIBER
+        else _student_grants(room)
+    )
     issued_at = datetime.now(UTC)
     token = (
         lk_api.AccessToken(api_key, api_secret)
         .with_identity(identity)
-        .with_grants(_student_grants(room))
+        .with_grants(grants)
         .with_ttl(timedelta(seconds=ttl_seconds))
     ).to_jwt()
     return VoiceToken(
@@ -85,6 +98,23 @@ def _student_grants(room: str) -> lk_api.VideoGrants:
         can_publish=True,
         can_subscribe=True,
         can_publish_data=True,
+    )
+
+
+def _server_subscriber_grants(room: str) -> lk_api.VideoGrants:
+    """M14-255 服务端订阅角色 grants：**仅** join + 订阅。
+
+    can_publish/can_publish_data 显式 False；管理/录制/agent/hidden
+    （room_admin/room_create/room_record/recorder/agent/hidden 等）
+    全部保持默认 False——该角色只消费学习者已发布的音轨，绝无任何
+    发布、数据通道、管理或隐蔽在场能力。
+    """
+    return lk_api.VideoGrants(
+        room_join=True,
+        room=room,
+        can_publish=False,
+        can_subscribe=True,
+        can_publish_data=False,
     )
 
 

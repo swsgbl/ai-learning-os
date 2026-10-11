@@ -93,11 +93,70 @@ JWT；全部复用 m14-35 harness 加固模式（PID 树回收/fake 麦克风/
 亦由 44 项零网络契约测试锚定——**本切片
 仅交付 harness 与 mock 契约验证，真实栈运行保留给 supervisor，
 未预声明任何真实运行结果**，产品能力与矩阵判定零变化）。
+
+**2026-10-11 M14-255 交付服务端 LiveKit 订阅基础（域层
+foundation）**（voice_tokens 新增 subscribe-only 内部角色
+server-subscriber——恰好 join+subscribe，无发布/数据/管理/录制/
+agent/hidden 权限，公开 /token 端点行为零变化（PUBLIC_VOICE_
+ROLES）；新增域层 ServerVoiceSubscriber 单房间订阅控制器——
+注入 token provider/Room 工厂/AudioStream 工厂/事件汇，start/stop
+幂等、确定顺序清理（先流后房）、失败零活资源 + 安全类别 + 通用
+净化消息、token 只在内存、帧直转不缓存、仅消费 audio 轨；20 项
+fake-only 契约测试（含两项 RED 抽查与 supervisor 三项修正）+ 邻居
+65 passed——**不是流式
+ASR、不是运行时集成**：零 FastAPI 接线、零端点新增/改动、未连接
+真实 LiveKit；运行时连接/流式 ASR/VAD/barge-in/pause-resume/缺口 3
+关闭均未交付，计数不变 implemented 60 / partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-255 服务端 LiveKit 订阅基础（域层 foundation）**
+worktree `ai-learning-os-worktrees/m14-255-livekit-subscription`，
+分支 `api/m14-255-livekit-subscription`，基于 current main
+`0f89567b`（PR #341 merge，即 M14-254）。动因：M14-252/M14-254
+打通了 Web 侧 LiveKit 管理输入，但服务端对学习者已发布音轨零订阅
+能力。本切片交付第一个窄后端基础件，**全部行为用注入 fake 验证
+（零网络/零运行时），不是流式 ASR、不是运行时集成**。交付：
+①voice_tokens.py 新增 `ROLE_SERVER_SUBSCRIBER = "server-subscriber"`
+与 `_server_subscriber_grants`（恰好 join+subscribe：can_publish/
+can_publish_data 显式 False，管理/录制/agent/hidden 全默认空）；
+`VOICE_ROLES` 扩为两角色、新增 `PUBLIC_VOICE_ROLES=(ROLE_STUDENT,)`
+——公开 /token 端点改用后者校验，外部请求 server-subscriber 依旧
+422「未知角色」（公开行为零变化，契约测试实证 student 200/
+server-subscriber 422）；②新增域层 `voice_subscription.py` 的
+`ServerVoiceSubscriber`：构造注入 room/identity/token provider/
+Room 工厂/AudioStream 工厂/事件汇；start 幂等（active 期 no-op，
+终态重启抛 VoiceSubscriptionError——单实例单连接）；stop 幂等且
+确定顺序清理（先全部音频流按 sid 排序、后房间断开）；state() 有界
+净化投影（环形事件 64 条 + 全量计数，无 token/帧字节/凭据字段）；
+token 只在内存局部变量直达 room.connect——绝不入 state/事件/日志/
+错误（失败消息为白名单通用文案，注入异常携带 JWT 形态亦无法穿透）；
+音频帧原样转发 sink 不缓存；token/connect/audio_stream 失败先清
+全部已获资源再 failed 终态 + 安全类别（token/connect/audio_
+stream/cleanup）+ 通用净化消息；cleanup 失败尽力而为不阻塞
+stopped；轨退订 close 失败同样 fail-closed（清剩余流 + 断房间 +
+failed 终态——supervisor 修正 2）；远端断开后不保留死房间引用
+（修正 3）；仅消费 kind=="audio" 轨，非 audio 安全忽略；③零 FastAPI
+startup/lifespan 接线、零 HTTP 端点新增/改动、不调 ASR/TTS/VAD/
+barge-in/pause-resume；④新增 test_voice_subscription.py **20 项
+fake-only 契约测试**（grants 边界 3 + happy path 5 + 失败路径 5 +
+幂等有界 4 + 构造校验；RED 抽查：临时移除 _fail 清理两行即
+connect/audio_stream 失败两项测试失败、恢复后全绿——钉住真实
+行为）。不声明运行时 LiveKit 连接、流式 ASR、VAD、barge-in、
+pause/resume 或缺口 3/M4-09 关闭（计数不变 implemented 60 /
+partial 3）；未启停任何生产/运行时服务、未连接真实 LiveKit、
+未触碰 DB/凭据（测试 JWT 均为合成假值）。验证与结果
+（focused 20 passed + 邻居 test_voice_tokens + test_voice_
+providers 合计 65 passed、ruff changed 路径 All checks passed、
+git diff --check 干净、新增行 0 secret/0 私有路径/0 U+FFFD/
+0 readiness 置 true）见
+`docs/evidence/m14-255-livekit-subscription-foundation/README.md`。
+单本地 commit，不 push、不开 PR、不合并。
+
+### 前一任务快照（M14-254 VoiceStudio LiveKit 输入真实浏览器验收 harness——详见 docs/evidence/m14-254-voice-livekit-real-browser/README.md；本切片不改写、不弱化该证据）
 
 **M14-254 VoiceStudio LiveKit 输入真实浏览器验收 harness**
 worktree `ai-learning-os-worktrees/m14-252-voice-livekit-input`（历史
