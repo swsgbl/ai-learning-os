@@ -1,5 +1,29 @@
 # Changelog
 
+## M14-253 — CI Ruff 依赖稳定性（requirements-dev 锁 ruff==0.16.10）
+
+- 动因：PR #339（零 .py 变更）API CI 仅 Ruff 失败——失败 run 38096599374
+  安装 ruff 0.17.0，对存量代码新增 44 个发现；对照成功 run 37863737266
+  安装 0.16.10 全绿。根因是 `ruff>=0.14,<1` 未锁 minor，上游新 minor
+  使 lint 规则集传递性漂移。最小修复：锁回已知良好版 0.16.10；本切片
+  不对存量代码批量改写 UP017。
+- 变更：`services/api/requirements-dev.txt` 的 ruff 区间 `>=0.14,<1` →
+  `==0.16.10`，附注释（lint 规则集只随显式升级变更，不随未锁传递性
+  新版本变化；记录两次 CI run 对照）。生产 requirements.txt 零改动。
+- 验证（worktree m14-253-ci-ruff-stability，基线 f8259b07）：
+  - `uvx ruff@0.16.10 check services/api`（仓库根，与 CI 同命令）→
+    All checks passed（0 发现，exit 0），与成功 run 一致；
+  - `uvx ruff@0.17.0 check services/api --statistics` → Found 44 errors
+    （41 UP017 / 2 I001 / 1 FURB162，exit 1），精确复现失败 run 的 44 项；
+  - worktree `.venv`（uv CPython 3.11.15）安装 requirements.txt +
+    修改后 requirements-dev.txt → 实装 ruff 0.16.10，`python -m ruff
+    check services/api` 全绿（pin 解析与安装路径双重验证）；
+  - 回归：`python -m pytest services/api`（无 DB 环境，DATABASE_URL 与
+    AIOS_PG_TEST_URL 均空）→ **5841 passed, 36 skipped**（36 skipped 为
+    真实 PG 集成项按 test_gate 设计跳过，本机未启动 Docker/PG；2
+    warnings 为既有 aiosqlite 线程清理时序告警，与本改动无关）；
+  - `git diff --check` 干净；新增行无敏感值/本机绝对路径/U+FFFD。
+
 ## M14-251 — Web voice-studio 服务端 ASR 听写通道（apps/web only，零服务端变更）
 
 - 动因：M14-250 后 voice-studio 朗读已走服务端 TTS，但听写链仍是
