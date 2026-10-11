@@ -1,4 +1,70 @@
 # Changelog
+## M14-256 — LiveKit Python runtime 适配层（async-native，fake-only；无 FastAPI 接线/无端点变更）
+
+- 动因：M14-255 订阅控制器是同步协议，与 livekit realtime SDK
+  真实形态（`rtc.Room.connect/disconnect` 与
+  `rtc.AudioStream.aclose` 均 async、AudioStream 为 async 迭代
+  器）之间缺一座显式声明依赖的 async-native 适配层。本切片
+  交付该适配层并用 fake 全覆盖（零网络/零真实服务）。**不接
+  FastAPI startup/lifespan、不做 ASR/VAD/barge-in/pause-
+  resume、不声明缺口 3/M4-09 关闭。**
+- `services/api/requirements.txt`：新增 `livekit>=1.1,<1.2`
+  （realtime 发行版——PyPI 包名就是 `livekit`，与 REST 签发
+  包 `livekit-api>=1.0,<2` 并列；本地已装 1.1.16、最新
+  1.1.20，pin 同 minor。零安装动作，仅声明）。
+- `voice_subscription.py` **async-native 演进**（M14-255 语义零
+  回归）：`RoomLike.connect/disconnect` 与 `AudioStreamLike.
+  close` 协议改 Awaitable；`start/stop` 与全部清理/失败路径
+  `async def`；事件回调经 `_dispatch`（`ensure_future` + 任务
+  集追踪）调度为循环任务（SDK 同步事件分发由适配层桥接）；
+  start 幂等升级为并发重复调用等待同一首次任务；stop 清理
+  顺序扩为**残留事件任务 → 全部音频流 → 房间断开**
+  （`_cancel_pending_tasks` 排除当前任务——失败路径可能正
+  运行在事件任务里，取消自己会死锁）；token 只在内存局部
+  变量、帧不缓存、fail-closed、有界净化 state、终态不可重启
+  全部保持。**零 `asyncio.run`、零嵌套循环、零线程桥**（文本
+  契约锁定，docstring 字样不算）。
+- 新增 `services/api/app/domain/voice_runtime.py`（适配层）：
+  `normalize_track_kind`（SDK 枚举 KIND_AUDIO=1/KIND_VIDEO=2/
+  KIND_UNKNOWN=0、裸 int、str 输入统一映射 audio/video/
+  unknown，未知值安全落 unknown、bool 显式拒绝）；
+  `LiveKitRoomAdapter`（**URL 保存在适配器**——控制器
+  `await connect(token)` 把 (url, token) 恰按序传
+  `rtc.Room.connect`；`on()` 事件参数桥接：track-like 替换为
+  `_NormalizedTrackView`——kind 归一化 + 其余属性
+  `__getattr__` 代理直通原始 track，sid/frames/SDK 媒体句柄
+  对下游工厂可达）；`LiveKitAudioStreamAdapter`（消费
+  `rtc.AudioStream` async 迭代器：`set_frame_handler` 启动
+  消费任务逐帧**原样**转发不复制不缓存；`await close()` 先
+  cancel 任务等待真正退出再 `await aclose()`，幂等）；
+  `livekit_runtime_factories(url)` 工厂对（测试 monkeypatch
+  `voice_runtime.rtc` 命名空间即可零网络覆盖同一装配面）。
+- **supervisor R1 修正（amend 回原提交）**：①事件 handler 意外
+  异常由「只 emit cleanup failed 停留 active」改为
+  `await _fail(CATEGORY_CLEANUP, 通用消息)`——清任务/流/房间进
+  failed 终态；②流消费异常观察面——`AudioStreamLike` 契约新增
+  `set_error_handler`，适配器 `_consume` 捕获非 CancelledError
+  异常触发回调（不带异常文本），控制器注册后调度 `_fail`：消费
+  任务死亡后绝不停留 active、流不再悬挂。两项各含聚焦/集成测试
+  与 RED 抽查（还原旧实现即测试失败）。
+- 测试：新增 `test_voice_runtime.py` **26 项**（依赖 pin/import
+  面；RoomAdapter (url, token) 顺序——RED 抽查反转即失败；
+  kind 归一化 15 组参数化；AudioStream 帧对象同一性直转与
+  close 顺序幂等；控制器×真实工厂装配 3 项——happy path/
+  connect 失败/AudioStream 构造失败，JWT 零泄漏；async-native
+  纪律文本契约、流消费失败集成）；`test_voice_subscription.py`
+  **21 项 async 迁移**（`asyncio.run` 驱动 + drain 排空 dispatch 链，语义
+  零回归，新增并发幂等 start 断言）。
+- 验证：focused **21 + 26 passed**；四文件（subscription/
+  runtime/tokens/providers）合计 **92 passed** 零回归；ruff
+  （changed 路径）All checks passed；`git diff --check` 干净。
+- **诚实边界：fake-only 适配层/运行时验证——零真实网络、零
+  真实 LiveKit 服务运行、无 FastAPI startup/lifespan 接线、
+  无流式 ASR/VAD/barge-in/pause/resume、无公开端点变更**；
+  未启停任何生产/运行时服务，未读/未存真实 secret（测试 JWT
+  均为合成假值）；矩阵计数不变 implemented 60 / partial 3；
+  `production_ready`/`release_ready`/`public_ready` 均 false
+  不变。
 ## M14-255 — 服务端 LiveKit 订阅基础（域层 foundation，fake-only 行为覆盖；非流式 ASR、非运行时集成）
 
 - 动因：M14-252/M14-254 打通了 Web 侧 LiveKit 管理输入，但服务端

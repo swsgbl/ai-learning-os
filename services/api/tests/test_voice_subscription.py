@@ -1,9 +1,10 @@
-"""M14-255 服务端 LiveKit 订阅基础契约测试（零网络/零运行时/全 fake 注入）。
+"""M14-255 服务端 LiveKit 订阅基础契约测试（M14-256 async-native 迁移）。
 
-覆盖：
+覆盖（全部零网络/零运行时/全 fake 注入；async 生命周期经 asyncio.run
+在同步测试内驱动——仓库既有惯例，域层自身零 asyncio.run）：
 1  subscribe-only token 角色边界（server-subscriber 恰好 join+subscribe，
    无发布/数据/管理/录制/agent/hidden；student grants 与公开端点行为不变）；
-2  connect/subscribe/帧转发/轨清理/断开的 happy path（清理顺序确定：
+2  async connect/subscribe/帧转发/轨清理/断开的 happy path（清理顺序确定：
    先全部音频流、后房间断开）；
 3  token/connect/audio_stream 失败与 cleanup 失败（失败后零活资源、
    安全类别 + 通用净化消息）；
@@ -12,12 +13,10 @@
    state()/事件/错误中——失败注入的异常消息故意携带 JWT 形态与
    音频字节，断言它们无法穿透）；
 6  仅消费 audio 轨：非 audio 轨安全忽略。
-
-本套件不发任何网络请求、不启动任何服务；fake Room/track/AudioStream
-为鸭子协议替身（与域层 Protocol 对齐）。
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 
@@ -51,7 +50,17 @@ JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,
 FRAME_BYTES = b"PCM-frame-bytes-do-not-persist"
 
 
-# ---------- fake 注入件（与域层 Protocol 对齐的鸭子替身） ----------
+def run(coro) -> None:
+    asyncio.run(coro)
+
+
+async def drain(rounds: int = 16) -> None:
+    """排空 dispatch 任务链（每层 await 一次调度点，16 轮覆盖全链深）。"""
+    for _ in range(rounds):
+        await asyncio.sleep(0)
+
+
+# ---------- fake 注入件（与域层 async 协议对齐的鸭子替身） ----------
 
 
 class FakeFrame:
@@ -68,13 +77,17 @@ class FakeAudioStream:
         self.sid = sid
         self.ops = ops
         self.handler = None
+        self.error_handler = None
         self.close_calls = 0
         self.close_raises = False
 
     def set_frame_handler(self, handler) -> None:
         self.handler = handler
 
-    def close(self) -> None:
+    def set_error_handler(self, handler) -> None:
+        self.error_handler = handler  # 域层消费侧失败通知面（M14-256 R1）
+
+    async def close(self) -> None:
         self.close_calls += 1
         self.ops.append(("stream_close", self.sid))
         if self.close_raises:
@@ -105,20 +118,20 @@ class FakeRoom:
     def on(self, event: str, handler) -> None:
         self.handlers[event] = handler
 
-    def connect(self, token: str) -> None:
+    async def connect(self, token: str) -> None:
         self.connect_calls += 1
         if self.connect_raises:
             # 异常消息故意携带 token——断言它无法穿透到事件/状态
             raise RuntimeError(f"connect boom {token}")
         self.connected_tokens.append(token)
 
-    def disconnect(self) -> None:
+    async def disconnect(self) -> None:
         self.disconnect_calls += 1
         self.ops.append(("room_disconnect", ""))
         if self.disconnect_raises:
             raise RuntimeError(f"disconnect boom {FAKE_JWT}")
 
-    # 测试驱动用的触发器（对应注入的真实事件名）
+    # 测试驱动用的触发器（对应注入的真实事件名；须在事件循环内调用）
     def emit_track_subscribed(self, track: FakeTrack) -> None:
         self.handlers["track_subscribed"](track)
 
@@ -187,13 +200,18 @@ def event_types(sink: RecordingSink) -> list[str]:
     return [event.type for event in sink.events]
 
 
-def serialized(harness: Harness) -> str:
+def serialized(unit: Harness) -> str:
     """控制器 state + 全部收到事件的序列化文本（泄漏断言靶面）。"""
-    controller_state = json.dumps(harness.controller_state, ensure_ascii=False)
+    controller_state = json.dumps(unit.controller_state, ensure_ascii=False)
     events_text = json.dumps(
-        [event.to_dict() for event in harness.sink.events], ensure_ascii=False, default=str
+        [event.to_dict() for event in unit.sink.events], ensure_ascii=False, default=str
     )
     return controller_state + events_text
+
+
+def refresh_state(unit: Harness) -> str:
+    unit.controller_state = unit._controller.state()
+    return serialized(unit)
 
 
 @pytest.fixture
@@ -207,11 +225,6 @@ def harness() -> Harness:
 
 def controller_of(unit: Harness) -> ServerVoiceSubscriber:
     return unit._controller
-
-
-def refresh_state(unit: Harness) -> str:
-    unit.controller_state = controller_of(unit).state()
-    return serialized(unit)
 
 
 # ---------- subscribe-only token 角色边界 ----------
@@ -279,12 +292,16 @@ def test_public_endpoint_rejects_server_subscriber_role(livekit_env) -> None:
         assert ok.json()["role"] == ROLE_STUDENT
 
 
-# ---------- happy path：connect → subscribe → 帧转发 → 清理 → 断开 ----------
+# ---------- happy path：async connect → subscribe → 帧转发 → 清理 → 断开 ----------
 
 
 def test_start_connects_with_in_memory_token_only(harness) -> None:
     controller = controller_of(harness)
-    controller.start()
+
+    async def scenario() -> None:
+        await controller.start()
+
+    run(scenario())
     assert controller.state()["status"] == "active"
     assert harness.room.connect_calls == 1
     # token 只作为 connect 参数出现（测试内部比对，不打印不持久）
@@ -295,23 +312,32 @@ def test_start_connects_with_in_memory_token_only(harness) -> None:
 
 def test_subscribed_audio_track_forwards_frames_without_retaining(harness) -> None:
     controller = controller_of(harness)
-    controller.start()
-    track = FakeTrack("TR-audio-1")
-    harness.room.emit_track_subscribed(track)
+
+    async def scenario() -> None:
+        await controller.start()
+        harness.room.emit_track_subscribed(FakeTrack("TR-audio-1"))
+        await drain()
+        harness.streams["TR-audio-1"].emit(FakeFrame(FRAME_BYTES))
+
+    run(scenario())
     state = controller.state()
     assert state["audio_track_count"] == 1
     assert state["audio_track_ids"] == ["TR-audio-1"]
     assert "track_subscribed" in event_types(harness.sink)
     # 帧直转 sink：控制器不缓存（state 序列化无帧字节）
-    harness.streams["TR-audio-1"].emit(FakeFrame(FRAME_BYTES))
     assert len(harness.sink.frames) == 1
     assert FRAME_BYTES.decode() not in refresh_state(harness)
 
 
 def test_non_audio_track_is_ignored(harness) -> None:
     controller = controller_of(harness)
-    controller.start()
-    harness.room.emit_track_subscribed(FakeTrack("TR-video-1", kind="video"))
+
+    async def scenario() -> None:
+        await controller.start()
+        harness.room.emit_track_subscribed(FakeTrack("TR-video-1", kind="video"))
+        await drain()
+
+    run(scenario())
     assert controller.state()["audio_track_count"] == 0
     assert harness.streams == {}
     ignored = [e for e in harness.sink.events if e.type == "track_ignored"]
@@ -321,10 +347,15 @@ def test_non_audio_track_is_ignored(harness) -> None:
 
 def test_track_unsubscribe_closes_stream(harness) -> None:
     controller = controller_of(harness)
-    controller.start()
-    track = FakeTrack("TR-audio-1")
-    harness.room.emit_track_subscribed(track)
-    harness.room.emit_track_unsubscribed(track)
+
+    async def scenario() -> None:
+        await controller.start()
+        harness.room.emit_track_subscribed(FakeTrack("TR-audio-1"))
+        await drain()
+        harness.room.emit_track_unsubscribed(FakeTrack("TR-audio-1"))
+        await drain()
+
+    run(scenario())
     assert harness.streams["TR-audio-1"].close_calls == 1
     assert controller.state()["audio_track_count"] == 0
     assert "track_finished" in event_types(harness.sink)
@@ -332,10 +363,18 @@ def test_track_unsubscribe_closes_stream(harness) -> None:
 
 def test_stop_cleans_streams_before_room_and_is_idempotent(harness) -> None:
     controller = controller_of(harness)
-    controller.start()
-    for sid in ("TR-a", "TR-b"):
-        harness.room.emit_track_subscribed(FakeTrack(sid))
-    controller.stop()
+
+    async def scenario() -> None:
+        await controller.start()
+        harness.room.emit_track_subscribed(FakeTrack("TR-a"))
+        harness.room.emit_track_subscribed(FakeTrack("TR-b"))
+        await drain()
+        await controller.stop()
+        events_after_stop = len(harness.sink.events)
+        await controller.stop()  # 幂等
+        assert len(harness.sink.events) == events_after_stop
+
+    run(scenario())
     # 确定顺序：全部音频流先关（按 sid 排序），房间最后断开
     assert harness.ops == [
         ("stream_close", "TR-a"),
@@ -344,24 +383,25 @@ def test_stop_cleans_streams_before_room_and_is_idempotent(harness) -> None:
     ]
     assert harness.room.disconnect_calls == 1
     assert controller.state()["status"] == "stopped"
-    # 幂等：重复 stop 零新事件/零新清理
-    events_before = len(harness.sink.events)
-    controller.stop()
-    assert harness.room.disconnect_calls == 1
-    assert len(harness.sink.events) == events_before
 
 
 def test_room_disconnected_cleans_up_and_later_stop_is_noop(harness) -> None:
     controller = controller_of(harness)
-    controller.start()
-    harness.room.emit_track_subscribed(FakeTrack("TR-a"))
-    harness.room.emit_disconnected()
+
+    async def scenario() -> None:
+        await controller.start()
+        harness.room.emit_track_subscribed(FakeTrack("TR-a"))
+        await drain()
+        harness.room.emit_disconnected()
+        await drain()
+        events_before = len(harness.sink.events)
+        await controller.stop()  # 幂等 no-op
+        assert len(harness.sink.events) == events_before
+
+    run(scenario())
     assert controller.state()["status"] == "stopped"
     assert harness.streams["TR-a"].close_calls == 1
     assert harness.room.disconnect_calls == 0  # 远端已断，无需再调
-    events_before = len(harness.sink.events)
-    controller.stop()
-    assert len(harness.sink.events) == events_before  # 幂等 no-op
 
 
 # ---------- 失败路径：零活资源 + 安全类别 + 通用净化消息 ----------
@@ -370,7 +410,11 @@ def test_room_disconnected_cleans_up_and_later_stop_is_noop(harness) -> None:
 def test_token_failure_fails_closed_without_leaking(harness) -> None:
     harness.token_raises = True  # 异常消息携带 JWT 形态
     controller = controller_of(harness)
-    controller.start()
+
+    async def scenario() -> None:
+        await controller.start()
+
+    run(scenario())
     state = controller.state()
     assert state["status"] == "failed"
     failed = [e for e in harness.sink.events if e.type == "failed"]
@@ -383,7 +427,11 @@ def test_token_failure_fails_closed_without_leaking(harness) -> None:
 def test_connect_failure_disconnects_room_without_leaking(harness) -> None:
     controller = controller_of(harness)
     harness.room.connect_raises = True  # 异常消息携带 token 原文
-    controller.start()
+
+    async def scenario() -> None:
+        await controller.start()
+
+    run(scenario())
     state = controller.state()
     assert state["status"] == "failed"
     failed = [e for e in harness.sink.events if e.type == "failed"]
@@ -396,10 +444,16 @@ def test_connect_failure_disconnects_room_without_leaking(harness) -> None:
 
 def test_audio_stream_failure_cleans_everything(harness) -> None:
     controller = controller_of(harness)
-    controller.start()
-    harness.room.emit_track_subscribed(FakeTrack("TR-ok"))  # 先有一路成功
-    harness.stream_factory_raises = True  # 第二路建流失败（异常携带 JWT+帧字节）
-    harness.room.emit_track_subscribed(FakeTrack("TR-bad"))
+
+    async def scenario() -> None:
+        await controller.start()
+        harness.room.emit_track_subscribed(FakeTrack("TR-ok"))  # 先有一路成功
+        await drain()
+        harness.stream_factory_raises = True  # 第二路建流失败（异常携带 JWT+帧字节）
+        harness.room.emit_track_subscribed(FakeTrack("TR-bad"))
+        await drain()
+
+    run(scenario())
     state = controller.state()
     assert state["status"] == "failed"
     failed = [e for e in harness.sink.events if e.type == "failed"]
@@ -416,12 +470,16 @@ def test_audio_stream_failure_cleans_everything(harness) -> None:
 
 def test_cleanup_failure_still_reaches_stopped(harness) -> None:
     controller = controller_of(harness)
-    controller.start()
-    track = FakeTrack("TR-a")
-    harness.room.emit_track_subscribed(track)
-    harness.streams["TR-a"].close_raises = True
-    harness.room.disconnect_raises = True
-    controller.stop()
+
+    async def scenario() -> None:
+        await controller.start()
+        harness.room.emit_track_subscribed(FakeTrack("TR-a"))
+        await drain()
+        harness.streams["TR-a"].close_raises = True
+        harness.room.disconnect_raises = True
+        await controller.stop()
+
+    run(scenario())
     state = controller.state()
     assert state["status"] == "stopped"  # 清理失败不阻塞终态
     assert harness.room.disconnect_calls == 1  # 恰一次尝试
@@ -432,84 +490,24 @@ def test_cleanup_failure_still_reaches_stopped(harness) -> None:
     assert JWT_RE.search(refresh_state(harness)) is None
 
 
-def test_terminal_controller_cannot_restart(harness) -> None:
-    controller = controller_of(harness)
-    controller.start()
-    controller.stop()
-    with pytest.raises(VoiceSubscriptionError, match="不可重启"):
-        controller.start()
-    assert harness.room.connect_calls == 1  # 无双重连接
-
-
-def test_failed_controller_cannot_restart(harness) -> None:
-    harness.token_raises = True
-    controller = controller_of(harness)
-    controller.start()
-    with pytest.raises(VoiceSubscriptionError, match="不可重启"):
-        controller.start()
-
-
-# ---------- 幂等 start / 构造校验 / 有界性 ----------
-
-
-def test_start_is_idempotent_while_active(harness) -> None:
-    controller = controller_of(harness)
-    controller.start()
-    controller.start()  # active 期重复 start：no-op
-    assert harness.room_factory_calls == 1
-    assert harness.token_calls == 1
-    assert harness.room.connect_calls == 1
-    assert event_types(harness.sink) == ["connecting", "connected"]
-
-
-def test_stop_before_start_seals_lifecycle(harness) -> None:
-    controller = controller_of(harness)
-    controller.stop()
-    assert controller.state()["status"] == "stopped"
-    with pytest.raises(VoiceSubscriptionError, match="不可重启"):
-        controller.start()
-
-
-def test_constructor_validation() -> None:
-    unit = Harness()
-    with pytest.raises(VoiceSubscriptionError, match="room"):
-        unit.controller(room="  ")
-    with pytest.raises(VoiceSubscriptionError, match="identity"):
-        unit.controller(identity="")
-    with pytest.raises(VoiceSubscriptionError, match="max_events"):
-        unit.controller(max_events=0)
-
-
-def test_event_log_is_bounded(harness) -> None:
-    controller = controller_of(harness)
-    controller.start()
-    for _ in range(80):  # 超过默认环形上限 64
-        harness.room.emit_track_subscribed(FakeTrack("TR-video", kind="video"))
-    state = controller.state()
-    assert state["event_count"] == 82  # connecting + connected + 80（全量计数）
-    assert len(state["events"]) == 64  # 投影有界（滚动淘汰最旧）
-    # 严格滚动断言：connecting/connected 已被淘汰出窗口，保留的 64 条
-    # 恰为第 17..80 个 track_ignored——最旧与最新都是 track_ignored，
-    # 且窗口内不存在更早的 connecting/connected
-    types = [event["type"] for event in state["events"]]
-    assert types[0] == "track_ignored"
-    assert types[-1] == "track_ignored"
-    assert set(types) == {"track_ignored"}
-    assert all("kind=video" in event["detail"] for event in state["events"])
-
-
 def test_track_unsubscribe_close_failure_fails_closed(harness) -> None:
-    """supervisor 修正 2：单轨 close 失败 = 可能仍活的资源——fail-closed。
+    """单轨 close 失败 = 可能仍活的资源——fail-closed（supervisor 修正 2）。
 
     剩余流被关闭、房间被断开、终态 failed、事件只记安全 cleanup
     类别 + 通用净化消息（close 异常携带 JWT 形态亦无法穿透）。
     """
+
+    async def scenario(controller: ServerVoiceSubscriber) -> None:
+        await controller.start()
+        harness.room.emit_track_subscribed(FakeTrack("TR-a"))
+        harness.room.emit_track_subscribed(FakeTrack("TR-b"))
+        await drain()
+        harness.streams["TR-a"].close_raises = True
+        harness.room.emit_track_unsubscribed(FakeTrack("TR-a"))
+        await drain()
+
     controller = controller_of(harness)
-    controller.start()
-    harness.room.emit_track_subscribed(FakeTrack("TR-a"))
-    harness.room.emit_track_subscribed(FakeTrack("TR-b"))
-    harness.streams["TR-a"].close_raises = True  # close 异常携带 FAKE_JWT
-    harness.room.emit_track_unsubscribed(FakeTrack("TR-a"))
+    run(scenario(controller))
     state = controller.state()
     assert state["status"] == "failed"
     assert state["audio_track_count"] == 0
@@ -524,3 +522,132 @@ def test_track_unsubscribe_close_failure_fails_closed(harness) -> None:
     assert failed[0].detail == "订阅资源清理失败"
     assert not any(e.type == "track_finished" for e in harness.sink.events)
     assert JWT_RE.search(refresh_state(harness)) is None
+
+
+def test_event_handler_exception_fails_closed(harness, monkeypatch) -> None:
+    """supervisor 修正 1：事件 handler 意外异常 → fail-closed。
+
+    第一路正常订阅建流，第二路 handler 抛异常（异常消息故意携带 JWT
+    形态）——旧实现只 emit cleanup failed 后停留在 active（资源状态
+    未知却继续会话）；必须清任务/流/房间并进 failed 终态。
+    """
+    controller = controller_of(harness)
+    original = controller._on_track_subscribed
+    calls = {"count": 0}
+
+    async def flaky(track: object, *args: object) -> None:
+        calls["count"] += 1
+        if calls["count"] == 1:
+            return await original(track, *args)
+        raise RuntimeError(f"handler boom {FAKE_JWT}")
+
+    monkeypatch.setattr(controller, "_on_track_subscribed", flaky)
+
+    async def scenario() -> None:
+        await controller.start()
+        harness.room.emit_track_subscribed(FakeTrack("TR-a"))
+        await drain()
+        harness.room.emit_track_subscribed(FakeTrack("TR-b"))
+        await drain()
+
+    run(scenario())
+    state = controller.state()
+    assert state["status"] == "failed"
+    assert state["audio_track_count"] == 0
+    # 第一路已建流被清理（零活资源），房间被断开恰一次
+    assert harness.streams["TR-a"].close_calls == 1
+    assert harness.room.disconnect_calls == 1
+    failed = [e for e in harness.sink.events if e.type == "failed"]
+    assert len(failed) == 1
+    assert failed[0].category == CATEGORY_CLEANUP
+    assert failed[0].detail == "订阅资源清理失败"
+    assert JWT_RE.search(refresh_state(harness)) is None
+
+
+def test_terminal_controller_cannot_restart(harness) -> None:
+    controller = controller_of(harness)
+
+    async def scenario() -> None:
+        await controller.start()
+        await controller.stop()
+        await controller.start()  # 终态重启：API 误用
+
+    with pytest.raises(VoiceSubscriptionError, match="不可重启"):
+        run(scenario())
+    assert harness.room.connect_calls == 1  # 无双重连接
+
+
+def test_failed_controller_cannot_restart(harness) -> None:
+    harness.token_raises = True
+    controller = controller_of(harness)
+
+    async def scenario() -> None:
+        await controller.start()
+        await controller.start()
+
+    with pytest.raises(VoiceSubscriptionError, match="不可重启"):
+        run(scenario())
+
+
+# ---------- 幂等 start / 构造校验 / 有界性 ----------
+
+
+def test_start_is_idempotent_while_active(harness) -> None:
+    controller = controller_of(harness)
+
+    async def scenario() -> None:
+        await controller.start()
+        await controller.start()  # active 期顺序重复 start：no-op
+        # 并发重复 start：等待同一首次任务（无第二次连接）
+        await asyncio.gather(controller.start(), controller.start())
+
+    run(scenario())
+    assert harness.room_factory_calls == 1
+    assert harness.token_calls == 1
+    assert harness.room.connect_calls == 1
+    assert event_types(harness.sink) == ["connecting", "connected"]
+
+
+def test_stop_before_start_seals_lifecycle(harness) -> None:
+    controller = controller_of(harness)
+
+    async def scenario() -> None:
+        await controller.stop()
+        assert controller.state()["status"] == "stopped"
+        await controller.start()  # 封存后重启：API 误用
+
+    with pytest.raises(VoiceSubscriptionError, match="不可重启"):
+        run(scenario())
+
+
+def test_constructor_validation() -> None:
+    unit = Harness()
+    with pytest.raises(VoiceSubscriptionError, match="room"):
+        unit.controller(room="  ")
+    with pytest.raises(VoiceSubscriptionError, match="identity"):
+        unit.controller(identity="")
+    with pytest.raises(VoiceSubscriptionError, match="max_events"):
+        unit.controller(max_events=0)
+
+
+def test_event_log_is_bounded(harness) -> None:
+    controller = controller_of(harness)
+
+    async def scenario() -> None:
+        await controller.start()
+        for _ in range(80):  # 超过默认环形上限 64
+            harness.room.emit_track_subscribed(FakeTrack("TR-video", kind="video"))
+        await drain()
+
+    run(scenario())
+    state = controller.state()
+    assert state["event_count"] == 82  # connecting + connected + 80（全量计数）
+    assert len(state["events"]) == 64  # 投影有界（滚动淘汰最旧）
+    # 严格滚动断言：connecting/connected 已被淘汰出窗口，保留的 64 条
+    # 恰为第 17..80 个 track_ignored——最旧与最新都是 track_ignored，
+    # 且窗口内不存在更早的 connecting/connected
+    types = [event["type"] for event in state["events"]]
+    assert types[0] == "track_ignored"
+    assert types[-1] == "track_ignored"
+    assert set(types) == {"track_ignored"}
+    assert all("kind=video" in event["detail"] for event in state["events"])

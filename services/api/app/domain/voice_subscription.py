@@ -1,10 +1,18 @@
 """M14-255：服务端 LiveKit 订阅基础（域层纯逻辑，零 FastAPI 接线/零运行时）。
 
+M14-256：生命周期操作演进为 **async-native**——room connect/disconnect
+与 audio-stream close 均为 awaitable（对齐 livekit realtime SDK 的真实
+形态：`rtc.Room.connect/disconnect` 与 `rtc.AudioStream.aclose` 都是
+async）；事件回调经轻量 dispatch 包装（`ensure_future`）调度为任务，
+由适配层（voice_runtime.py）桥接真实 SDK 的同步事件分发。全程无
+`asyncio.run`、无嵌套事件循环、无专用线程 sync-to-async 桥——控制器
+只在自己被 await 的事件循环里工作。
+
 目标：为「服务端订阅学习者已发布音轨」提供第一个最小后端基础件——
 一个只消费、不发布的房间订阅控制器。**这不是流式 ASR，也不是运行时
 集成**：本模块不进 FastAPI startup/lifespan、不新增/改动 HTTP 端点、
-不调用 ASR/TTS/VAD/barge-in/pause-resume；真实运行时接线（livekit
-rtc Room/AudioStream 的 async 适配）是后续切片的职责。
+不调用 ASR/TTS/VAD/barge-in/pause-resume；真实运行时接线是后续切片
+的职责。
 
 可测性契约：Room 工厂、AudioStream 工厂、token provider、事件汇全部
 注入——全部行为可用 fake 零网络、确定性地验证（协议面见各 Protocol）。
@@ -17,20 +25,23 @@ rtc Room/AudioStream 的 async 适配）是后续切片的职责。
   字节——state()/事件序列化后不含帧数据。
 
 生命周期契约：
-- 一个实例恰拥有一段房间连接：start 幂等（active 期重复调用
-  no-op）；stop 幂等（重复调用 no-op）并按确定顺序清理——先全部
-  音频流、后房间断开；实例终止（stopped/failed）后重启是 API 误用
-  （抛 VoiceSubscriptionError，不静默新建连接）；
-- 任何失败（token/connect/audio_stream/轨退订 close 失败）不留活资源：先尽力关闭已
-  建流、再断开房间，然后进入 failed 状态并发出带安全类别
-  （token/connect/audio_stream/cleanup）与通用净化消息的事件。
+- 一个实例恰拥有一段房间连接：start 幂等（active 期重复调用等待
+  首次任务完成）；stop 幂等（重复调用 no-op）并按确定顺序清理——
+  先取消残留事件任务、再全部音频流、后房间断开；实例终止
+  （stopped/failed）后重启是 API 误用（抛 VoiceSubscriptionError，
+  不静默新建连接）；
+- 任何失败（token/connect/audio_stream/轨退订 close 失败）不留活
+  资源：先尽力关闭已建流、再断开房间，然后进入 failed 终态并发出
+  带安全类别（token/connect/audio_stream/cleanup）与通用净化消息
+  的事件。
 """
 from __future__ import annotations
 
+import asyncio
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 #: 状态机：idle →（start）→ active →（stop/远端断开）→ stopped；
 #: 任一步失败 → failed（终态；与 stopped 同为不可重启）。
@@ -72,22 +83,29 @@ class EventSinkLike(Protocol):
 
 @runtime_checkable
 class RoomLike(Protocol):
-    """Room 最小协议（真实 SDK 的 async 适配由未来运行时接线提供）。"""
+    """Room 最小协议（M14-256 async-native：connect/disconnect 可等待）。"""
 
-    def on(self, event: str, handler: Callable[..., None]) -> None: ...
+    def on(self, event: str, handler: Callable[..., Any]) -> None: ...
 
-    def connect(self, token: str) -> object: ...
+    def connect(self, token: str) -> Awaitable[object]: ...
 
-    def disconnect(self) -> object: ...
+    def disconnect(self) -> Awaitable[object]: ...
 
 
 @runtime_checkable
 class AudioStreamLike(Protocol):
-    """音频流最小协议：注册帧回调 + 关闭。"""
+    """音频流最小协议：注册帧回调 + 错误回调 + 异步关闭（M14-256 R1）。
+
+    set_error_handler：流消费侧意外失败（如底层 async 迭代异常）的
+    通知面——控制器据此 fail-closed（清资源进 failed 终态），绝不
+    让消费任务死亡后停在 active。
+    """
 
     def set_frame_handler(self, handler: Callable[[AudioFrameLike], None]) -> None: ...
 
-    def close(self) -> None: ...
+    def set_error_handler(self, handler: Callable[[], None]) -> None: ...
+
+    def close(self) -> Awaitable[object]: ...
 
 
 @runtime_checkable
@@ -145,11 +163,13 @@ def _track_kind(track: object) -> str:
 
 
 class ServerVoiceSubscriber:
-    """单房间连接的服务端订阅控制器（subscribe-only 消费者）。
+    """单房间连接的服务端订阅控制器（subscribe-only 消费者，async-native）。
 
-    生命周期：start() → room.connect（token 只进内存局部变量）→
-    track_subscribed（仅 audio 建 AudioStream 并转发帧；非 audio 忽略）
-    → stop()/远端断开 → 先关全部流、后断房间（确定顺序）。
+    生命周期：`await start()` → room.connect（token 只进内存局部变量）
+    → track_subscribed（仅 audio 建 AudioStream 并转发帧；非 audio 忽略）
+    → `await stop()`/远端断开 → 取消残留事件任务、先关全部流、后断
+    房间（确定顺序）。事件回调经 dispatch 包装调度为循环任务；适配层
+    （voice_runtime.py）负责桥接真实 SDK 的同步事件分发。
     """
 
     def __init__(
@@ -179,6 +199,8 @@ class ServerVoiceSubscriber:
         self._room_conn: RoomLike | None = None
         self._streams: dict[str, AudioStreamLike] = {}
         self._events = _EventLog(max_entries=max_events)
+        self._tasks: set[asyncio.Future[object]] = set()
+        self._start_task: asyncio.Future[object] | None = None
 
     # --- 事件与状态（有界 + 净化投影） ---
 
@@ -205,36 +227,74 @@ class ServerVoiceSubscriber:
             "events": [event.to_dict() for event in self._events.entries],
         }
 
+    def _dispatch(self, handler: Callable[..., Any]) -> Callable[..., None]:
+        """把 async 事件处理包成同步回调：在当前事件循环上调度任务。
+
+        SDK 的 Room 事件分发是同步调用——本包装让控制器内部处理保持
+        async-native（无线程、无嵌套循环）；任务入集追踪，stop/失败时
+        统一有界回收。非活动期的迟到事件在处理入口被丢弃。
+        """
+
+        def sync_handler(*args: object) -> None:
+            task = asyncio.ensure_future(self._run_handler(handler, args))
+            self._tasks.add(task)
+            task.add_done_callback(self._tasks.discard)
+
+        return sync_handler
+
+    async def _run_handler(
+        self, handler: Callable[..., Any], args: tuple[object, ...]
+    ) -> None:
+        try:
+            result = handler(*args)
+            if isinstance(result, Awaitable):
+                await result
+        except Exception:  # noqa: BLE001
+            # 事件处理意外失败 = 资源状态未知——fail-closed（supervisor
+            # 修正 1）：清任务/流/房间并进 failed 终态（通用净化消息，
+            # 不泄 cause）；绝不只发事件后停在 active
+            await self._fail(CATEGORY_CLEANUP, _MESSAGE_CLEANUP)
+
     # --- 生命周期 ---
 
-    def start(self) -> None:
-        """幂等启动：active 期重复调用 no-op；终态后重启是 API 误用。"""
+    async def start(self) -> None:
+        """幂等启动：active 期重复调用等待首次任务（no-op）；终态重启是误用。"""
+        if self._start_task is not None:
+            await self._start_task  # 并发重复 start：等待同一首次任务
+            return
         if self._status == STATUS_ACTIVE:
             return
         if self._status in _TERMINAL:
             raise VoiceSubscriptionError(_MESSAGE_STOPPED_TERMINAL)
-        self._status = STATUS_ACTIVE  # 先占位：事件处理器可能同步回调
+        self._start_task = asyncio.ensure_future(self._start_once())
+        try:
+            await self._start_task
+        finally:
+            self._start_task = None
+
+    async def _start_once(self) -> None:
+        self._status = STATUS_ACTIVE  # 先占位：事件回调可能同步/异步到达
         self._emit("connecting")
         try:
             token = self._token_provider()  # 局部变量：用后即不可达
         except Exception:  # noqa: BLE001 —— 任何失败统一转净化事件（不泄 cause）
-            self._fail(CATEGORY_TOKEN, _MESSAGE_TOKEN)
+            await self._fail(CATEGORY_TOKEN, _MESSAGE_TOKEN)
             return
         room = self._room_factory()
-        room.on("track_subscribed", self._on_track_subscribed)
-        room.on("track_unsubscribed", self._on_track_unsubscribed)
-        room.on("disconnected", self._on_room_disconnected)
+        room.on("track_subscribed", self._dispatch(self._on_track_subscribed))
+        room.on("track_unsubscribed", self._dispatch(self._on_track_unsubscribed))
+        room.on("disconnected", self._dispatch(self._on_room_disconnected))
         try:
-            room.connect(token)
+            await room.connect(token)
         except Exception:  # noqa: BLE001
             self._room_conn = room  # 交由 _fail 统一尽力断开
-            self._fail(CATEGORY_CONNECT, _MESSAGE_CONNECT)
+            await self._fail(CATEGORY_CONNECT, _MESSAGE_CONNECT)
             return
         self._room_conn = room
         self._emit("connected")
 
-    def stop(self) -> None:
-        """幂等停止：确定顺序清理——先全部音频流、后房间断开。"""
+    async def stop(self) -> None:
+        """幂等停止：确定顺序清理——残留事件任务 → 全部音频流 → 房间断开。"""
         if self._status in (STATUS_STOPPED, STATUS_IDLE):
             # idle stop：无资源可清，仅封存生命周期；stopped stop：no-op
             self._status = STATUS_STOPPED
@@ -243,13 +303,14 @@ class ServerVoiceSubscriber:
             self._status = STATUS_STOPPED  # failed 已清理资源；封存即可
             return
         self._status = STATUS_STOPPED
-        self._close_streams_ordered()
-        self._disconnect_room_ordered()
+        await self._cancel_pending_tasks()
+        await self._close_streams_ordered()
+        await self._disconnect_room_ordered()
         self._emit("stopped")
 
-    # --- 音轨回调（由注入 Room 在订阅事件时调用） ---
+    # --- 音轨事件处理（经 dispatch 调度的 async 任务） ---
 
-    def _on_track_subscribed(self, track: object, *_args: object) -> None:
+    async def _on_track_subscribed(self, track: object, *_args: object) -> None:
         if self._status != STATUS_ACTIVE:
             return  # 已停止/失败的连接不再消费新轨
         sid = _track_sid(track, len(self._streams) + 1)
@@ -261,34 +322,49 @@ class ServerVoiceSubscriber:
         try:
             stream = self._audio_stream_factory(track)
         except Exception:  # noqa: BLE001
-            self._fail(CATEGORY_AUDIO_STREAM, _MESSAGE_AUDIO_STREAM)
+            await self._fail(CATEGORY_AUDIO_STREAM, _MESSAGE_AUDIO_STREAM)
             return
         stream.set_frame_handler(self._forward_frame)
+        # M14-256 R1（supervisor 修正 2）：流消费侧意外失败的通知面——
+        # 适配器 async 迭代异常时回调，控制器 fail-closed（消费任务死亡
+        # 后绝不停留在 active）
+        stream.set_error_handler(self._on_stream_error)
         self._streams[sid] = stream
         self._emit("track_subscribed", detail=sid)
 
-    def _on_track_unsubscribed(self, track: object, *_args: object) -> None:
+    def _on_stream_error(self) -> None:
+        """流消费侧错误回调（同步面——在事件循环任务里被调用）。
+
+        调度 fail-closed：清任务/剩余流/房间并进 failed 终态（通用
+        净化消息，不泄 cause；异常文本绝不由适配器经此面传入）。
+        """
+        task = asyncio.ensure_future(self._fail(CATEGORY_CLEANUP, _MESSAGE_CLEANUP))
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+
+    async def _on_track_unsubscribed(self, track: object, *_args: object) -> None:
         sid = _track_sid(track, -1)
         stream = self._streams.pop(sid, None)
         if stream is not None:
             try:
-                stream.close()
+                await stream.close()
             except Exception:  # noqa: BLE001
                 # close 失败 = 可能仍活的资源——违反「失败零活资源」契约，
                 # fail-closed：清剩余流 + 断房间 + failed 终态（supervisor
-                # 修正 2；通用净化消息，不泄 cause）
-                self._fail(CATEGORY_CLEANUP, _MESSAGE_CLEANUP)
+                # 修正 2 保持；通用净化消息，不泄 cause）
+                await self._fail(CATEGORY_CLEANUP, _MESSAGE_CLEANUP)
                 return
         self._emit("track_finished", detail=sid)
 
-    def _on_room_disconnected(self, *_args: object) -> None:
+    async def _on_room_disconnected(self, *_args: object) -> None:
         """远端断开：流随之失效——静默清理（不重复 failed/stopped 事件，
         状态封存 stopped；房间已死，不保留其引用；后续 stop() 幂等
         no-op）。"""
         if self._status in _TERMINAL:
             return
-        self._close_streams_ordered(quiet=True)
-        self._room_conn = None  # 远端已断：不再持有死房间对象（supervisor 修正 3）
+        await self._close_streams_ordered(quiet=True)
+        await self._cancel_pending_tasks()
+        self._room_conn = None  # 远端已断：不再持有死房间对象（supervisor 修正 3 保持）
         self._status = STATUS_STOPPED
         self._emit("stopped", detail="room-disconnected")
 
@@ -301,30 +377,48 @@ class ServerVoiceSubscriber:
 
     # --- 清理（确定顺序） ---
 
-    def _close_streams_ordered(self, *, quiet: bool = False) -> None:
+    async def _cancel_pending_tasks(self) -> None:
+        """有界回收残留事件任务（空集时零开销）。
+
+        排除当前任务：失败/清理路径可能正运行在某个事件任务里
+        （如 track_subscribed 处理中触发 _fail）——取消自己会在
+        gather 里等待自身完成而死锁；当前任务会随本次 await 链
+        自然返回。
+        """
+        current = asyncio.current_task()
+        pending = [
+            task for task in self._tasks if not task.done() and task is not current
+        ]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    async def _close_streams_ordered(self, *, quiet: bool = False) -> None:
         for sid in sorted(self._streams):
             stream = self._streams.pop(sid)
             try:
-                stream.close()
+                await stream.close()
             except Exception:  # noqa: BLE001 —— 清理失败继续处理其余资源
                 if not quiet:
                     self._emit(
-                        "failed", category=CATEGORY_CLEANUP, detail="stream close 失败"
+                        "failed", category=CATEGORY_CLEANUP, detail=_MESSAGE_CLEANUP
                     )
 
-    def _disconnect_room_ordered(self) -> None:
+    async def _disconnect_room_ordered(self) -> None:
         room = self._room_conn
         self._room_conn = None
         if room is None:
             return
         try:
-            room.disconnect()
+            await room.disconnect()
         except Exception:  # noqa: BLE001 —— 清理失败尽力而为，不抛出
-            self._emit("failed", category=CATEGORY_CLEANUP, detail="room disconnect 失败")
+            self._emit("failed", category=CATEGORY_CLEANUP, detail=_MESSAGE_CLEANUP)
 
-    def _fail(self, category: str, message: str) -> None:
-        """失败路径：先清全部已获资源（流→房间），再置 failed + 净化事件。"""
-        self._close_streams_ordered(quiet=True)
-        self._disconnect_room_ordered()
+    async def _fail(self, category: str, message: str) -> None:
+        """失败路径：先清全部已获资源（任务→流→房间），再置 failed + 净化事件。"""
+        await self._cancel_pending_tasks()
+        await self._close_streams_ordered(quiet=True)
+        await self._disconnect_room_ordered()
         self._status = STATUS_FAILED
         self._emit("failed", category=category, detail=message)
