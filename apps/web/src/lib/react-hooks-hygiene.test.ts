@@ -334,6 +334,17 @@ describe("voice-studio.tsx：朗读事件化（自动朗读不经 effect）+ 服
     expect(VOICE_SOURCE).toMatch(/voiceInputRef\.current = null; \/\/ 失败不留 stale 控制器/);
   });
 
+  it("M14-254：非敏感 DOM 契约属性钉住（harness 锚点：根/麦克风阶段/权威 session_id），只绑定非凭据值", () => {
+    // 根容器三属性：data-voice-studio / data-mic-phase / data-voice-session-id
+    expect(VOICE_SOURCE).toMatch(/data-voice-studio\b/);
+    expect(VOICE_SOURCE).toMatch(/data-mic-phase=\{micPhase\}/);
+    expect(VOICE_SOURCE).toMatch(/data-voice-session-id=\{view\.session\.session_id\}/);
+    // 契约属性绝不经由绑定暴露凭据面：token/JWT/identity 零出现于
+    // 任何 data-* 属性绑定（属性值只允许 micPhase 四态与服务端
+    // session_id——UUID 形态，非凭据）
+    expect(VOICE_SOURCE).not.toMatch(/data-[\w-]+=\{[^}]*(token|jwt|identity)/i);
+  });
+
   it("once-only 会话申请守卫保留（started ref 防重复开考）", () => {
     expect(VOICE_SOURCE).toContain("started.current");
   });

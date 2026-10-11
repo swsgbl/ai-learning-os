@@ -86,6 +86,41 @@
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
 
+### M14-254 状态更新（VoiceStudio LiveKit 输入真实浏览器验收 harness——仅交付 harness 与 mock 契约验证，真实栈运行保留给 supervisor）
+
+- 基于 current main `47c39043`（PR #339 merge，即 M14-252；main CI
+  38103803209 5/5 绿）实施：M14-252 证据明确说真实 LiveKit 服务 +
+  真实浏览器麦克风 E2E 覆盖缺位。本切片交付 supervisor 运维的可
+  重复 harness，对既有 live 栈验证真实 M14-252 路径（登录真实
+  UI → /voice/<paperId> → 点语音作答 → recording（必经
+  token→connect→mic→publish）→ 停止 → 非空 WAV multipart 到达
+  /transcribe → token room 恰为 voice-<session_id> → DOM/报告零
+  JWT）。**不新增任何用户可见语音功能，不声明 M4-09 或缺口 3
+  关闭；本提交不预声明任何真实运行结果。**
+- `apps/web/src/components/voice-studio.tsx`：非敏感 DOM 契约属性
+  （data-voice-studio / data-mic-phase 四态 / data-voice-session-id
+  权威 UUID），只绑定非凭据值；hygiene 新断言钉住（data-* 绑定零
+  token/jwt/identity）。
+- 新增 `infra/verify_voice_studio_livekit_input.py`：importlib 复用
+  m14-35 harness 全部加固模式（只读 preflight + 契约派生 LiveKit
+  探测、既有验收用户 login-only 认证（零注册零播种）、真实 node
+  直启 + 精确 PID 树回收、Chromium
+  fake 麦克风、LOOPBACK 严格开关、JWT 脱敏 + 分窗 console）；
+  网络监听先于语音链安装且只记净化元数据（token room、transcribe
+  字节数/顶层类型、内存子串断言 audio/wav part 与 answer.wav 文件
+  名——原始音频字节与 token 响应体绝不保留）；空 transcript/诚实
+  clarify 可接受（仅当 transcribe HTTP 链成功）；报告递归脱敏 +
+  JWT 自检命中改判 failed；证据落 gitignored .verify/。
+- 新增 `services/api/tests/test_verify_voice_studio_livekit_input.py`
+  44 项零网络契约测试（选卷五路径/房间派生/摘要净化/fail-closed
+  十路径/JWT 防线/phase 契约/DOM 属性零凭据/PID 树复用与零扫杀
+  模式/监听先于导航等文本契约）。
+- 验证：Python focused 44 + 邻居 145 passed；Web 全套 18 files/326
+  passed、typecheck/lint 0、build 路由与基点一致；ruff All checks
+  passed。**真实栈运行（live API/LiveKit + 真浏览器 + 真麦克风）
+  保留给 supervisor 显式执行**；未启停任何运行时服务；零真实
+  secret/JWT 入库。
+
 ### M14-252 状态更新（Web VoiceStudio LiveKit 管理语音输入——输入传输切片，非流式）
 
 - 基于 current main `f8259b07`（PR #338 merge，即 M14-251）实施：

@@ -1,5 +1,86 @@
 # Changelog
 
+## M14-254 — VoiceStudio LiveKit 输入真实浏览器验收 harness（DOM 契约 + harness + 零网络契约测试；真实栈运行保留给 supervisor）
+
+- 动因：M14-252 交付了 LiveKit 管理语音输入，但其证据明确说真实
+  LiveKit 服务 + 真实浏览器麦克风 E2E 覆盖缺位（仓库测试口径为
+  stub + 注入点行为断言）。本切片交付可重复的 supervisor 运维
+  harness 与其零网络契约测试——**不新增服务端订阅、流式 ASR、
+  VAD、barge-in、pause/resume 或任何用户可见语音功能，不声明
+  M4-09 或缺口 3 关闭，不预声明任何真实运行结果。**
+- `voice-studio.tsx`：新增非敏感 DOM 契约属性（根
+  `data-voice-studio`、`data-mic-phase={micPhase}` 四态、
+  `data-voice-session-id={view.session.session_id}`——权威 UUID），
+  零视觉/行为变更；属性只绑定非凭据值（token/ws_url JWT/identity/
+  控制器内部零暴露），hygiene 新断言钉住（data-* 绑定不得引用
+  token/jwt/identity）。
+- 新增 `infra/verify_voice_studio_livekit_input.py`（验收 harness，
+  supervisor 显式运行）：经 importlib 复用
+  `verify_web_livekit_client.py` 全部加固模式——API 只读 preflight
+  + 契约派生 LiveKit 信令探测（fail-closed）、既有验收用户
+  login-only 认证（只调业务登录端点，零注册零播种——access token
+  只进内存请求头）、真实 node 直启
+  next start + 精确 PID 树回收（绝不按端口/进程名扫杀）、
+  Chromium fake 麦克风 + 免授权 UI + microphone permission、
+  `AIOS_LIVEKIT_BROWSER_LOOPBACK` 严格开关、JWT 正则脱敏与登录/
+  验证分窗 console 断言。验收流程：UI 登录 → `GET /api/v1/papers`
+  确定性选卷（`AIOS_VOICE_PAPER_ID` 显式 override；空串/缺失/
+  不存在全部 ENV-BLOCKED，零播种零数据变更）→ `/voice/<paperId>`
+  → 等 `data-voice-session-id` 非空与语音按钮就绪 → **网络监听先于
+  语音链安装** → 点语音作答 → 等 `data-mic-phase="recording"`
+  （M14-252 语义下必经 token→Room.connect→麦克风轨→publish 全
+  成功）→ 持续 1.5s → 点「停止录音并提交识别」→ 等回 idle →
+  硬断言：token 恰一次且 room===`voice-<session_id>`、transcribe
+  恰一次 HTTP 200 multipart（体内 audio/wav part 与 answer.wav
+  文件名经内存子串断言布尔化、字节数 > 0）、验证窗 console/
+  pageerror 零、DOM 与序列化报告零 JWT（递归脱敏 + 自检命中改判
+  failed）→ 三张截图与 results.json（净化 network/browser/
+  livekit_probe 段，无凭据字段）落 gitignored `.verify/` →
+  finally 精确 PID 树回收。网络事实只记净化元数据（method/path/
+  status/timing、token 请求 room、transcribe 的 multipart 字节数
+  与顶层 content-type）；**token 响应体（房间 JWT）从不读取、
+  原始音频字节绝不保留、Authorization/cookie 绝不入报告**。空
+  transcript 或诚实 UI clarify/error 可接受——仅当 transcribe
+  HTTP 链成功（不构成流式 ASR 成功声明）。autoplay flag
+  （`--autoplay-policy=no-user-gesture-required`，让既有 TTS 朗读
+  链在 headless 下真实完成）显式记录于报告 browser 段可审计。
+- 新增 `services/api/tests/test_verify_voice_studio_livekit_input.py`
+  **44 项零网络契约测试**（不发网络请求、不启动浏览器、不装依赖、
+  不读 secret）：select_paper 五路径（override 命中/确定性首卷/
+  空列表/空 override/缺失 id 全 fail-closed）、
+  expected_token_room 派生与 token 摘要白名单键、transcribe 事实
+  净化（计数/布尔保留、原始音频字节不返回）、verify_network_facts
+  fail-closed 十路径（token 零次/重复/错 room/缺 room、transcribe
+  非唯一/非 200/非 multipart/缺 wav part/空体/缺失）、JWT 防线
+  （find_jwt/report_has_jwt 递归/sanitize_tree 不改写原值/不可
+  序列化保守判脏）、MIC_PHASES 四态与 phase_valid 拒绝未知值、
+  DOM 属性契约（三属性存在 + 绑定零凭据）、进程回收复用邻居
+  stop_process_tree 且源码零 /IM/pkill/killall/netstat/
+  Get-Process/wmic 扫杀模式、监听先于 /voice 导航、console 恰一次
+  clear（分窗）、token 响应体零读取（`.body()`/`.text()` 不出现
+  于源码）、autoplay flag 入报告、硬断言锚点齐全；supervisor
+  两项修正随测：login-only 认证（login_verification_learner 只调
+  /api/v1/auth/login、成功返回内存 token/失败 ENV-BLOCKED；源码零
+  ensure_user 零注册端点——零播种边界）与落盘防线顺序
+  （finalize_results 先对未脱敏报告 JWT 自检——脏报告以 failed+
+  退出码 1+自检标记收场且原始 JWT 不落盘、后递归脱敏；函数体内
+  检测先于脱敏的顺序由文本契约锁定）。
+- 验证：Python focused 44 passed + 邻居 harness 测试
+  （test_verify_web_livekit_client + test_livekit_lan_cutover）
+  合计 **138 passed**；Web 全套 **18 files / 326 tests passed**
+  （hygiene +1，M14-252 契约零回归）；typecheck 0 error；lint
+  0 error / 0 warning；build 编译成功路由与基点一致；ruff（changed
+  Python 路径）All checks passed；`git diff --check` 干净。
+- **诚实边界：本提交只交付 harness 与 mock 契约验证——真实栈
+  运行（对 live API/LiveKit + 真实浏览器 + 真实麦克风）保留给
+  supervisor 显式执行，未运行未预声明**；未启停任何运行时服务
+  （Docker/WSL/LiveKit/API/Web/ASR/TTS/代理/模拟器）、未触碰
+  DB/凭据、零真实 secret/JWT 入库（测试 JWT 形态均为合成假值）。
+  不声明服务端订阅、流式 ASR、VAD、barge-in、pause/resume、远程
+  设备、跨 NAT、长时浸泡或生产就绪；M4-09 维持 partial，计数
+  不变 implemented 60 / partial 3；`production_ready`/
+  `release_ready`/`public_ready` 均 false 不变。
+
 ## M14-253 — CI Ruff 依赖稳定性（requirements-dev 锁 ruff==0.16.10）
 
 - 动因：PR #339（零 .py 变更）API CI 仅 Ruff 失败——失败 run 38096599374
