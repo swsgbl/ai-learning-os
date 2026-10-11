@@ -1,11 +1,15 @@
-// M14-251：浏览器录音 + 本地 WAV 编码模块（voice-studio 听写链的
-// 采集设备）。浏览器 MediaRecorder 录麦克风 → Web Audio 解码容器 →
-// 本地重编码为 RIFF/WAV（PCM、单声道、16-bit）→ 交 server-asr.ts
-// 上送服务端转写。本模块是纯采集/编码设备：不解析语音、不判定答案、
-// 不回退浏览器 SpeechRecognition（已随本切片移除）。资源诚实回收：
-// 超时定时器、recorder 监听、音轨/流、AudioContext 在成功/失败/手动
-// 停止/超时四条路径上一律清理；不支持 API、权限被拒、设备缺失、零
-// 数据、解码失败、超限输出均如实 reject，绝不静默降级。
+// M14-251：浏览器录音 + 本地 WAV 编码模块（听写链的采集设备）。
+// M14-252：拆出「外部提供流」入口 recordAndEncodeWavFromStream——
+// LiveKit 已发布音轨的 utterance 采集走它，音轨所有权显式化
+// （ownsTracks 缺省 false = 调用方拥有，一段 utterance 录完不停轨，
+// LiveKit 控制器仍是音轨所有者）；recordAndEncodeWav 保持直接
+// getUserMedia 路径并恒拥有/停止自己的音轨（M14-251 行为零改动）。
+// 共用核心：MediaRecorder 采集 → Web Audio 解码容器 → 本地重编码
+// RIFF/WAV（PCM、单声道、16-bit）。本模块是纯采集/编码设备：不解析
+// 语音、不判定答案。资源诚实回收：超时定时器、recorder 监听、
+// AudioContext 在成功/失败/手动停止/超时四条路径上一律清理；所拥有的
+// 音轨恒停止，不拥有的（LiveKit）绝不越权停止。不支持 API、权限被拒、
+// 设备缺失、零数据、解码失败、超限输出均如实 reject。
 const DEFAULT_MAX_RECORDING_MS = 60_000;
 // 与服务端 MAX_AUDIO_BYTES（20MB，/transcribe 413 上限）同口径——
 // 超限的 WAV 不出浏览器，避免构造注定 413 的请求。
@@ -18,15 +22,33 @@ export type WavRecordingOptions = {
   maxDurationMs?: number;
 };
 
-// 模块级当前录音占用：供 stopActiveRecording 手动停止（voice-studio
-// 麦克风按钮在录音期间复用为「停止并提交」）。同一时刻至多一段录音。
+/** 外部提供流的录音选项：音轨所有权显式化。
+ *  ownsTracks 缺省 false = 音轨属调用方（如 LiveKit 已发布音轨），
+ *  录音结束（成功/失败/手动停止/超时）不停轨——所有者负责生命周期；
+ *  true = 本次调用拥有音轨，结束恒停止（与直接 getUserMedia 路径
+ *  同语义）。 */
+export type SuppliedStreamRecordingOptions = WavRecordingOptions & {
+  ownsTracks?: boolean;
+};
+
+// 模块级当前录音占用：供 stopActiveRecording 手动停止（麦克风按钮
+// 在录音期间复用为「停止并提交」）。同一时刻至多一段录音——直接路径
+// 与提供流路径共用同一占用面。
 let activeRecording: { requestStop: () => void } | null = null;
 
 /** 请求停止当前活跃录音（幂等 no-op）：录音照常产出 WAV 并 resolve，
- *  调用方（voice-studio）在 recordAndEncodeWav 的 promise 上继续转写
+ *  调用方在 recordAndEncodeWav(FromStream) 的 promise 上继续转写
  *  提交链。无活跃录音时不做任何事。 */
 export function stopActiveRecording(): void {
   activeRecording?.requestStop();
+}
+
+function requireRecorderSupport(): MediaRecorderConstructor {
+  const RecorderCtor = typeof MediaRecorder === "undefined" ? undefined : MediaRecorder;
+  if (typeof RecorderCtor !== "function") {
+    throw new Error("当前浏览器不支持麦克风录音");
+  }
+  return RecorderCtor as MediaRecorderConstructor;
 }
 
 function requireRecordingSupport(): {
@@ -34,16 +56,12 @@ function requireRecordingSupport(): {
   Recorder: MediaRecorderConstructor;
 } {
   const mediaDevices = typeof navigator === "undefined" ? undefined : navigator.mediaDevices;
-  const RecorderCtor = typeof MediaRecorder === "undefined" ? undefined : MediaRecorder;
-  if (
-    typeof mediaDevices?.getUserMedia !== "function" ||
-    typeof RecorderCtor !== "function"
-  ) {
+  if (typeof mediaDevices?.getUserMedia !== "function") {
     throw new Error("当前浏览器不支持麦克风录音");
   }
   return {
     getUserMedia: (constraints: MediaStreamConstraints) => mediaDevices.getUserMedia(constraints),
-    Recorder: RecorderCtor as MediaRecorderConstructor,
+    Recorder: requireRecorderSupport(),
   };
 }
 
@@ -138,27 +156,26 @@ async function decodeToWavBlob(container: Blob): Promise<Blob> {
   }
 }
 
-/** 录一段麦克风音频并本地编码为非空 WAV（PCM/mono/16-bit）：getUserMedia
- *  → MediaRecorder → 到时或手动停止 → 容器 Blob → Web Audio 解码 →
- *  WAV。成功、失败、手动停止、超时四条路径都清理定时器/监听/音轨/
- *  流/AudioContext。 */
-export async function recordAndEncodeWav(options: WavRecordingOptions = {}): Promise<Blob> {
-  const maxDurationMs = options.maxDurationMs ?? DEFAULT_MAX_RECORDING_MS;
-  const { getUserMedia, Recorder } = requireRecordingSupport();
-  let stream: MediaStream;
-  try {
-    stream = await getUserMedia({ audio: true, video: false });
-  } catch (cause) {
-    throw micAccessError(cause);
-  }
+/** 录音核心（直接路径与提供流路径共用）：对既有流启动 MediaRecorder，
+ *  到时或手动停止后解码编码为 WAV。ownsTracks 决定结束时是否停止
+ *  流上全部音轨（true = 本次调用拥有）。定时器/监听/AudioContext
+ *  四路恒清理；构造失败释放已拥有的资源（supervisor 修正 1 保持）。 */
+async function recordStreamToWav(
+  stream: MediaStream,
+  Recorder: MediaRecorderConstructor,
+  maxDurationMs: number,
+  ownsTracks: boolean,
+): Promise<Blob> {
   const chunks: Blob[] = [];
   let recorder: MediaRecorder;
   try {
     recorder = new Recorder(stream);
   } catch (cause) {
-    // MediaRecorder 构造失败（如流的编码不受支持）——getUserMedia 已
-    // 授予的音轨必须立即释放，不泄漏麦克风占用
-    for (const track of stream.getTracks()) track.stop();
+    // MediaRecorder 构造失败（如流的编码不受支持）——本次调用拥有的
+    // 音轨必须立即释放，不泄漏麦克风占用；调用方拥有的音轨不越权停止
+    if (ownsTracks) {
+      for (const track of stream.getTracks()) track.stop();
+    }
     throw new Error(`无法启动录音：${cause instanceof Error ? cause.message : "录音设备初始化失败"}`);
   }
   const stopped = new Promise<void>((resolve, reject) => {
@@ -191,7 +208,9 @@ export async function recordAndEncodeWav(options: WavRecordingOptions = {}): Pro
     recorder.onstop = null;
     recorder.onerror = null;
     activeRecording = null;
-    for (const track of stream.getTracks()) track.stop();
+    if (ownsTracks) {
+      for (const track of stream.getTracks()) track.stop();
+    }
   }
   const container = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
   if (container.size === 0) {
@@ -199,4 +218,35 @@ export async function recordAndEncodeWav(options: WavRecordingOptions = {}): Pro
     throw new Error("没有录到声音");
   }
   return decodeToWavBlob(container);
+}
+
+/** 录一段麦克风音频并本地编码为非空 WAV（PCM/mono/16-bit）：getUserMedia
+ *  → MediaRecorder → 到时或手动停止 → 容器 Blob → Web Audio 解码 →
+ *  WAV。本路径拥有音轨：成功、失败、手动停止、超时四条路径都停止
+ *  全部音轨并清理定时器/监听/AudioContext（M14-251 行为零改动）。 */
+export async function recordAndEncodeWav(options: WavRecordingOptions = {}): Promise<Blob> {
+  const maxDurationMs = options.maxDurationMs ?? DEFAULT_MAX_RECORDING_MS;
+  const { getUserMedia, Recorder } = requireRecordingSupport();
+  let stream: MediaStream;
+  try {
+    stream = await getUserMedia({ audio: true, video: false });
+  } catch (cause) {
+    throw micAccessError(cause);
+  }
+  return recordStreamToWav(stream, Recorder, maxDurationMs, true);
+}
+
+/** M14-252：对外部提供的流录音并编码为 WAV（不触碰 getUserMedia）。
+ *  LiveKit 已发布音轨的 utterance 采集入口：音轨所有权缺省归调用方
+ *  （ownsTracks=false，录音结束不停轨——LiveKit 控制器仍是所有者），
+ *  ownsTracks=true 时本调用拥有并恒停止。60s 默认上限、20MB 上限、
+ *  PCM/mono/16-bit 编码与全部诚实错误行为与直接路径一致；
+ *  stopActiveRecording 对本入口同样生效（同一模块级占用面）。 */
+export async function recordAndEncodeWavFromStream(
+  stream: MediaStream,
+  options: SuppliedStreamRecordingOptions = {},
+): Promise<Blob> {
+  const maxDurationMs = options.maxDurationMs ?? DEFAULT_MAX_RECORDING_MS;
+  const Recorder = requireRecorderSupport();
+  return recordStreamToWav(stream, Recorder, maxDurationMs, options.ownsTracks ?? false);
 }

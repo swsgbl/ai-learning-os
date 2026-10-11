@@ -13,6 +13,7 @@ import {
   MAX_WAV_BYTES,
   encodeWavMono16,
   recordAndEncodeWav,
+  recordAndEncodeWavFromStream,
   stopActiveRecording,
 } from "./wav-recorder";
 
@@ -40,6 +41,7 @@ type StubRecorder = {
 type RecordingStub = {
   recorders: StubRecorder[];
   tracks: StubTrack[];
+  stream: StubMediaStream;
   getUserMedia: ReturnType<typeof vi.fn>;
   decodeAudioData: ReturnType<typeof vi.fn>;
   close: ReturnType<typeof vi.fn>;
@@ -47,9 +49,10 @@ type RecordingStub = {
 
 /** 装配全套录音环境桩：getUserMedia 默认放行单音轨流；MediaRecorder
  *  stop() 同步触发 onstop（真实浏览器为异步，行为等价）；AudioContext
- *  decodeAudioData 默认解析出单声道 fixture。 */
+ *  decodeAudioData 默认解析出单声道 fixture。supplied=true 时不 stub
+ *  navigator——供「外部提供流」路径实证零 getUserMedia。 */
 function stubRecorderEnvironment(
-  options: { decoded?: AudioBuffer | "reject" } = {},
+  options: { decoded?: AudioBuffer | "reject"; supplied?: boolean } = {},
 ): RecordingStub {
   const recorders: StubRecorder[] = [];
   const tracks: StubTrack[] = [{ stop: vi.fn() }];
@@ -87,10 +90,10 @@ function stubRecorderEnvironment(
   const AudioContextCtor = function () {
     return { decodeAudioData, close };
   };
-  vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
+  if (!options.supplied) vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
   vi.stubGlobal("MediaRecorder", MediaRecorderCtor);
   vi.stubGlobal("AudioContext", AudioContextCtor);
-  return { recorders, tracks, getUserMedia, decodeAudioData, close };
+  return { recorders, tracks, stream, getUserMedia, decodeAudioData, close };
 }
 
 /** AudioBuffer 桩：默认 16kHz 单声道 [0, 0.5, -0.5, 1, -1]。 */
@@ -423,5 +426,88 @@ describe("诚实拒绝（不静默降级、不构造空 WAV）", () => {
     stopActiveRecording();
     await expect(pending).rejects.toThrow("当前环境不支持录音音频解码");
     expect(tracks[0].stop).toHaveBeenCalledTimes(1);
+  });
+});
+
+// --- M14-252：外部提供流的录音（LiveKit 已发布音轨的 utterance 采集） ---
+
+describe("recordAndEncodeWavFromStream：外部提供流录音（音轨所有权显式化）", () => {
+  it("零 getUserMedia：直接以提供的流录制并编码 WAV（容器字节透传解码）", async () => {
+    const stub = stubRecorderEnvironment({ supplied: true });
+    const pending = recordAndEncodeWavFromStream(stub.stream as unknown as MediaStream);
+    await flush();
+    expect(stub.getUserMedia).not.toHaveBeenCalled(); // 全程未触碰 navigator
+    expect(stub.recorders[0].stream).toBe(stub.stream); // recorder 绑定提供的流
+    stub.recorders[0].emitData(new Blob([new Uint8Array([7, 7, 7])], { type: "audio/webm" }));
+    stopActiveRecording();
+    const wav = await pending;
+    expect(wav.type).toBe("audio/wav");
+    expect(wav.size).toBe(44 + 5 * 2);
+    const decodedBytes = new Uint8Array(stub.decodeAudioData.mock.calls[0][0] as ArrayBuffer);
+    expect(decodedBytes).toEqual(new Uint8Array([7, 7, 7]));
+  });
+
+  it("默认所有权属调用方（LiveKit 音轨）：utterance 完成后不停止音轨", async () => {
+    const stub = stubRecorderEnvironment({ supplied: true });
+    const pending = recordAndEncodeWavFromStream(stub.stream as unknown as MediaStream);
+    await flush();
+    stub.recorders[0].emitData(new Blob([new Uint8Array([1])], { type: "audio/webm" }));
+    stopActiveRecording();
+    await pending;
+    expect(stub.tracks[0].stop).not.toHaveBeenCalled(); // 音轨归 LiveKit 控制器所有
+  });
+
+  it("ownsTracks=true：录音结束（含成功路径）恒停止全部音轨（直接路径同语义）", async () => {
+    const stub = stubRecorderEnvironment({ supplied: true });
+    const pending = recordAndEncodeWavFromStream(stub.stream as unknown as MediaStream, {
+      ownsTracks: true,
+    });
+    await flush();
+    stub.recorders[0].emitData(new Blob([new Uint8Array([1])], { type: "audio/webm" }));
+    stopActiveRecording();
+    await pending;
+    expect(stub.tracks[0].stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("ownsTracks=true 失败路径同样停止音轨（解码失败不留活轨）", async () => {
+    const stub = stubRecorderEnvironment({ supplied: true, decoded: "reject" });
+    const pending = recordAndEncodeWavFromStream(stub.stream as unknown as MediaStream, {
+      ownsTracks: true,
+    });
+    await flush();
+    stub.recorders[0].emitData(new Blob([new Uint8Array([1])], { type: "audio/webm" }));
+    stopActiveRecording();
+    await expect(pending).rejects.toThrow("录音解码失败");
+    expect(stub.tracks[0].stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("stopActiveRecording 对提供流录音生效且模块引用复位（二次录音互不干扰）", async () => {
+    const stub = stubRecorderEnvironment({ supplied: true });
+    const first = recordAndEncodeWavFromStream(stub.stream as unknown as MediaStream);
+    await flush();
+    stub.recorders[0].emitData(new Blob([new Uint8Array([1])], { type: "audio/webm" }));
+    stopActiveRecording();
+    await first;
+    expect(stub.recorders[0].stop).toHaveBeenCalledTimes(1);
+    const second = recordAndEncodeWavFromStream(stub.stream as unknown as MediaStream);
+    await flush();
+    stub.recorders[1].emitData(new Blob([new Uint8Array([2])], { type: "audio/webm" }));
+    stopActiveRecording();
+    await second;
+    expect(stub.recorders[0].stop).toHaveBeenCalledTimes(1); // 一段录音只停一次
+    expect(stub.recorders[1].stop).toHaveBeenCalledTimes(1);
+  });
+
+  it("超时自动停止提供流录音：产出有效 WAV 且不停止调用方音轨（默认所有权）", async () => {
+    const stub = stubRecorderEnvironment({ supplied: true });
+    const pending = recordAndEncodeWavFromStream(stub.stream as unknown as MediaStream, {
+      maxDurationMs: 25,
+    });
+    await flush();
+    stub.recorders[0].emitData(new Blob([new Uint8Array([9])], { type: "audio/webm" }));
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    const wav = await pending;
+    expect(wav.size).toBeGreaterThan(44);
+    expect(stub.tracks[0].stop).not.toHaveBeenCalled();
   });
 });
