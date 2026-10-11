@@ -380,7 +380,16 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
   };
 
   return (
-    <div className="space-y-5">
+    // M14-254：非敏感 DOM 契约属性（真实验收 harness 的锚点，零视觉/
+    // 行为变更）——data-voice-studio（根）、data-mic-phase（当前麦克风
+    // 阶段四态）、data-voice-session-id（权威 session_id，UUID 形态）。
+    // 永不经由这些属性暴露 token/ws_url JWT/identity 或控制器内部。
+    <div
+      className="space-y-5"
+      data-voice-studio
+      data-mic-phase={micPhase}
+      data-voice-session-id={view.session.session_id}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <p className="text-xs text-muted">语音陪练 · 服务端权威会话</p>
