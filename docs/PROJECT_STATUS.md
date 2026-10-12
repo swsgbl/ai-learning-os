@@ -120,11 +120,76 @@ M14-255 全部安全/生命周期语义保持（20 项迁移 + 25 项 runtime
 契约 + RED 抽查）；**fake-only 验证，零真实网络/服务**，无
 FastAPI 接线、无 ASR/VAD/barge-in/pause-resume，计数不变
 implemented 60 / partial 3）。
+
+**2026-10-12 M14-257 交付 FastAPI 独立语音运行时管理器
+（fake-only）**（新增域模块 voice_runtime_manager.py——
+ManagedSubscriberLike async-native 最小协议（start/stop/state）、
+validate_key 不透明键严格校验（strip 规范/无控制字符/≤128，绝不
+解释为路径或 URL）、VoiceRuntimeManager 显式构造注册表（容量在
+factory 构造之前检查、并发同键恰一实例、失败零残留、stop 幂等
+确定性、fail-closed 清理失败绝不显示 active、白名单+截断+JWT
+正则纵深净化的有界 snapshot；零全局态/零 asyncio.run/线程桥）；
+36 项 fake-only 契约测试（含四项 RED 抽查与真实
+ServerVoiceSubscriber 集成式验证；supervisor R1 四项修正——容量
+预留含 pending、停止覆盖 pending 键、取消不破坏去重、异常链
+抑制——已 amend）；**无 FastAPI 接线/无端点变更/零真实网络**，
+计数不变 implemented 60 / partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-257 FastAPI 独立语音运行时管理器（fake-only；R1 修正后定稿）**
+worktree `ai-learning-os-worktrees/m14-257-voice-runtime-manager`，
+分支 `api/m14-257-voice-runtime-manager`，基于 current main
+`31d67a65`（PR #343 merge，即 M14-256）。动因：M14-256 交付了
+订阅控制器与 runtime 适配层，但缺少显式所有者为未来 API lifespan
+管理订阅者生命周期作用域。本切片交付 **FastAPI 独立**的管理器/
+注册表——**fake-only：不连接 LiveKit、不接 FastAPI startup/
+lifespan、不新增/改动任何 HTTP 路由、不做流式 ASR/VAD/barge-in/
+pause-resume**。交付：新增域模块 `voice_runtime_manager.py`——
+①`ManagedSubscriberLike` 协议（async-native 最小生命周期面：
+async start/stop + 已净化有界 state()；不要求继承
+ServerVoiceSubscriber，管理器不暴露房间/token/流内部）；②
+`validate_key`（不透明键严格校验：非空 strip 规范、无控制字符
+（<0x20/0x7F）、≤128；" a " 与 "a" 同键；绝不解释为路径/
+URL）；③`VoiceRuntimeManager` 显式构造注册表（构造注入正数
+容量与每订阅者投影事件上限；零全局态/零 asyncio.run/嵌套循环/
+线程/进程池——文本契约锁定）：`start(key, factory)` 每键至多一
+实例——并发/重复调用经 `_starting` 任务复用首次结果（factory
+恰一次）、**容量在 factory 构造之前检查**（满载零构造零注册）、
+factory/start 失败零注册残留（start 失败先尽力 stop 再抛通用
+净化错误，异常文本绝不透传）、在册终态键拒绝重启（绝不静默
+替换）；`stop(key)` 成功即移除条目（释放容量）、幂等（未知键
+no-op）、订阅者 stop 抛错时条目仍移除（fail-closed：清理状态
+未知绝不显示 active）并抛通用错误；`stop_all()` 键排序确定性
+遍历、单项失败不阻断其余（{stopped,failed} 计数）；`snapshot()`
+白名单键投影（status/room/identity/audio_track_count/audio_
+track_ids/event_count + events 截断）——任意非法键（异常文本/
+凭据/帧字段）在投影处丢弃，字符串值再过 JWT 正则（纵深防御，
+脏 fake 实证）。voice_subscription/voice_runtime/voice_tokens/
+voice.py 全部零触碰。新增 test_voice_runtime_manager.py **36 项
+fake-only 契约测试**（键校验 9 组参数化/容量前置（RED 抽查 A）/
+注册投影与截断/并发去重恰一实例（RED 抽查 B）/独立键/factory
+与 start 失败零残留/stop 幂等与 stop_all 容错/终态拒绝重启/
+脏投影净化/async-native 纪律文本契约/真实 ServerVoiceSubscriber
+集成式（结构等价迷你 harness——订阅者行为已由其 21 项锁定，
+此处只验管理面与真实 state 键域契合））。**supervisor R1 四项
+修正（amend 回原提交）**：①容量预留含进行中启动（并发不同键
+max=1 下恰一幸存，另一在构造前拒）；②stop/stop_all 覆盖 pending
+键（等待启动落定再停/移除；启动自清失败则 stop no-op）；③
+_starting 归属清理由启动任务完成回调负责 + 调用方 shield——取消
+不破坏同键去重（回调兼消费任务异常防 unobserved）；④包装错误
+一律 from None——__cause__/traceback 零异常文本外泄；新增 6 项
+R1 聚焦测试（30→36，四项 RED→GREEN 实证）。验证与结果
+（focused 36 passed、五文件合计 128 passed、ruff changed 路径
+All checks passed、git diff --check 干净、新增行 0 secret/0
+私有路径/0 U+FFFD/0 readiness 置 true）见
+`docs/evidence/m14-257-voice-runtime-manager/README.md`。单本地
+commit，不 push、不开 PR、不合并。
+
+### 前一任务快照（M14-256 LiveKit Python runtime 适配层——详见 docs/evidence/m14-256-livekit-runtime-adapter/README.md；本切片不改写、不弱化该证据）
 
 **M14-256 LiveKit Python runtime 适配层（async-native，fake-only）**
 worktree `ai-learning-os-worktrees/m14-256-livekit-runtime-adapter`，
