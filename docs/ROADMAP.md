@@ -85,6 +85,20 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-258 状态更新（语音运行时管理器关闭/排空边界——fake-only 验证）
+
+- 基于 current main `32c8715a`（PR #344 merge，即 M14-257）实施：
+  为未来 lifespan 关停预置安全关闭/排空边界。
+- `voice_runtime_manager.py` 保守扩展：显式 open/draining/closed
+  状态；start() 排空/关闭屏障（构造之前拒绝，closed 永拒）；
+  stop_all() 排空屏障（共享排空任务并发去重、含 pending、finally
+  恢复、完成回 open）；close() 永久终态（即刻生效、幂等、并发
+  去重、确定性排空、无重开）。订阅者/适配层/路由零触碰。
+- 新增 8 项聚焦测试（44 项合计，36 基线零回归；三项 RED 抽查）；
+  五文件合计 136 passed。**fake-only：无 FastAPI/lifespan/HTTP/
+  settings/容器/调度器变更，零真实网络**；不声明缺口 3/M4-09
+  关闭，计数不变；production_ready=false / release_ready=false /
+  public_ready=false 不变。
 ### M14-257 状态更新（FastAPI 独立语音运行时管理器——fake-only 验证）
 
 - 基于 current main `31d67a65`（PR #343 merge，即 M14-256）实施：

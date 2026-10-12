@@ -725,3 +725,175 @@ def test_manager_error_chain_sanitized_r1() -> None:
         assert_sanitized(stop_error.value)
 
     run(scenario())
+
+
+# ---------- M14-258：关闭/排空边界（fake-only） ----------
+
+
+def test_stop_all_barrier_rejects_new_start_before_factory() -> None:
+    """stop_all 进行中（慢启动排空）：并发新 start 在 factory 构造之前被拒，
+    pending 产物仍被排空清理。"""
+    manager = VoiceRuntimeManager(max_subscribers=4)
+    slow_factory, slow_sub = make_factory(start_delay=0.03)
+    new_factory, _ = make_factory()
+
+    async def scenario() -> None:
+        asyncio.ensure_future(manager.start("k-slow", slow_factory))
+        await asyncio.sleep(0.005)  # k-slow 进入 pending
+        stop_all_task = asyncio.ensure_future(manager.stop_all())
+        await asyncio.sleep(0.001)  # stop_all 已置屏障
+        with pytest.raises(VoiceRuntimeManagerError, match="正在排空"):
+            await manager.start("k-new", new_factory)
+        assert new_factory.calls == 0  # 拒绝发生在构造之前
+        outcome = await stop_all_task
+        assert outcome == {"stopped": 1, "failed": 0}
+        assert slow_sub.stop_calls == 1  # pending 产物被排空
+        assert manager.snapshot()["subscriber_count"] == 0
+
+    run(scenario())
+
+
+def test_stop_all_restores_open_state_after_completion() -> None:
+    """正常 stop_all 完成后回 open——管理器仍可接受新启动。"""
+    manager = VoiceRuntimeManager()
+    factory, _ = make_factory()
+
+    async def scenario() -> None:
+        await manager.start("k", factory)
+        assert manager.snapshot()["state"] == "open"
+        await manager.stop_all()
+        assert manager.snapshot()["state"] == "open"
+        await manager.start("k", factory)  # 仍可重新启动
+        assert factory.calls == 2
+
+    run(scenario())
+
+
+def test_close_waits_pending_stops_product_and_closes() -> None:
+    """close 期间有 pending 启动：等待其落定、停掉产物、移除、终态 closed。"""
+    manager = VoiceRuntimeManager()
+    factory, subscriber = make_factory(start_delay=0.03)
+
+    async def scenario() -> None:
+        asyncio.ensure_future(manager.start("k", factory))
+        await asyncio.sleep(0.005)
+        assert manager.snapshot()["state"] == "open"
+        outcome = await manager.close()
+        assert outcome == {"stopped": 1, "failed": 0}
+        assert subscriber.stop_calls == 1  # 产物被停
+        assert manager.snapshot()["subscriber_count"] == 0
+        assert manager.snapshot()["state"] == "closed"
+
+    run(scenario())
+
+
+def test_close_is_permanently_terminal_and_idempotent() -> None:
+    """close 永久终态：后续 start 在 factory 构造之前永拒；重复 close no-op。"""
+    manager = VoiceRuntimeManager()
+    factory, subscriber = make_factory()
+    later_factory, later_sub = make_factory()
+
+    async def scenario() -> None:
+        await manager.start("k", factory)
+        first = await manager.close()
+        assert first == {"stopped": 1, "failed": 0}
+        assert subscriber.stop_calls == 1
+        with pytest.raises(VoiceRuntimeManagerError, match="已关闭"):
+            await manager.start("k2", later_factory)
+        assert later_factory.calls == 0  # 拒绝在构造之前
+        assert later_sub.start_calls == 0
+        second = await manager.close()  # 幂等 no-op
+        assert second == {"stopped": 1, "failed": 0}
+        assert subscriber.stop_calls == 1  # 绝不双停
+        assert manager.snapshot()["state"] == "closed"
+
+    run(scenario())
+
+
+def test_concurrent_close_calls_do_not_double_stop() -> None:
+    """并发 close 共享同一排空任务——订阅者 stop 恰一次、结果一致。"""
+    manager = VoiceRuntimeManager()
+    factory, subscriber = make_factory(start_delay=0.02)
+
+    async def scenario() -> None:
+        asyncio.ensure_future(manager.start("k", factory))
+        await asyncio.sleep(0.005)
+        first, second, third = await asyncio.gather(
+            manager.close(), manager.close(), manager.close()
+        )
+        assert first == second == third == {"stopped": 1, "failed": 0}
+        assert subscriber.stop_calls == 1  # 恰一次停止
+        assert manager.snapshot()["state"] == "closed"
+
+    run(scenario())
+
+
+def test_close_continues_after_single_stop_failure() -> None:
+    """close 中单项停止失败：其余条目仍被停/移除，结果为有界确定性计数。"""
+    manager = VoiceRuntimeManager(max_subscribers=4)
+    factory_a, sub_a = make_factory()
+    factory_bad, _ = make_factory(stop_raises=True)  # 异常消息携带 JWT 形态
+    factory_c, sub_c = make_factory()
+
+    async def scenario() -> None:
+        await manager.start("k-a", factory_a)
+        await manager.start("k-bad", factory_bad)
+        await manager.start("k-c", factory_c)
+        outcome = await manager.close()
+        assert outcome == {"stopped": 2, "failed": 1}
+        assert sub_a.stop_calls == 1 and sub_c.stop_calls == 1
+        assert manager.snapshot()["subscriber_count"] == 0  # 全部移除
+        assert manager.snapshot()["state"] == "closed"
+        # 排空结果是纯计数——无异常文本/token 形态
+        assert FAKE_JWT not in repr(outcome) and JWT_RE.search(repr(outcome)) is None
+
+    run(scenario())
+
+
+def test_snapshot_exposes_lifecycle_state_without_internals() -> None:
+    """snapshot 暴露 open/draining/closed 显式状态且不含订阅者内部对象。"""
+    manager = VoiceRuntimeManager()
+    factory, _ = make_factory(start_delay=0.05)
+
+    async def scenario() -> None:
+        assert manager.snapshot()["state"] == "open"
+        asyncio.ensure_future(manager.start("k", factory))
+        await asyncio.sleep(0.005)
+        drain_task = asyncio.ensure_future(manager.stop_all())
+        await asyncio.sleep(0.001)
+        mid = manager.snapshot()
+        assert mid["state"] == "draining"
+        assert not any(
+            isinstance(value, FakeSubscriber)
+            for value in mid.values()
+        )
+        await drain_task
+        assert manager.snapshot()["state"] == "open"
+        await manager.close()
+        assert manager.snapshot()["state"] == "closed"
+
+    run(scenario())
+
+
+def test_shutdown_errors_and_states_sanitized() -> None:
+    """排空/关闭面的错误与投影零泄漏：draining/closed 拒绝消息与 close
+    结果不含订阅者异常文本/token 形态（stop 抛错消息携带 FAKE_JWT）。"""
+    manager = VoiceRuntimeManager()
+    bad_factory, _ = make_factory(stop_raises=True)
+
+    async def scenario() -> None:
+        await manager.start("k-bad", bad_factory)
+        outcome = await manager.close()
+        assert outcome == {"stopped": 0, "failed": 1}
+        serialized = repr(outcome) + repr(manager.snapshot())
+        assert FAKE_JWT not in serialized
+        assert JWT_RE.search(serialized) is None
+        try:
+            await manager.start("k-after", make_factory()[0])
+        except VoiceRuntimeManagerError as error:
+            assert error.__cause__ is None
+            assert FAKE_JWT not in str(error)
+        else:
+            pytest.fail("closed 后 start 应拒绝")
+
+    run(scenario())
