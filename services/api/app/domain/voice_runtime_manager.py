@@ -1,9 +1,15 @@
 """M14-257：FastAPI 独立的语音运行时管理器/注册表（fake-only 验证）。
 
+M14-258：补上安全的关闭/排空边界——`close()` 永久终态（幂等、
+并发去重、排空全部条目与进行中启动、单项清理失败不阻断其余、
+无重开操作）；`stop_all()` 成为排空屏障（进行中拒绝新启动、
+含 pending 键、正常完成后管理器仍可接受新启动、清理抛错时
+屏障状态在 finally 中恢复）；snapshot 暴露 open/draining/closed
+显式状态。**仍为 fake-only、FastAPI 独立**——不连接 LiveKit、
+不接 lifespan/HTTP 路由、不做流式 ASR/VAD/barge-in/pause-resume。
+
 为后续 API lifespan 接线预置的显式所有者：有界地管理一个或多个
-`ServerVoiceSubscriber` 形态的运行时对象的生命周期作用域。**本切片
-fake-only**——不连接 LiveKit、不接 FastAPI startup/lifespan、不新增/
-改动任何 HTTP 路由；不做流式 ASR/VAD/barge-in/pause-resume。
+`ServerVoiceSubscriber` 形态的运行时对象的生命周期作用域。
 
 设计契约：
 - **显式构造、零全局态**：管理器由调用方显式构造（未来 lifespan 拥有
@@ -27,6 +33,12 @@ fake-only**——不连接 LiveKit、不接 FastAPI startup/lifespan、不新增
   抛错时同样移除条目（fail-closed：清理状态未知绝不继续显示
   active）并向调用方抛通用错误；`stop_all()` 覆盖注册条目 ∪
   进行中启动键，按键排序确定性遍历，单项失败不阻断其余清理。
+- **关闭/排空边界（M14-258）**：排空进行中（stop_all/close）新
+  `start()` 在 factory 构造之前拒绝；`close()` 一经开始即终态
+  （后续 start 永拒、close 幂等且并发去重——共享同一排空任务，
+  绝不双停资源）、排空覆盖 pending、无重开操作；`stop_all()`
+  正常完成后回到 open（仍可接受新启动）、清理抛错时屏障标志在
+  finally 恢复。
 - **异常链抑制**（R1 修正 4）：包装订阅者/factory 异常的管理器
   错误一律 `from None`——__cause__/__context__/traceback 序列化
   均不含原始异常文本（通用净化消息唯一出口）。
@@ -35,7 +47,7 @@ fake-only**——不连接 LiveKit、不接 FastAPI startup/lifespan、不新增
   event_count/events），events 再截断到构造注入的上限；全部字符串
   值经 JWT 形态正则替换（纵深防御——即使订阅者实现失误，token
   形态也进不了公开投影）；无原始帧、无凭据、无异常文本、无无界
-  历史。
+  历史；总投影含显式 open/draining/closed 状态。
 """
 from __future__ import annotations
 
@@ -50,6 +62,11 @@ KEY_MAX_LENGTH = 128
 DEFAULT_MAX_EVENTS_PER_SUBSCRIBER = 16
 #: 默认容量（构造可注入；必须为正）。
 DEFAULT_MAX_SUBSCRIBERS = 8
+
+#: 管理器显式生命周期状态（snapshot 的 state 字段）。
+STATE_OPEN = "open"
+STATE_DRAINING = "draining"
+STATE_CLOSED = "closed"
 
 #: JWT 三段形态（与验收 harness 同口径）：投影字符串的纵深脱敏。
 _JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}")
@@ -76,6 +93,8 @@ _MESSAGE_START_FAILED = "订阅者启动失败（已尽力清理，无注册残�
 _MESSAGE_TERMINAL_RESTART = "该键的订阅者已终态，拒绝重启（请使用新键）"
 _MESSAGE_CONCURRENT_START_FAILED = "同键并发启动失败（无注册残留）"
 _MESSAGE_STOP_FAILED = "订阅者停止清理失败（条目已移除，状态不再显示 active）"
+_MESSAGE_DRAINING = "管理器正在排空（stop_all/close 进行中），拒绝新启动（在构造之前拒绝）"
+_MESSAGE_CLOSED = "管理器已关闭（永久终态），拒绝新启动"
 
 
 class VoiceRuntimeManagerError(RuntimeError):
@@ -162,6 +181,14 @@ class VoiceRuntimeManager:
         self._max_events = max_events_per_subscriber
         self._entries: dict[str, _Entry] = {}
         self._starting: dict[str, asyncio.Future[dict[str, Any]]] = {}
+        # M14-258 关闭/排空边界：_draining 屏障（stop_all 进行中）、
+        # _closed 永久终态（close 一经开始即置位）、_drain_task 共享
+        # 排空任务（close/stop_all 并发去重——绝不双停）、
+        # _close_outcome 关闭结果记录（重复 close 的幂等返回面）。
+        self._draining = False
+        self._closed = False
+        self._drain_task: asyncio.Future[dict[str, int]] | None = None
+        self._close_outcome: dict[str, int] | None = None
 
     # --- 投影（白名单 + 截断 + 深度净化） ---
 
@@ -179,9 +206,10 @@ class VoiceRuntimeManager:
         return projection
 
     def snapshot(self) -> dict[str, Any]:
-        """有界净化总投影：条目计数 + 每订阅者白名单投影（键排序确定）。"""
+        """有界净化总投影：显式生命周期状态 + 条目计数 + 白名单投影。"""
         keys = sorted(self._entries)
         return {
+            "state": self._lifecycle_state(),
             "subscriber_count": len(self._entries),
             "max_subscribers": self._max_subscribers,
             "keys": keys,
@@ -189,6 +217,14 @@ class VoiceRuntimeManager:
                 self._project(key, self._entries[key].subscriber) for key in keys
             ],
         }
+
+    def _lifecycle_state(self) -> str:
+        """显式生命周期状态：closed（close 一经开始即终态）> draining > open。"""
+        if self._closed:
+            return STATE_CLOSED
+        if self._draining:
+            return STATE_DRAINING
+        return STATE_OPEN
 
     # --- 生命周期 ---
 
@@ -202,6 +238,12 @@ class VoiceRuntimeManager:
         归属清理由任务自身的完成回调负责）。返回净化有界投影。
         """
         canonical = validate_key(key)
+        # M14-258 排空/关闭屏障：一经开始即在新 factory 构造之前拒绝
+        # 新启动（close 为永久终态；stop_all 进行中为临时屏障）
+        if self._closed:
+            raise VoiceRuntimeManagerError(_MESSAGE_CLOSED)
+        if self._draining:
+            raise VoiceRuntimeManagerError(_MESSAGE_DRAINING)
         if canonical in self._entries:
             entry = self._entries[canonical]
             if str(entry.subscriber.state().get("status", "")) in _TERMINAL_STATUSES:
@@ -277,21 +319,70 @@ class VoiceRuntimeManager:
             raise VoiceRuntimeManagerError(_MESSAGE_STOP_FAILED) from None
 
     async def stop_all(self) -> dict[str, int]:
-        """按键排序确定性停止全部条目与进行中的启动；单项失败不阻断。
+        """排空屏障：按键排序确定性停止全部条目与进行中的启动。
 
-        R1 修正 2：覆盖面 = 注册条目 ∪ 进行中启动键——pending 键经
-        stop(key) 等待落定后同样清理。
+        M14-258：进行中（含并发 stop_all/close 共享同一排空任务——
+        绝不双停）新 `start()` 在 factory 构造之前拒绝；正常完成后
+        回到 open（未 close 时仍可接受新启动）；清理抛错时屏障标志
+        在 finally 恢复。已关闭时返回关闭时的排空结果（no-op）。
         返回 {stopped: 成功数, failed: 清理失败数}（计数非文本）。
         """
+        if self._closed:
+            return dict(self._close_outcome or {"stopped": 0, "failed": 0})
+        if self._drain_task is not None:
+            return await asyncio.shield(self._drain_task)
+        self._draining = True
+        task = asyncio.ensure_future(self._drain())
+        self._drain_task = task
+        task.add_done_callback(lambda done: self._on_drain_done(done))
+        # 调用方取消只解除自身等待——排空任务与归属清理由
+        # _on_drain_done 负责（与 start 去重同构，R1 修正 3）
+        return await asyncio.shield(task)
+
+    async def close(self) -> dict[str, int]:
+        """永久关闭（终态、幂等、并发去重）。
+
+        一经开始即 `_closed=True`：后续 `start()` 永拒（在 factory
+        构造之前）；并发/重复 close 共享同一排空任务（绝不双停），
+        完成后返回排空结果 {stopped, failed}（无重开操作）。
+        """
+        if self._closed and self._drain_task is None:
+            return dict(self._close_outcome or {"stopped": 0, "failed": 0})  # 幂等 no-op
+        if self._drain_task is not None:
+            # 与进行中的 stop_all/close 共享同一排空（close 语义更严：
+            # 立即终态——等待共享排空完成后记为关闭）
+            self._closed = True
+            return await asyncio.shield(self._drain_task)
+        self._closed = True  # 立即终态：屏障先于任何 await 生效
+        self._draining = True
+        task = asyncio.ensure_future(self._drain())
+        self._drain_task = task
+        task.add_done_callback(lambda done: self._on_drain_done(done))
+        return await asyncio.shield(task)
+
+    async def _drain(self) -> dict[str, int]:
+        """确定性排空：注册条目 ∪ 进行中启动键，排序遍历，单项失败不阻断。"""
         stopped = 0
         failed = 0
-        for key in sorted(set(self._entries) | set(self._starting)):
-            try:
-                await self.stop(key)
-                stopped += 1
-            except VoiceRuntimeManagerError:
-                failed += 1  # 条目已被 stop() 移除（fail-closed），继续其余
+        try:
+            for key in sorted(set(self._entries) | set(self._starting)):
+                try:
+                    await self.stop(key)
+                    stopped += 1
+                except VoiceRuntimeManagerError:
+                    failed += 1  # 条目已被 stop() 移除（fail-closed），继续其余
+        finally:
+            # 屏障状态恢复：close 保持终态；stop_all 排空后回 open
+            self._draining = False
         return {"stopped": stopped, "failed": failed}
+
+    def _on_drain_done(self, task: asyncio.Future[dict[str, int]]) -> None:
+        """排空任务归属清理：清映射 + （已关闭时）记录结果 + 消费异常。"""
+        self._drain_task = None
+        if not task.cancelled():
+            task.exception()  # 消费（防 unobserved）；_drain 自身不抛
+            if self._closed:
+                self._close_outcome = task.result()
 
     async def _best_effort_stop(self, subscriber: ManagedSubscriberLike) -> None:
         try:
@@ -304,6 +395,9 @@ __all__ = [
     "DEFAULT_MAX_EVENTS_PER_SUBSCRIBER",
     "DEFAULT_MAX_SUBSCRIBERS",
     "KEY_MAX_LENGTH",
+    "STATE_CLOSED",
+    "STATE_DRAINING",
+    "STATE_OPEN",
     "ManagedSubscriberLike",
     "VoiceRuntimeManager",
     "VoiceRuntimeManagerError",

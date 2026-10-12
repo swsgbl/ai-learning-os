@@ -1,4 +1,56 @@
 # Changelog
+## M14-258 — 语音运行时管理器关闭/排空边界（fake-only；无 lifespan/路由接线）
+
+- 动因：M14-257 的显式管理器缺少安全关闭/排空边界——未来 API
+  lifespan 关停需要「排空中拒绝新启动、pending 一并排空、永久
+  关闭终态幂等」的确定性语义。本切片在 voice_runtime_manager.py
+  上**保守扩展**（订阅者控制器/LiveKit 适配层/HTTP 路由零触碰）。
+  **fake-only：不连接 LiveKit、不接 FastAPI startup/lifespan、
+  不新增/改动任何 HTTP 路由、不做流式 ASR/VAD/barge-in/
+  pause-resume、不声明 M4-09 或缺口 3 关闭。**
+- **显式生命周期状态**：`STATE_OPEN/STATE_DRAINING/STATE_CLOSED`
+  + `snapshot()["state"]`（closed 一经开始即报——诚实终态，
+  优先级 closed>draining>open）。
+- **start() 排空/关闭屏障**：键校验后、任何 entries/starting
+  查询与 factory 构造之前检查——`_closed` 永拒（「管理器已关闭
+  （永久终态），拒绝新启动」）、`_draining` 临时拒（「管理器
+  正在排空（stop_all/close 进行中），拒绝新启动（在构造之前
+  拒绝）」）；屏障先于任何 await 生效（单线程事件循环无竞态）。
+- **stop_all() 排空屏障**：置 draining → 共享排空任务
+  （`_drain_task` + `asyncio.shield`——并发 stop_all/close 去重
+  绝不双停，调用方取消只解除自身等待）→ 键排序遍历
+  `entries ∪ starting`（pending 经 stop(key) 等待落定后清理）→
+  **finally 恢复屏障**（清理抛错不卡 draining）；正常完成回
+  open——仍可接受新启动。
+- **close() 永久终态**：入口立即 `_closed=True`（屏障即刻生效）
+  → 与进行中 stop_all 共享排空或新建 → `_on_drain_done` 归属
+  清理（清映射 + 已关闭时记录 `_close_outcome` + 消费任务异常
+  防 unobserved）。**幂等**（重复 close 返回记录结果，绝不重
+  排空双停）；**并发去重**（三路 gather 共享一任务、订阅者
+  stop 恰一次）；**无重开操作**。
+- **确定性清理**：排空单项 stop 失败计数继续（fail-closed 条目
+  仍移除）；结果恒纯计数 `{stopped, failed}`；关闭面错误与
+  投影零泄漏（异常链 from None、白名单+JWT 正则投影保持）。
+- M14-257 全语义保持：不透明键校验、容量含进行中预留、同键
+  并发/取消调用方去重、pending-start 停止语义、有界净化投影。
+- 新增 8 项 M14-258 聚焦测试（**44 项合计**，36 基线零回归）：
+  stop_all 屏障拒构造（新工厂调用计数 0）/屏障恢复 open/close
+  含 pending（等待落定停产物移除）/close 永久终态幂等（重复
+  close no-op 绝不双停）/并发 close 去重（订阅者 stop 恰一次）/
+  close 单项失败容错（其余照常停止移除、纯计数结果）/状态
+  序列 open→draining→open→closed 全可见/关闭面净化（outcome
+  与 snapshot 无 JWT 形态、拒绝错误 __cause__ 为 None）。三项
+  RED 抽查：移除屏障块→3 项失败；移除 close 幂等守卫→终态
+  测试失败；移除 finally 恢复→open 恢复测试失败；恢复后全绿。
+- 验证：focused **44 passed**；五文件（subscription/runtime/
+  manager/tokens/providers）合计 **136 passed** 零回归；ruff
+  （changed 路径）All checks passed；`git diff --check` 干净。
+- **诚实边界：fake-only 关闭/排空验证——零真实网络、零真实
+  LiveKit 连接、无 FastAPI startup/lifespan/HTTP 路由/settings/
+  容器/调度器变更、无流式 ASR/VAD/barge-in/pause-resume**；
+  未启停任何生产/运行时服务，未读/未存真实 secret（测试 JWT
+  均为合成假值）；矩阵计数不变 implemented 60 / partial 3；
+  `production_ready`/`release_ready`/`public_ready` 均 false 不变。
 ## M14-257 — FastAPI 独立语音运行时管理器（fake-only；无 lifespan/路由接线）
 
 - 动因：M14-256 交付了订阅控制器与 runtime 适配层，但缺少显式

@@ -134,11 +134,62 @@ ServerVoiceSubscriber 集成式验证；supervisor R1 四项修正——容量
 预留含 pending、停止覆盖 pending 键、取消不破坏去重、异常链
 抑制——已 amend）；**无 FastAPI 接线/无端点变更/零真实网络**，
 计数不变 implemented 60 / partial 3）。
+
+**2026-10-13 M14-258 交付管理器关闭/排空边界（fake-only）**
+（voice_runtime_manager 保守扩展——显式 open/draining/closed
+生命周期状态；start() 排空/关闭屏障（factory 构造之前拒绝，
+closed 永拒、draining 临时拒）；stop_all() 排空屏障（共享排空
+任务并发去重绝不双停、含 pending 键、finally 恢复屏障、正常
+完成回 open）；close() 永久终态（入口即刻生效、幂等、并发去重、
+确定性排空、无重开）；订阅者控制器/适配层/路由零触碰；44 项
+fake-only 测试（36 基线零回归 + 8 新增，三项 RED 抽查）——
+零真实网络/无 FastAPI 接线，计数不变 implemented 60 / partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-258 语音运行时管理器关闭/排空边界（fake-only）**
+worktree `ai-learning-os-worktrees/m14-258-voice-runtime-shutdown`，
+分支 `api/m14-258-voice-runtime-shutdown`，基于 current main
+`32c8715a`（PR #344 merge，即 M14-257）。动因：M14-257 的显式
+管理器缺少安全关闭/排空边界——未来 lifespan 关停需要「排空中
+拒绝新启动、pending 一并排空、永久关闭终态幂等」。本切片在
+voice_runtime_manager.py 上**保守扩展**（订阅者控制器/LiveKit
+适配层/路由零触碰），**fake-only、FastAPI 独立**：不连接
+LiveKit、不接 lifespan/HTTP 路由、不做流式 ASR/VAD/barge-in/
+pause-resume。交付：①显式生命周期状态（STATE_OPEN/DRAINING/
+CLOSED + snapshot()["state"]，close 一经开始即报 closed——
+诚实终态优先级 closed>draining>open）；②start() 排空/关闭
+屏障——键校验后、任何查询与 factory 构造之前检查（closed 永拒
+「管理器已关闭（永久终态），拒绝新启动」、draining 临时拒
+「管理器正在排空…在构造之前拒绝」；屏障先于任何 await 生效）；
+③stop_all() 排空屏障——置 draining → 共享排空任务（_drain_
+task + asyncio.shield：并发 stop_all/close 去重绝不双停，调用方
+取消只解除自身等待）→ 键排序遍历 entries∪starting（pending 经
+stop(key) 等待落定后清理）→ finally 恢复屏障（清理抛错不卡
+draining）；正常完成回 open 仍可新启动；④close() 永久终态——
+入口立即 _closed=True（屏障即刻生效）→ 与进行中 stop_all 共享
+排空或新建 → _on_drain_done 归属清理（清映射 + 已关闭时记录
+_close_outcome + 消费任务异常防 unobserved）；幂等（重复 close
+返回记录结果 no-op，绝不重排空双停）；并发去重（三路 gather
+共享一任务、订阅者 stop 恰一次）；无重开操作；⑤排空单项失败
+计数继续（fail-closed 条目仍移除），结果恒纯计数 {stopped,
+failed}；⑥M14-257 全语义保持（不透明键/容量含预留/同键取消
+去重/pending 停止/白名单截断 JWT 正则投影/异常链 from None）。
+新增 8 项 M14-258 聚焦测试（44 项合计：36 基线零回归 + 8 新增
+——stop_all 屏障拒构造/屏障恢复 open/close 含 pending/close
+永久终态幂等/并发 close 不双停/close 单项失败容错/状态序列
+open→draining→open→closed/关闭面净化；三项 RED 抽查：移除
+屏障块、移除 close 幂等守卫、移除 finally 恢复各即对应测试
+失败）。验证与结果（focused 44 passed、五文件合计 136 passed、
+ruff changed 路径 All checks passed、git diff --check 干净、
+新增行 0 secret/0 私有路径/0 U+FFFD/0 readiness 置 true）见
+`docs/evidence/m14-258-voice-runtime-shutdown/README.md`。单本地
+commit，不 push、不开 PR、不合并。
+
+### 前一任务快照（M14-257 FastAPI 独立语音运行时管理器——详见 docs/evidence/m14-257-voice-runtime-manager/README.md；本切片不改写、不弱化该证据）
 
 **M14-257 FastAPI 独立语音运行时管理器（fake-only；R1 修正后定稿）**
 worktree `ai-learning-os-worktrees/m14-257-voice-runtime-manager`，
