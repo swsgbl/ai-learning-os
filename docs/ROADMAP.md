@@ -85,6 +85,24 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-257 状态更新（FastAPI 独立语音运行时管理器——fake-only 验证）
+
+- 基于 current main `31d67a65`（PR #343 merge，即 M14-256）实施：
+  为未来 API lifespan 预置显式所有者——有界管理订阅者生命周期。
+- 新增 `voice_runtime_manager.py`：ManagedSubscriberLike async
+  协议（start/stop/state）、validate_key 不透明键校验、
+  VoiceRuntimeManager 显式构造注册表（容量前置、并发同键恰一
+  实例、失败零残留、stop 幂等确定性容错、fail-closed、白名单+
+  截断+JWT 正则净化的有界 snapshot；零全局态/零线程桥）。
+- 新增 36 项 fake-only 契约测试（含四项 RED 抽查与真实
+  ServerVoiceSubscriber 集成式；supervisor R1 四项修正——容量
+  预留含 pending、stop/stop_all 覆盖 pending 键、任务归属去重
+  （取消不破坏）+ shield、异常链 from None 抑制——amend 回原
+  提交）；五文件合计 128 passed 零回归。
+  **fake-only：无 FastAPI startup/lifespan/HTTP 路由/启动钩子/
+  settings/容器/调度器变更，零真实网络**；不声明缺口 3/M4-09
+  关闭，计数不变；production_ready=false / release_ready=false /
+  public_ready=false 不变。
 ### M14-256 状态更新（LiveKit Python runtime 适配层——async-native，fake-only 验证）
 
 - 基于 current main `b3e66222`（PR #342 merge，即 M14-255）实施：

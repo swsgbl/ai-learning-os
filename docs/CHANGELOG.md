@@ -1,4 +1,59 @@
 # Changelog
+## M14-257 — FastAPI 独立语音运行时管理器（fake-only；无 lifespan/路由接线）
+
+- 动因：M14-256 交付了订阅控制器与 runtime 适配层，但缺少显式
+  所有者为未来 API lifespan 管理订阅者生命周期作用域。本切片
+  交付 **FastAPI 独立**的管理器/注册表并用 fake 全覆盖。**不
+  连接 LiveKit、不接 FastAPI startup/lifespan、不新增/改动任何
+  HTTP 路由、不做流式 ASR/VAD/barge-in/pause-resume、不声明
+  M4-09 或缺口 3 关闭。**
+- 新增 `services/api/app/domain/voice_runtime_manager.py`：
+  `ManagedSubscriberLike` 协议（async-native 最小生命周期面：
+  `async start/stop` + 已净化有界 `state()`——不要求继承
+  ServerVoiceSubscriber，管理器不暴露房间/token/流内部）；
+  `validate_key`（不透明键严格校验：非空 strip 规范、无控制
+  字符、≤128，" a " 与 "a" 同键——绝不解释为路径/URL）；
+  `VoiceRuntimeManager` 显式构造注册表（零全局态/零 asyncio.run/
+  嵌套循环/线程/进程池，文本契约锁定）：`start(key, factory)`
+  每键至多一实例——并发/重复调用经 `_starting` 任务复用首次
+  结果（factory 恰一次）、**容量在 factory 构造之前检查**、
+  factory/start 失败零注册残留（异常文本绝不透传）、在册终态
+  键拒绝重启；`stop(key)` 成功即移除条目（释放容量）、幂等、
+  订阅者 stop 抛错时条目仍移除（**fail-closed：清理状态未知
+  绝不显示 active**）并抛通用净化错误；`stop_all()` 键排序
+  确定性、单项失败不阻断其余（计数返回）；`snapshot()` 白名单
+  键投影 + events 截断 + 全字符串 JWT 正则替换（纵深防御——脏
+  fake 实证 error/token/frames/exception 键与 JWT 形态全部挡下）。
+- voice_subscription/voice_runtime/voice_tokens/voice.py 路由
+  **全部零触碰**（M14-255/256 语义零回归）。
+- **supervisor R1 修正（amend 回原提交）**：①容量检查含进行中
+  启动预留（`entries+starting >= max`）；②`stop(key)` 先等待该键
+  pending 启动落定（成功停产物移除；启动自清失败则 no-op），
+  `stop_all()` 覆盖 pending 键；③`_starting` 清理归属启动任务完成
+  回调 + 调用方 `shield`——取消不破坏同键去重，回调兼消费任务
+  异常；④包装错误一律 `from None`（__cause__/traceback 零异常
+  文本外泄）。新增 6 项 R1 聚焦测试（四项 RED→GREEN 实证）。
+- 新增 `test_voice_runtime_manager.py` **36 项 fake-only 契约
+  测试**：键校验 9 组参数化；容量前置（RED 抽查 A：移除前置
+  检查即失败）与构造校验；注册投影/events 截断/键排序；并发
+  gather 三路同键恰一实例恰一次 factory（RED 抽查 B：移除
+  `_starting` 复用即失败）；独立键；factory/start 失败零残留
+  与错误净化；stop 幂等/stop_all 容错（单项抛错继续其余，
+  全部条目移除）；终态拒绝重启；脏投影净化（非法键丢弃 + JWT
+  [REDACTED]）；async-native 纪律文本契约；真实
+  ServerVoiceSubscriber 集成式（结构等价迷你 harness——订阅者
+  行为已由 test_voice_subscription 21 项锁定，此处只验管理面与
+  真实 state 键域契合）。
+- 验证：focused **36 passed**；五文件（subscription/runtime/
+  manager/tokens/providers）合计 **128 passed** 零回归；ruff
+  （changed 路径）All checks passed；`git diff --check` 干净。
+- **诚实边界：fake-only 管理器验证——零真实网络、零真实
+  LiveKit 连接、无 FastAPI startup/lifespan/HTTP 路由/启动钩子/
+  settings/容器/调度器变更、无流式 ASR/VAD/barge-in/pause-
+  resume**；未启停任何生产/运行时服务，未读/未存真实 secret
+  （测试 JWT 均为合成假值）；矩阵计数不变 implemented 60 /
+  partial 3；`production_ready`/`release_ready`/`public_ready`
+  均 false 不变。
 ## M14-256 — LiveKit Python runtime 适配层（async-native，fake-only；无 FastAPI 接线/无端点变更）
 
 - 动因：M14-255 订阅控制器是同步协议，与 livekit realtime SDK
