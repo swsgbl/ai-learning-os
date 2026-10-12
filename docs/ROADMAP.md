@@ -85,6 +85,26 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-256 状态更新（LiveKit Python runtime 适配层——async-native，fake-only 验证）
+
+- 基于 current main `b3e66222`（PR #342 merge，即 M14-255）实施：
+  同步协议的订阅控制器 → 对齐 livekit realtime SDK 真实 async 形态。
+- 依赖声明 `livekit>=1.1,<1.2`（realtime 发行版；与 livekit-api
+  并列）；voice_subscription async-native 演进（connect/disconnect/
+  close Awaitable、事件 ensure_future dispatch、stop 清理顺序
+  任务→流→房、零 asyncio.run/嵌套循环/线程桥；M14-255 安全/生命
+  周期语义零回归）；新增 voice_runtime.py（URL 留适配器 token 单参
+  入控制器、AudioStream async 迭代消费任务帧直转不保留、TrackKind
+  归一化、track 视图属性代理直通、close 先 cancel 后 aclose）。
+- 新增 test_voice_runtime.py 26 项 + 订阅测试 21 项 async 迁移
+  （含三项 RED 抽查；supervisor R1 两项修正——事件处理异常与
+  流消费异常均改 fail-closed 清资源进 failed 终态，新增
+  set_error_handler 错误回调契约（异常文本不入回调）——amend 回
+  原提交）；四文件合计 92 passed 零回归。**fake-only：零
+  真实网络/服务、无 FastAPI startup/lifespan 接线、无流式 ASR/
+  VAD/barge-in/pause-resume、无公开端点变更**；不声明缺口 3/
+  M4-09 关闭，计数不变；production_ready=false / release_ready=
+  false / public_ready=false 不变。
 ### M14-255 状态更新（服务端 LiveKit 订阅基础——域层 foundation，fake-only 行为覆盖；非流式 ASR、非运行时集成）
 
 - 基于 current main `0f89567b`（PR #341 merge，即 M14-254）实施：

@@ -107,11 +107,79 @@ fake-only 契约测试（含两项 RED 抽查与 supervisor 三项修正）+ 邻
 ASR、不是运行时集成**：零 FastAPI 接线、零端点新增/改动、未连接
 真实 LiveKit；运行时连接/流式 ASR/VAD/barge-in/pause-resume/缺口 3
 关闭均未交付，计数不变 implemented 60 / partial 3）。
+
+**2026-10-11 M14-256 交付 LiveKit Python runtime 适配层（async-
+native，fake-only）**（依赖声明 livekit>=1.1,<1.2（realtime 发行
+版，与 livekit-api 并列）；voice_subscription 演进 async-native
+——connect/disconnect/close 均 Awaitable、事件经 ensure_future
+dispatch、stop 清理顺序扩为任务→流→房、零 asyncio.run/嵌套循环/
+线程桥；新增 voice_runtime.py 适配层——URL 留在适配器 token 单参
+入控制器、AudioStream async 迭代消费任务帧直转不保留、SDK
+TrackKind 归一化 audio/video/unknown、track 视图属性代理直通；
+M14-255 全部安全/生命周期语义保持（20 项迁移 + 25 项 runtime
+契约 + RED 抽查）；**fake-only 验证，零真实网络/服务**，无
+FastAPI 接线、无 ASR/VAD/barge-in/pause-resume，计数不变
+implemented 60 / partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-256 LiveKit Python runtime 适配层（async-native，fake-only）**
+worktree `ai-learning-os-worktrees/m14-256-livekit-runtime-adapter`，
+分支 `api/m14-256-livekit-runtime-adapter`，基于 current main
+`b3e66222`（PR #342 merge，即 M14-255）。动因：M14-255 订阅控制器
+是同步协议，与 livekit realtime SDK 真实形态（rtc.Room.connect/
+disconnect 与 rtc.AudioStream.aclose 均 async、AudioStream 为
+async 迭代器）之间缺一座显式声明依赖的 async-native 适配层。
+**全部行为 fake 验证（零网络/零真实服务）；不接 FastAPI
+startup/lifespan、不做 ASR/VAD/barge-in/pause-resume、不开任何
+网络 socket。**交付：①requirements.txt 新增 `livekit>=1.1,<1.2`
+（realtime 发行版，本地已装 1.1.16；与 REST 签发包 livekit-api
+并列，零安装动作仅声明）；②voice_subscription.py async-native
+演进——RoomLike.connect/disconnect 与 AudioStreamLike.close 协议
+改 Awaitable，start/stop 与全部清理/失败路径 async def；事件
+回调经 _dispatch（ensure_future + 任务集追踪）调度，SDK 同步
+事件分发由适配层桥接；start 幂等升级为并发重复调用等待同一首次
+任务；stop 清理顺序扩为残留事件任务→全部音频流→房间断开
+（_cancel_pending_tasks 排除当前任务——失败路径可能正运行在
+事件任务里，取消自己会死锁）；零 asyncio.run/零嵌套循环/零线程
+桥（文本契约锁定）；token 只在内存局部变量、帧不缓存、
+fail-closed、有界净化 state、终态不可重启全部保持（20 项测试
+迁移后全绿）；③新增 voice_runtime.py——normalize_track_kind
+（SDK 枚举 KIND_AUDIO=1/KIND_VIDEO=2/KIND_UNKNOWN=0、裸 int、
+str 输入统一映射 audio/video/unknown，未知值安全落 unknown、
+bool 显式拒绝）；LiveKitRoomAdapter（**URL 保存在适配器**，
+控制器 await connect(token) 把 (url, token) 恰按序传 rtc.Room.
+connect；on() 事件参数桥接——track-like 替换为 _Normalized
+TrackView：kind 归一化 + 其余属性 __getattr__ 代理直通原始
+track（sid/frames/SDK 媒体句柄对下游工厂可达——初版只暴露
+sid/kind 会吞掉真实 track 能力面，集成调试发现后修正））；
+LiveKitAudioStreamAdapter（消费 rtc.AudioStream async 迭代器：
+set_frame_handler 启动消费任务逐帧原样转发不复制不缓存；await
+close 先 cancel 任务等待真正退出再 await aclose，幂等）；
+livekit_runtime_factories(url) 工厂对（测试 monkeypatch rtc
+命名空间零网络覆盖同一装配面）；④公开 voice token 端点与
+student/server-subscriber 角色语义零改动（邻居 16+29 项全绿）。
+新增 test_voice_runtime.py **26 项**（依赖 pin/import 面 2、
+RoomAdapter 顺序 2（RED 抽查：反转参数序即失败）、kind 归一化
+15 组参数化、AudioStream 帧同一性直转/close 顺序幂等、控制器×
+真实工厂装配 3（happy path/connect 失败/stream 失败——JWT 零
+泄漏）、async-native 纪律文本契约、R1 流消费失败 fail-closed
+集成）+ test_voice_subscription.py
+21 项 async 迁移（语义零回归，新增并发幂等 start 断言 + R1
+事件 handler 异常 fail-closed）。
+验证与结果（supervisor R1 两项修正 amend 回原提交：事件处理异常与流消费
+异常均由「只发事件停留 active」改为 fail-closed 清资源进 failed
+终态——set_error_handler 显式错误回调契约，异常文本不传入回调；
+两项均含 RED 抽查。focused 21+26 passed、四文件合计 92 passed、ruff
+changed 路径 All checks passed、git diff --check 干净、新增行
+0 真实 secret/0 私有路径/0 U+FFFD/0 readiness 置 true）见
+`docs/evidence/m14-256-livekit-runtime-adapter/README.md`。单本地
+commit，不 push、不开 PR、不合并。
+
+### 前一任务快照（M14-255 服务端 LiveKit 订阅基础——详见 docs/evidence/m14-255-livekit-subscription-foundation/README.md；本切片不改写、不弱化该证据）
 
 **M14-255 服务端 LiveKit 订阅基础（域层 foundation）**
 worktree `ai-learning-os-worktrees/m14-255-livekit-subscription`，
