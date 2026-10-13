@@ -1,4 +1,59 @@
 # Changelog
+## M14-260 — 有界语音帧计量汇（纯域层，fake-only）
+
+- 动因：M14-259 把管理器接进应用生命周期后，`EventSinkLike`
+  仍只有测试替身实现——订阅事件与音频帧缺一个有界、净化、
+  可观测的默认归宿。本切片交付纯域层同步计量汇
+  `BoundedVoiceFrameSink`（结构满足 `EventSinkLike`）。
+  **fake-only：不注册生产订阅者工厂、不进 FastAPI lifespan/
+  app.state、不加 HTTP 路由、不改 readiness 语义、不连真实
+  房间服务、不做流式 ASR/VAD/barge-in/pause-resume、不声明
+  M4-09 或缺口 3 关闭。**
+- **新增 `services/api/app/domain/voice_frame_sink.py`**：
+  事件面——白名单五字段（type/room/identity/category/detail）
+  净化投影 + 环形最新-N（deque maxlen，默认 `max_events=64`
+  与订阅域同约定）+ 全量 event_count 含被淘汰者 + 已知字段仅
+  接受 str/None（其他类型统一固定占位 `[INVALID-FIELD]`，绝不
+  str() 化 bytes——杜绝音频字节经字段值渗入，R1 修正 2）+
+  str 先 JWT 三段形态正则替换 `[REDACTED-JWT]` 再确定性截断
+  到 `MAX_FIELD_LENGTH`（512 字符显式常量，R1 修正 3）+ 原始
+  事件对象绝不保留；帧面——仅 bytes/bytearray/memoryview
+  视为有效载荷（R1 修正 1），只读 `len(frame.data)` 计
+  frame_count/frame_byte_count，绝不复制/保留帧字节或帧对象，
+  帧数据缺失/抛错/非有效类型（str/list/dict 等 len 可用亦
+  无效）/不可计长/长度非法一律计 invalid_frame_count 且绝不
+  抛出；`snapshot()` 恰六个有界字段（无音频字节/凭据/异常
+  文本/路径/时间戳/无界历史），每次返回全新拷贝。
+- **依赖极轻（源码卫生测试 AST 级锚定）**：运行时导入严格限定
+  `re`/`collections`/`typing`，协议类型仅 TYPE_CHECKING 引用；
+  无网络/磁盘/进程/线程/定时器/事件循环导入或调用，无任何
+  async 节点——纯同步确定性模块。
+- 新增 `services/api/tests/test_voice_frame_sink.py` **14 项
+  fake-only 契约测试**：默认/自定义上限与非正上限确定性拒绝；
+  最新-N 保留 + 全量计数 + 快照全新拷贝；投影白名单 + JWT
+  净化 + 原始事件不保留 + 鸭子事件白名单外字段不进投影；已知
+  字段 bytes/数值/列表映射 `[INVALID-FIELD]` 且序列化无 b'/
+  原始字节表示（R1 修正 2）；>512 字符字段截断恰 512 且尾部
+  不入快照（R1 修正 3）；有效帧计量（bytes/bytearray/
+  memoryview 同等有效，R1 修正 1）；八种无效帧（缺属性/None/
+  非 Sized/str/list/dict/属性抛错/__len__ 非数字）不抛出且
+  计数；快照顶层恰六字段、序列化零帧字节/零 JWT/零异常文本；
+  EventSinkLike 结构兼容；ServerVoiceSubscriber 集成契约
+  （订阅者行为与清理顺序零变化，汇接住全部事件与帧）；源码
+  卫生（AST 导入白名单/禁止调用/无 async 节点）。
+- 验证（canonical venv，TDD：先 RED 后 GREEN；supervisor R1
+  三项修正已 amend 回本提交）：focused **14 passed**；五文件
+  （frame_sink/subscription/runtime/runtime_manager/
+  runtime_lifespan）合计 **111 passed**（14+21+26+44+6，基线
+  97 零回归）；ruff（两文件）All checks passed；`git diff
+  --check` 干净。
+- **诚实边界：纯域类零接线——零生产订阅者工厂、零 lifespan/
+  app.state/HTTP/readiness 变更、零真实房间连接/网络、零
+  流式 ASR/VAD/barge-in/pause-resume/转写、零数据库/迁移/
+  容器/compose/部署/Web/Android/Harmony 改动**；未启停任何
+  生产/运行时服务，未读/未存真实 secret；矩阵计数不变
+  implemented 60 / partial 3；`production_ready`/
+  `release_ready`/`public_ready` 均 false 不变。
 ## M14-259 — FastAPI lifespan 拥有 VoiceRuntimeManager（fake-only 接线）
 
 - 动因：M14-258 交付了管理器的安全关闭/排空边界，但尚无所有者
