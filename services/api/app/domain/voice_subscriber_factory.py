@@ -28,6 +28,14 @@ HTTP 路由、不改 readiness、不做流式 ASR/VAD/barge-in/pause-resume。
 - **每次装配彼此独立**：每次 ``create()`` 新建一个独立 sink 与
   一个独立订阅者（无共享可变订阅者/汇状态；帧与事件只进本订阅者
   自己的汇）。
+- **token 协作者二选一（M14-264）**：既有零参
+  ``token_provider: Callable[[], str]``（源/语义完全兼容）或新
+  room-aware ``token_provider_factory: Callable[[str, str], str]``
+  ——两者都缺/都给确定性拒绝。room-aware 路径以捕获**已校验**
+  canonical room/identity 的零参闭包适配订阅者：provider factory
+  仅在订阅者启动时被调用、收到恰确的该句柄 room/identity（杜绝
+  为错误房间签发 token）；其返回 token 仍只进订阅者启动局部，
+  绝不存于工厂/句柄/投影。
 - **句柄只暴露净化投影**：``start()/stop()/state()`` 委托订阅者；
   ``sink_snapshot()`` 委托汇的 ``snapshot()``（有界净化、全新拷贝）。
   句柄绝不暴露原始 sink 对象、订阅者内部、token 或音频字节；
@@ -66,7 +74,8 @@ _JWT_RE = re.compile(r"eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5
 _REDACTED = "[REDACTED-JWT]"
 
 #: 通用净化消息白名单（绝不拼接协作者/订阅者异常文本）。
-_MESSAGE_INVALID_COLLABORATOR = "注入协作者非法：token provider/room factory/audio-stream factory 必须为可调用对象"
+_MESSAGE_PROVIDER_CONFIG = "token provider 配置非法：token_provider 与 token_provider_factory 必须恰提供一个"
+_MESSAGE_INVALID_COLLABORATOR = "注入协作者非法：token provider（或 room-aware provider factory）/room factory/audio-stream factory 必须为可调用对象"
 _MESSAGE_INVALID_MAX_EVENTS = "max_events 必须为正"
 _MESSAGE_ROOM_INVALID = "房间名非法：仅 [A-Za-z0-9_-]，长度 3–64"
 _MESSAGE_IDENTITY_INVALID = "身份标识非法：仅 [A-Za-z0-9_-]，长度 3–64"
@@ -191,17 +200,29 @@ class ControlledVoiceSubscriberFactory:
     def __init__(
         self,
         *,
-        token_provider: Callable[[], str],
+        token_provider: Callable[[], str] | None = None,
+        token_provider_factory: Callable[[str, str], str] | None = None,
         room_factory: Callable[[], RoomLike],
         audio_stream_factory: Callable[[object], AudioStreamLike],
         max_events: int = DEFAULT_MAX_EVENTS,
     ) -> None:
-        for collaborator in (token_provider, room_factory, audio_stream_factory):
-            if not callable(collaborator):
+        # M14-264：token 协作者二选一——零参 token_provider 或
+        # room-aware token_provider_factory；两者都缺/都给确定性
+        # 拒绝（在构造期即失败，绝不静默偏选）。
+        if (token_provider is None) == (token_provider_factory is None):
+            raise VoiceSubscriberFactoryError(_MESSAGE_PROVIDER_CONFIG)
+        for collaborator in (
+            token_provider,
+            token_provider_factory,
+            room_factory,
+            audio_stream_factory,
+        ):
+            if collaborator is not None and not callable(collaborator):
                 raise VoiceSubscriberFactoryError(_MESSAGE_INVALID_COLLABORATOR)
         if not isinstance(max_events, int) or isinstance(max_events, bool) or max_events <= 0:
             raise VoiceSubscriberFactoryError(_MESSAGE_INVALID_MAX_EVENTS)
         self._token_provider = token_provider
+        self._token_provider_factory = token_provider_factory
         self._room_factory = room_factory
         self._audio_stream_factory = audio_stream_factory
         self._max_events = max_events
@@ -210,12 +231,25 @@ class ControlledVoiceSubscriberFactory:
         """装配一个订阅者 + 一个独立汇（参数先行校验；零协作者预调用）。
 
         无效 room/identity 在任何协作者调用之前确定性失败；装配
-        失败统一转通用净化错误（异常链彻底抑制）。token provider
-        以 callable 引用透传订阅者——本方法绝不调用它（token 只在
-        订阅者启动局部变量中短暂存在，用后即不可达）。
+        失败统一转通用净化错误（异常链彻底抑制）。token 协作者以
+        callable 引用透传订阅者——本方法绝不调用它（token 只在
+        订阅者启动局部变量中短暂存在，用后即不可达）。M14-264
+        room-aware 路径：以捕获**已校验** canonical_room/
+        canonical_identity 的零参闭包适配订阅者——provider factory
+        仅在订阅者启动时被调用，且收到恰确的该句柄 room/identity
+        （杜绝为错误房间签发 token）；其返回 token 仍只进订阅者
+        启动局部，绝不存于工厂/句柄。
         """
         canonical_room = validate_room(room)
         canonical_identity = validate_identity(identity)
+        provider_factory = self._token_provider_factory
+        if provider_factory is not None:
+
+            def subscriber_token_provider() -> str:
+                return provider_factory(canonical_room, canonical_identity)
+
+        else:
+            subscriber_token_provider = self._token_provider
         sink: BoundedVoiceFrameSink | None = None
         subscriber: ServerVoiceSubscriber | None = None
         assembly_failed = False
@@ -224,7 +258,7 @@ class ControlledVoiceSubscriberFactory:
             subscriber = ServerVoiceSubscriber(
                 room=canonical_room,
                 identity=canonical_identity,
-                token_provider=self._token_provider,
+                token_provider=subscriber_token_provider,
                 room_factory=self._room_factory,
                 audio_stream_factory=self._audio_stream_factory,
                 event_sink=sink,

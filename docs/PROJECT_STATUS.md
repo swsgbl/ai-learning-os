@@ -223,11 +223,92 @@ livekit_runtime_factories，零真实连接），八文件合计 218 passed
 零回归——**不改 create_app/lifespan/app.state、零 settings/
 环境/凭据读取、零真实 LiveKit 连接、零网络**，计数不变
 implemented 60 / partial 3）。
+**2026-10-14 M14-264 交付 room-aware 受控订阅者工厂（纯域层，
+fake-only）**（受控工厂 token 协作者二选一——既有零参
+token_provider 源/语义兼容保持，或新 room-aware
+token_provider_factory: Callable[[str, str], str]（两者都缺/
+都给确定性拒绝；None 为「未提供」哨兵）；room-aware 路径以
+捕获**已校验** canonical room/identity 的零参闭包适配订阅者
+——provider factory 仅在订阅者启动时被调用、收到恰确的该句柄
+room/identity（杜绝为错误房间签发 token），返回 token 仍只进
+订阅者启动局部、绝不存于工厂/句柄/投影；voice_runtime_factory
+增补 build_room_aware_controlled_voice_subscriber_factory（与
+零参版同一顺序契约：URL 校验 → provider factory callable 校验
+→ livekit_runtime_factories 恰一次 → 引用透传；共享
+runtime 工厂对助手，异常链彻底抑制）；既有净化/每 create 独立
+sink/句柄投影/管理器兼容/关停语义全部保持；26 项新增 fake-only
+测试（含 Codex R1 修正——畸形 runtime 返回形状全转净化错误），
+八文件合计 244 passed 零回归——**不改 create_app/
+lifespan/app.state、零 settings/环境/凭据读取、不实现/不调用
+真实 build_voice_token、零真实 LiveKit 连接**，计数不变
+implemented 60 / partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-264 room-aware 受控订阅者工厂（纯域层，fake-only）**
+worktree `ai-learning-os-worktrees/m14-264-room-aware-voice-subscriber-factory`，
+分支 `api/m14-264-room-aware-voice-subscriber-factory`，基于
+current main `9248c42e`（PR #350 merge，即 M14-263）。动因：
+M14-263 能装配真实 runtime 工厂，但 M14-261 的 token 协作者
+是零参 callable——生产服务端订阅者 JWT 必须由传给
+`create(room, identity)` 的**恰确** room/identity 派生，直接把
+零参工厂注入应用启动会有为错误房间签发 token 的风险。本切片
+补上 room-aware provider 路径。**fake-only：不改
+`app.main.create_app`/FastAPI lifespan/app.state、不读 settings/
+环境变量/LiveKit 凭据/API key/secret、不实现/不调用真实
+`build_voice_token`（测试全用 fake provider factory）、不启动
+真实 LiveKit 连接/零网络、不加 HTTP/readiness/部署/公开暴露、
+不做流式 ASR/VAD/barge-in/pause-resume、不声明 M4-09 或缺口 3
+关闭。**交付：①`voice_subscriber_factory.py` 扩展——构造器
+token 协作者**二选一**：既有零参 `token_provider: Callable[[],
+str]`（源/语义完全兼容）或新 room-aware
+`token_provider_factory: Callable[[str, str], str]`；两者都缺/
+都给确定性抛 `VoiceSubscriberFactoryError`（None 为「未提供」
+哨兵——`token_provider=None` 落入配置错误，非 None 非 callable
+仍落协作者错误）；构造仍零协作者调用。room-aware 路径：
+`create()` 仍先校验 room/identity 再装配（零 provider/room/
+stream 调用）；以捕获已校验 canonical_room/canonical_identity
+的**零参闭包**适配 `ServerVoiceSubscriber`——provider factory
+仅在订阅者启动时被调用、收到恰确的该句柄 room/identity；返回
+token 只进订阅者启动局部（经闭包直转 room.connect），绝不存于
+工厂/句柄/投影。②`voice_runtime_factory.py` 增补
+`build_room_aware_controlled_voice_subscriber_factory(url,
+token_provider_factory)`——与零参版同一顺序契约（URL 校验
+（M14-263 语义原样复用）→ provider factory callable 校验（先于
+runtime 工厂）→ `livekit_runtime_factories(validated_url)` 恰一次
+→ 引用透传构造 room-aware 受控工厂）；装配零调用（provider/
+room/stream/create 全零）；runtime 工厂对调用抽取为共享私有
+助手 `_runtime_factory_pair`（**Codex R1 修正**：解包与
+callable/None 形状验证在守卫路径内完成——畸形返回值不再以
+ValueError/TypeError 从调用方解包处逃逸，任何畸形形状（长度
+错误/非可迭代/元素非 callable/抛错）统一转净化错误且异常链
+彻底抑制）。既有
+净化/异常链抑制/每 create 独立 sink/句柄投影/管理器兼容/关停
+语义全部保持。测试更新：`test_voice_subscriber_factory.py`
++9 项（构造二选一拒绝/非 callable room-aware 拒绝/create 零
+调用 idle 句柄/start 恰确 room+identity+token 到连接（fake
+房间记录收到的 token）/双房间独立 provider 调用与 token/
+provider 失败净化+链抑制/token 不入投影/零参路径回归守卫）；
+`test_voice_runtime_factory.py` +17 项（room-aware URL 先行/
+非 callable 先于 runtime/恰一次原样 URL+引用透传+装配零调用/
+装配出的工厂创建 idle 句柄/runtime 失败净化/零参装配回归
+守卫；**R1 修正**——两个 builder 各 4 例畸形 runtime 返回
+形状（3 元组/1 元组/非可迭代/元素非 callable，携带假标记与
+JWT 形态）全转净化错误、`__cause__`/`__context__` 均 None、
+str/traceback 零泄漏、恰一次尝试）；既有非 callable 测试按
+None 哨兵新语义调整（None→
+配置错误、非 None 非 callable→协作者错误）。验证与结果
+（focused 双文件 121 passed、八文件合计 244 passed（M14-263
+基线 218 零回归）、ruff 四文件 All checks passed、compileall
+四文件 OK、git diff --check 干净、新增行 0 secret/0 私有
+路径/0 U+FFFD/0 readiness 置 true）见
+`docs/evidence/m14-264-room-aware-voice-subscriber-factory/README.md`。
+单本地 commit，不 push、不开 PR、不合并。
+
+### 前一任务快照（M14-263 真实 LiveKit 工厂受控装配——详见 docs/evidence/m14-263-voice-livekit-factory-assembly/README.md；本切片不改写、不弱化该证据）
 
 **M14-263 真实 LiveKit 工厂受控装配（纯域函数，fake-only）**
 worktree `ai-learning-os-worktrees/m14-263-voice-livekit-factory-assembly`，
