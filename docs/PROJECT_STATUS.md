@@ -192,11 +192,80 @@ fake-only 契约测试，六文件合计 169 passed 零回归——**零
 LiveKit 导入/零 livekit_runtime_factories 调用、无 lifespan/
 app.state/HTTP/readiness 变更、零真实网络、无流式 ASR/VAD/
 barge-in/pause-resume**，计数不变 implemented 60 / partial 3）。
+**2026-10-13 M14-262 受控订阅者工厂 lifespan 注册（显式可选
+注入，fake-only）**（main.py 保守扩展——create_app 新增
+keyword-only 可选参数 voice_subscriber_factory（默认 None），
+非 None 必须为 ControlledVoiceSubscriberFactory 实例、在返回
+app 之前确定性拒绝（lifespan 绝不半启动）；注入时 lifespan
+启动期把同一实例挂到 app.state.voice_subscriber_factory（未
+注入不安装属性、绝不隐式构造生产默认工厂、不读凭据）；退出后
+属性保留同实例供诊断、管理器照常关闭；管理器构造容量/关停
+顺序/worker stop/engine dispose/HTTP/readiness/settings 零变化；
+注册 ≠ 启动——仅当调用方经管理器显式 start 才创建订阅者；
+12 项 fake-only 契约测试（含双集成：工厂+管理器+帧到有界汇+
+净化投影+显式 stop，关停时活跃订阅者恰被排空一次+close 幂等），
+七文件合计 181 passed 零回归——**零 LiveKit 导入/调用、零
+livekit_runtime_factories、零新增环境/凭据读取、零真实网络**，
+计数不变 implemented 60 / partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-262 受控订阅者工厂 lifespan 注册（显式可选注入，fake-only）**
+worktree `ai-learning-os-worktrees/m14-262-voice-subscriber-lifespan`，
+分支 `api/m14-262-voice-subscriber-lifespan`，基于 current main
+`c1956f81`（PR #348 merge，即 M14-261）。动因：M14-261 交付了
+纯域受控工厂，但应用层尚无显式所有权把它接进生命周期。本切片
+把 `ControlledVoiceSubscriberFactory` 以**显式可选注入**接进
+`create_app`——不构造默认生产工厂、不连真实 LiveKit。
+**fake-only：不导入/不调用真实 LiveKit SDK、不调用
+livekit_runtime_factories、不在 main.py 读 LiveKit 凭据/构造
+token provider、注册 ≠ 启动（仅当调用方经管理器显式 start 才
+创建订阅者）、不加 HTTP 端点/readiness 检查、不做流式 ASR/
+VAD/barge-in/pause-resume、不声明 M4-09 或缺口 3 关闭。**
+交付：`services/api/app/main.py` 保守扩展——①`create_app` 新增
+keyword-only 可选参数 `voice_subscriber_factory:
+ControlledVoiceSubscriberFactory | None = None`（函数签名首段
+即校验：非 None 必须为 `ControlledVoiceSubscriberFactory` 实例，
+否则在返回 app 之前抛 `ValueError`——lifespan 绝不半启动；
+None/省略 = 不注册任何工厂）；②lifespan 启动期（管理器接线后、
+`yield` 前）：注入存在时把**同一实例**挂到
+`app.state.voice_subscriber_factory`（实例同一性：期间 `is`
+注入工厂、退出后属性保留同实例供诊断）；未注入则**不安装该
+属性**（`create_app(None)` 继续只暴露管理器——无隐式生产
+工厂）；③管理器所有权与关停零变化：构造容量/`close 即排空`
+顺序（先于 worker stop 与 engine dispose）/幂等语义全部保持
+（既有 lifespan 测试锚定零回归）。新增
+`test_voice_subscriber_lifespan.py` **12 项 fake-only 契约测试**
+（全合成 fake room/stream/track/frame，零真实网络/凭据；TDD
+先 RED 后 GREEN）：非法非 None 注入（object/str/int/lambda/
+类引用）在返回 app 前抛 ValueError；省略/None 注入不安装属性
+（期间与退出后均无）；注入工厂 lifespan 期间安装且身份同一
+（退出后属性保留、管理器 closed）；两个独立 app/工厂互不共享
+（管理器实例亦独立）；集成一——注册工厂可创建句柄（注册 ≠
+启动、零连接零 token 调用）、管理器零参闭包 start 拥有并启动
+（active/room/identity 净化投影、无凭据键、零 JWT 形态）、帧
+到达有界汇（frame_count/byte_count 精确、序列化无 JWT/无帧
+字节）、显式 stop 移除条目、退出后 close 成功且幂等（无双重
+停止）；集成二——关停时仍活跃的订阅者被既有 close 路径恰排空
+一次（disconnect 恰 1、subscriber_count 0、closed；再 close
+幂等返回首次排空记录结果）；源码卫生——main.py 无
+`ControlledVoiceSubscriberFactory(` 构造调用、无 livekit
+导入/`livekit_runtime_factories`、无 os.environ/getenv 新增
+读取、恰一个守卫式 `app.state.voice_subscriber_factory =`
+赋值、注入参数 keyword-only 且默认 None（inspect.signature
+锚定）、管理器关停顺序不变（close < worker.stop < engine
+.dispose、无 stop_all、VoiceRuntimeManager 构造仍恰一处缩进
+锚定）。验证与结果（focused 12 passed、七文件合计 181 passed
+（12+58+14+21+26+44+6，M14-261 基线 169 零回归）、ruff 两文件
+All checks passed、git diff --check 干净、新增行 0 secret/0
+私有路径/0 U+FFFD/0 readiness 置 true）见
+`docs/evidence/m14-262-voice-subscriber-lifespan/README.md`。
+单本地 commit，不 push、不开 PR、不合并。
+
+### 前一任务快照（M14-261 受控语音订阅者工厂——详见 docs/evidence/m14-261-controlled-voice-subscriber-factory/README.md；本切片不改写、不弱化该证据）
 
 **M14-261 受控语音订阅者工厂（纯域装配层，fake-only）**
 worktree `ai-learning-os-worktrees/m14-261-controlled-voice-subscriber-factory`，

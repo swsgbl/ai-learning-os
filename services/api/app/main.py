@@ -37,6 +37,7 @@ from app.core.security import validate_auth_secret, validate_exposure
 from app.db.session import create_engine, is_sqlite, make_sessionmaker, prepare_database
 from app.domain.rubric_grader import make_rubric_judge
 from app.domain.voice_runtime_manager import VoiceRuntimeManager
+from app.domain.voice_subscriber_factory import ControlledVoiceSubscriberFactory
 from app.domain.web_gate import RateLimiter
 from app.ops.readiness import Check, CheckOutcome, evaluate_checks
 from app.parsing.registry import make_default_registry
@@ -66,7 +67,19 @@ from app.search.providers import build_search_registry
 from app.storage.objectstore import make_object_store
 
 
-def create_app(database_url: str | None = None) -> FastAPI:
+def create_app(
+    database_url: str | None = None,
+    *,
+    voice_subscriber_factory: ControlledVoiceSubscriberFactory | None = None,
+) -> FastAPI:
+    # M14-262：受控订阅者工厂显式可选注入——非 None 必须是
+    # ControlledVoiceSubscriberFactory 实例，在返回 app 之前确定性
+    # 拒绝（lifespan 绝不半启动）；None/省略 = 不注册任何工厂
+    # （绝不隐式构造生产默认工厂、不读任何凭据）。
+    if voice_subscriber_factory is not None and not isinstance(
+        voice_subscriber_factory, ControlledVoiceSubscriberFactory
+    ):
+        raise ValueError("voice_subscriber_factory 必须为 ControlledVoiceSubscriberFactory 实例或 None")
     settings = get_settings()
     # M14-246 结构化 JSON 日志：bootstrap 路径幂等安装；LOG_LEVEL 未配置
     # = 不改变既有 logger 级别语义（零漂移）
@@ -179,6 +192,14 @@ def create_app(database_url: str | None = None) -> FastAPI:
         # 所有权与确定性关停的 fake-only 接线切片。
         voice_runtime_manager = VoiceRuntimeManager()
         app.state.voice_runtime_manager = voice_runtime_manager
+        # M14-262：显式注入的受控订阅者工厂——同一实例挂到
+        # app.state（诊断面；退出后属性保留、实例不变）；未注入则
+        # 不安装该属性（无隐式生产工厂）。注册 ≠ 启动：仅当调用方
+        # 经管理器显式 start 才创建订阅者；管理器容量/构造/关停顺序
+        # 零变化（close 即排空、先于 worker stop 与 engine dispose、
+        # 幂等——M14-258/259 契约保持）。
+        if voice_subscriber_factory is not None:
+            app.state.voice_subscriber_factory = voice_subscriber_factory
         try:
             yield
         finally:

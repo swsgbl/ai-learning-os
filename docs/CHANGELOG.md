@@ -1,4 +1,54 @@
 # Changelog
+## M14-262 — 受控订阅者工厂 lifespan 注册（显式可选注入，fake-only）
+
+- 动因：M14-261 交付了纯域受控工厂，但应用层尚无显式所有权
+  把它接进生命周期。本切片把 `ControlledVoiceSubscriberFactory`
+  以**显式可选注入**接进 `create_app`。**fake-only：不导入/
+  不调用真实 LiveKit SDK、不调用 livekit_runtime_factories、
+  不在 main.py 读 LiveKit 凭据/构造 token provider、注册 ≠
+  启动、不加 HTTP 端点/readiness 检查、不做流式 ASR/VAD/
+  barge-in/pause-resume、不声明 M4-09 或缺口 3 关闭。**
+- **`services/api/app/main.py` 保守扩展**：①`create_app` 新增
+  keyword-only 可选参数 `voice_subscriber_factory:
+  ControlledVoiceSubscriberFactory | None = None`——函数首段
+  即校验：非 None 必须为 `ControlledVoiceSubscriberFactory`
+  实例，否则在返回 app 之前确定性抛 `ValueError`（lifespan
+  绝不半启动）；None/省略 = 不注册任何工厂（**绝不隐式构造
+  生产默认工厂**——`create_app(None)` 继续只暴露管理器）；
+  ②lifespan 启动期（管理器接线后、`yield` 前）：注入存在时把
+  **同一实例**挂到 `app.state.voice_subscriber_factory`（期间
+  `is` 注入工厂；退出后属性保留同实例供诊断、管理器照常
+  closed）；未注入则不安装该属性；③管理器所有权与关停零变化
+  （构造容量、close 即排空、先于 worker stop 与 engine
+  dispose、幂等——既有 M14-258/259 契约与测试锚定保持）。
+- 新增 `services/api/tests/test_voice_subscriber_lifespan.py`
+  **12 项 fake-only 契约测试**（全合成 fake room/stream/track/
+  frame，零真实网络/凭据；TDD 先 RED 后 GREEN）：非法非 None
+  注入（object/str/int/lambda/类引用）在返回 app 前抛
+  ValueError；省略/None 注入期间与退出后均不安装属性；注入
+  工厂 lifespan 期间安装且身份同一（退出后保留、管理器
+  closed）；两个独立 app/工厂互不共享；集成一——注册工厂可
+  创建句柄（零连接零 token 调用）、管理器零参闭包 start 拥有
+  并启动（净化投影无凭据键零 JWT）、帧到达有界汇（计数精确、
+  序列化无 JWT/无帧字节）、显式 stop 移除条目、退出后 close
+  成功且幂等；集成二——关停时仍活跃的订阅者被既有 close 路径
+  恰排空一次（disconnect 恰 1、再 close 幂等返回首次排空记录
+  结果）；源码卫生——无默认工厂构造、无 livekit 导入/调用、
+  无新增环境读取、恰一个守卫式赋值、注入参数 keyword-only 且
+  默认 None、管理器关停顺序不变。
+- 验证（canonical venv，TDD：先 RED 后 GREEN）：focused
+  **12 passed**；七文件（subscriber_lifespan/subscriber_factory/
+  frame_sink/subscription/runtime/runtime_manager/
+  runtime_lifespan）合计 **181 passed**（12+58+14+21+26+44+6，
+  M14-261 基线 169 零回归）；ruff（main.py + 新测试）All
+  checks passed；`git diff --check` 干净。
+- **诚实边界：显式可选注入零隐式装配——零默认生产工厂、零
+  LiveKit 导入/调用、零凭据读取、零 HTTP/readiness 变更、零
+  真实网络、零流式 ASR/VAD/barge-in/pause-resume/转写、零
+  数据库/迁移/容器/compose/部署/Web/Android/Harmony 改动**；
+  未启停任何生产/运行时服务，未读/未存真实 secret；矩阵计数
+  不变 implemented 60 / partial 3；`production_ready`/
+  `release_ready`/`public_ready` 均 false 不变。
 ## M14-261 — 受控语音订阅者工厂（纯域装配层，fake-only）
 
 - 动因：M14-260 补上事件/帧的有界计量归宿后，域内仍缺一个把
