@@ -85,6 +85,34 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-261 状态更新（受控语音订阅者工厂——纯域装配层，fake-only 验证）
+
+- 基于 current main `6a9fca8b`（PR #347 merge，即 M14-260）
+  实施：把注入协作者（token provider / room factory /
+  audio-stream factory）装配成订阅者 + 独立汇的受控工厂。
+- 新增 `voice_subscriber_factory.py`
+  `ControlledVoiceSubscriberFactory` + `ControlledVoiceSubscriber
+  Handle`：构造零副作用（不调用任何注入 callable、零 I/O，
+  测试锚定）；`create(room, identity)` 参数先行校验（room 与
+  既有公开边界 `^[A-Za-z0-9_-]{3,64}$` 同口径；identity 采用
+  同一保守正则——不放宽 room 语义、与 new_identity 形态兼容），
+  无效参数在任何协作者调用之前确定性失败；每次装配一个
+  `ServerVoiceSubscriber` + 一个独立 `BoundedVoiceFrameSink`
+  （token 只经 token-provider callable 与订阅者启动局部流动，
+  绝不进工厂/句柄状态）；句柄结构满足
+  `ManagedSubscriberLike`（start/stop/state 委托）+
+  `sink_snapshot()` 有界净化汇快照 + state JWT 形态递归净化
+  纵深防御；协作者失败统一通用净化错误且异常链彻底抑制
+  （`__cause__`/`__context__`/序列化 traceback 均无原始文本）；
+  fake-only 与 `VoiceRuntimeManager.start()` 零参工厂闭包集成。
+- 新增 58 项 fake-only 契约测试（TDD 先 RED 后 GREEN）；六文件
+  合计 **169 passed**（58+14+21+26+44+6，M14-260 基线 111 零
+  回归）。**fake-only：零 LiveKit 导入/零
+  livekit_runtime_factories 调用、无 lifespan/app.state/HTTP/
+  readiness 变更、零真实网络、无流式 ASR/VAD/barge-in/
+  pause-resume**；不声明缺口 3/M4-09 关闭，计数不变
+  implemented 60 / partial 3；production_ready=false /
+  release_ready=false / public_ready=false 不变。
 ### M14-260 状态更新（有界语音帧计量汇——纯域层，fake-only 验证）
 
 - 基于 current main `e81d1b7b`（PR #346 merge，即 M14-259）
