@@ -1,4 +1,42 @@
 # Changelog
+## M14-259 — FastAPI lifespan 拥有 VoiceRuntimeManager（fake-only 接线）
+
+- 动因：M14-258 交付了管理器的安全关闭/排空边界，但尚无所有者
+  把它接进应用生命周期。本切片把 `VoiceRuntimeManager` 接入既有
+  FastAPI lifespan——显式所有权、`app.state` 暴露、确定性关停。
+  **仍为 fake-only 接线：不注册生产订阅者工厂、不连 LiveKit、
+  不加 HTTP 路由、不改 readiness 语义、不做流式 ASR/VAD/
+  barge-in/pause-resume、不声明 M4-09 或缺口 3 关闭。**
+- **`services/api/app/main.py` 保守修改（+14/−1）**：既有
+  `lifespan` 内、启动依赖装配后、`yield` 前——构造**恰一个**
+  `VoiceRuntimeManager` 并赋值 `app.state.voice_runtime_manager`
+  （快照状态经管理器自身 `snapshot()` 透出，不加包装状态）。
+- **确定性关停**：`yield` 包进 `try/finally`，`await
+  voice_runtime_manager.close()` 在 lifespan 关停时总是执行（应用
+  阶段异常路径同样）；关停顺序——**manager close 先于 parse
+  worker stop 与数据库 engine dispose**；既有数据库清理语义保持；
+  绝不在 close 前另调 `stop_all()`（双排空接口）。
+- **所有权显式**：每 `create_app()`/lifespan 恰一实例；无模块级
+  实例/全局单例/线程/嵌套事件循环/`asyncio.run`/进程池/调度器/
+  后台任务（源码卫生测试锚定）。
+- 新增 `services/api/tests/test_voice_runtime_lifespan.py` **6 项
+  fake-only 契约测试**（全合成 fake，零真实网络/凭据）：进入前
+  未接线；活跃期 open、退出后**同一实例** closed；SQLite 启动
+  模式同样接线并关闭；两个独立 app 实例互不相同；活跃期注册的
+  fake 订阅者关停时恰停一次；对已关闭管理器再 close 幂等不双停
+  （stop_calls 仍 1、返回记录的 {stopped:1, failed:0}）；源码
+  卫生（无模块级构造、close→worker.stop→engine.dispose 文本序、
+  无 stop_all 调用形态）。
+- 验证：focused **6 passed**；四文件（lifespan/manager/
+  observability/migrations）合计 **75 passed**（6+44+21+4，
+  M14-258 基线 44 零回归）零回归；ruff（changed 路径）All
+  checks passed；`git diff --check` 干净。
+- **诚实边界：fake-only 接线——零生产订阅者工厂、零真实
+  LiveKit 连接、零流式 ASR/VAD/barge-in/pause-resume、零 voice
+  HTTP 路由与 readiness 契约变更、零 settings/容器/compose/部署
+  配置改动**；未启停任何生产/运行时服务，未读/未存真实 secret；
+  矩阵计数不变 implemented 60 / partial 3；
+  `production_ready`/`release_ready`/`public_ready` 均 false 不变。
 ## M14-258 — 语音运行时管理器关闭/排空边界（fake-only；无 lifespan/路由接线）
 
 - 动因：M14-257 的显式管理器缺少安全关闭/排空边界——未来 API

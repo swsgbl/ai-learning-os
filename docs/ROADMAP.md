@@ -85,6 +85,27 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-259 状态更新（FastAPI lifespan 拥有 VoiceRuntimeManager——fake-only 接线）
+
+- 基于 current main `981c40c8`（PR #345 merge，即 M14-258）实施：
+  把 M14-258 的管理器接进既有 FastAPI lifespan——显式所有权与
+  确定性关停。
+- `main.py` 保守修改（+14/−1）：lifespan 内构造恰一个
+  `VoiceRuntimeManager` 赋值 `app.state.voice_runtime_manager`
+  （快照状态经管理器自身 snapshot() 透出，无包装状态）；`yield`
+  包 try/finally——`await manager.close()` 关停时总是执行，
+  **先于** parse worker stop 与数据库 engine dispose；不另调
+  `stop_all()`（双排空）；每 create_app()/lifespan 恰一实例，
+  无模块级单例/线程/嵌套循环/asyncio.run/进程池/调度器/后台任务。
+- 新增 6 项 fake-only 契约测试（进入前未接线/活跃期 open 退出后
+  同一实例 closed/SQLite 模式/两 app 实例独立/订阅者恰停一次/
+  再 close 幂等 + 源码卫生）；四文件合计 **75 passed**
+  （6+44+21+4，M14-258 基线 44 零回归）。**fake-only：零生产
+  订阅者工厂、无 voice HTTP 路由与 readiness 契约变更、零真实
+  LiveKit 连接/流式 ASR/VAD/barge-in/pause-resume**；不声明缺口
+  3/M4-09 关闭，计数不变 implemented 60 / partial 3；
+  production_ready=false / release_ready=false /
+  public_ready=false 不变。
 ### M14-258 状态更新（语音运行时管理器关闭/排空边界——fake-only 验证）
 
 - 基于 current main `32c8715a`（PR #344 merge，即 M14-257）实施：
