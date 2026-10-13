@@ -1,4 +1,72 @@
 # Changelog
+## M14-261 — 受控语音订阅者工厂（纯域装配层，fake-only）
+
+- 动因：M14-260 补上事件/帧的有界计量归宿后，域内仍缺一个把
+  注入协作者装配成订阅者+汇的受控工厂。本切片交付纯域、构造
+  零副作用、参数先行校验的 `ControlledVoiceSubscriberFactory`。
+  **fake-only：不导入/不调用真实 LiveKit SDK、不调用
+  livekit_runtime_factories、不进 FastAPI lifespan/app.state、
+  不加 HTTP 路由、不改 readiness 语义、不连真实房间服务、不做
+  流式 ASR/VAD/barge-in/pause-resume、不声明 M4-09 或缺口 3
+  关闭。**
+- **新增 `services/api/app/domain/voice_subscriber_factory.py`**：
+  ①构造注入 token provider / room factory / audio-stream
+  factory 三协作者 callable + 正数 `max_events`（非 callable/
+  非正上限确定性抛 `VoiceSubscriberFactoryError`）；构造零副作用
+  ——不调用任何注入 callable、无网络/磁盘/进程/定时器/线程/
+  事件循环操作（测试锚定三计数恒 0）；②`create(room, identity)`
+  参数先行校验：room 与既有公开边界 `^[A-Za-z0-9_-]{3,64}$`
+  同口径（非字符串/bytes/空白/长度 2 与 65/非法字符集/控制字符
+  拒绝）；identity 采用**同一保守正则**——不放宽 room 语义且与
+  `new_identity()` 的 `student-xxxxxxxx` 形态及 `server-sub-*`
+  命名兼容；无效参数在任何协作者调用之前确定性失败（订阅者
+  未构造，token provider/room factory/audio-stream factory
+  零调用）；③每次 create 新建一个 `ServerVoiceSubscriber` + 一个
+  **独立** `BoundedVoiceFrameSink`——token provider 以 callable
+  引用透传订阅者（create 绝不调用它；token 只在订阅者启动局部
+  变量短暂存在，绝不进工厂/句柄状态/快照/异常/证据）；无共享
+  可变订阅者/汇状态；④`ControlledVoiceSubscriberHandle` 结构满足
+  `ManagedSubscriberLike`（async start/stop + state 委托订阅者），
+  另暴露 `sink_snapshot()` 有界净化汇快照；不暴露原始 sink 对象/
+  订阅者内部/token/音频字节；`state()` 对订阅者投影再做 JWT
+  形态递归净化（纵深防御）；⑤协作者失败统一通用净化消息且异常
+  链彻底抑制——在 except 块之外 `raise ... from None`，
+  `__cause__`/`__context__`/序列化 traceback 均不含原始异常
+  文本；token provider 失败由订阅者转 failed 终态，句柄据此抛
+  通用启动失败错误（fail-closed）；⑥fake-only 与
+  `VoiceRuntimeManager.start()` 集成：`create` 直接作为管理器
+  零参工厂闭包体（成功启动 active 投影、stop 移除条目并断开
+  房间）。
+- 新增 `services/api/tests/test_voice_subscriber_factory.py`
+  **58 项 fake-only 契约测试**（全合成 fake，零网络/零运行时
+  服务；TDD 先 RED 后 GREEN）：构造零副作用与零协作者调用；
+  非 callable 协作者/非正 max_events 拒绝；room 校验成功/失败
+  全集（与 API 房间正则同口径断言）；identity 校验成功/失败
+  全集（保守边界文档化）；无效 room/identity 两组 parametrize
+  三协作者零调用；每次 create 独立订阅者与汇 + 初始 idle 投影；
+  双订阅者帧隔离与计数递增；ManagedSubscriberLike 结构兼容 +
+  公开面无 sink/subscriber/token；VoiceRuntimeManager 集成
+  （start active + stop 条目移除）；停止清理顺序保持订阅者拥有
+  （stream_close×2 → room_disconnect）；快照有界净化（脏注入
+  JWT 形态 sid——序列化无 JWT/无帧字节/无协作者异常文本/无
+  绝对私有路径、events 截断、sink 顶层恰六字段）；token
+  provider/room factory 失败通用错误 + 异常链三面抑制；
+  AST 级源码卫生（运行时导入白名单 re/collections.abc/typing/
+  两个同域纯模块；禁止调用清单；无 asyncio 调度；无
+  __import__/eval/exec 逃逸口）。
+- 验证（canonical venv，TDD：先 RED 后 GREEN）：focused
+  **58 passed**；六文件（subscriber_factory/frame_sink/
+  subscription/runtime/runtime_manager/runtime_lifespan）合计
+  **169 passed**（58+14+21+26+44+6，M14-260 基线 111 零回归）；
+  ruff（两文件）All checks passed；`git diff --check` 干净。
+- **诚实边界：纯域装配层零接线——零 LiveKit 导入、零
+  livekit_runtime_factories 调用、零 lifespan/app.state/HTTP/
+  readiness 变更、零真实房间连接/网络、零流式 ASR/VAD/
+  barge-in/pause-resume/转写、零数据库/迁移/容器/compose/
+  部署/Web/Android/Harmony 改动**；未启停任何生产/运行时服务，
+  未读/未存真实 secret；矩阵计数不变 implemented 60 /
+  partial 3；`production_ready`/`release_ready`/`public_ready`
+  均 false 不变。
 ## M14-260 — 有界语音帧计量汇（纯域层，fake-only）
 
 - 动因：M14-259 把管理器接进应用生命周期后，`EventSinkLike`

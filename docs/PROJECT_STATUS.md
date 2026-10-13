@@ -172,64 +172,114 @@ Subscriber 集成契约，订阅者行为零变化；supervisor R1 三项修正
 111 passed 零回归——**零接线：无生产订阅者工厂、无 lifespan/
 app.state/HTTP/readiness 变更、零真实网络、无流式 ASR/VAD/
 barge-in/pause-resume**，计数不变 implemented 60 / partial 3）。
+**2026-10-13 M14-261 交付受控语音订阅者工厂（纯域装配层，
+fake-only）**（新增域模块 voice_subscriber_factory.py——
+ControlledVoiceSubscriberFactory 注入 token provider/room
+factory/audio-stream factory 三协作者，构造零副作用；create
+(room, identity) 参数先行校验（room 与既有公开边界
+^[A-Za-z0-9_-]{3,64}$ 同口径、identity 采用同一保守正则——
+不放宽 room 语义且与 new_identity 形态兼容），无效参数在
+任何协作者调用之前确定性失败；每次装配一个 ServerVoice
+Subscriber + 一个独立 BoundedVoiceFrameSink（无共享可变状态），
+返回结构满足 ManagedSubscriberLike 的 ControlledVoiceSubscriber
+Handle（start/stop/state 委托订阅者 + sink_snapshot 有界净化
+汇快照 + state JWT 形态递归净化纵深防御；token 只经 token
+provider callable 与订阅者启动局部，绝不进工厂/句柄状态；
+协作者失败统一通用净化错误且异常链彻底抑制——__cause__/
+__context__/序列化 traceback 均无原始文本；fake-only 与
+VoiceRuntimeManager.start 零参工厂闭包集成验证）；58 项
+fake-only 契约测试，六文件合计 169 passed 零回归——**零
+LiveKit 导入/零 livekit_runtime_factories 调用、无 lifespan/
+app.state/HTTP/readiness 变更、零真实网络、无流式 ASR/VAD/
+barge-in/pause-resume**，计数不变 implemented 60 / partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
 
+**M14-261 受控语音订阅者工厂（纯域装配层，fake-only）**
+worktree `ai-learning-os-worktrees/m14-261-controlled-voice-subscriber-factory`，
+分支 `api/m14-261-controlled-voice-subscriber-factory`，基于
+current main `6a9fca8b`（PR #347 merge，即 M14-260）。动因：
+M14-260 补上事件/帧的有界计量归宿后，域内仍缺一个把协作者
+（token provider / room factory / audio-stream factory）装配成
+订阅者+汇的受控工厂——本切片交付 M14-260 之后的下一个窄后端
+基础件：纯域、构造零副作用、参数先行校验的
+`ControlledVoiceSubscriberFactory`。**fake-only：不导入/不调用
+真实 LiveKit SDK、不调用 livekit_runtime_factories、不进
+lifespan/app.state、不加 HTTP 路由、不改 readiness 语义、不连
+真实房间服务、不做流式 ASR/VAD/barge-in/pause-resume、不声明
+M4-09 或缺口 3 关闭。**交付：新增域模块
+`voice_subscriber_factory.py`——①构造注入三协作者 callable +
+正数 `max_events`（非 callable 协作者/非正上限确定性抛
+`VoiceSubscriberFactoryError`）；构造零副作用：不调用任何注入
+callable、无网络/磁盘/进程/定时器/线程/事件循环操作（测试
+锚定三计数恒 0）；②`create(room, identity)` 参数先行校验：
+room 与既有公开边界 `^[A-Za-z0-9_-]{3,64}$` 同口径（非字符串/
+bytes/空白/长度 2 与 65/非法字符集/控制字符确定性拒绝）；
+identity 采用**同一保守正则**——不放宽 room 语义，且与
+`new_identity()` 的 `student-xxxxxxxx` 形态及既有 `server-sub-*`
+服务端命名兼容；无效参数在任何协作者调用之前失败（订阅者根本
+未构造）；③每次 create 新建一个 `ServerVoiceSubscriber` + 一个
+**独立** `BoundedVoiceFrameSink`（token provider 以 callable
+引用透传订阅者——create 绝不调用它；无共享可变订阅者/汇状态，
+帧与事件只进本订阅者自己的汇）；④返回
+`ControlledVoiceSubscriberHandle`：结构满足
+`ManagedSubscriberLike`（async start/stop + state 委托订阅者），
+另暴露 `sink_snapshot()` 有界净化汇快照；句柄绝不暴露原始 sink
+对象/订阅者内部/token/音频字节；`state()` 对订阅者投影再做
+JWT 形态递归净化（纵深防御——外部音轨 sid 携带 token 形态也进
+不了公开投影）；⑤协作者失败统一通用净化错误且**异常链彻底
+抑制**——在 except 块之外 `raise ... from None`，`__cause__`/
+`__context__`/序列化 traceback 均无原始异常文本（token provider
+失败由订阅者转 failed 终态，句柄据此抛通用启动失败——
+fail-closed）；⑥fake-only 与 `VoiceRuntimeManager.start()`
+集成：`create` 直接作为管理器零参工厂闭包体，成功启动
+（active 投影）、stop 移除条目并断开房间。新增
+`test_voice_subscriber_factory.py` **58 项 fake-only 契约测试**
+（全合成 fake，零真实网络/凭据；TDD 先 RED 后 GREEN）：构造
+零副作用/非 callable 协作者/非正上限；room 与 identity 校验
+成功/失败全集；无效参数三协作者零调用（room、identity 两组
+parametrize）；每次 create 独立订阅者与汇 + 初始投影；帧只到达
+本订阅者汇且计数递增（双订阅者隔离）；ManagedSubscriberLike
+结构兼容 + 公开面无 sink/subscriber/token；VoiceRuntimeManager
+集成（start active + stop 条目移除）；停止清理顺序保持订阅者
+拥有（stream_close×2 → room_disconnect）；快照有界净化（脏
+注入 JWT 形态 sid——序列化无 JWT/无帧字节/无异常文本/无私有
+路径、events 截断到注入上限、sink 顶层恰六字段）；token
+provider/room factory 失败通用错误 + `__cause__`/`__context__`/
+traceback 三面链抑制；AST 级源码卫生（导入白名单
+re/collections.abc/typing/两个同域纯模块 + 禁止调用清单 +
+无 asyncio 调度 + 无 __import__/eval/exec 逃逸）。验证与结果
+（focused 58 passed、六文件合计 169 passed（58+14+21+26+44+6，
+M14-260 基线 111 零回归）、ruff 两文件 All checks passed、
+git diff --check 干净、新增行 0 secret/0 私有路径/0 U+FFFD/
+0 readiness 置 true）见
+`docs/evidence/m14-261-controlled-voice-subscriber-factory/README.md`。
+单本地 commit，不 push、不开 PR、不合并。
+
+### 前一任务快照（M14-260 有界语音帧计量汇——详见 docs/evidence/m14-260-voice-frame-sink/README.md；本切片不改写、不弱化该证据）
+
 **M14-260 有界语音帧计量汇（纯域层，fake-only）**
 worktree `ai-learning-os-worktrees/m14-260-voice-frame-sink`，
 分支 `api/m14-260-voice-frame-sink`，基于 current main
-`e81d1b7b`（PR #346 merge，即 M14-259）。动因：M14-259 把
-管理器接进应用生命周期后，`EventSinkLike` 仍只有测试替身实现
-——订阅事件与音频帧缺一个有界、净化、可观测的默认归宿。本切片
-交付 M14-259 之后的下一个窄后端基础件：纯域层同步计量汇。
-**fake-only：不注册生产订阅者工厂、不进 lifespan/app.state、
-不加 HTTP 路由、不改 readiness 语义、不连真实房间服务、不做
-流式 ASR/VAD/barge-in/pause-resume、不声明 M4-09 或缺口 3
-关闭。**交付：新增域模块 `voice_frame_sink.py`——
-①`BoundedVoiceFrameSink` 结构满足 `EventSinkLike`
-（on_event/on_frame）+ `snapshot()` 有界净化快照，构造注入
-正数 `max_events`（默认 64，与订阅域 DEFAULT_MAX_EVENTS 同
-约定同值；非正上限确定性抛 `VoiceFrameSinkError`）；②事件面：
-白名单五字段（type/room/identity/category/detail）净化投影 +
-环形最新-N（deque maxlen）+ 全量 event_count 含被淘汰者 +
-已知字段仅接受 str/None（其他类型统一固定占位
-`[INVALID-FIELD]`，绝不 str() 化 bytes——杜绝音频字节经字段
-值渗入，R1 修正 2）+ str 先 JWT 三段形态正则替换
-`[REDACTED-JWT]`（与运行时管理器同口径）再确定性截断到
-`MAX_FIELD_LENGTH`（512 字符显式常量，R1 修正 3）+ 原始事件
-对象绝不保留；③帧面：仅 bytes/bytearray/memoryview 三类载荷
-视为有效（R1 修正 1）——只读 `len(frame.data)` 计
-frame_count/frame_byte_count，绝不复制/保留帧字节或帧对象，
-帧数据缺失/属性抛错/非有效载荷类型（str/list/dict 等 len 可
-用亦无效）/不可计长/长度非法一律计 invalid_frame_count 且绝不
-抛出，零网络/磁盘/进程/线程/定时器/事件循环操作；
-④snapshot 恰六个有界字段（max_events/event_count/events/
-frame_count/frame_byte_count/invalid_frame_count），无音频字节/
-凭据/异常文本/私有路径/时间戳/无界历史，每次返回全新拷贝；
-⑤依赖极轻：运行时导入严格限定 re/collections/typing，协议类型
-仅 TYPE_CHECKING 引用（AST 级源码卫生测试锚定）。新增
-`test_voice_frame_sink.py` **14 项 fake-only 契约测试**（全合成
-fake，零真实网络/凭据；TDD 先 RED 后 GREEN；supervisor R1 三项
-修正——帧类型白名单/字段占位/512 截断——已 amend 回本提交）：
-默认/自定义/非正上限；最新-N + 全量计数 + 快照全新拷贝；投影
-白名单 + JWT 净化 + 原始事件不保留 + 鸭子事件白名单外字段不
-进投影；已知字段 bytes/数值/列表映射 `[INVALID-FIELD]` 且
-序列化无 b'/原始字节表示；>512 字符字段截断恰 512 且尾部不入
-快照；有效帧计量（bytes/bytearray/memoryview 同等有效）；八种
-无效帧（缺属性/None/非 Sized/str/list/dict/属性抛错/__len__
-非数字）不抛出且计数；快照顶层恰六字段、序列化零帧字节/零
-JWT/零异常文本；EventSinkLike 结构兼容；ServerVoiceSubscriber
-集成契约（沿用既有 fake room/stream 模式，订阅者行为与清理顺序
-零变化，汇接住全部事件与帧）；源码卫生（AST 导入白名单/禁止
-调用/无 async 节点）。验证与结果（focused 14 passed、五文件
-合计 111 passed（14+21+26+44+6，基线 97 零回归）、ruff 两文件
-All checks passed、git diff --check 干净、新增行 0 secret/0
-私有路径/0 U+FFFD/0 readiness 置 true）见
-`docs/evidence/m14-260-voice-frame-sink/README.md`。单本地
-commit，不 push、不开 PR、不合并。
+`e81d1b7b`（PR #346 merge，即 M14-259）。交付纯域层同步计量汇
+`BoundedVoiceFrameSink`（结构满足 `EventSinkLike`）：事件白名单
+五字段净化投影 + 环形最新-N（默认 64 与订阅域同约定）+ 全量
+计数含被淘汰者 + 已知字段仅接受 str/None（其他类型统一固定占位
+`[INVALID-FIELD]`，绝不 str() 化 bytes）+ str 净化后确定性截断
+512 字符 + JWT 形态正则纵深脱敏 + 原始事件对象绝不保留；帧仅
+bytes/bytearray/memoryview 有效、只读 len(data) 计数计量，绝不
+复制/保留帧字节，无效/缺失/非有效类型帧一律计数不抛出；
+snapshot 恰六个有界字段、每次全新拷贝；运行时导入严格限定
+re/collections/typing（AST 级锚定），零网络/磁盘/进程/线程/
+定时器/事件循环。14 项 fake-only 契约测试（含
+ServerVoiceSubscriber 集成契约；supervisor R1 三项修正已 amend），
+五文件合计 111 passed 零回归；ruff All checks passed、
+git diff --check 干净。零接线：无生产订阅者工厂、无 lifespan/
+app.state/HTTP/readiness 变更、零真实网络、无流式 ASR/VAD/
+barge-in/pause-resume，计数不变 implemented 60 / partial 3。
 
 ### 前一任务快照（M14-259 FastAPI lifespan 拥有 VoiceRuntimeManager——详见 docs/evidence/m14-259-voice-runtime-lifespan/README.md；本切片不改写、不弱化该证据）
 
