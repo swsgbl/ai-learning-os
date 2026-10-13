@@ -85,6 +85,35 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-265 状态更新（语音应用层工厂装配——纯域层，fake-only 验证）
+
+- 基于 current main `34bc8e27`（PR #351 merge，即 M14-264）
+  实施：补齐「显式受控凭据 → room-aware 服务端订阅者 token
+  provider → ControlledVoiceSubscriberFactory」的纯域装配链。
+- 新增 `voice_app_factory.py`：`VoiceAppFactoryConfig`
+  frozen+slots 显式不可变配置（恰承载 URL/key/secret/TTL 四
+  项，TTL 默认 voice_tokens.DEFAULT_TTL_SECONDS；凭据字段
+  field(repr=False) 抑制——repr 绝不外泄 key/secret，Codex
+  R1 修正）；
+  `build_room_aware_token_provider_factory` 先行校验凭据与
+  TTL 后构造零参 provider——构造期零签发/零 LiveKit/零日志/
+  零持久化，调用时恰以 (room, identity) 签发
+  ROLE_SERVER_SUBSCRIBER token 且只返回 .token，凭据只作闭包
+  捕获局部；`build_voice_app_subscriber_factory` 纯组合——
+  URL 校验**复用** M14-264 validate_livekit_url 同源净化、
+  runtime 装配复用 build_room_aware_controlled_voice_subscriber
+  _factory（绝不重复实现或放宽）；配置失败通用净化消息+
+  守卫后 raise...from None；build_voice_token 运行期失败沿既有
+  failed-start 净化路径流转（装配层不吞不改写）。
+- 新增 39 项 fake-only 契约测试（含真实离线签发
+  subscribe-only grants 断言、签发失败仅 start 期触达净化路径、
+  秘密不进返回工厂公开面三面断言、config repr 凭据抑制）；九文件合计 **283 passed**
+  （M14-264 基线 244 零回归）；ruff/compileall/diff-check 全过。
+  **fake-only：不改 main.py/create_app、零 settings/环境/.env
+  读取、零真实凭据、零真实 LiveKit 连接、无流式 ASR/VAD/
+  barge-in/pause-resume**；不声明缺口 3/M4-09 关闭，计数不变
+  implemented 60 / partial 3；production_ready=false /
+  release_ready=false / public_ready=false 不变。
 ### M14-264 状态更新（room-aware 受控订阅者工厂——纯域层，fake-only 验证）
 
 - 基于 current main `9248c42e`（PR #350 merge，即 M14-263）

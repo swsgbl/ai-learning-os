@@ -1,4 +1,76 @@
 # Changelog
+## M14-265 — 语音应用层工厂装配（纯域层，fake-only）
+
+- 动因：M14-263 装配真实 runtime 工厂、M14-264 补上
+  room-aware token-provider factory，但尚缺从**显式受控凭据**
+  到 room-aware 服务端订阅者 token provider、再到
+  `ControlledVoiceSubscriberFactory` 的纯域装配链。本切片补齐
+  该链。**这不是应用运行时接线：不改 `services/api/app/main.py`
+  /create_app、不调 get_settings、不读 .env/环境变量、不改
+  路由/readiness/compose/DB/迁移/Web/Android/Harmony、不启动
+  真实 LiveKit 连接或订阅；测试全用显眼假凭据字符串，绝不
+  引入真实 secret/token。**
+- **新增 `services/api/app/domain/voice_app_factory.py`**：
+  ①`VoiceAppFactoryConfig`——frozen+slots 显式不可变配置，恰
+  承载 LiveKit URL/API key/API secret/TTL 四项（TTL 默认
+  `voice_tokens.DEFAULT_TTL_SECONDS`），构造后不可变、无字典
+  属性面；凭据字段 `field(repr=False)` 抑制——repr 只含非秘密
+  字段（类名/URL/TTL），绝不外泄 key/secret（Codex R1 修正，
+  防意外日志泄漏）；②`build_room_aware_token_provider_factory(api_key,
+  api_secret, ttl_seconds)`——先行校验凭据（非空普通字符串：
+  非 str/bytes/空白拒绝）与 TTL（非布尔整数、30–86400 闭
+  区间），构造期零签发/零 LiveKit 调用/零日志/零持久化；返回
+  的 provider factory 恰以调用方传入的 (room, identity) 调用
+  `build_voice_token(..., role=ROLE_SERVER_SUBSCRIBER)` 并只
+  返回 `.token`（subscribe-only grants：join+subscribe、无
+  发布/数据通道/管理面）；**凭据只作 provider 闭包捕获局部
+  变量**——绝不成为返回工厂的公开属性/持久值；③
+  `build_voice_app_subscriber_factory(config)`——纯组合：config
+  类型校验 → 凭据/TTL 校验并构造 provider factory（不调用）→
+  URL 校验**复用** M14-264 `validate_livekit_url`（错误类型/
+  消息同源，绝不重复实现）→ 复用
+  `build_room_aware_controlled_voice_subscriber_factory`（URL/
+  runtime 形状/异常链抑制原样保持，绝不放宽）；装配期零签发、
+  零 runtime 协作者调用、绝不触发订阅者创建/启动；④配置失败
+  通用净化消息 + 守卫后 `raise ... from None`（`__cause__`/
+  `__context__` 均 None——URL/key/secret/token/协作者异常文本
+  绝不入错误或 traceback）；`build_voice_token` 运行期失败不在
+  装配层吞掉——沿既有 M14-261/264 净化 failed-start 路径流转。
+- 新增 `services/api/tests/test_voice_app_factory.py` **39 项
+  fake-only 契约测试**（TDD 先 RED 后 GREEN；签发器 fake 记录
+  全参数 + monkeypatch runtime 工厂对）：provider 构造零签发
+  零协作者；config frozen+slots 不可变锚定 + **repr 凭据抑制**
+  （repr 含类名/URL/TTL 非秘密字段、无 FAKE_KEY/FAKE_SECRET/
+  JWT 形态，Codex R1 修正）；非法 key（7 例）/
+  secret（6 例）/TTL（7 例 + 组合 3 例）/畸形 config（4 例）
+  确定性失败且错误与 traceback 无敏感值、`__cause__`/
+  `__context__` 均 None；fake 签发器断言恰确 (room, identity)/
+  key/secret/ttl/`ROLE_SERVER_SUBSCRIBER` + 只返回 `.token`；
+  不同 (room, identity) 对调用与 token 独立；真实离线签发
+  路径 `verify_voice_token` 断言 identity/room/room_join/
+  can_subscribe True、can_publish/can_publish_data False、管理
+  面全 False（不持久化/不输出 token）；签发失败装配/创建期
+  零触发、仅订阅者 start 时恰一次尝试并进入既有净化
+  failed-start（`VoiceSubscriberFactoryError`、链抑制、状态
+  封存）；组合凭据先于 runtime 工厂、恰一次原样 URL、返回
+  `ControlledVoiceSubscriberFactory`、room-aware 行为保持、
+  装配零协作者；非法 URL 复用 M14-264 净化（同源
+  `VoiceRuntimeFactoryError` 消息、URL 值不入错误、runtime
+  工厂零调用）；秘密不进返回工厂公开面（公开属性 repr/
+  槽位字符串值/闭包代码常量三面断言）；AST+文本级源码卫生。
+- 验证（canonical venv，TDD：先 RED 后 GREEN；Codex R1 repr
+  修正已 amend 回本提交）：三文件
+  **160 passed**；九文件合计 **283 passed**（M14-264 基线
+  244 零回归）；ruff（两文件）All checks passed；compileall
+  （两文件）OK；`git diff --check` 干净。
+- **诚实边界：纯域装配层零接线——不改 main.py/create_app、
+  零 settings/环境/.env 读取、零真实凭据（全为显眼假值）、
+  零真实 LiveKit 连接、零网络、零流式 ASR/VAD/barge-in/
+  pause-resume/转写、零数据库/迁移/容器/compose/部署/Web/
+  Android/Harmony 改动**；未启停任何生产/运行时服务，未读/
+  未存真实 secret；矩阵计数不变 implemented 60 / partial 3；
+  `production_ready`/`release_ready`/`public_ready` 均 false
+  不变。
 ## M14-264 — room-aware 受控订阅者工厂（纯域层，fake-only）
 
 - 动因：M14-263 能装配真实 runtime 工厂，但 M14-261 的 token

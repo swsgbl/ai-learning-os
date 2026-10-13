@@ -242,11 +242,101 @@ sink/句柄投影/管理器兼容/关停语义全部保持；26 项新增 fake-o
 lifespan/app.state、零 settings/环境/凭据读取、不实现/不调用
 真实 build_voice_token、零真实 LiveKit 连接**，计数不变
 implemented 60 / partial 3）。
+**2026-10-14 M14-265 交付语音应用层工厂装配（纯域层，
+fake-only）**（新增域模块 voice_app_factory.py——
+VoiceAppFactoryConfig frozen+slots 显式不可变配置（恰承载
+LiveKit URL/API key/API secret/TTL 四项，TTL 默认
+voice_tokens.DEFAULT_TTL_SECONDS；凭据字段 field(repr=False)
+抑制——repr 只含非秘密字段，Codex R1 修正）；
+build_room_aware_token_provider_factory(key, secret, ttl)
+先行校验凭据（非空普通字符串）与 TTL（非布尔整数 30–86400）
+后构造零参 room-aware provider——构造期零签发零 LiveKit 零
+日志零持久化，调用时恰以 (room, identity) 签发
+ROLE_SERVER_SUBSCRIBER token 且只返回 .token，凭据只作闭包
+捕获局部；build_voice_app_subscriber_factory(config) 纯组合
+——config 类型→凭据→URL（**复用** M14-264 validate_livekit_url
+同源净化，绝不重复实现）→复用 build_room_aware_controlled_
+voice_subscriber_factory（URL/runtime 形状/异常链抑制原样
+保持）；配置失败通用净化消息+守卫后 raise...from None（URL/
+key/secret/token/协作者异常文本绝不入错误或 traceback）；
+build_voice_token 运行期失败不在装配层吞掉——沿既有
+failed-start 净化路径流转；39 项 fake-only 契约测试（含真实
+离线签发 subscribe-only grants 断言与签发失败仅 start 期触达
+净化路径、repr 凭据抑制），九文件合计 283 passed 零回归——**不改 main.py/
+create_app、零 settings/环境/.env 读取、零真实凭据、零真实
+LiveKit 连接**，计数不变 implemented 60 / partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-265 语音应用层工厂装配（纯域层，fake-only）**
+worktree `ai-learning-os-worktrees/m14-265-voice-app-factory-assembly`，
+分支 `api/m14-265-voice-app-factory-assembly`，基于 current
+main `34bc8e27`（PR #351 merge，即 M14-264）。动因：M14-263
+装配真实 runtime 工厂、M14-264 补上 room-aware token-provider
+factory，但尚缺从**显式受控凭据**到 room-aware 服务端订阅者
+token provider、再到 `ControlledVoiceSubscriberFactory` 的纯域
+装配链。本切片补齐该链。**这不是应用运行时接线：不连
+create_app（本切片不改 `services/api/app/main.py`）、不调
+get_settings、不读 .env/环境变量、不改路由/readiness/compose/
+DB/迁移/Web/Android/Harmony、不启动真实 LiveKit 连接或订阅；
+测试全用显眼假凭据字符串，绝不引入真实 secret/token。**交付：
+新增域模块 `voice_app_factory.py`——①`VoiceAppFactoryConfig`：
+frozen+slots 显式不可变配置，恰承载 LiveKit URL/API key/
+API secret/TTL 四项（TTL 默认 `voice_tokens.DEFAULT_TTL_
+SECONDS`；凭据字段 `field(repr=False)` 抑制——repr 只含
+类名/URL/TTL 非秘密字段，绝不外泄 key/secret，Codex R1
+修正防意外日志泄漏）；②`build_room_aware_token_provider_factory(api_key,
+api_secret, ttl_seconds)`：先行校验凭据（非空普通字符串——
+非 str/bytes/空白拒绝）与 TTL（非布尔整数、30–86400 闭区间），
+构造期零签发/零 LiveKit 调用/零日志/零持久化；返回的
+provider factory 恰以调用方传入的 (room, identity) 调用
+`build_voice_token(..., role=ROLE_SERVER_SUBSCRIBER)` 并只返回
+`.token`（subscribe-only grants——join+subscribe、无发布/
+数据通道/管理面，离线本地 JWT 验证锚定）；**凭据只作 provider
+闭包的捕获局部变量**——绝不成为返回工厂的公开属性/持久值
+（公开属性 repr/槽位字符串值/代码常量三面断言无秘密）；
+③`build_voice_app_subscriber_factory(config)`：纯组合——config
+类型校验 → 凭据/TTL 校验并构造 provider factory（不调用）→
+URL 校验**复用** M14-264 `validate_livekit_url`（错误类型/
+消息同源，绝不重复实现或放宽）→ 复用
+`build_room_aware_controlled_voice_subscriber_factory`（URL/
+runtime 形状/异常链抑制行为原样保持）；装配期零签发、零
+runtime 协作者调用、绝不触发订阅者创建/启动；④配置失败通用
+净化消息 + 守卫后 `raise ... from None`（`__cause__`/
+`__context__` 均 None——URL/key/secret/token/协作者异常文本
+绝不入错误或 traceback）；`build_voice_token` 运行期失败不在
+装配层吞掉——沿既有 M14-261/264 净化 failed-start 路径流转。
+新增 `test_voice_app_factory.py` **39 项 fake-only 契约测试**
+（TDD 先 RED 后 GREEN；签发器 fake 记录全参数 + monkeypatch
+runtime 工厂对）：provider 构造零签发零协作者；config
+frozen+slots 不可变 + repr 凭据抑制（repr 含类名/URL/TTL、
+无 FAKE_KEY/FAKE_SECRET/JWT 形态——Codex R1 修正）；非法 key/
+secret（各 6–7 例）/TTL（7 例/
+组合 3 例）/畸形 config（4 例）确定性失败且错误与 traceback
+无敏感值、链彻底抑制；fake 签发器断言恰确 (room, identity)/
+key/secret/ttl/role + 只返回 .token；不同 (room, identity) 对
+独立；真实离线签发路径 verify_voice_token 断言 identity/room/
+room_join/can_subscribe True、can_publish/can_publish_data False
+与管理面全 False；签发失败装配/创建期零触发、仅订阅者 start
+时进入既有净化 failed-start（`VoiceSubscriberFactoryError`、
+链抑制、状态封存）；组合凭据先于 runtime 工厂、恰一次原样
+URL、返回 `ControlledVoiceSubscriberFactory`、room-aware 行为
+保持（idle 创建→start 才签发）、装配零协作者；非法 URL 复用
+M14-264 净化（`VoiceRuntimeFactoryError` 同源消息、URL 值不
+入错误、runtime 工厂零调用）；秘密不进返回工厂公开面；AST+
+文本级源码卫生（导入白名单/禁止调用/无 app.main/settings/
+环境读取/无动态逃逸/无创建与启动调用形态）。验证与结果
+（三文件 160 passed、九文件合计 283 passed（M14-264 基线
+244 零回归）、ruff 两文件 All checks passed、compileall 两
+文件 OK、git diff --check 干净、新增行 0 真实 secret/0 私有
+路径/0 U+FFFD/0 readiness 置 true）见
+`docs/evidence/m14-265-voice-app-factory-assembly/README.md`。
+单本地 commit，不 push、不开 PR、不合并。
+
+### 前一任务快照（M14-264 room-aware 受控订阅者工厂——详见 docs/evidence/m14-264-room-aware-voice-subscriber-factory/README.md；本切片不改写、不弱化该证据）
 
 **M14-264 room-aware 受控订阅者工厂（纯域层，fake-only）**
 worktree `ai-learning-os-worktrees/m14-264-room-aware-voice-subscriber-factory`，
