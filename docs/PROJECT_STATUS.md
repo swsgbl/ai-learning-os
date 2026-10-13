@@ -155,46 +155,105 @@ try/finally 使 close() 关停时总是执行且**先于** parse worker stop
 **零生产订阅者工厂、无 voice HTTP 路由与 readiness 契约变更、
 零真实 LiveKit 连接/流式 ASR/VAD/barge-in/pause-resume**，
 计数不变 implemented 60 / partial 3）。
+**2026-10-13 M14-260 交付有界语音帧计量汇（纯域层，fake-only）**
+（新增域模块 voice_frame_sink.py——BoundedVoiceFrameSink 结构满足
+EventSinkLike：事件白名单五字段净化投影 + 环形最新-N（默认 64 与
+订阅域同约定）+ 全量计数含被淘汰者 + 已知字段仅接受 str/None
+（其他类型统一固定占位 [INVALID-FIELD]，绝不 str() 化 bytes）+
+str 净化后确定性截断 512 字符 + JWT 形态正则纵深脱敏 + 原始
+事件对象绝不保留；帧仅 bytes/bytearray/memoryview 有效、只读
+len(data) 计数计量，绝不复制/保留帧字节，无效/缺失/非有效类型
+帧数据一律计数不抛出；snapshot 恰六个有界字段、每次全新拷贝、
+无音频字节/凭据/异常文本/路径/时间戳；运行时导入严格限定
+re/collections/typing（AST 级源码卫生锚定），零网络/磁盘/进程/
+线程/定时器/事件循环；14 项 fake-only 契约测试（含 ServerVoice
+Subscriber 集成契约，订阅者行为零变化；supervisor R1 三项修正
+——帧类型白名单/字段占位/512 截断——已 amend），五文件合计
+111 passed 零回归——**零接线：无生产订阅者工厂、无 lifespan/
+app.state/HTTP/readiness 变更、零真实网络、无流式 ASR/VAD/
+barge-in/pause-resume**，计数不变 implemented 60 / partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
 
+**M14-260 有界语音帧计量汇（纯域层，fake-only）**
+worktree `ai-learning-os-worktrees/m14-260-voice-frame-sink`，
+分支 `api/m14-260-voice-frame-sink`，基于 current main
+`e81d1b7b`（PR #346 merge，即 M14-259）。动因：M14-259 把
+管理器接进应用生命周期后，`EventSinkLike` 仍只有测试替身实现
+——订阅事件与音频帧缺一个有界、净化、可观测的默认归宿。本切片
+交付 M14-259 之后的下一个窄后端基础件：纯域层同步计量汇。
+**fake-only：不注册生产订阅者工厂、不进 lifespan/app.state、
+不加 HTTP 路由、不改 readiness 语义、不连真实房间服务、不做
+流式 ASR/VAD/barge-in/pause-resume、不声明 M4-09 或缺口 3
+关闭。**交付：新增域模块 `voice_frame_sink.py`——
+①`BoundedVoiceFrameSink` 结构满足 `EventSinkLike`
+（on_event/on_frame）+ `snapshot()` 有界净化快照，构造注入
+正数 `max_events`（默认 64，与订阅域 DEFAULT_MAX_EVENTS 同
+约定同值；非正上限确定性抛 `VoiceFrameSinkError`）；②事件面：
+白名单五字段（type/room/identity/category/detail）净化投影 +
+环形最新-N（deque maxlen）+ 全量 event_count 含被淘汰者 +
+已知字段仅接受 str/None（其他类型统一固定占位
+`[INVALID-FIELD]`，绝不 str() 化 bytes——杜绝音频字节经字段
+值渗入，R1 修正 2）+ str 先 JWT 三段形态正则替换
+`[REDACTED-JWT]`（与运行时管理器同口径）再确定性截断到
+`MAX_FIELD_LENGTH`（512 字符显式常量，R1 修正 3）+ 原始事件
+对象绝不保留；③帧面：仅 bytes/bytearray/memoryview 三类载荷
+视为有效（R1 修正 1）——只读 `len(frame.data)` 计
+frame_count/frame_byte_count，绝不复制/保留帧字节或帧对象，
+帧数据缺失/属性抛错/非有效载荷类型（str/list/dict 等 len 可
+用亦无效）/不可计长/长度非法一律计 invalid_frame_count 且绝不
+抛出，零网络/磁盘/进程/线程/定时器/事件循环操作；
+④snapshot 恰六个有界字段（max_events/event_count/events/
+frame_count/frame_byte_count/invalid_frame_count），无音频字节/
+凭据/异常文本/私有路径/时间戳/无界历史，每次返回全新拷贝；
+⑤依赖极轻：运行时导入严格限定 re/collections/typing，协议类型
+仅 TYPE_CHECKING 引用（AST 级源码卫生测试锚定）。新增
+`test_voice_frame_sink.py` **14 项 fake-only 契约测试**（全合成
+fake，零真实网络/凭据；TDD 先 RED 后 GREEN；supervisor R1 三项
+修正——帧类型白名单/字段占位/512 截断——已 amend 回本提交）：
+默认/自定义/非正上限；最新-N + 全量计数 + 快照全新拷贝；投影
+白名单 + JWT 净化 + 原始事件不保留 + 鸭子事件白名单外字段不
+进投影；已知字段 bytes/数值/列表映射 `[INVALID-FIELD]` 且
+序列化无 b'/原始字节表示；>512 字符字段截断恰 512 且尾部不入
+快照；有效帧计量（bytes/bytearray/memoryview 同等有效）；八种
+无效帧（缺属性/None/非 Sized/str/list/dict/属性抛错/__len__
+非数字）不抛出且计数；快照顶层恰六字段、序列化零帧字节/零
+JWT/零异常文本；EventSinkLike 结构兼容；ServerVoiceSubscriber
+集成契约（沿用既有 fake room/stream 模式，订阅者行为与清理顺序
+零变化，汇接住全部事件与帧）；源码卫生（AST 导入白名单/禁止
+调用/无 async 节点）。验证与结果（focused 14 passed、五文件
+合计 111 passed（14+21+26+44+6，基线 97 零回归）、ruff 两文件
+All checks passed、git diff --check 干净、新增行 0 secret/0
+私有路径/0 U+FFFD/0 readiness 置 true）见
+`docs/evidence/m14-260-voice-frame-sink/README.md`。单本地
+commit，不 push、不开 PR、不合并。
+
+### 前一任务快照（M14-259 FastAPI lifespan 拥有 VoiceRuntimeManager——详见 docs/evidence/m14-259-voice-runtime-lifespan/README.md；本切片不改写、不弱化该证据）
+
 **M14-259 FastAPI lifespan 拥有 VoiceRuntimeManager（fake-only 接线）**
 worktree `ai-learning-os-worktrees/m14-259-voice-runtime-lifespan`，
 分支 `api/m14-259-voice-runtime-lifespan`，基于 current main
-`981c40c8`（PR #345 merge，即 M14-258）。动因：M14-258 交付了
-管理器的安全关闭/排空边界，但尚无所有者把它接进应用生命周期。
-本切片把 `VoiceRuntimeManager` 接入既有 FastAPI lifespan——
-显式所有权、`app.state` 暴露、确定性关停，即使随后进行正常的
-数据库清理。**仍为 fake-only 接线**：不注册生产订阅者工厂、
-不连 LiveKit、不加 HTTP 路由、不改 readiness 语义、不做流式
-ASR/VAD/barge-in/pause-resume。交付（`main.py` 保守修改
-+14/−1）：①既有 `lifespan` 内、启动依赖装配完成后、`yield`
+`981c40c8`（PR #345 merge，即 M14-258）。`main.py` 保守修改
+（+14/−1）：既有 `lifespan` 内、启动依赖装配完成后、`yield`
 之前——构造**恰一个** `VoiceRuntimeManager` 并赋值
-`app.state.voice_runtime_manager`，快照状态经管理器自身
-`snapshot()` 透出（不加包装状态）；②`yield` 包进 try/finally，
-`finally` 中 `await voice_runtime_manager.close()` 在 lifespan
-关停时**总是**执行（应用阶段异常路径同样）——关停顺序为先关
-语音管理器、再停 parse worker、再释放数据库引擎，既有数据库
-清理语义保持，**绝不**在 close 之前另调 `stop_all()`（双排空
-接口）；③所有权显式——每 `create_app()`/lifespan 调用恰一
-实例，无模块级实例/全局单例/线程/嵌套事件循环/`asyncio.run`/
-进程池/调度器/后台任务。新增 `test_voice_runtime_lifespan.py`
-**6 项 fake-only 契约测试**（全合成 fake，零真实网络/凭据）：
-进入前未接线；内存模式活跃期 open、退出后**同一实例** closed
-（含真实 /health 200）；SQLite 启动模式同样接线并关闭；两个
-独立 app 实例互不相同；活跃期经管理器注册的 fake 订阅者关停时
-恰停一次（stop_calls 恰 1、条目清零）；退出后对已关闭管理器
-再 close 幂等不双停（返回记录的 {stopped:1, failed:0}）；源码
-卫生（main.py 无模块级构造、close→worker.stop→engine.dispose
-文本序、无 stop_all 调用形态）。验证与结果（focused 6 passed、
-四文件合计 75 passed（6+44+21+4，M14-258 基线 44 零回归）、
-ruff changed 路径 All checks passed、git diff --check 干净、
-新增行 0 secret/0 私有路径/0 U+FFFD/0 readiness 置 true）见
-`docs/evidence/m14-259-voice-runtime-lifespan/README.md`。单本地
-commit，不 push、不开 PR、不合并。
+`app.state.voice_runtime_manager`（快照状态经管理器自身
+`snapshot()` 透出）；`yield` 包 try/finally，`finally` 中
+`await voice_runtime_manager.close()` 关停时**总是**执行且
+**先于** parse worker stop 与数据库 engine dispose（绝不另调
+`stop_all()` 双排空）；每 create_app()/lifespan 恰一实例，无
+模块级实例/全局单例/线程/嵌套事件循环/`asyncio.run`/进程池/
+调度器/后台任务。新增 `test_voice_runtime_lifespan.py` **6 项
+fake-only 契约测试**（进入前未接线；活跃期 open、退出后同一
+实例 closed（含真实 /health 200）；SQLite 模式同样接线并关闭；
+两 app 实例独立；fake 订阅者关停恰停一次；再 close 幂等不双停；
+源码卫生锚定）。验证：focused 6 passed、四文件合计 75 passed
+（6+44+21+4，M14-258 基线 44 零回归）、ruff All checks passed、
+git diff --check 干净。零生产订阅者工厂、无 voice HTTP 路由与
+readiness 契约变更、零真实 LiveKit 连接/流式 ASR/VAD/barge-in/
+pause-resume，计数不变 implemented 60 / partial 3。
 
 ### 前一任务快照（M14-258 语音运行时管理器关闭/排空边界——详见 docs/evidence/m14-258-voice-runtime-shutdown/README.md；本切片不改写、不弱化该证据）
 

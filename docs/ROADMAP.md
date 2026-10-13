@@ -85,6 +85,31 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-260 状态更新（有界语音帧计量汇——纯域层，fake-only 验证）
+
+- 基于 current main `e81d1b7b`（PR #346 merge，即 M14-259）
+  实施：为 `EventSinkLike` 补第一个生产归宿——有界、净化、
+  确定性的事件/帧计量汇。
+- 新增 `voice_frame_sink.py` `BoundedVoiceFrameSink`：事件白名单
+  五字段净化投影 + 环形最新-N（默认 64 与订阅域同约定）+ 全量
+  计数含被淘汰者 + 已知字段仅接受 str/None（其他类型统一固定
+  占位 [INVALID-FIELD]，绝不 str() 化 bytes）+ str 净化后确定性
+  截断 512 字符 + JWT 形态正则纵深脱敏 + 原始事件对象绝不
+  保留；帧仅 bytes/bytearray/memoryview 有效、只读 len(data)
+  计数计量（绝不复制/保留字节），无效/缺失/非有效类型帧一律
+  计数不抛出；snapshot 恰六个有界字段、每次全新拷贝；运行时
+  导入严格限定 re/collections/typing（AST 级源码卫生锚定），
+  零网络/磁盘/进程/线程/定时器/事件循环。
+- 新增 14 项 fake-only 契约测试（含 ServerVoiceSubscriber
+  集成契约——订阅者行为与清理顺序零变化；TDD 先 RED 后 GREEN；
+  supervisor R1 三项修正——帧类型白名单/字段占位/512 截断——
+  已 amend）；五文件合计 **111 passed**（14+21+26+44+6，基线
+  97 零回归）。**fake-only：零接线（无生产订阅者工厂、无
+  lifespan/app.state/HTTP/readiness 变更）、零真实网络、无
+  流式 ASR/VAD/barge-in/pause-resume**；不声明缺口 3/M4-09
+  关闭，计数不变 implemented 60 / partial 3；
+  production_ready=false / release_ready=false /
+  public_ready=false 不变。
 ### M14-259 状态更新（FastAPI lifespan 拥有 VoiceRuntimeManager——fake-only 接线）
 
 - 基于 current main `981c40c8`（PR #345 merge，即 M14-258）实施：
