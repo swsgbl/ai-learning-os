@@ -1,4 +1,64 @@
 # Changelog
+## M14-263 — 真实 LiveKit 工厂受控装配（纯域函数，fake-only）
+
+- 动因：M14-262 打开了工厂的应用层注入面，但尚无一个受控的、
+  经过校验的装配函数把真实 runtime 工厂装进受控工厂。本切片
+  交付纯域装配函数。**fake-only：不改 `app.main.create_app`/
+  FastAPI lifespan/app.state、不读 settings/环境变量/凭据/
+  token 材料、不启动订阅者/房间/音频流/LiveKit 连接（装配即
+  返回）、不加 HTTP 路由/readiness/公开暴露、不做流式 ASR/
+  VAD/barge-in/pause-resume、不声明 M4-09 或缺口 3 关闭；
+  测试 monkeypatch `livekit_runtime_factories`——零真实
+  LiveKit 调用。**
+- **新增 `services/api/app/domain/voice_runtime_factory.py`**：
+  ①`validate_livekit_url(url)`——非空普通字符串；仅 `ws`/
+  `wss` scheme；主机名存在且非空；userinfo（用户名/密码）
+  缺席；query 与 fragment 缺席；端口可解析为 1–65535 整数
+  （urlsplit 解析失败/越界/保留 0 均确定性拒绝）；失败抛
+  `VoiceRuntimeFactoryError` 通用净化消息——**URL 原文绝不进
+  错误文本**（URL 可携带凭据形态）；通过即原样返回。②
+  `build_controlled_voice_subscriber_factory(url,
+  token_provider)`——顺序契约：URL 校验 → token-provider
+  callable 校验（均先于 runtime 工厂调用；绝不调用 provider、
+  不存储/检视其返回值）→ `livekit_runtime_factories(
+  validated_url)` **恰一次**（返回闭包对——调用本身零 SDK
+  构造、零网络）→ room/audio-stream 工厂与 token-provider
+  callable 以引用透传 `ControlledVoiceSubscriberFactory` →
+  装配即返回，绝不触发订阅者创建/启动路径；runtime 工厂失败
+  （含返回形状错误）统一转通用净化错误且**异常链彻底抑制**
+  （except 块之外 `raise ... from None`——`__cause__`/
+  `__context__`/序列化 traceback 均无协作者文本）。
+- 新增 `services/api/tests/test_voice_runtime_factory.py`
+  **37 项 fake-only 契约测试**（monkeypatch 为记录型 fake，零
+  真实连接；TDD 先 RED 后 GREEN）：合法 ws/wss（含带端口）恰
+  一次原样 URL + 结果为 `ControlledVoiceSubscriberFactory`；
+  validate 原样返回；三 callable 白盒身份同一透传且装配零
+  调用；装配出的工厂可用 fake room/audio 协作者创建
+  `ControlledVoiceSubscriberHandle`（协议兼容、idle 未启动、
+  token/room/stream 零调用）；非法 URL 24 例 parametrize
+  （非字符串/bytes/空白/无 scheme/错误 scheme/缺主机名/
+  userinfo/query/fragment/端口 0、99999、非数字、负数）确定
+  性失败且 runtime 工厂与 token provider 零调用；validate
+  直拒抽查；非 callable token provider（4 例）先于 runtime
+  工厂失败；runtime 工厂异常（消息带 JWT 形态）转净化错误
+  ——str 无原始文本、`__cause__`/`__context__` 均 None、
+  traceback 序列化干净、恰一次尝试；源码卫生（AST 导入白
+  名单 + 禁止调用清单含 connect + 无 app.main/settings/环境/
+  凭据文本 + 无 __import__/eval/exec/create( 逃逸）。
+- 验证（canonical venv，TDD：先 RED 后 GREEN）：focused
+  **37 passed**；八文件（runtime_factory/subscriber_factory/
+  frame_sink/subscription/runtime/runtime_manager/
+  runtime_lifespan/subscriber_lifespan）合计 **218 passed**
+  （37+58+14+21+26+44+6+12，M14-262 基线 181 零回归）；ruff
+  （两文件）All checks passed；compileall（两文件）OK；
+  `git diff --check` 干净。
+- **诚实边界：纯域装配函数零接线——不改 create_app/lifespan/
+  app.state、零 settings/环境/凭据读取、零真实 LiveKit 连接、
+  零网络、零流式 ASR/VAD/barge-in/pause-resume/转写、零
+  数据库/迁移/容器/compose/部署/Web/Android/Harmony 改动**；
+  未启停任何生产/运行时服务，未读/未存真实 secret；矩阵计数
+  不变 implemented 60 / partial 3；`production_ready`/
+  `release_ready`/`public_ready` 均 false 不变。
 ## M14-262 — 受控订阅者工厂 lifespan 注册（显式可选注入，fake-only）
 
 - 动因：M14-261 交付了纯域受控工厂，但应用层尚无显式所有权
