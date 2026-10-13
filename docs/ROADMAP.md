@@ -85,6 +85,34 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-264 状态更新（room-aware 受控订阅者工厂——纯域层，fake-only 验证）
+
+- 基于 current main `9248c42e`（PR #350 merge，即 M14-263）
+  实施：补上「token 必须由恰确 room/identity 派生」的 provider
+  路径——零参直注入会有为错误房间签发 token 的风险。
+- `voice_subscriber_factory.py`：token 协作者二选一——零参
+  `token_provider`（源/语义兼容保持）或 room-aware
+  `token_provider_factory: Callable[[str, str], str]`（都缺/都
+  给确定性拒绝；None 为未提供哨兵）；room-aware 以捕获已校验
+  canonical room/identity 的零参闭包适配订阅者——provider
+  factory 仅在订阅者启动时收到恰确 room/identity，返回 token
+  只进订阅者启动局部、绝不存于工厂/句柄/投影。
+- `voice_runtime_factory.py`：增补
+  `build_room_aware_controlled_voice_subscriber_factory(url,
+  token_provider_factory)`——URL 校验（M14-263 语义复用）→
+  provider factory callable 校验 → runtime 工厂恰一次 → 引用
+  透传；装配零调用；异常链彻底抑制（共享工厂对助手）。
+- 新增 26 项 fake-only 测试（双文件；含 Codex R1 修正——
+  `_runtime_factory_pair` 解包与 callable/None 形状验证移入
+  守卫路径，两个 builder 各 4 例畸形 runtime 返回形状全转
+  净化错误且链抑制，已 amend 回本提交）；八文件合计 **244
+  passed**（M14-263 基线 218 零回归）；ruff/compileall/
+  diff-check 全过。**fake-only：不改 create_app/lifespan/
+  app.state、零 settings/环境/凭据读取、不实现/不调用真实
+  build_voice_token、零真实 LiveKit 连接、无流式 ASR/VAD/
+  barge-in/pause-resume**；不声明缺口 3/M4-09 关闭，计数不变
+  implemented 60 / partial 3；production_ready=false /
+  release_ready=false / public_ready=false 不变。
 ### M14-263 状态更新（真实 LiveKit 工厂受控装配——纯域函数，fake-only 验证）
 
 - 基于 current main `d7ee1806`（PR #349 merge，即 M14-262）

@@ -103,12 +103,14 @@ class FakeRoom:
         self.handlers: dict[str, Callable[..., Any]] = {}
         self.connect_calls = 0
         self.disconnect_calls = 0
+        self.received_tokens: list[str] = []  # M14-264：断言连接收到哪个 token
 
     def on(self, name: str, handler: Callable[..., Any]) -> None:
         self.handlers[name] = handler
 
     async def connect(self, token: str) -> None:
-        self.connect_calls += 1  # token 只作参数出现，测试不持久化
+        self.connect_calls += 1  # token 只作参数出现，投影绝不持久化
+        self.received_tokens.append(token)
 
     async def disconnect(self) -> None:
         self.disconnect_calls += 1
@@ -126,12 +128,15 @@ class Collaborators:
         *,
         token_raises: bool = False,
         room_raises: bool = False,
+        token_factory_raises: bool = False,
     ) -> None:
         self.token_calls = 0
         self.room_calls = 0
         self.stream_calls = 0
         self.token_raises = token_raises
         self.room_raises = room_raises
+        self.token_factory_raises = token_factory_raises
+        self.token_factory_calls: list[tuple[str, str]] = []
         self.ops: list[tuple[str, str]] = []
         self.rooms: list[FakeRoom] = []
         self.streams: list[FakeAudioStream] = []
@@ -141,6 +146,13 @@ class Collaborators:
         if self.token_raises:
             raise RuntimeError(f"token boom {FAKE_JWT}")
         return FAKE_JWT
+
+    def token_provider_factory(self, room: str, identity: str) -> str:
+        """M14-264：room-aware provider——记录收到的 (room, identity)。"""
+        self.token_factory_calls.append((room, identity))
+        if self.token_factory_raises:
+            raise RuntimeError(f"token-factory boom {FAKE_JWT}")
+        return f"tok-{room}-{identity}"
 
     def room_factory(self) -> FakeRoom:
         self.room_calls += 1
@@ -160,6 +172,16 @@ class Collaborators:
     def make_factory(self, **kwargs: Any) -> ControlledVoiceSubscriberFactory:
         return ControlledVoiceSubscriberFactory(
             token_provider=self.token_provider,
+            room_factory=self.room_factory,
+            audio_stream_factory=self.audio_stream_factory,
+            **kwargs,
+        )
+
+    def make_room_aware_factory(
+        self, **kwargs: Any
+    ) -> ControlledVoiceSubscriberFactory:
+        return ControlledVoiceSubscriberFactory(
+            token_provider_factory=self.token_provider_factory,
             room_factory=self.room_factory,
             audio_stream_factory=self.audio_stream_factory,
             **kwargs,
@@ -188,7 +210,15 @@ def test_constructor_zero_side_effects_and_no_collaborator_calls() -> None:
 
 def test_constructor_rejects_non_callable_collaborators() -> None:
     collaborators = Collaborators()
-    for bad in (None, 123, "provider", object()):
+    # M14-264 后 None 是「未提供」哨兵——落入二选一配置错误
+    # （同类异常、确定性、零协作者调用）
+    with pytest.raises(VoiceSubscriberFactoryError, match="恰提供一个"):
+        ControlledVoiceSubscriberFactory(
+            token_provider=None,
+            room_factory=collaborators.room_factory,
+            audio_stream_factory=collaborators.audio_stream_factory,
+        )
+    for bad in (123, "provider", object()):
         with pytest.raises(VoiceSubscriberFactoryError, match="协作者"):
             ControlledVoiceSubscriberFactory(
                 token_provider=bad,
@@ -549,6 +579,170 @@ def test_room_factory_failure_generic_error_suppressed_chain() -> None:
         _assert_chain_suppressed(error)
 
     run(scenario())
+
+
+# ---------- 13（M14-264）：room-aware token provider 路径 ----------
+
+
+def test_constructor_rejects_neither_and_both_providers() -> None:
+    collaborators = Collaborators()
+    # 两者都缺：确定性拒绝
+    with pytest.raises(VoiceSubscriberFactoryError, match="恰提供一个"):
+        ControlledVoiceSubscriberFactory(
+            room_factory=collaborators.room_factory,
+            audio_stream_factory=collaborators.audio_stream_factory,
+        )
+    # 两者都给：确定性拒绝
+    with pytest.raises(VoiceSubscriberFactoryError, match="恰提供一个"):
+        ControlledVoiceSubscriberFactory(
+            token_provider=collaborators.token_provider,
+            token_provider_factory=collaborators.token_provider_factory,
+            room_factory=collaborators.room_factory,
+            audio_stream_factory=collaborators.audio_stream_factory,
+        )
+    # 拒绝路径零协作者调用
+    assert collaborators.token_calls == 0
+    assert collaborators.token_factory_calls == []
+    assert collaborators.room_calls == 0
+    assert collaborators.stream_calls == 0
+
+
+@pytest.mark.parametrize("bad_provider_factory", [123, "provider", object()])
+def test_constructor_rejects_non_callable_room_aware_provider(
+    bad_provider_factory,
+) -> None:
+    collaborators = Collaborators()
+    with pytest.raises(VoiceSubscriberFactoryError, match="协作者"):
+        ControlledVoiceSubscriberFactory(
+            token_provider_factory=bad_provider_factory,
+            room_factory=collaborators.room_factory,
+            audio_stream_factory=collaborators.audio_stream_factory,
+        )
+    assert collaborators.room_calls == 0
+    assert collaborators.stream_calls == 0
+
+
+def test_room_aware_create_returns_idle_handle_without_invoking() -> None:
+    collaborators = Collaborators()
+    factory = collaborators.make_room_aware_factory()
+    handle = factory.create("voice-ra", "server-sub-ra")
+    assert isinstance(handle, ControlledVoiceSubscriberHandle)
+    state = handle.state()
+    assert state["status"] == "idle"
+    assert state["room"] == "voice-ra"
+    # 创建 ≠ 启动：provider factory / room / stream 全零调用
+    assert collaborators.token_factory_calls == []
+    assert collaborators.room_calls == 0
+    assert collaborators.stream_calls == 0
+
+
+def test_room_aware_start_passes_exact_room_identity_and_token() -> None:
+    collaborators = Collaborators()
+    factory = collaborators.make_room_aware_factory()
+    handle = factory.create("voice-exact", "server-sub-exact")
+
+    async def scenario() -> None:
+        await handle.start()
+
+    run(scenario())
+    # provider factory 恰在订阅者启动时收到**恰确的**已校验 room/identity
+    assert collaborators.token_factory_calls == [("voice-exact", "server-sub-exact")]
+    # fake 房间连接收到 provider factory 返回的 token
+    expected_token = "tok-voice-exact-server-sub-exact"
+    assert collaborators.rooms[0].received_tokens == [expected_token]
+    # token 绝不持久化在工厂/句柄/汇投影
+    blob = json.dumps(
+        {
+            "state": handle.state(),
+            "sink": handle.sink_snapshot(),
+        },
+        ensure_ascii=False,
+        default=repr,
+    )
+    assert expected_token not in blob
+    assert "tok-voice-exact" not in blob
+
+
+def test_room_aware_two_rooms_distinct_provider_calls_and_tokens() -> None:
+    collaborators = Collaborators()
+    factory = collaborators.make_room_aware_factory()
+    first = factory.create("voice-r1", "server-sub-1")
+    second = factory.create("voice-r2", "server-sub-2")
+
+    async def scenario() -> None:
+        await first.start()
+        await second.start()
+
+    run(scenario())
+    # 两个句柄各自触发各自的 provider 调用（不同 room/identity）
+    assert collaborators.token_factory_calls == [
+        ("voice-r1", "server-sub-1"),
+        ("voice-r2", "server-sub-2"),
+    ]
+    # 各自房间收到各自的 token（互不串房间）
+    assert collaborators.rooms[0].received_tokens == ["tok-voice-r1-server-sub-1"]
+    assert collaborators.rooms[1].received_tokens == ["tok-voice-r2-server-sub-2"]
+
+    async def stop_both() -> None:
+        await first.stop()
+        await second.stop()
+
+    run(stop_both())
+
+
+def test_room_aware_provider_failure_sanitized_chain_suppressed() -> None:
+    collaborators = Collaborators(token_factory_raises=True)
+    factory = collaborators.make_room_aware_factory()
+    handle = factory.create("voice-tf", "server-sub-tf")
+
+    async def scenario() -> None:
+        with pytest.raises(VoiceSubscriberFactoryError, match="启动失败"):
+            await handle.start()
+
+    run(scenario())
+    assert collaborators.token_factory_calls == [("voice-tf", "server-sub-tf")]
+    caught: list[BaseException] = []
+
+    async def again() -> None:
+        with pytest.raises(VoiceSubscriberFactoryError) as exc_info:
+            await handle.start()  # 终态重启同样转通用错误
+        caught.append(exc_info.value)
+
+    run(again())
+    error = caught[0]
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    serialized = "".join(
+        traceback.format_exception(type(error), error, error.__traceback__)
+    )
+    for forbidden in ("boom", FAKE_JWT):
+        assert forbidden not in serialized
+        assert forbidden not in str(error)
+    # 订阅者侧封存 failed 终态（净化事件，无 token/异常文本）
+    state_text = json.dumps(handle.state(), ensure_ascii=False)
+    assert FAKE_JWT not in state_text
+    assert "tok-" not in state_text
+    assert handle.state()["status"] in ("failed", "stopped")
+
+
+def test_room_aware_zero_arg_path_still_works_unchanged() -> None:
+    """既有零参 provider 路径语义不变（显式回归守卫）。"""
+    collaborators = Collaborators()
+    factory = collaborators.make_factory()
+    handle = factory.create("voice-zz", "server-sub-zz")
+
+    async def scenario() -> None:
+        await handle.start()
+
+    run(scenario())
+    assert collaborators.token_calls == 1  # 零参 provider 恰一次
+    assert collaborators.token_factory_calls == []  # room-aware 面零调用
+    assert collaborators.rooms[0].received_tokens == [FAKE_JWT]
+
+    async def stop() -> None:
+        await handle.stop()
+
+    run(stop())
 
 
 # ---------- 12：源码卫生（AST 级） ----------

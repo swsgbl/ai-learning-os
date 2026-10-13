@@ -34,6 +34,7 @@ import app.domain.voice_runtime_factory as factory_module
 from app.domain.voice_runtime_factory import (
     VoiceRuntimeFactoryError,
     build_controlled_voice_subscriber_factory,
+    build_room_aware_controlled_voice_subscriber_factory,
     validate_livekit_url,
 )
 from app.domain.voice_subscriber_factory import (
@@ -80,13 +81,20 @@ class Recorder:
         self.token_calls = 0
         self.room_factory_calls = 0
         self.stream_factory_calls = 0
+        self.token_factory_calls: list[tuple[str, str]] = []
         self.runtime_calls: list[str] = []
         self.runtime_raises = False
+        self.runtime_malformed: object | None = None  # Codex R1：形状错误注入面
         self.returned_factories: tuple = ()
 
     def token_provider(self) -> str:
         self.token_calls += 1
         return FAKE_JWT
+
+    def token_provider_factory(self, room: str, identity: str) -> str:
+        """M14-264：room-aware provider 替身——记录 (room, identity)。"""
+        self.token_factory_calls.append((room, identity))
+        return f"tok-{room}-{identity}"
 
     def room_factory(self) -> FakeRoom:
         self.room_factory_calls += 1
@@ -100,6 +108,8 @@ class Recorder:
         self.runtime_calls.append(url)
         if self.runtime_raises:
             raise RuntimeError(f"runtime boom {FAKE_JWT}")
+        if self.runtime_malformed is not None:
+            return self.runtime_malformed  # 恶意/畸形形状原样返回
         # 记录返回的工厂对（bound method 对象每次访问均新建——
         # 身份断言必须用被返回的同一批引用）
         self.returned_factories = (self.room_factory, self.audio_stream_factory)
@@ -257,6 +267,141 @@ def test_runtime_factory_failure_sanitized_and_chain_suppressed(recorder) -> Non
     assert recorder.runtime_calls == ["wss://host"]  # 恰一次尝试
     # 错误消息可安全序列化（无凭据形态）
     assert JWT_RE.search(json.dumps(str(error), ensure_ascii=False)) is None
+
+
+# ---------- 9（M14-264）：room-aware 装配 ----------
+
+
+def test_room_aware_assembly_validates_url_before_runtime(recorder) -> None:
+    for bad_url in ("", "http://host", "ws://", "ws://u@h", "ws://h?q", None):
+        with pytest.raises(VoiceRuntimeFactoryError, match="LiveKit URL 非法"):
+            build_room_aware_controlled_voice_subscriber_factory(
+                bad_url, recorder.token_provider_factory
+            )
+    assert recorder.runtime_calls == []
+    assert recorder.token_factory_calls == []
+
+
+@pytest.mark.parametrize("bad_provider_factory", [None, 123, "provider", object()])
+def test_room_aware_assembly_rejects_non_callable_before_runtime(
+    bad_provider_factory, recorder
+) -> None:
+    with pytest.raises(VoiceRuntimeFactoryError, match="token provider 非法"):
+        build_room_aware_controlled_voice_subscriber_factory(
+            "wss://host", bad_provider_factory
+        )
+    assert recorder.runtime_calls == []
+
+
+def test_room_aware_assembly_exact_url_once_reference_passthrough(recorder) -> None:
+    provider_factory = recorder.token_provider_factory  # 捕获同一 bound method
+    result = build_room_aware_controlled_voice_subscriber_factory(
+        "wss://livekit.example.com", provider_factory
+    )
+    assert isinstance(result, ControlledVoiceSubscriberFactory)
+    assert recorder.runtime_calls == ["wss://livekit.example.com"]  # 恰一次原样 URL
+    # provider factory 引用透传；零参路径未配置
+    assert result._token_provider_factory is provider_factory
+    assert result._token_provider is None
+    room_factory, audio_stream_factory = recorder.returned_factories
+    assert result._room_factory is room_factory
+    assert result._audio_stream_factory is audio_stream_factory
+    # 装配零调用：provider factory / room / stream / token 全零
+    assert recorder.token_factory_calls == []
+    assert recorder.token_calls == 0
+    assert recorder.room_factory_calls == 0
+    assert recorder.stream_factory_calls == 0
+
+
+def test_room_aware_assembled_factory_creates_idle_handle(recorder) -> None:
+    factory = build_room_aware_controlled_voice_subscriber_factory(
+        "wss://livekit.example.com", recorder.token_provider_factory
+    )
+    handle = factory.create("voice-asm", "server-sub-asm")
+    assert isinstance(handle, ControlledVoiceSubscriberHandle)
+    assert handle.state()["status"] == "idle"
+    # 创建 ≠ 启动：装配与创建全程 provider factory 零调用
+    assert recorder.token_factory_calls == []
+    assert recorder.room_factory_calls == 0
+
+
+def test_room_aware_assembly_runtime_failure_sanitized(recorder) -> None:
+    recorder.runtime_raises = True
+    with pytest.raises(VoiceRuntimeFactoryError) as exc_info:
+        build_room_aware_controlled_voice_subscriber_factory(
+            "wss://host", recorder.token_provider_factory
+        )
+    error = exc_info.value
+    assert "boom" not in str(error)
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    assert recorder.runtime_calls == ["wss://host"]  # 恰一次尝试
+
+
+# ---------- 10（Codex R1）：畸形 runtime 返回形状全转净化错误 ----------
+
+
+def _malformed_shape(shape: str, recorder: Recorder) -> object:
+    """构造畸形 runtime 返回值（携带假标记——证明绝不外泄）。"""
+    if shape == "too-long":
+        return (recorder.room_factory, recorder.audio_stream_factory, f"extra-{FAKE_JWT}")
+    if shape == "too-short":
+        return (f"boom-{FAKE_JWT}",)
+    if shape == "non-iterable":
+        return 42
+    return (f"boom-{FAKE_JWT}", recorder.audio_stream_factory)  # 元素非 callable
+
+
+@pytest.mark.parametrize("shape", ["too-long", "too-short", "non-iterable", "non-callable-element"])
+def test_zero_arg_builder_malformed_runtime_return_sanitized(shape, recorder) -> None:
+    recorder.runtime_malformed = _malformed_shape(shape, recorder)
+    with pytest.raises(VoiceRuntimeFactoryError) as exc_info:
+        build_controlled_voice_subscriber_factory("wss://host", recorder.token_provider)
+    error = exc_info.value
+    assert "boom" not in str(error)
+    assert FAKE_JWT not in str(error)
+    assert JWT_RE.search(str(error)) is None
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    serialized = "".join(
+        traceback.format_exception(type(error), error, error.__traceback__)
+    )
+    assert "boom" not in serialized
+    assert FAKE_JWT not in serialized
+    assert recorder.runtime_calls == ["wss://host"]  # 恰一次尝试
+
+
+@pytest.mark.parametrize("shape", ["too-long", "too-short", "non-iterable", "non-callable-element"])
+def test_room_aware_builder_malformed_runtime_return_sanitized(shape, recorder) -> None:
+    recorder.runtime_malformed = _malformed_shape(shape, recorder)
+    with pytest.raises(VoiceRuntimeFactoryError) as exc_info:
+        build_room_aware_controlled_voice_subscriber_factory(
+            "wss://host", recorder.token_provider_factory
+        )
+    error = exc_info.value
+    assert "boom" not in str(error)
+    assert FAKE_JWT not in str(error)
+    assert JWT_RE.search(str(error)) is None
+    assert error.__cause__ is None
+    assert error.__context__ is None
+    serialized = "".join(
+        traceback.format_exception(type(error), error, error.__traceback__)
+    )
+    assert "boom" not in serialized
+    assert FAKE_JWT not in serialized
+    assert recorder.runtime_calls == ["wss://host"]  # 恰一次尝试
+
+
+def test_zero_arg_assembly_remains_compatible(recorder) -> None:
+    """既有 M14-263 零参装配面不变（显式回归守卫）。"""
+    provider = recorder.token_provider
+    result = build_controlled_voice_subscriber_factory(
+        "wss://livekit.example.com", provider
+    )
+    assert isinstance(result, ControlledVoiceSubscriberFactory)
+    assert result._token_provider is provider
+    assert result._token_provider_factory is None
+    assert recorder.runtime_calls == ["wss://livekit.example.com"]
 
 
 # ---------- 8：源码卫生 ----------

@@ -1,4 +1,80 @@
 # Changelog
+## M14-264 — room-aware 受控订阅者工厂（纯域层，fake-only）
+
+- 动因：M14-263 能装配真实 runtime 工厂，但 M14-261 的 token
+  协作者是零参 callable——生产服务端订阅者 JWT 必须由传给
+  `create(room, identity)` 的**恰确** room/identity 派生，零参
+  直注入会有为错误房间签发 token 的风险。本切片补上
+  room-aware provider 路径。**fake-only：不改
+  `app.main.create_app`/FastAPI lifespan/app.state、不读
+  settings/环境变量/LiveKit 凭据/API key/secret、不实现/不
+  调用真实 `build_voice_token`（测试全用 fake provider
+  factory）、零真实 LiveKit 连接/零网络、不加 HTTP/readiness/
+  部署/公开暴露、不做流式 ASR/VAD/barge-in/pause-resume、
+  不声明 M4-09 或缺口 3 关闭。**
+- **`services/api/app/domain/voice_subscriber_factory.py` 扩展**：
+  构造器 token 协作者**二选一**——既有零参 `token_provider:
+  Callable[[], str]`（源/语义完全兼容）或新 room-aware
+  `token_provider_factory: Callable[[str, str], str]`；两者
+  都缺/都给确定性抛 `VoiceSubscriberFactoryError`（None 为
+  「未提供」哨兵——`token_provider=None` 落配置错误，非 None
+  非 callable 仍落协作者错误）；构造仍零协作者调用。
+  room-aware 路径：`create()` 仍先校验 room/identity 再装配
+  （零 provider/room/stream 调用）；以捕获**已校验**
+  canonical_room/canonical_identity 的零参闭包适配
+  `ServerVoiceSubscriber`——provider factory 仅在订阅者启动时
+  被调用、收到恰确的该句柄 room/identity；返回 token 只进
+  订阅者启动局部（经闭包直转 room.connect），绝不存于工厂/
+  句柄/投影。
+- **`services/api/app/domain/voice_runtime_factory.py` 增补**：
+  `build_room_aware_controlled_voice_subscriber_factory(url,
+  token_provider_factory)`——与零参版同一顺序契约：URL 校验
+  （M14-263 语义原样复用）→ provider factory callable 校验
+  （先于 runtime 工厂）→ `livekit_runtime_factories(
+  validated_url)` 恰一次 → 引用透传构造 room-aware 受控工厂；
+  装配零调用（provider/room/stream/create 全零）；runtime
+  工厂对调用抽取为共享私有助手 `_runtime_factory_pair`（解包
+  与 callable/None 形状验证在守卫路径内完成，任何畸形形状/
+  抛错统一转净化错误且异常链彻底抑制）。既有净化/异常链抑制/
+  每 create 独立
+  sink/句柄投影/管理器兼容/关停语义全部保持。
+- 测试更新（TDD 先 RED 后 GREEN）：
+  `test_voice_subscriber_factory.py` **+9 项**（构造二选一
+  拒绝且零协作者调用/非 callable room-aware 拒绝/create 零
+  调用返回 idle 句柄/start 证明 provider factory 收到恰确
+  room+identity 且 fake 房间连接收到返回 token（token 不入
+  投影序列化）/双房间独立 provider 调用与 token 互不串房/
+  provider 失败走既有净化 failed-start 路径且 __cause__/
+  __context__/traceback 无泄漏/零参路径显式回归守卫）；
+  `test_voice_runtime_factory.py` **+17 项**（room-aware URL
+  先行拒绝/非 callable 先于 runtime/恰一次原样 URL+引用透传
+  +装配零调用/装配出的工厂创建 idle 句柄且 provider 零调用/
+  runtime 失败净化+链抑制/零参装配显式回归守卫；**Codex R1
+  修正**——两个 builder 各 4 例畸形 runtime 返回形状（3 元组/
+  1 元组/非可迭代/元素非 callable，携带假标记与 JWT 形态）
+  全转通用净化错误且 `__cause__`/`__context__` 均 None、
+  str/traceback 零泄漏、恰一次尝试）；既有非
+  callable 构造测试按 None 哨兵新语义调整。合计双文件
+  **121 passed**。
+- **Codex R1 修正（已 amend 回本提交）**：
+  `_runtime_factory_pair` 的解包与 callable/None 检查移入
+  守卫路径内——此前畸形返回值（3 元组/非可迭代）会以
+  ValueError/TypeError 从调用方解包处逃逸，回归 M14-263 的
+  「任何失败统一净化」契约；修正后任何畸形形状（长度错误/
+  非可迭代/元素非 callable/抛错）均转通用净化错误且异常链
+  彻底抑制。
+- 验证（canonical venv）：focused 双文件 **121 passed**；八
+  文件合计 **244 passed**（M14-263 基线 218 零回归）；ruff
+  （四文件）All checks passed；compileall（四文件）OK；
+  `git diff --check` 干净。
+- **诚实边界：纯域扩展零接线——不改 create_app/lifespan/
+  app.state、零 settings/环境/凭据读取、不实现/不调用真实
+  build_voice_token、零真实 LiveKit 连接、零网络、零流式
+  ASR/VAD/barge-in/pause-resume/转写、零数据库/迁移/容器/
+  compose/部署/Web/Android/Harmony 改动**；未启停任何生产/
+  运行时服务，未读/未存真实 secret；矩阵计数不变
+  implemented 60 / partial 3；`production_ready`/
+  `release_ready`/`public_ready` 均 false 不变。
 ## M14-263 — 真实 LiveKit 工厂受控装配（纯域函数，fake-only）
 
 - 动因：M14-262 打开了工厂的应用层注入面，但尚无一个受控的、
