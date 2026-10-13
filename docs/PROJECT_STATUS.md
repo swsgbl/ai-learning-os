@@ -207,11 +207,86 @@ app 之前确定性拒绝（lifespan 绝不半启动）；注入时 lifespan
 七文件合计 181 passed 零回归——**零 LiveKit 导入/调用、零
 livekit_runtime_factories、零新增环境/凭据读取、零真实网络**，
 计数不变 implemented 60 / partial 3）。
+**2026-10-13 M14-263 交付真实 LiveKit 工厂受控装配函数（纯域层，
+fake-only）**（新增域模块 voice_runtime_factory.py——
+build_controlled_voice_subscriber_factory(url, token_provider)：
+URL 先行确定性校验（非空字符串、仅 ws/wss、主机名必在、
+userinfo/query/fragment 缺席、端口 1–65535——URL 原文绝不进
+错误消息）→ token-provider callable 校验（绝不调用/不检视返回值）
+→ livekit_runtime_factories(validated_url) 恰一次（返回闭包对，
+调用零 SDK 构造零网络）→ 三个 callable 以引用透传进 M14-261
+ControlledVoiceSubscriberFactory；装配即返回，绝不触发订阅者
+创建/启动；runtime 工厂失败转通用净化错误且异常链彻底抑制
+（except 块外 raise...from None——__cause__/__context__/traceback
+均无协作者文本）；37 项 fake-only 契约测试（monkeypatch
+livekit_runtime_factories，零真实连接），八文件合计 218 passed
+零回归——**不改 create_app/lifespan/app.state、零 settings/
+环境/凭据读取、零真实 LiveKit 连接、零网络**，计数不变
+implemented 60 / partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-263 真实 LiveKit 工厂受控装配（纯域函数，fake-only）**
+worktree `ai-learning-os-worktrees/m14-263-voice-livekit-factory-assembly`，
+分支 `api/m14-263-voice-livekit-factory-assembly`，基于 current
+main `d7ee1806`（PR #349 merge，即 M14-262）。动因：M14-262 打开
+了工厂的应用层注入面，但尚无一个受控的、经过校验的装配函数把
+真实 runtime 工厂（`voice_runtime.livekit_runtime_factories`）
+装进受控工厂——本切片交付 M14-262 之后的下一个窄后端基础件：
+纯域装配函数。**fake-only：不改 `app.main.create_app`/FastAPI
+lifespan/app.state、不读 settings/环境变量/凭据/token 材料、
+不启动订阅者/房间/音频流/LiveKit 连接（装配即返回）、不加
+HTTP 路由/readiness/公开暴露、不做流式 ASR/VAD/barge-in/
+pause-resume、不声明 M4-09 或缺口 3 关闭；测试 monkeypatch
+`livekit_runtime_factories`——零真实 LiveKit 调用。**交付：
+新增域模块 `voice_runtime_factory.py`——①
+`validate_livekit_url(url)`：非空普通字符串；仅 `ws`/`wss`
+scheme；主机名存在且非空；userinfo（用户名/密码）缺席；query
+与 fragment 缺席；端口可解析为 1–65535 整数（urlsplit 解析
+失败/越界/保留 0 均拒绝）；失败抛 `VoiceRuntimeFactoryError`
+通用净化消息——**URL 原文绝不进错误文本**（URL 可携带凭据
+形态）；通过即原样返回（不规范化）。②
+`build_controlled_voice_subscriber_factory(url, token_provider)`：
+顺序契约——URL 校验 → token-provider callable 校验（均先于
+runtime 工厂调用；绝不调用 provider、不存储/检视其返回值）→
+`livekit_runtime_factories(validated_url)` **恰一次**（返回
+闭包对——调用本身零 SDK 构造、零网络）→ room/audio-stream
+工厂与 token-provider callable 以引用透传
+`ControlledVoiceSubscriberFactory`（构造零副作用，M14-261 契约）
+→ 装配即返回，绝不触发订阅者创建/启动路径；runtime 工厂失败
+（含返回形状错误）统一转通用净化错误且**异常链彻底抑制**
+（except 块之外 `raise ... from None`——`__cause__`/
+`__context__`/序列化 traceback 均无协作者文本）。新增
+`test_voice_runtime_factory.py` **37 项 fake-only 契约测试**
+（monkeypatch `voice_runtime_factory.livekit_runtime_factories`
+为记录型 fake，零真实连接；TDD 先 RED 后 GREEN）：合法 ws/wss
+（含带端口）恰一次原样 URL + 结果为
+`ControlledVoiceSubscriberFactory`；validate 原样返回；三
+callable 白盒身份同一透传且装配零调用；装配出的工厂可用
+fake room/audio 协作者创建 `ControlledVoiceSubscriberHandle`
+（协议兼容、idle 未启动、token/room/stream 零调用）；非法
+URL 24 例 parametrize（非字符串/bytes/空白/无 scheme/错误
+scheme/缺主机名/userinfo/query/fragment/端口 0、99999、非数字、
+负数）确定性失败且 runtime 工厂与 token provider 零调用；
+validate 直拒抽查；非 callable token provider（4 例）先于
+runtime 工厂失败；runtime 工厂异常（消息带 JWT 形态）转净化
+错误——str 无 boom/JWT、`__cause__`/`__context__` 均 None、
+traceback 序列化干净、恰一次尝试；源码卫生（AST 导入白名单
+__future__/urllib.parse/collections.abc/typing/两个同域模块；
+禁止调用清单含 connect；无 app.main/get_settings/os.environ/
+getenv/SECRET/API_KEY 文本；无 __import__/eval/exec/create(
+动态逃逸）。验证与结果（focused 37 passed、八文件合计
+218 passed（37+58+14+21+26+44+6+12，M14-262 基线 181 零回归）、
+ruff 两文件 All checks passed、compileall 两文件 OK、
+git diff --check 干净、新增行 0 secret/0 私有路径/0 U+FFFD/
+0 readiness 置 true）见
+`docs/evidence/m14-263-voice-livekit-factory-assembly/README.md`。
+单本地 commit，不 push、不开 PR、不合并。
+
+### 前一任务快照（M14-262 受控订阅者工厂 lifespan 注册——详见 docs/evidence/m14-262-voice-subscriber-lifespan/README.md；本切片不改写、不弱化该证据）
 
 **M14-262 受控订阅者工厂 lifespan 注册（显式可选注入，fake-only）**
 worktree `ai-learning-os-worktrees/m14-262-voice-subscriber-lifespan`，

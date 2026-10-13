@@ -85,6 +85,31 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-263 状态更新（真实 LiveKit 工厂受控装配——纯域函数，fake-only 验证）
+
+- 基于 current main `d7ee1806`（PR #349 merge，即 M14-262）
+  实施：为 M14-262 打开的注入面补一个受控装配函数——把真实
+  runtime 工厂装进 M14-261 受控工厂（装配即返回，零连接）。
+- 新增 `voice_runtime_factory.py`
+  `build_controlled_voice_subscriber_factory(url, token_provider)`：
+  URL 先行确定性校验（非空字符串、仅 ws/wss、主机名必在、
+  userinfo/query/fragment 缺席、端口 1–65535；URL 原文绝不进
+  错误消息）→ token-provider callable 校验（绝不调用）→
+  `livekit_runtime_factories(validated_url)` 恰一次 → 三个
+  callable 以引用透传 `ControlledVoiceSubscriberFactory`；绝不
+  触发订阅者创建/启动；runtime 工厂失败转通用净化错误且异常
+  链彻底抑制（`__cause__`/`__context__`/traceback 均无协作者
+  文本）。
+- 新增 37 项 fake-only 契约测试（monkeypatch
+  livekit_runtime_factories，零真实连接）；八文件合计
+  **218 passed**（37+58+14+21+26+44+6+12，M14-262 基线 181
+  零回归）；ruff/compileall/diff-check 全过。
+  **fake-only：不改 create_app/lifespan/app.state、零
+  settings/环境/凭据读取、零真实 LiveKit 连接、零网络、无
+  流式 ASR/VAD/barge-in/pause-resume**；不声明缺口 3/M4-09
+  关闭，计数不变 implemented 60 / partial 3；
+  production_ready=false / release_ready=false /
+  public_ready=false 不变。
 ### M14-262 状态更新（受控订阅者工厂 lifespan 注册——显式可选注入，fake-only 验证）
 
 - 基于 current main `c1956f81`（PR #348 merge，即 M14-261）
