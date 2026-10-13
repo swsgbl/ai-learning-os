@@ -36,6 +36,7 @@ from app.core.logging import configure_logging, request_id_var
 from app.core.security import validate_auth_secret, validate_exposure
 from app.db.session import create_engine, is_sqlite, make_sessionmaker, prepare_database
 from app.domain.rubric_grader import make_rubric_judge
+from app.domain.voice_runtime_manager import VoiceRuntimeManager
 from app.domain.web_gate import RateLimiter
 from app.ops.readiness import Check, CheckOutcome, evaluate_checks
 from app.parsing.registry import make_default_registry
@@ -172,7 +173,19 @@ def create_app(database_url: str | None = None) -> FastAPI:
         app.state.chunks = chunks if resolved_url else None
         app.state.parse_jobs = parse_jobs if resolved_url else None
         app.state.worker = worker if resolved_url else None
-        yield
+        # M14-259：语音运行时管理器——lifespan 显式拥有恰一个实例
+        # （零模块级单例；快照状态经 manager 自身 snapshot() 透出，无
+        # 包装状态）。当前**未注册任何生产订阅者工厂**——这是 lifespan
+        # 所有权与确定性关停的 fake-only 接线切片。
+        voice_runtime_manager = VoiceRuntimeManager()
+        app.state.voice_runtime_manager = voice_runtime_manager
+        try:
+            yield
+        finally:
+            # 关停顺序（M14-258 close 即排空，绝不另调 stop_all 双排空）：
+            # 先关语音管理器（确定性排空订阅者），再停 parse worker、
+            # 释放数据库引擎——close 幂等，应用阶段异常路径同样执行。
+            await voice_runtime_manager.close()
         if resolved_url:
             await worker.stop()
             await engine.dispose()
