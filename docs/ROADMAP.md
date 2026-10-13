@@ -85,6 +85,30 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-262 状态更新（受控订阅者工厂 lifespan 注册——显式可选注入，fake-only 验证）
+
+- 基于 current main `c1956f81`（PR #348 merge，即 M14-261）
+  实施：把 M14-261 的受控工厂以显式可选注入接进
+  `create_app`——不构造默认生产工厂、不连真实 LiveKit。
+- `main.py` 保守扩展：`create_app` 新增 keyword-only 可选参数
+  `voice_subscriber_factory: ControlledVoiceSubscriberFactory |
+  None = None`——非 None 必须为该类型实例，在返回 app 之前
+  确定性抛 `ValueError`（lifespan 绝不半启动）；注入时 lifespan
+  启动期把同一实例挂到 `app.state.voice_subscriber_factory`
+  （未注入不安装属性；退出后属性保留同实例供诊断、管理器照常
+  关闭）；`create_app(None)` 继续只暴露管理器（无隐式生产
+  工厂）；管理器构造容量/关停顺序（close 即排空、先于 worker
+  stop 与 engine dispose、幂等）/HTTP/readiness/settings 零变化；
+  注册 ≠ 启动。
+- 新增 12 项 fake-only 契约测试（双集成：注册工厂+管理器
+  start+帧到有界汇+净化投影+显式 stop 移除条目+close 幂等；
+  关停时活跃订阅者恰被排空一次）；七文件合计 **181 passed**
+  （12+58+14+21+26+44+6，M14-261 基线 169 零回归）。
+  **fake-only：零 LiveKit 导入/调用、零 livekit_runtime_
+  factories、零新增环境/凭据读取、零真实网络、无流式 ASR/
+  VAD/barge-in/pause-resume**；不声明缺口 3/M4-09 关闭，
+  计数不变 implemented 60 / partial 3；production_ready=false /
+  release_ready=false / public_ready=false 不变。
 ### M14-261 状态更新（受控语音订阅者工厂——纯域装配层，fake-only 验证）
 
 - 基于 current main `6a9fca8b`（PR #347 merge，即 M14-260）
