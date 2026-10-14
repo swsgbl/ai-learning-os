@@ -85,6 +85,32 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-266 状态更新（显式语音应用接线——适配+包装，fake-only 验证）
+
+- 基于 current main `e0950f98`（PR #352 merge，即 M14-265 含
+  其 Codex R1 修正）实施：补上「已加载设置对象 → M14-265 配置
+  → 工厂 → 既有 create_app 显式 keyword 注入」的窄接线路径。
+- 新增 `app/voice_app.py`：`VoiceAppSettingsLike` 最小设置协议
+  （恰三属性——服务端 livekit_url/key/secret，**故意不读
+  public_livekit_url**）；`voice_app_factory_config(settings)`
+  适配器（属性缺失/读取抛错转通用净化域错误，守卫后
+  raise...from None；TTL 用 DEFAULT_TTL_SECONDS——不新增设置
+  项）；`create_app_with_voice_subscriber(database_url, *,
+  settings)` 包装器——复用 M14-265 构造工厂（零重复净化逻辑）、
+  恰一次以 keyword 把同一实例传给既有 create_app，工厂失败先于
+  任何 FastAPI app 返回。
+- **零隐式接线**：main.py 零改动（模块级 `app = create_app()`
+  原样、不导入/不调用新包装器）、create_app 签名/lifespan 零
+  变化、M14-262 注入语义保持、注册 ≠ 启动（lifespan 集成断言
+  零签发/零房间流构造/零订阅者）；新模块零全局设置读取/零
+  env/环境变量（源码卫生 AST+文本锚定）。
+- 新增 14 项 fake-only 契约测试；十文件合计 **297 passed**
+  （M14-265 基线 283 零回归）；ruff/compileall/diff-check 全过。
+  **fake-only：零真实凭据、零 LiveKit SDK 调用、零网络、无
+  流式 ASR/VAD/barge-in/pause-resume**；不声明缺口 3/M4-09
+  关闭、不声明已配置生产语音，计数不变 implemented 60 /
+  partial 3；production_ready=false / release_ready=false /
+  public_ready=false 不变。
 ### M14-265 状态更新（语音应用层工厂装配——纯域层，fake-only 验证）
 
 - 基于 current main `34bc8e27`（PR #351 merge，即 M14-264）

@@ -265,11 +265,87 @@ failed-start 净化路径流转；39 项 fake-only 契约测试（含真实
 净化路径、repr 凭据抑制），九文件合计 283 passed 零回归——**不改 main.py/
 create_app、零 settings/环境/.env 读取、零真实凭据、零真实
 LiveKit 连接**，计数不变 implemented 60 / partial 3）。
+**2026-10-14 M14-266 交付显式语音应用接线（适配+包装，
+fake-only）**（新增 app/voice_app.py——VoiceAppSettingsLike
+最小设置协议（恰三属性：服务端 livekit_url/livekit_api_key/
+livekit_api_secret；**故意不读 public_livekit_url**）；
+voice_app_factory_config(settings) 适配器只读恰三字段（TTL 用
+DEFAULT_TTL_SECONDS——无既有类型化设置，本切片不新增）、属性
+缺失/读取抛错统一转通用净化域错误（守卫后 raise...from None
+——设置值/属性名/URL/凭据/协作者异常文本绝不入错误或
+traceback）；create_app_with_voice_subscriber(database_url, *,
+settings) 包装器——适配→复用 M14-265 build_voice_app_subscriber
+_factory（凭据/URL/runtime 形状/token/净化全部复用零重复）→
+恰一次以 keyword 把同一工厂实例显式传入既有 create_app，工厂
+失败先于任何 FastAPI app 返回；**零隐式接线**：main.py 零改动
+（模块级 app = create_app() 原样、不导入不调用新包装器）、
+create_app 签名/lifespan 零变化、M14-262 注入语义保持、注册≠
+启动（lifespan 集成断言零签发零房间/流构造零订阅者）；14 项
+fake-only 契约测试，十文件合计 297 passed 零回归——**零全局
+设置读取、零 env/环境变量、零真实凭据、零 LiveKit SDK 调用、
+零网络**，计数不变 implemented 60 / partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-266 显式语音应用接线（适配+包装，fake-only）**
+worktree `ai-learning-os-worktrees/m14-266-voice-app-explicit-wiring`，
+分支 `api/m14-266-voice-app-explicit-wiring`，基于 current main
+`e0950f98`（PR #352 merge，即 M14-265 含其 Codex R1 修正）。
+动因：M14-265 能从显式凭据构造 `ControlledVoiceSubscriberFactory`，
+本切片补上最后的窄显式接线路径——把**已加载的设置对象**适配为
+配置、构造工厂、以 keyword 显式传入既有 `create_app`。
+**零隐式接线：不改 `app.main`（模块级 `app = create_app()` 原样
+且不导入/不调用新包装器）、不改 `create_app` 签名/lifespan
+实现、`create_app(None)` 与 `voice_subscriber_factory=None` 语义
+不变（M14-262 契约）；不新增环境设置项、不声明已配置生产语音；
+不改部署入口/compose/Docker/DB/迁移/Web/Android/Harmony；不启停
+任何 API/LiveKit/ASR/TTS 服务；测试全用显眼假凭据与 fake
+runtime 工厂。**交付：新增 `services/api/app/voice_app.py`——
+①`VoiceAppSettingsLike`（runtime_checkable 最小设置协议）：恰三
+必读属性——服务端 `livekit_url`/`livekit_api_key`/
+`livekit_api_secret`（**故意不读 `public_livekit_url`**——公开
+地址非服务端订阅者装配面）；②`voice_app_factory_config
+(settings)`：属性访问全部在守卫内完成——缺失/抛错统一转
+`VoiceAppWiringError` 通用净化消息（守卫后 `raise ... from
+None`：`__cause__`/`__context__`/traceback 均无设置值/属性名/
+URL/凭据/协作者异常文本）；TTL 用 `DEFAULT_TTL_SECONDS`（无
+既有类型化设置，本切片不新增）；值级校验不在本层重复——由
+M14-265 装配先行完成；③`create_app_with_voice_subscriber(
+database_url, *, settings)`：适配 → 复用 M14-265
+`build_voice_app_subscriber_factory`（凭据/URL/runtime 形状/
+token/净化全部复用零重复）→ **恰一次**以 keyword 参数把同一
+工厂实例显式传入既有 `create_app`；工厂失败（含设置值非法）
+先于任何 FastAPI app 返回（绝不半装配）；设置对象必须显式
+提供——模块绝不调用全局设置读取入口/读 env 文件/环境变量/
+secret 文件/全局态。新增 `test_voice_app_wiring.py` **14 项
+fake-only 契约测试**（TDD 先 RED 后 GREEN；签发器/runtime
+工厂对均 monkeypatch 记录）：适配器恰映射服务端三字段
+（public URL 被忽略断言 + TTL 默认）+ 零签发零协作者；
+VoiceAppSettingsLike 结构兼容；缺属性（3 例 parametrize）/
+属性抛错（消息带 JWT 形态）/非对象设置（4 例）净化失败且链
+彻底抑制；非法 key/secret/URL（3 例）先于 runtime 工厂与
+create_app 失败（复用 M14-265/264 错误类型与消息）；包装器恰
+一工厂、恰一 create_app、位置参数原样透传、恰一 keyword、
+返回值直通、装配零协作者；fake-only lifespan 集成——
+`app.state.voice_subscriber_factory is factory`、管理器 open、
+订阅者计数 0、/health 200、零签发零房间/流构造，关停 closed
+零启动、退出后属性保留同实例；源码卫生（AST 导入白名单
+{__future__, typing, fastapi, app.main, app.domain.voice_app_
+factory, app.domain.voice_tokens} + 禁止调用含 get_settings/
+build_voice_token + 文本级无配置/环境读取/动态逃逸/创建启动
+形态）；main.py 默认不变锚定（裸 `app = create_app()` 存在、
+无 voice_app 引用、M14-262 keyword-only 注入面保持）。验证与
+结果（三文件 65 passed（14+39+12）、十文件合计 297 passed
+（M14-265 基线 283 零回归）、ruff 两文件 All checks passed、
+compileall 两文件 OK、git diff --check 干净、新增行 0 真实
+secret/0 私有路径/0 U+FFFD/0 readiness 置 true）见
+`docs/evidence/m14-266-voice-app-explicit-wiring/README.md`。
+单本地 commit，不 push、不开 PR、不合并。
+
+### 前一任务快照（M14-265 语音应用层工厂装配——详见 docs/evidence/m14-265-voice-app-factory-assembly/README.md；本切片不改写、不弱化该证据）
 
 **M14-265 语音应用层工厂装配（纯域层，fake-only）**
 worktree `ai-learning-os-worktrees/m14-265-voice-app-factory-assembly`，
