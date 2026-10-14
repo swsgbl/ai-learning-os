@@ -1,4 +1,64 @@
 # Changelog
+## M14-266 — 显式语音应用接线（适配+包装，fake-only）
+
+- 动因：M14-265 能从显式凭据构造
+  `ControlledVoiceSubscriberFactory`，本切片补上最后的窄显式
+  接线路径——已加载设置对象 → M14-265 配置 → 工厂 → 既有
+  `create_app` 显式 keyword 注入。**零隐式接线：不改
+  `app.main`（模块级 `app = create_app()` 原样且不导入/不调用
+  新包装器）、不改 `create_app` 签名/lifespan 实现、
+  `create_app(None)` 与 `voice_subscriber_factory=None` 语义
+  不变（M14-262 契约）；不新增环境设置项、不声明已配置生产
+  语音；不改部署入口/compose/Docker/DB/迁移/Web/Android/
+  Harmony；不启停任何 API/LiveKit/ASR/TTS 服务；测试全用显眼
+  假凭据与 fake runtime 工厂。**
+- **新增 `services/api/app/voice_app.py`**：①
+  `VoiceAppSettingsLike`（runtime_checkable 最小设置协议）——
+  恰三必读属性：服务端 `livekit_url`/`livekit_api_key`/
+  `livekit_api_secret`（**故意不读 `public_livekit_url`**——
+  公开地址非服务端订阅者装配面）；②`voice_app_factory_config
+  (settings)`——属性访问全部在守卫内完成：缺失/抛错统一转
+  `VoiceAppWiringError` 通用净化消息（守卫后 `raise ... from
+  None`：`__cause__`/`__context__`/traceback 均无设置值/属性
+  名/URL/凭据/协作者异常文本）；TTL 用 `DEFAULT_TTL_SECONDS`
+  （无既有类型化设置，本切片不新增）；值级校验由 M14-265
+  装配先行完成（不在本层重复）；③
+  `create_app_with_voice_subscriber(database_url, *, settings)`:
+  适配 → 复用 M14-265 `build_voice_app_subscriber_factory`
+  （凭据/URL/runtime 形状/token/净化全部复用零重复）→ 恰一次
+  以 keyword 参数把同一工厂实例显式传入既有 `create_app`；
+  工厂失败（含设置值非法）先于任何 FastAPI app 返回；设置对象
+  必须显式提供——模块绝不调用全局设置读取入口/读 env 文件/
+  环境变量/secret 文件/全局态。
+- 新增 `services/api/tests/test_voice_app_wiring.py` **14 项
+  fake-only 契约测试**（TDD 先 RED 后 GREEN；签发器/runtime
+  工厂对均 monkeypatch 记录）：适配器恰映射服务端三字段
+  （public URL 被忽略 + TTL 默认）+ 零签发零协作者；
+  VoiceAppSettingsLike 结构兼容；缺属性（3 例）/属性抛错
+  （消息带 JWT 形态）/非对象设置（4 例）净化失败且链彻底
+  抑制；非法 key/secret/URL（3 例）先于 runtime 工厂与
+  create_app 失败（复用 M14-265/264 错误类型与消息）；包装器
+  恰一工厂、恰一 create_app、位置参数原样透传、恰一 keyword、
+  返回值直通、装配零协作者；fake-only lifespan 集成——
+  `app.state.voice_subscriber_factory is factory`、管理器
+  open、订阅者计数 0、/health 200、零签发零房间/流构造，
+  关停 closed 零启动、退出后属性保留同实例；源码卫生（AST
+  导入白名单 + 禁止调用含 get_settings/build_voice_token +
+  文本级无配置/环境读取/动态逃逸/创建启动形态）；main.py
+  默认不变锚定（裸 `app = create_app()` 存在、无 voice_app
+  引用、M14-262 keyword-only 注入面保持）。
+- 验证（canonical venv，TDD：先 RED 后 GREEN）：三文件
+  **65 passed**（14+39+12）；十文件合计 **297 passed**
+  （M14-265 基线 283 零回归）；ruff（两文件）All checks
+  passed；compileall（两文件）OK；`git diff --check` 干净。
+- **诚实边界：显式接线零隐式装配——main.py/create_app 零
+  改动、零全局设置读取/零 env/环境变量、零真实凭据（全为
+  显眼假值）、零 LiveKit SDK 调用、零网络、零流式 ASR/VAD/
+  barge-in/pause-resume/转写、零数据库/迁移/容器/compose/
+  部署/Web/Android/Harmony 改动**；未启停任何生产/运行时
+  服务，未读/未存真实 secret；矩阵计数不变 implemented 60 /
+  partial 3；`production_ready`/`release_ready`/
+  `public_ready` 均 false 不变。
 ## M14-265 — 语音应用层工厂装配（纯域层，fake-only）
 
 - 动因：M14-263 装配真实 runtime 工厂、M14-264 补上
