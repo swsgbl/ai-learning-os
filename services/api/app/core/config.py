@@ -32,6 +32,10 @@ class Settings(BaseSettings):
     public_livekit_url: str | None = None
     livekit_api_key: str | None = None
     livekit_api_secret: str | None = None
+    # M14-267: 服务端容器 LiveKit 地址（env LIVEKIT_SERVER_URL）——仅供
+    # 服务端订阅者装配（app.voice_entrypoint）；与浏览器面 livekit_url/
+    # public_livekit_url 语义分离、互不回退、互不改写。无 validator/回落。
+    livekit_server_url: str | None = None
     asr_provider: str | None = None
     tts_provider: str | None = None
     # M4-02 云端语音槽位：OpenAI 兼容端点；key 只放部署 secret/.env，不入库不入码

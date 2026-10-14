@@ -1,4 +1,85 @@
 # Changelog
+## M14-267 — 显式语音部署入口与服务端 URL 拆分（部署接线，fake-only）
+
+- 动因：M14-266 能从设置对象显式装配工厂，但部署入口仍导入
+  `app.main:app`（故意无订阅者工厂）——本切片补上窄部署入口。
+  **这是部署接线 only：不使流式 ASR/VAD/barge-in 可用、不声明
+  生产语音就绪；不加语音 HTTP 路由/readiness；不连真实
+  LiveKit；不创建/启动订阅者；不改 Web/Android/Harmony/DB/
+  迁移/recovery/edge/TURN 部署；不改既有 LiveKit 拓扑/端口
+  绑定/凭据/生产恢复 pin；不启停任何 API/Docker/LiveKit/
+  ASR/TTS/emulator/代理/生产服务（本地不跑 Docker——真实
+  compose 入口冒烟属 Docker CI）；测试全用显眼假凭据与 fake
+  runtime 协作者。**
+- **`services/api/app/core/config.py`**：Settings 新增恰一字段
+  `livekit_server_url: str | None = None`（env
+  `LIVEKIT_SERVER_URL`）——服务端容器地址，与浏览器面
+  `livekit_url`（token ws_url）/`public_livekit_url`（显式公开
+  URL）语义分离、互不回退、互不改写；无 validator/回落/
+  强制/secret 行为；既有设置零改名零改义。
+- **新增 `services/api/app/voice_entrypoint.py`**：
+  `VoiceEntrypointSettingsLike`（runtime_checkable 最小设置面：
+  恰 `livekit_server_url`/`livekit_api_key`/`livekit_api_secret`
+  三属性）+ `_ServerUrlSettingsAdapter`（slots 锁死属性面：恰读
+  服务端 URL 映射进 M14-266 `VoiceAppSettingsLike.livekit_url`
+  ——浏览器面两字段被结构性挡在装配面外，适配器根本不读取）+
+  `create_voice_entrypoint_app(database_url, *, settings)` 纯包装
+  （复用 M14-266 `create_app_with_voice_subscriber`——零重复
+  凭据/URL 校验/token 签发/runtime 工厂/净化逻辑；映射先于
+  工厂装配、非法值经既有 M14-265/266 校验路径在任何 FastAPI
+  app 创建之前失败、绝不返回半装配 app）+ 模块级 `app`
+  （`get_settings` 恰一次且仅此一处；fail-closed——server URL
+  缺失/非法时导入即失败，绝不静默回退浏览器 URL/绝不返回
+  无工厂 app；注册 ≠ 启动——import/lifespan 零签发/零订阅者
+  创建/零房间流构造/零 LiveKit SDK 调用）。
+- **`infra/docker-compose.yml`**：主 API 服务显式
+  `command: ["uvicorn", "app.voice_entrypoint:app", "--host",
+  "0.0.0.0", "--port", "8000"]` + 环境注入
+  `LIVEKIT_SERVER_URL: ${AIOS_LIVEKIT_SERVER_URL:-ws://livekit:7880}`
+  ——既有 LIVEKIT_URL/PUBLIC_LIVEKIT_URL/API 凭据/绑定/端口/
+  profiles/健康检查默认零变化。**`.env.example`**：新增
+  `AIOS_LIVEKIT_SERVER_URL` compose 插值键 + 服务端容器 URL
+  （非浏览器 URL）区分注释。**`services/api/Dockerfile` 与
+  `app/main.py` 零改动**（镜像默认 CMD 仍 `app.main:app`、
+  模块级 `app = create_app()` 原样且不导入入口——测试锚定）。
+- 新增 `services/api/tests/test_voice_entrypoint.py` **18 项
+  fake-only 契约测试**（TDD 先 RED 后 GREEN；受控 env +
+  `get_settings.cache_clear` + `importlib.reload` 驱动模块级
+  app）：三 URL 显式不同恰 server 进入映射（浏览器/public 被
+  忽略 + VoiceAppSettingsLike 结构兼容）；纯包装恰一次透传
+  （database_url 原样 + 设置 keyword；不直接调 create_app——
+  文本锚定）；非法 server URL（6 例）经 M14-265/266 净化先于
+  runtime 工厂与 create_app 失败（三零计数断言、链彻底抑制）；
+  `get_settings` 恰一调用节点且在模块级 app 行（AST+正则）+
+  纯函数双守卫不触全局设置；fake-only lifespan×2（纯函数与
+  模块级默认）——恰一工厂同实例、管理器 open、订阅者计数 0、
+  /health 200、零签发/零房间/零流/零启动、关停 closed；源码
+  卫生（AST 导入白名单 + 禁止调用含 build_voice_token/
+  validate_livekit_url——不重复校验 + 文本级无 getenv/env
+  文件/动态逃逸/创建启动形态）；main.py 与 Dockerfile 默认
+  不变锚定；compose 渲染（yaml.safe_load）——command 恰为
+  `app.voice_entrypoint:app`、LIVEKIT_SERVER_URL 插值默认、
+  浏览器面三变量原样；.env.example 键与注释块区分断言。
+- 验证（canonical venv，TDD：先 RED 后 GREEN）：三文件
+  **44 passed**（18+14+12）；十一文件合计 **315 passed**
+  （M14-266 基线 297 零回归）；m905+compose 审计 **34
+  passed, 1 skipped**（compose 改动不破坏既有契约）；ruff
+  （触及文件）All checks passed；compileall（触及文件）OK；
+  `git diff --check` 干净。真实 compose 入口冒烟属 Docker CI。
+  首轮 PR CI 后显式同步 rc-smoke 契约（API job 暴露部署面
+  联动）：生产 compose pin 第五次显式更新（M14-100/148/159/
+  160 先例；新 sha `8fb2aafc…fedfe8e`）+ rc-smoke compose
+  api env 追加逐字一致 `LIVEKIT_SERVER_URL` 行（键集零增零删
+  parity 保持；smoke 镜像默认 CMD 不变）；同步后
+  `test_rc_smoke_rehearsal.py` **59 passed**、compose 套件
+  （profiles/restart/m905）**44 passed, 2 skipped**。
+- **诚实边界：部署接线零运行时声明——注册 ≠ 启动 ≠ 流式
+  ASR/VAD/barge-in 可用 ≠ 生产语音就绪；零真实连接、零签发、
+  零订阅者创建/启动、零 LiveKit SDK 调用、零真实凭据入库
+  （compose 默认值为既有 dev 占位约定）**；未启停任何生产/
+  运行时服务；矩阵计数不变 implemented 60 / partial 3；
+  `production_ready`/`release_ready`/`public_ready` 均 false
+  不变。
 ## M14-266 — 显式语音应用接线（适配+包装，fake-only）
 
 - 动因：M14-265 能从显式凭据构造

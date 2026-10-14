@@ -83,6 +83,10 @@ services:
     build:
       context: ..
       dockerfile: services/api/Dockerfile
+    # M14-267: 主 compose API 服务显式运行语音入口（注册受控订阅者工厂；
+    # 注册 ≠ 启动/连接）。镜像默认 CMD（app.main:app）保持不变——其他
+    # 部署面不受影响。
+    command: ["uvicorn", "app.voice_entrypoint:app", "--host", "0.0.0.0", "--port", "8000"]
     # M7-06: 应用回滚锚点 —— 发布时 docker tag 固化版本镜像；回滚 = AIOS_IMAGE_TAG=<旧tag> up -d --no-build
     image: aios/api:${AIOS_IMAGE_TAG:-local}
     restart: unless-stopped
@@ -109,6 +113,10 @@ services:
       # M9-08: LIVEKIT_URL 是浏览器可达地址（token ws_url）—— 本机默认 127.0.0.1；
       # 容器内部地址 ws://livekit:7880 只服务端调用用，绝不发给浏览器
       LIVEKIT_URL: ${AIOS_LIVEKIT_URL:-ws://127.0.0.1:7880}
+      # M14-267: 服务端容器 LiveKit 地址（服务端订阅者装配专用）——与浏览器面
+      # LIVEKIT_URL/PUBLIC_LIVEKIT_URL 语义分离、互不回退；缺失/非法时入口
+      # fail-closed 拒绝启动（绝不静默回退浏览器 URL）
+      LIVEKIT_SERVER_URL: ${AIOS_LIVEKIT_SERVER_URL:-ws://livekit:7880}
       # M9-08: 浏览器可达 LiveKit 地址 —— 公开模式必配（AIOS_BIND_IP 非 loopback
       # 时 fail-closed 校验）；本机模式留空则 token 回退 127.0.0.1
       PUBLIC_LIVEKIT_URL: ${AIOS_PUBLIC_LIVEKIT_URL:-}

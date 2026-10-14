@@ -85,6 +85,39 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-267 状态更新（显式语音部署入口与服务端 URL 拆分——部署接线，fake-only 验证）
+
+- 基于 current main `bf46509e`（PR #353 merge，即 M14-266）
+  实施：部署入口显式运行语音入口模块——设置拆分 + 入口 +
+  主 compose API 切换（部署接线 only）。
+- **设置拆分**：Settings 新增恰一字段 `livekit_server_url`
+  （env `LIVEKIT_SERVER_URL`，服务端容器地址）——与浏览器面
+  `livekit_url`/`public_livekit_url` 语义分离、互不回退、零
+  改名零改义；无 validator/回落/secret 行为。
+- **入口模块 `app/voice_entrypoint.py`**：
+  `VoiceEntrypointSettingsLike` 恰三属性 +
+  `_ServerUrlSettingsAdapter`（服务端 URL 映射进 M14-266
+  设置面——浏览器面两字段结构性忽略）+
+  `create_voice_entrypoint_app` 纯包装（复用 M14-266，零重复
+  凭据/URL/token/净化；非法值先于任何 FastAPI app 创建失败）+
+  模块级 app（`get_settings` 恰一次且仅此；fail-closed——
+  server URL 缺失/非法导入即失败，绝不静默回退浏览器 URL）。
+- **部署面**：主 compose API 显式
+  `command: ["uvicorn", "app.voice_entrypoint:app", ...]` +
+  `LIVEKIT_SERVER_URL: ${AIOS_LIVEKIT_SERVER_URL:-ws://livekit:7880}`
+  注入；.env.example 补键与服务端/浏览器区分注释；既有
+  LIVEKIT_URL/PUBLIC_LIVEKIT_URL/凭据/绑定/端口/profile/健康
+  检查零变化；镜像默认 CMD（app.main:app）与 main.py 零改动。
+- 新增 18 项 fake-only 契约测试（含模块级 app lifespan 注册≠
+  启动断言与 compose yaml 渲染断言）；十一文件合计 **315
+  passed**（M14-266 基线 297 零回归）；m905+compose 审计
+  34 passed 1 skipped；ruff/compileall/diff-check 全过。
+  **注册 ≠ 启动 ≠ 流式 ASR/VAD 可用：零真实连接、零签发、
+  零订阅者创建/启动、零 LiveKit SDK 调用**（真实 compose
+  入口冒烟属 Docker CI，本地不跑 Docker）；不声明缺口 3/
+  M14-09 关闭，计数不变 implemented 60 / partial 3；
+  production_ready=false / release_ready=false /
+  public_ready=false 不变。
 ### M14-266 状态更新（显式语音应用接线——适配+包装，fake-only 验证）
 
 - 基于 current main `e0950f98`（PR #352 merge，即 M14-265 含
