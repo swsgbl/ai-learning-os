@@ -1,4 +1,42 @@
 # Changelog
+## M14-272d — Voice live 会话路由（服务端管线 HTTP 面，fake-only）
+
+- **范围**：M14-272 第四子切片——把 M14-272a/c 管线暴露为
+  **服务端权威** HTTP 面 `/voice/live-sessions`（Web/Android/
+  Harmony 逐步对齐此契约——三端本切片零触碰）。fake runtime
+  工厂 + fake transcriber——零真实网络零真实连接。
+- **`services/api/app/api/routes/voice_live.py`（新增）**：
+  - `POST /{session_id}/open` {room}——打开会话（identity 服务端
+    生成 `server-sub-*`，绝不接受客户端指定；同会话幂等 200）；
+  - `GET /{session_id}`——组合状态投影（FSM state/revision +
+    ASR 状态 + 通道计数 + closed）；
+  - `POST /{session_id}/events` {event, revision?}——FSM 事件
+    （revision 乐观并发：不匹配/非法迁移 409）；
+  - `POST /{session_id}/vad` {signal}——VAD 信号映射（M14-271）；
+  - `GET /{session_id}/transcript`——服务端权威 transcript；
+  - `DELETE /{session_id}`——确定性关停（M14-272a 四段序），响应
+    携带 final transcript；幂等。
+  - 错误面：管线未安装 503（默认入口——路由恒注册但数据面
+    仅语音入口可用）；未知/已终结会话 404；迁移/revision 拒绝
+    409；非法 session_id/room 422。全部响应无凭据/token。
+- **domain 小扩展（零回归）**：`ServerVoiceSessionHandle` 记
+  identity（property + state 投影含 identity/closed）；
+  `ServerVoicePipeline.submit_vad_session` 薄方法；open 入参
+  identity 复用工厂保守边界校验。
+- **测试**：`test_voice_live_routes.py`（新增，11 项 fake-only
+  契约测试）——503 门（6 端点参数化）、全流程（open→事件→VAD→
+  transcript→DELETE：fake 房间断开、无帧零转写、终结 404）、帧
+  路径（通道注帧→close 冲刷→transcriber 逐字拼接→文本映射）、
+  revision 并发（应用/冲突 409 状态不变）、错误面（非法事件 409/
+  未知 404 四端点/标识 422 四例）、幂等 open（订阅者恰一）、
+  响应零凭据泄漏。
+- 验证（canonical venv）：单文件 **11 passed**；十九文件合计
+  **490 passed**（M14-272c 基线 479 零回归）；审计 **93 passed,
+  1 skipped**；ruff/compileall/diff-check 全过。
+- **诚实边界：HTTP 面就绪 ≠ 端到端已验收——三端接入与真实
+  LiveKit+FunASR 浏览器端到端属 M14-272 验收批**；后台 pump
+  循环未做（close 确定性冲刷已覆盖批式路径）；零真实凭据；
+  计数不变 implemented 60 / partial 3；三 ready 标志均 false。
 ## M14-272c — 语音管线 lifespan 接线 + 同步 FunASR transcriber（fake-only）
 
 - **范围**：M14-272 第三子切片——最终接线：`create_app` 新增

@@ -536,6 +536,7 @@ def test_source_hygiene_pipeline_module() -> None:
         "app.domain.voice_frame_sink",
         "app.domain.voice_session_control",
         "app.domain.voice_session_subscriptions",
+        "app.domain.voice_subscriber_factory",
     }
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
