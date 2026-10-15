@@ -63,10 +63,18 @@ RUNNER_PATH = REPO_ROOT / "tools" / "ops" / "rc_smoke_rehearsal.py"
 #: AIOS_WEB_HEALTH_PATH：root 构建 = / 逐字不变，basePath 构建 = /aios；
 #: 修复 M14-159 实证的 basePath 构建下固定探测 / 404 unhealthy），其余
 #: 服务定义/网络/卷/端口等生产语义零变更；rc-smoke compose healthcheck
-#: 同步同一命令（R1，逐字一致契约保持）。
+#: 同步同一命令（R1，逐字一致契约保持）。M14-267 第五次显式更新
+#: docker-compose.yml pin——api 服务新增显式 command（uvicorn
+#: app.voice_entrypoint:app，语音部署入口切换；镜像默认 CMD 不变）+
+#: LIVEKIT_SERVER_URL 环境槽位（AIOS_LIVEKIT_SERVER_URL 插值，默认
+#: ws://livekit:7880——服务端容器地址，与浏览器面 LIVEKIT_URL/
+#: PUBLIC_LIVEKIT_URL 语义分离），其余服务定义/网络/卷/端口等生产
+#: 语义零变更；rc-smoke compose api env 同步同一 LIVEKIT_SERVER_URL
+#: 行（键集+值逐字一致契约保持）；见
+#: docs/evidence/m14-267-voice-entrypoint/。
 PRODUCTION_FILE_PINS = {
     "infra/docker-compose.yml":
-        "b003d0fea0c00e57edd0bd94bc637275b407fccb25f64a95ad06ab0d709a502a",
+        "8fb2aafc116cf5a7d259bc48a8c4521379562e9be487525139f187a39fedfe8e",
     "infra/build_release_candidate.sh":
         "3efa02586c8a93a1d4b26f1fc981fd1233a87ae94be797cd3f939e9b464778b2",
     "infra/smoke_docker.sh":
