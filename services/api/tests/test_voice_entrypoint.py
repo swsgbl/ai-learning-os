@@ -36,11 +36,11 @@ from fastapi.testclient import TestClient
 
 import app.domain.voice_app_factory as app_factory_module
 import app.domain.voice_runtime_factory as runtime_module
-import app.voice_app as voice_app_module
+import app.voice_pipeline_entry as pipeline_entry_module
 from app.core.config import get_settings
 from app.domain.voice_runtime_factory import VoiceRuntimeFactoryError
 from app.domain.voice_subscriber_factory import ControlledVoiceSubscriberFactory
-from app.voice_app import VoiceAppSettingsLike
+from app.voice_pipeline_entry import VoicePipelineSettingsLike
 
 FAKE_SERVER_URL = "ws://livekit:7880"  # 服务端容器地址（compose 默认同款）
 FAKE_BROWSER_URL = "ws://127.0.0.1:7880"  # 浏览器面（必须被忽略）
@@ -77,6 +77,8 @@ class FakeEntrypointSettings:
             "livekit_server_url": FAKE_SERVER_URL,
             "livekit_api_key": FAKE_KEY,
             "livekit_api_secret": FAKE_SECRET,
+            "voice_asr_endpoint": "http://127.0.0.1:8010/v1",
+            "asr_local_model": "sensevoice",
         }
         fields.update(overrides)
         for name, value in fields.items():
@@ -156,6 +158,7 @@ def load_entrypoint(monkeypatch, **env_overrides):
         "LIVEKIT_SERVER_URL": FAKE_SERVER_URL,
         "LIVEKIT_API_KEY": FAKE_KEY,
         "LIVEKIT_API_SECRET": FAKE_SECRET,
+        "VOICE_ASR_ENDPOINT": "http://127.0.0.1:8010/v1",
     }
     env.update(env_overrides)
     for name, value in env.items():
@@ -193,7 +196,7 @@ def test_server_url_mapping_ignores_browser_urls(monkeypatch) -> None:
 
     # 直接替换入口模块已绑定的名字（from-import 绑定不受源模块影响）
     monkeypatch.setattr(
-        module, "create_app_with_voice_subscriber", recording_wrapper
+        module, "create_app_with_voice_pipeline", recording_wrapper
     )
     settings = FakeEntrypointSettings()  # 三个 URL 显式不同
     sentinel_db = object()
@@ -202,12 +205,14 @@ def test_server_url_mapping_ignores_browser_urls(monkeypatch) -> None:
     args, kwargs = captured[0]
     assert args == (sentinel_db,)  # database_url 原样透传
     mapped = kwargs["settings"]
-    assert isinstance(mapped, VoiceAppSettingsLike)  # M14-266 设置面
+    assert isinstance(mapped, VoicePipelineSettingsLike)  # M14-272c 设置面
     assert mapped.livekit_url == FAKE_SERVER_URL  # 只有服务端 URL 进入
     assert mapped.livekit_url != FAKE_BROWSER_URL
     assert mapped.livekit_url != FAKE_PUBLIC_URL
     assert mapped.livekit_api_key == FAKE_KEY
     assert mapped.livekit_api_secret == FAKE_SECRET
+    assert mapped.asr_local_endpoint == "http://127.0.0.1:8010/v1"  # ASR 直通
+    assert mapped.asr_local_model == "sensevoice"
 
 
 def test_wrapper_not_create_app_directly() -> None:
@@ -215,7 +220,7 @@ def test_wrapper_not_create_app_directly() -> None:
     assert "from app.main import" not in ENTRYPOINT_SOURCE
     assert "import app.main" not in ENTRYPOINT_SOURCE
     assert "create_app(" not in ENTRYPOINT_SOURCE.replace(
-        "create_app_with_voice_subscriber(", ""
+        "create_app_with_voice_pipeline(", ""
     ).replace("create_voice_entrypoint_app(", "")
 
 
@@ -235,7 +240,7 @@ def test_invalid_server_url_fails_before_app_creation(
         create_app_calls.append((args, kwargs))
         raise AssertionError("create_app 不应被调用")
 
-    monkeypatch.setattr(voice_app_module, "create_app", spy_create_app)
+    monkeypatch.setattr(pipeline_entry_module, "create_app", spy_create_app)
     # 清除模块级 app 构建的基线记录（合法 URL 恰一次），断言失败路径增量
     runtime_pair.calls.clear()
     with pytest.raises(VoiceRuntimeFactoryError, match="LiveKit URL 非法") as ei:
@@ -246,6 +251,29 @@ def test_invalid_server_url_fails_before_app_creation(
     assert runtime_pair.calls == []  # 失败路径 runtime 工厂零调用
     assert signer.calls == []  # 零签发
     assert create_app_calls == []  # FastAPI app 创建零调用
+
+
+def test_missing_asr_endpoint_fails_closed_before_app(
+    runtime_pair, signer, monkeypatch
+) -> None:
+    """ASR 端点缺失/空白：M14-272c fail-closed 先于任何 app 创建。"""
+    module = load_entrypoint(monkeypatch)
+    create_app_calls: list[tuple] = []
+
+    def spy_create_app(*args, **kwargs):
+        create_app_calls.append((args, kwargs))
+        raise AssertionError("create_app 不应被调用")
+
+    monkeypatch.setattr(pipeline_entry_module, "create_app", spy_create_app)
+    for bad_endpoint in (None, "", "   "):
+        with pytest.raises(Exception) as ei:
+            module.create_voice_entrypoint_app(
+                None,
+                settings=FakeEntrypointSettings(voice_asr_endpoint=bad_endpoint),
+            )
+        text_error = str(ei.value)
+        assert FAKE_KEY not in text_error and FAKE_SECRET not in text_error
+    assert create_app_calls == []
 
 
 # ---------- 4：get_settings 恰一次且仅模块级 ----------
@@ -287,7 +315,7 @@ def test_pure_function_accepts_explicit_settings_no_get_settings(
         return sentinel
 
     monkeypatch.setattr(
-        module, "create_app_with_voice_subscriber", recording_wrapper
+        module, "create_app_with_voice_pipeline", recording_wrapper
     )
     result = module.create_voice_entrypoint_app(
         None, settings=FakeEntrypointSettings()
@@ -303,7 +331,7 @@ def test_entrypoint_lifespan_registration_only(
 ) -> None:
     module = load_entrypoint(monkeypatch)
     built: list[ControlledVoiceSubscriberFactory] = []
-    real_build = voice_app_module.build_voice_app_subscriber_factory
+    real_build = pipeline_entry_module.build_voice_app_subscriber_factory
 
     def recording_build(config):
         factory = real_build(config)
@@ -311,7 +339,7 @@ def test_entrypoint_lifespan_registration_only(
         return factory
 
     monkeypatch.setattr(
-        voice_app_module, "build_voice_app_subscriber_factory", recording_build
+        pipeline_entry_module, "build_voice_app_subscriber_factory", recording_build
     )
     app = module.create_voice_entrypoint_app(
         None, settings=FakeEntrypointSettings()
@@ -365,7 +393,7 @@ def test_source_hygiene_entrypoint_module() -> None:
         "typing",
         "fastapi",
         "app.core.config",
-        "app.voice_app",
+        "app.voice_pipeline_entry",
     }
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -465,8 +493,18 @@ def test_compose_browser_facing_urls_unchanged() -> None:
     assert env["LIVEKIT_API_KEY"] == "${AIOS_LIVEKIT_API_KEY:-devkey}"
 
 
+def test_compose_api_receives_voice_asr_topology_default() -> None:
+    """管线专用 ASR 槽位有拓扑默认；provider 面 ASR 默认留空不变。"""
+    api = _compose_api_service()
+    assert api["environment"]["VOICE_ASR_ENDPOINT"] == (
+        "${AIOS_VOICE_ASR_ENDPOINT:-http://host.docker.internal:8010/v1}"
+    )
+    assert api["environment"]["ASR_LOCAL_ENDPOINT"] == "${AIOS_ASR_LOCAL_ENDPOINT:-}"
+
+
 def test_env_example_documents_server_url_key() -> None:
     assert "AIOS_LIVEKIT_SERVER_URL" in ENV_EXAMPLE_TEXT
+    assert "AIOS_VOICE_ASR_ENDPOINT" in ENV_EXAMPLE_TEXT
     # 键附近的注释块明确：服务端容器 URL，非浏览器 URL
     lines = ENV_EXAMPLE_TEXT.splitlines()
     anchor = next(

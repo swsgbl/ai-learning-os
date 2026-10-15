@@ -71,10 +71,17 @@ RUNNER_PATH = REPO_ROOT / "tools" / "ops" / "rc_smoke_rehearsal.py"
 #: PUBLIC_LIVEKIT_URL 语义分离），其余服务定义/网络/卷/端口等生产
 #: 语义零变更；rc-smoke compose api env 同步同一 LIVEKIT_SERVER_URL
 #: 行（键集+值逐字一致契约保持）；见
-#: docs/evidence/m14-267-voice-entrypoint/。
+#: docs/evidence/m14-267-voice-entrypoint/。M14-272e 第六次显式
+#: 更新 docker-compose.yml pin——api env 新增 VOICE_ASR_ENDPOINT
+#: 槽位（语音管线专用服务端转写地址，默认 host.docker.internal
+#: FunASR 拓扑——与 M4-02 provider 面 ASR_LOCAL_ENDPOINT（默认留空
+#: = 降级替身）语义分离；transcriber 惰性零 HTTP），其余服务定义/
+#: 网络/卷/端口与既有 env 值生产语义零变更；rc-smoke compose api
+#: env 同步同一行（键集+值逐字一致契约保持）；见
+#: docs/evidence/m14-272e-voice-entrypoint-pipeline/。
 PRODUCTION_FILE_PINS = {
     "infra/docker-compose.yml":
-        "8fb2aafc116cf5a7d259bc48a8c4521379562e9be487525139f187a39fedfe8e",
+        "1740f8ca2beb4133ea70d28a21fbc394803c4fe7f48ff798b0a0bd88f5471ed5",
     "infra/build_release_candidate.sh":
         "3efa02586c8a93a1d4b26f1fc981fd1233a87ae94be797cd3f939e9b464778b2",
     "infra/smoke_docker.sh":

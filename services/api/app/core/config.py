@@ -36,6 +36,10 @@ class Settings(BaseSettings):
     # 服务端订阅者装配（app.voice_entrypoint）；与浏览器面 livekit_url/
     # public_livekit_url 语义分离、互不回退、互不改写。无 validator/回落。
     livekit_server_url: str | None = None
+    # M14-272e: 语音管线专用 ASR 端点（env VOICE_ASR_ENDPOINT，服务端
+    # 容器转写地址）——与 M4-02 provider 面 asr_local_endpoint 语义
+    # 分离（provider 默认留空 = 降级替身；管线面 fail-closed 非空）。
+    voice_asr_endpoint: str | None = None
     asr_provider: str | None = None
     tts_provider: str | None = None
     # M4-02 云端语音槽位：OpenAI 兼容端点；key 只放部署 secret/.env，不入库不入码

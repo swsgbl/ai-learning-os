@@ -1,4 +1,38 @@
 # Changelog
+## M14-272e — 部署入口升级为管线装配 + VOICE_ASR_ENDPOINT 槽位（fake-only）
+
+- **范围**：M14-272 第五子切片——`voice_entrypoint` 内部从「受控
+  工厂注册」（M14-267）升级为「管线装配」
+  （`create_app_with_voice_pipeline`——M14-272a/c/d 组装器 +
+  lifespan 安装 + live 路由数据面）；新增**语音管线专用 ASR 端点
+  槽位** `VOICE_ASR_ENDPOINT`（与 M4-02 provider 面
+  `ASR_LOCAL_ENDPOINT` 语义分离——provider 默认留空 = 降级替身
+  契约原样保持）。compose command/镜像 CMD 零变化。
+- **`voice_entrypoint.py`（升级）**：`VoiceEntrypointSettingsLike`
+  扩为恰五属性（服务端 LiveKit 三件 + `voice_asr_endpoint`/
+  `asr_local_model`）；`_ServerUrlSettingsAdapter` 映射
+  `voice_asr_endpoint` → M14-272c `asr_local_endpoint`（浏览器面
+  两字段仍结构性忽略）；包装改调 `create_app_with_voice_pipeline`
+  （凭据/URL/ASR 校验全复用，fail-closed 链扩展至 ASR 端点）。
+- **`config.py`**：Settings 新增 `voice_asr_endpoint: str | None
+  = None`（env `VOICE_ASR_ENDPOINT`）。
+- **compose/.env**：api env 新增
+  `VOICE_ASR_ENDPOINT: ${AIOS_VOICE_ASR_ENDPOINT:-
+  http://host.docker.internal:8010/v1}`（宿主 FunASR 拓扑默认；
+  transcriber 惰性零 HTTP——真实转写在 live 会话 close 冲刷时
+  发生）；`ASR_LOCAL_ENDPOINT` 默认留空零变化（M14-01 降级替身
+  契约保持）；rc-smoke parity 同步 + 生产 pin 第六次显式更新。
+- **测试**：`test_voice_entrypoint.py` 适配升级（20 项：五属性
+  映射、包装目标改 pipeline 版、ASR 端点缺失三例 fail-closed、
+  lifespan 双注册（工厂+管线）、compose VOICE_ASR 默认断言 +
+  ASR 默认留空不变断言）。
+- 验证（canonical venv）：focused **20 passed**；十九文件合计
+  **492 passed**（M14-272d 基线 490，entry 测试改写后净增）；
+  审计（含 M14-01 契约）**93 passed, 1 skipped**；ruff/
+  compileall/diff-check 全过。
+- **诚实边界：入口装配管线 ≠ 端到端已验收——真实 LiveKit +
+  FunASR + 浏览器端到端属 M14-272 验收批**；零真实凭据；计数
+  不变 implemented 60 / partial 3；三 ready 标志均 false 不变。
 ## M14-272d — Voice live 会话路由（服务端管线 HTTP 面，fake-only）
 
 - **范围**：M14-272 第四子切片——把 M14-272a/c 管线暴露为
