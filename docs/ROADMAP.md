@@ -85,6 +85,21 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-272b 状态更新（FunASR 批式转写适配器——纯域层，fake-only 验证）
+
+- 基于 current main `4dbecfa5`（PR #359 merge，即 M14-272a）
+  实施：批式 FunASR → M14-270 流式协议的适配器（transcriber
+  同步 callable 注入——真实 HTTP 包装属接线层）。
+- **`domain/voice_funasr_adapter.py`（新增）**：`FunAsrBatchAdapter`
+  （feed 零转写累积/finish 恰一次单 final 段/幂等；内存有界
+  8 MiB——超界丢最旧、单 chunk 超预算丢弃；失败净化链抑制；
+  state 计数投影）。
+- 新增 14 项 fake-only 契约测试（含 M14-270 消费链全链集成）；
+  十七文件合计 **462 passed**（M14-272a 基线 448 零回归）；
+  审计 93 passed 1 skipped；ruff/compileall/diff-check 全过。
+  **适配器协议就绪 ≠ FunASR 已接线——HTTP 包装与 lifespan/
+  路由安装属最终接线切片、本机端到端属 M14-272c**；计数不变；
+  三 ready 标志均 false 不变。
 ### M14-272a 状态更新（服务端语音会话管线组装器——工厂 sink 注入 + 纯域编排，fake-only 验证）
 
 - 基于 current main `516fbfe9`（PR #358 merge，即 M14-271）实施：

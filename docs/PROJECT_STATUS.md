@@ -361,11 +361,37 @@ fake-only 契约测试，十六文件合计 448 passed（M14-271 基线 433
 零回归）——**组装器 ≠ 真实语音能力：HTTP 接线与 FunASR
 adapter 属 M14-272b、本机端到端属 M14-272c**，计数不变
 implemented 60 / partial 3）。
+**2026-10-15 M14-272b 交付 FunASR 批式转写适配器（纯域层，
+fake-only）**（`voice_funasr_adapter.py`：feed 零转写累积 +
+finish 恰一次单 final 段 + 幂等 + 内存有界 8 MiB + 失败净化
+链抑制；14 项 fake-only 契约测试含 M14-270 消费链全链集成，
+十七文件合计 462 passed（M14-272a 基线 448 零回归）——**适配器
+协议就绪 ≠ FunASR 已接线：HTTP 包装与 lifespan/路由安装属最终
+接线切片、本机端到端属 M14-272c**，计数不变 implemented 60 /
+partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-272b FunASR 批式转写适配器（纯域层，fake-only）**
+worktree `ai-learning-os-worktrees/m14-272b-voice-funasr-wiring`，
+分支 `api/m14-272b-voice-funasr-wiring`，基于 current main
+`4dbecfa5`（PR #359 merge，即 M14-272a）。动因：M14-270 流式
+ASR 协议就绪但无真实 provider 适配——本切片把本地 FunASR 批式
+转写（M4-02 LocalFunAsrAsrProvider 形态）适配为流式协议：
+transcriber 同步 callable 注入（真实 HTTP 客户端包装与线程池
+调度属接线层——本切片零网络零真实 ASR）。**交付：新增
+`domain/voice_funasr_adapter.py`——FunAsrBatchAdapter（feed 批式
+累积零转写、finish 恰一次单 final 段、幂等；内存有界 8 MiB——
+超界丢最旧保最新、单 chunk 超总预算丢弃计审计；失败净化链彻底
+抑制；state 计数投影）。**验证与结果（单文件 14 passed、十七
+文件合计 462 passed（M14-272a 基线 448 零回归）、审计 93
+passed 1 skipped、ruff/compileall/diff-check 全过）见
+`docs/evidence/m14-272b-voice-funasr-adapter/README.md`。
+
+### 前一任务快照（M14-272a 服务端语音会话管线组装器——详见 docs/evidence/m14-272a-voice-pipeline/README.md；本切片不改写、不弱化该证据）
 
 **M14-272a 服务端语音会话管线组装器（工厂 sink 注入 + 纯域编排，fake-only）**
 worktree `ai-learning-os-worktrees/m14-272-voice-pipeline`，分支
@@ -384,6 +410,7 @@ worktree `ai-learning-os-worktrees/m14-272-voice-pipeline`，分支
 （M14-271 基线 433 零回归——含被扩展工厂的两套既有测试）、审计
 93 passed 1 skipped、ruff/compileall/diff-check 全过）见
 `docs/evidence/m14-272a-voice-pipeline/README.md`。
+**已合并：PR #359，CI 5/5，merge commit `4dbecfa5`。**
 
 ### 前一任务快照（M14-271 VAD/barge-in/pause-resume 服务端权威会话控制——详见 docs/evidence/m14-271-voice-session-control/README.md；本切片不改写、不弱化该证据）
 
