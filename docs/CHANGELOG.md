@@ -1,4 +1,52 @@
 # Changelog
+## M14-268 — 服务端订阅生命周期编排（纯域服务，fake-only）
+
+- **范围**：voice session **显式申请/释放**服务端订阅者的纯域
+  编排层——叠加在 `VoiceRuntimeManager`（M14-257/258：每键去重/
+  容量前置/排空关闭屏障/净化投影）与 `ControlledVoiceSubscriberFactory`
+  （M14-261/264/265：受控装配）之上。**订阅者只能由 runtime
+  manager 管理**：编排服务绝不直接构造/启动/停止订阅者。
+- **`services/api/app/domain/voice_session_subscriptions.py`（新增）**：
+  `session_key = "voice-session-" + canonical session_id`（同
+  session 恒同键，manager 每键去重直接给出会话级申请去重；
+  session_id 保守边界与 room/identity 同口径 `^[A-Za-z0-9_-]{3,64}$`
+  ——复用工厂公开正则不另立宽松边界；键总长 ≤77 < 管理器
+  `KEY_MAX_LENGTH` 128）+ `VoiceSessionSubscriptionService`：
+  `acquire(session_id, room=, identity=)`（参数先行校验——任一
+  非法在任何 manager 调用之前失败，不占容量预留、工厂零调用；
+  零参闭包捕获**已校验** canonical 值恰一次交给 `manager.start`，
+  工厂 `create` 只在管理器启动路径内、容量检查之后被调用恰一次；
+  返回纯透传 manager 净化有界投影）+ `release(session_id)`
+  （= `manager.stop(key)`，未知/已释放幂等 no-op；条目移除后
+  同键可重新 acquire——非"重启"，manager 既有终态语义透传）+
+  `snapshot()`（纯透传 manager 总投影——单一事实源 = manager，
+  服务无自身 session→订阅者映射/计数/历史）+ 构造校验
+  （manager/factory 结构面 `runtime_checkable` 协议检查）。
+- **错误零包装**：manager/工厂错误原样透传——本层不包装、不改写、
+  不拼接任何值/文本（既有净化消息唯一出口不变）；本层自身错误
+  仅参数/构造校验白名单文案。
+- **测试**：`services/api/tests/test_voice_session_subscriptions.py`
+  （新增，32 项 fake-only 契约测试，TDD 先 RED 后 GREEN；真实
+  manager + 真实受控工厂 + fake 最内层协作者三件套集成）——键
+  规则与 session_id 边界（10 例拒绝）、参数先行（5 例双零计数）、
+  申请编排（恰一次 manager.start + 闭包产物即工厂产物 + 投影
+  纯透传）、所有权（条目在 manager/订阅者 active/token 只进
+  连接局部 + AST 调用面白名单恰 {start, stop, snapshot,
+  create-仅闭包内}）、会话级去重（重复 acquire 工厂 create 恰
+  一次）、释放幂等与重新申请、失败透传净化（connect 抛错经
+  manager 净化错误零泄漏、容量满/关闭透传）、构造校验、snapshot
+  透传、源码卫生（AST 导入白名单 + 禁 LiveKit/FastAPI/HTTP/
+  socket/asyncio 调度/文件/secret + 文本 forbidden 清单）。
+- 验证（canonical venv）：单文件 **32 passed**；十二文件合计
+  **347 passed**（M14-267 基线 315 零回归）；m905+compose+
+  rc-smoke 审计 **93 passed, 1 skipped**；ruff（两文件）All
+  checks passed；compileall（两文件）OK；`git diff --check`
+  干净。
+- **诚实边界：编排 ≠ 运行时能力——不连真实 LiveKit、不加
+  HTTP 路由、不进 lifespan、不做流式 ASR/VAD/barge-in/
+  pause-resume、不创建帧管道**；零真实凭据（测试全为显眼假值）；
+  计数不变 implemented 60 / partial 3；`production_ready`/
+  `release_ready`/`public_ready` 均 false 不变。
 ## M14-267 — 显式语音部署入口与服务端 URL 拆分（部署接线，fake-only）
 
 - 动因：M14-266 能从设置对象显式装配工厂，但部署入口仍导入

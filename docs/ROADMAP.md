@@ -85,6 +85,33 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-268 状态更新（服务端订阅生命周期编排——纯域服务，fake-only 验证）
+
+- 基于 current main `a131494f`（PR #354 merge，即 M14-267）
+  实施：voice session **显式申请/释放**服务端订阅者的纯域编排
+  层（fake-only，不连真实 LiveKit）。
+- **编排模块 `domain/voice_session_subscriptions.py`（新增）**：
+  `session_key = "voice-session-" + canonical session_id`
+  （session_id 保守边界与 room/identity 同口径，复用工厂公开
+  正则；键总长 ≤77 < 管理器 128 上限）+
+  `VoiceSessionSubscriptionService.acquire/release/snapshot`。
+- **订阅者只能由 runtime manager 管理**：工厂 `create` 只作为
+  `manager.start(key, factory)` 零参闭包进入——构造恰发生在
+  管理器启动路径内、容量检查之后；编排服务绝不直接构造/启动/
+  停止订阅者（AST 调用面白名单锚定）。
+- **参数先行 + 单一事实源 + 错误零包装**：session/room/
+  identity 任一非法在任何 manager 调用之前失败（不占容量
+  预留、工厂零调用）；服务无自身 session→订阅者映射（snapshot
+  纯透传 manager）；manager/工厂错误原样透传（本层仅参数/
+  构造校验白名单文案）。
+- 新增 32 项 fake-only 契约测试（真实 manager + 真实受控工厂 +
+  fake 协作者三件套集成）；十二文件合计 **347 passed**
+  （M14-267 基线 315 零回归）；m905+compose+rc-smoke 审计
+  93 passed 1 skipped；ruff/compileall/diff-check 全过。
+  **编排 ≠ 运行时能力：不连真实 LiveKit、不加 HTTP 路由、
+  不进 lifespan、不做流式 ASR/VAD/barge-in**；计数不变
+  implemented 60 / partial 3；production_ready=false /
+  release_ready=false / public_ready=false 不变。
 ### M14-267 状态更新（显式语音部署入口与服务端 URL 拆分——部署接线，fake-only 验证）
 
 - 基于 current main `bf46509e`（PR #353 merge，即 M14-266）
