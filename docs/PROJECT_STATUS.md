@@ -386,11 +386,38 @@ delete（四段关停 + final transcript）；503/404/409/422 错误面；
 （M14-272c 基线 479 零回归）——**HTTP 面就绪 ≠ 端到端已验收：
 三端接入与真实浏览器端到端属 M14-272 验收批**，计数不变
 implemented 60 / partial 3）。
+**2026-10-16 M14-272e 交付部署入口升级为管线装配 +
+VOICE_ASR_ENDPOINT 槽位（fake-only）**（voice_entrypoint 内部升级
+create_app_with_voice_pipeline；Settings.voice_asr_endpoint 新槽位
+与 M4-02 provider 面语义分离（降级替身契约保持）；compose 默认
+宿主 FunASR 拓扑；pin 第六次更新；focused 20 passed、十九文件
+492 passed 零回归——**入口装配管线 ≠ 端到端已验收（真实浏览器
+端到端属 M14-272 验收批）**，计数不变 implemented 60 / partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-272e 部署入口升级为管线装配 + VOICE_ASR_ENDPOINT 槽位（fake-only）**
+worktree `ai-learning-os-worktrees/m14-272e-voice-entrypoint-pipeline`，
+分支 `api/m14-272e-voice-entrypoint-pipeline`，基于 current main
+`de630427`（PR #362 merge，即 M14-272d）。voice_entrypoint 内部
+从工厂注册（M14-267）升级为管线装配（create_app_with_voice_pipeline
+——组装器+lifespan+live 路由数据面）；Settings 新增
+voice_asr_endpoint（env VOICE_ASR_ENDPOINT——与 M4-02 provider 面
+asr_local_endpoint 语义分离，provider 默认留空=降级替身契约原样
+保持）；compose api env 新增 VOICE_ASR_ENDPOINT（默认宿主 FunASR
+拓扑 http://host.docker.internal:8010/v1，transcriber 惰性零
+HTTP）；rc-smoke parity 同步 + pin 第六次显式更新；ASR_LOCAL_
+ENDPOINT 默认留空零变化。entry 测试 20 项适配（五属性映射/
+pipeline 版包装/ASR 缺失 fail-closed 三例/lifespan 双注册/
+compose 双槽位断言）。验证与结果（focused 20 passed、十九文件
+合计 492 passed 零回归、审计（含 M14-01 契约）93 passed 1
+skipped、ruff/compileall/diff-check 全过）见
+`docs/evidence/m14-272e-voice-entrypoint-pipeline/README.md`。
+
+### 前一任务快照（M14-272d Voice live 会话路由——详见 docs/evidence/m14-272d-voice-live-routes/README.md；本切片不改写、不弱化该证据）
 
 **M14-272d Voice live 会话路由（服务端管线 HTTP 面，fake-only）**
 worktree `ai-learning-os-worktrees/m14-272d-voice-live-routes`，
@@ -409,6 +436,7 @@ closed 投影 + submit_vad_session 薄扩展（零回归）。**三端零触碰
 （M14-272c 基线 479 零回归）、审计 93 passed 1 skipped、ruff/
 compileall/diff-check 全过）见
 `docs/evidence/m14-272d-voice-live-routes/README.md`。
+**已合并：PR #362，CI 5/5，merge commit `de630427`。**
 
 ### 前一任务快照（M14-272c 语音管线 lifespan 接线——详见 docs/evidence/m14-272c-voice-pipeline-entry/README.md；本切片不改写、不弱化该证据）
 

@@ -85,6 +85,22 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-272e 状态更新（部署入口升级为管线装配 + VOICE_ASR_ENDPOINT 槽位——fake-only 验证）
+
+- 基于 current main `de630427`（PR #362 merge，即 M14-272d）
+  实施：voice_entrypoint 内部升级为 create_app_with_voice_pipeline
+  （M14-272a/c/d 组装器+lifespan+live 路由数据面）；新增
+  VOICE_ASR_ENDPOINT 槽位（Settings.voice_asr_endpoint——与
+  M4-02 provider 面 ASR_LOCAL_ENDPOINT 语义分离：provider 默认
+  留空=降级替身契约原样保持；管线面 fail-closed 非空，compose
+  默认宿主 FunASR 拓扑地址，transcriber 惰性零 HTTP）。
+- rc-smoke parity 同步 + 生产 pin 第六次显式更新；compose
+  command/镜像 CMD 零变化；entry 测试 20 项适配（含 ASR 端点
+  缺失 fail-closed 三例 + lifespan 双注册断言）。
+- focused 20 passed；十九文件合计 **492 passed**（零回归）；
+  审计（含 M14-01 契约）93 passed 1 skipped；ruff/compileall/
+  diff-check 全过。**入口装配管线 ≠ 端到端已验收（真实浏览器
+  端到端属 M14-272 验收批）**；计数不变；三 ready 标志均 false。
 ### M14-272d 状态更新（Voice live 会话路由——服务端管线 HTTP 面，fake-only 验证）
 
 - 基于 current main `7e6afb2f`（PR #361 merge，即 M14-272c）
