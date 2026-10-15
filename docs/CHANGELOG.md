@@ -1,4 +1,44 @@
 # Changelog
+## M14-270 — 流式 ASR 消费链（纯域层、可替换 adapter，fake-only）
+
+- **范围**：把服务端订阅音频流（M14-269 ``drain``）交给**可替换
+  ASR adapter**——本地 FunASR 是未来的一个 adapter 实现，本切片
+  交付协议与消费链本体，全部行为用 fake adapter 确定性验证。
+  **不回退浏览器语音识别（无任何 Web Speech API 路径——服务端
+  消费链是唯一 transcript 来源）**；不做 VAD/barge-in（M14-271）；
+  不加路由、不进 lifespan、不连真实 ASR、不落盘。
+- **`services/api/app/domain/voice_asr_stream.py`（新增）**：
+  - `VoiceAsrAdapterLike`（feed 增量 + finish 冲刷）与
+    `AsrSegmentLike`（text/is_final）——结构协议，可替换；
+  - `VoiceAsrStreamSession`：`pump(limit)` 从通道 drain → 逐
+    chunk 顺序一致送 adapter.feed → 返回段进服务端 transcript；
+    `finish()` 冲刷尾段并终结；
+  - **transcript 权威来源 = 服务端会话**：`seq` 由会话单调分配
+    （adapter 不参与编号）；有界环形（超上限淘汰最旧 + 全量计数）；
+    快照全新拷贝、text 先 JWT 形态净化再截断；
+  - **会话绑定**：`session_id` 复用 M14-268 保守边界（转本层
+    净化错误，不另立宽松边界）；
+  - **失败恢复（不扩大不吞错）**：单 chunk feed 抛错只计
+    failed_chunk_count/error_count（有界环形错误事件，通用净化
+    文案）——其余 chunk 照常、已交付段保留、会话保持 active；
+  - **超时边界**：可选注入 clock + idle_timeout_seconds——pump
+    开始检查距上次进度是否超窗，超窗则 expired（终结不再 feed；
+    finish 仍幂等收尾）；未注入 clock 跳过检查；
+  - 状态机：active → finished（finish）/ expired（idle 超时）；
+    终结后 pump 确定性拒绝。
+- **测试**：`test_voice_asr_stream.py`（新增，20 项 fake-only
+  契约测试，TDD 先 RED 后 GREEN）——消费链顺序逐字一致、pump
+  分批与空转、seq 单调与快照全新拷贝、环形有界全量计数、text
+  净化截断、单 chunk 失败隔离/全失败会话不崩、finish 冲刷终结
+  幂等、idle 超时 expired/进度重置窗口/无 clock 兼容、构造校验
+  （8 例）、快照序列化无凭据、源码卫生（AST 白名单 + 文本禁
+  SpeechRecognition/网络/文件/asyncio）。
+- 验证（canonical venv）：单文件 **20 passed**；十四文件合计
+  **398 passed**（M14-269 基线 378 零回归）；审计 **93 passed,
+  1 skipped**；ruff/compileall/diff-check 全过。
+- **诚实边界：消费链协议 ≠ 真实 ASR 可用——FunASR adapter 实现
+  与真实接线属后续切片（M14-272 端到端）**；零真实凭据；计数
+  不变 implemented 60 / partial 3；三 ready 标志均 false 不变。
 ## M14-269 — 有界音频帧管道（纯域层，fake-only）
 
 - **范围**：把订阅者帧路径接入**有界可消费管道**——帧字节经

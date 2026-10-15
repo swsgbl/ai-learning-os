@@ -85,6 +85,21 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-270 状态更新（流式 ASR 消费链——纯域层、可替换 adapter，fake-only 验证）
+
+- 基于 current main `72c0a800`（PR #356 merge，即 M14-269）实施：
+  服务端订阅音频流 → 可替换 ASR adapter 的消费链（fake-only）。
+- **`domain/voice_asr_stream.py`（新增）**：`VoiceAsrAdapterLike`/
+  `AsrSegmentLike` 结构协议（本地 FunASR 为未来实现）+
+  `VoiceAsrStreamSession`（pump drain→feed 顺序一致；transcript
+  权威来源 = 服务端会话：seq 单调/有界环形/净化截断；单 chunk
+  失败隔离不崩；idle 超时 expired；finish 冲刷终结幂等）。
+- **不回退浏览器语音识别**（源码卫生断言：模块无 SpeechRecognition/
+  Web Speech API 路径——服务端消费链是唯一 transcript 来源）。
+- 新增 20 项 fake-only 契约测试；十四文件合计 **398 passed**
+  （M14-269 基线 378 零回归）；审计 93 passed 1 skipped；ruff/
+  compileall/diff-check 全过。**消费链协议 ≠ 真实 ASR 可用——
+  FunASR 实现属 M14-272**；计数不变；三 ready 标志均 false 不变。
 ### M14-269 状态更新（有界音频帧管道——纯域层，fake-only 验证）
 
 - 基于 current main `1f8b80b1`（PR #355 merge，即 M14-268）
