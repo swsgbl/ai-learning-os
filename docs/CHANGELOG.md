@@ -1,4 +1,41 @@
 # Changelog
+## M14-271 — VAD/barge-in/pause-resume 服务端权威会话控制（纯域，fake-only）
+
+- **范围**：在 M4-03 VoiceSession FSM（既有权威迁移矩阵）之上包
+  一层**服务端权威会话控制器**——打断（barge-in）与恢复
+  （pause/resume）只经服务端 `submit` 发生；VAD 语音活动信号
+  映射为 FSM 事件语义（检测器实现属真实接线切片）。**客户端
+  只消费状态**（snapshot 投影——本模块零客户端概念、零 HTTP
+  路由、不进 lifespan）；Web/Android/Harmony 对齐同一 API 契约
+  属后续 HTTP 接线切片，三端零触碰。
+- **`services/api/app/domain/voice_session_control.py`（新增）**：
+  - `VoiceSessionController.submit(event, *, revision=None)`：
+    迁移判据完全复用 M4-03 `transition`（零重复矩阵）；未知
+    事件/终态封闭确定性拒绝（状态不变、零审计残留）；
+  - **revision 乐观并发**：提交可带期望 revision——不匹配拒绝
+    （状态/revision 均不变、零残留）；应用成功 +1；
+  - **VAD 信号映射 `submit_vad(signal)`**：`speech_start` 播报期
+    等价 barge_in（审计记录信号语义 `vad_speech_start`）、倾听期
+    幂等自环；`speech_end` 恒零迁移只审计（答案提交属 ASR/
+    transcript 链——VAD 不携带答案语义）；
+  - **pause/resume**：任意非终态自环、重复幂等（状态稳定、每次
+    记审计）；
+  - **审计有界净化**：环形保留最新 N（全量计数含被淘汰）；事件
+    白名单恰 {seq, event, from_state, to_state, revision}；seq
+    单调；快照全新拷贝。
+- **测试**：`test_voice_session_control.py`（新增，35 项 fake-only
+  契约测试，TDD 先 RED 后 GREEN）——全链迁移冒烟、barge-in
+  两播报态迁移/倾听幂等/三态拒绝（拒后零审计残留）、VAD 起止
+  语义/未知信号/终态、pause-resume 四态参数化+重复幂等+终态
+  拒绝、事件确定性、revision 正确/不匹配零残留/缺省/非正拒绝、
+  审计环形全量计数/全新拷贝/白名单、终态封闭、源码卫生（AST
+  白名单 + 禁网络/文件/asyncio）。
+- 验证（canonical venv）：单文件 **35 passed**；十五文件合计
+  **433 passed**（M14-270 基线 398 零回归）；审计 **93 passed,
+  1 skipped**；ruff/compileall/diff-check 全过。
+- **诚实边界：控制协议 ≠ 真实 VAD/语音能力——VAD 检测器与
+  HTTP 接线属后续切片（M14-272 端到端）**；零真实凭据；计数
+  不变 implemented 60 / partial 3；三 ready 标志均 false 不变。
 ## M14-270 — 流式 ASR 消费链（纯域层、可替换 adapter，fake-only）
 
 - **范围**：把服务端订阅音频流（M14-269 ``drain``）交给**可替换

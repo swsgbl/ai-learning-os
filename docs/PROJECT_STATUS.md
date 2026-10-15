@@ -344,11 +344,45 @@ expired、finish 冲刷终结幂等；20 项 fake-only 契约测试，十四
 文件合计 398 passed（M14-269 基线 378 零回归）——**消费链协议
 ≠ 真实 ASR 可用：FunASR 实现属 M14-272；不回退浏览器语音
 识别**，计数不变 implemented 60 / partial 3）。
+**2026-10-15 M14-271 交付 VAD/barge-in/pause-resume 服务端权威
+会话控制（纯域，fake-only）**（新增 `voice_session_control.py`：
+M4-03 FSM 之上的 `VoiceSessionController`——迁移零重复、revision
+乐观并发、VAD 信号映射、审计有界净化、终态封闭；35 项 fake-only
+契约测试，十五文件合计 433 passed（M14-270 基线 398 零回归）——
+**控制协议 ≠ 真实 VAD/语音能力：检测器与 HTTP 接线属 M14-272；
+客户端只消费状态，三端零触碰**，计数不变 implemented 60 /
+partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-271 VAD/barge-in/pause-resume 服务端权威会话控制（纯域，fake-only）**
+worktree `ai-learning-os-worktrees/m14-271-voice-session-control`，
+分支 `api/m14-271-voice-session-control`，基于 current main
+`1c93d3b8`（PR #357 merge，即 M14-270）。动因：FSM（M4-03）有
+权威迁移矩阵但无服务端会话控制面。本切片在 FSM 之上包一层
+**服务端权威控制器**：打断（barge-in）与恢复（pause/resume）
+只经服务端 `submit` 发生，带 revision 乐观并发与有界审计；VAD
+语音活动信号（speech_start/speech_end）映射为 FSM 事件语义
+（检测器实现属真实接线切片）。**客户端只消费状态（snapshot
+投影——本模块零客户端概念、零 HTTP 路由、不进 lifespan）；
+Web/Android/Harmony 对齐同一 API 契约属后续 HTTP 接线切片，
+三端零触碰。**交付：新增 `domain/voice_session_control.py`——
+`VoiceSessionController`（迁移判据完全复用 M4-03 `transition`
+零重复矩阵；未知事件/终态封闭确定性拒绝且零审计残留；revision
+乐观并发不匹配拒绝零残留；VAD speech_start 播报期等价 barge_in
+——审计记录信号语义、倾听期幂等自环；speech_end 恒零迁移只审计
+——答案提交属 ASR/transcript 链；pause/resume 非终态自环重复
+幂等；审计环形有界 + 全量计数 + 白名单五字段 + seq 单调 + 快照
+全新拷贝）。新增 `test_voice_session_control.py` **35 项 fake-only
+契约测试**（TDD 先 RED 后 GREEN）。验证与结果（单文件 35
+passed、十五文件合计 433 passed（M14-270 基线 398 零回归）、
+审计 93 passed 1 skipped、ruff/compileall/diff-check 全过）见
+`docs/evidence/m14-271-voice-session-control/README.md`。
+
+### 前一任务快照（M14-270 流式 ASR 消费链——详见 docs/evidence/m14-270-voice-asr-stream/README.md；本切片不改写、不弱化该证据）
 
 **M14-270 流式 ASR 消费链（纯域层、可替换 adapter，fake-only）**
 worktree `ai-learning-os-worktrees/m14-270-voice-asr-stream`，分支
@@ -373,6 +407,7 @@ RED 后 GREEN；ScriptedAdapter 脚本化 fake——按 chunk 序号产出
 passed（M14-269 基线 378 零回归）、审计 93 passed 1 skipped、
 ruff/compileall/diff-check 全过）见
 `docs/evidence/m14-270-voice-asr-stream/README.md`。
+**已合并：PR #357，CI 5/5，merge commit `1c93d3b8`。**
 
 ### 前一任务快照（M14-269 有界音频帧管道——详见 docs/evidence/m14-269-voice-frame-channel/README.md；本切片不改写、不弱化该证据）
 
