@@ -1,4 +1,33 @@
 # Changelog
+## M14-272b — FunASR 批式转写适配器（纯域层，fake-only）
+
+- **范围**：M14-272 第二子切片——把本地 FunASR 的**批式**转写
+  （整段音频 → 文本；M4-02 ``LocalFunAsrAsrProvider.transcribe``
+  形态）适配为 M14-270 ``VoiceAsrAdapterLike`` **流式协议**。
+  transcriber 为同步 callable 注入（真实 HTTP 客户端包装与
+  线程池调度属接线层切片）——本切片零网络零真实 ASR。
+- **`services/api/app/domain/voice_funasr_adapter.py`（新增）**：
+  `FunAsrBatchAdapter`——`feed` 批式累积（零转写、无效 chunk
+  跳过计数绝不抛）；`finish` 恰一次转写（拼接顺序逐字一致 →
+  单一 final 段；幂等——二次 finish 空列表且 transcriber 仍恰
+  一次）；**内存有界**（`max_buffer_bytes` 默认 8 MiB——超界丢
+  最旧保最新、单 chunk 超总预算直接丢弃计审计、压力下上界恒
+  成立）；失败净化（transcriber 抛错转通用净化错误 + 链彻底
+  抑制，缓冲清空不重试）；`state()` 计数投影（无音频/无文本）。
+- **测试**：`test_voice_funasr_adapter.py`（新增，14 项 fake-only
+  契约测试）——结构协议、feed 批式语义（零转写/无效 chunk 三
+  类/data 抛错）、finish 恰一次顺序一致单 final 段、幂等、缓冲
+  上界（丢最旧/单 chunk 超预算/压力参数化）、失败净化（异常
+  文本/端点词零泄漏 + 链抑制）、构造校验、与 M14-270 消费链
+  全链集成（通道→会话→适配器→transcript）、源码卫生（AST 白
+  名单 + 禁网络/HTTP client/文件/线程/asyncio）。
+- 验证（canonical venv）：单文件 **14 passed**；十七文件合计
+  **462 passed**（M14-272a 基线 448 零回归）；审计 **93 passed,
+  1 skipped**；ruff/compileall/diff-check 全过。
+- **诚实边界：适配器协议就绪 ≠ FunASR 已接线——同步 transcriber
+  的真实 HTTP 包装、lifespan/路由安装属 M14-272c 前的最终接线
+  切片；本机端到端验收属 M14-272c**；零真实凭据；计数不变
+  implemented 60 / partial 3；三 ready 标志均 false 不变。
 ## M14-272a — 服务端语音会话管线组装器（工厂 sink 注入 + 纯域编排，fake-only）
 
 - **范围**：M14-272（真实本机端到端验收）的第一子切片——把
