@@ -144,6 +144,7 @@ def build_controlled_voice_subscriber_factory(
 def build_room_aware_controlled_voice_subscriber_factory(
     url: str,
     token_provider_factory: Callable[[str, str], str],
+    event_sink_factory: Callable[[], object] | None = None,
 ) -> ControlledVoiceSubscriberFactory:
     """以 room-aware provider 装配受控订阅者工厂（M14-264）。
 
@@ -155,6 +156,8 @@ def build_room_aware_controlled_voice_subscriber_factory(
     factory 仅在订阅者启动时收到恰确的已校验 room/identity——
     杜绝为错误房间签发 token）。装配即返回——绝不触发订阅者
     创建/启动；runtime 工厂失败转通用净化错误（异常链彻底抑制）。
+    M14-272c：可选 ``event_sink_factory`` 透传工厂构造器
+    （M14-272a 注入面——缺省 None 行为零变化）。
     """
     canonical_url = validate_livekit_url(url)
     if not callable(token_provider_factory):
@@ -164,6 +167,7 @@ def build_room_aware_controlled_voice_subscriber_factory(
         token_provider_factory=token_provider_factory,
         room_factory=room_factory,
         audio_stream_factory=audio_stream_factory,
+        event_sink_factory=event_sink_factory,
     )
 
 

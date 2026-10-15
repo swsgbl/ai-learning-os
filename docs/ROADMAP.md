@@ -85,6 +85,22 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-272c 状态更新（语音管线 lifespan 接线 + 同步 FunASR transcriber——fake-only 验证）
+
+- 基于 current main `32d629ac`（PR #360 merge，即 M14-272b）
+  实施：最终接线——`create_app` 新增 `voice_pipeline_factory`
+  显式可选注入（lifespan 在 manager 建立后安装
+  `app.state.voice_pipeline`，共享同一 manager；关停先管线会话
+  后 manager；缺省零回归）+ `voice_pipeline_entry.py`（恰五属性
+  设置面 ASR endpoint fail-closed、同步 FunASR transcriber
+  multipart 调用件 loopback trust_env=False、部署包装）+
+  runtime 工厂 `event_sink_factory` 透传扩展。
+- 新增 17 项 fake-only 契约测试（httpx MockTransport 拦截——
+  零真实网络）；十八文件合计 **479 passed**（M14-272b 基线 462
+  零回归）；审计 93 passed 1 skipped；ruff/compileall/diff-check
+  全过。**接线就绪 ≠ 语音能力可用——HTTP 路由与部署入口切换属
+  后续切片；本机端到端验收待路由后进行**；计数不变；三 ready
+  标志均 false 不变。
 ### M14-272b 状态更新（FunASR 批式转写适配器——纯域层，fake-only 验证）
 
 - 基于 current main `4dbecfa5`（PR #359 merge，即 M14-272a）

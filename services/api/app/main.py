@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request
@@ -71,6 +71,7 @@ def create_app(
     database_url: str | None = None,
     *,
     voice_subscriber_factory: ControlledVoiceSubscriberFactory | None = None,
+    voice_pipeline_factory: Callable[[VoiceRuntimeManager], object] | None = None,
 ) -> FastAPI:
     # M14-262：受控订阅者工厂显式可选注入——非 None 必须是
     # ControlledVoiceSubscriberFactory 实例，在返回 app 之前确定性
@@ -80,6 +81,11 @@ def create_app(
         voice_subscriber_factory, ControlledVoiceSubscriberFactory
     ):
         raise ValueError("voice_subscriber_factory 必须为 ControlledVoiceSubscriberFactory 实例或 None")
+    # M14-272c：语音管线工厂显式可选注入——callable(manager)→pipeline；
+    # None/省略 = 不安装管线属性（M14-262 注入语义同构：显式注入、
+    # 缺省零变化、注册 ≠ 启动）。
+    if voice_pipeline_factory is not None and not callable(voice_pipeline_factory):
+        raise ValueError("voice_pipeline_factory 必须为 callable 或 None")
     settings = get_settings()
     # M14-246 结构化 JSON 日志：bootstrap 路径幂等安装；LOG_LEVEL 未配置
     # = 不改变既有 logger 级别语义（零漂移）
@@ -200,12 +206,22 @@ def create_app(
         # 幂等——M14-258/259 契约保持）。
         if voice_subscriber_factory is not None:
             app.state.voice_subscriber_factory = voice_subscriber_factory
+        # M14-272c：管线工厂在 manager 建立后安装（共享同一 manager
+        # ——单一管理面）；注册 ≠ 启动：安装不打开任何会话。
+        voice_pipeline = None
+        if voice_pipeline_factory is not None:
+            voice_pipeline = voice_pipeline_factory(voice_runtime_manager)
+            app.state.voice_pipeline = voice_pipeline
         try:
             yield
         finally:
             # 关停顺序（M14-258 close 即排空，绝不另调 stop_all 双排空）：
-            # 先关语音管理器（确定性排空订阅者），再停 parse worker、
-            # 释放数据库引擎——close 幂等，应用阶段异常路径同样执行。
+            # 先关管线会话（确定性四段关停——M14-272a），再关语音
+            # 管理器（排空订阅者），最后停 parse worker、释放数据库
+            # 引擎——close 幂等，应用阶段异常路径同样执行。
+            if voice_pipeline is not None:
+                for session_id in list(getattr(voice_pipeline, "_sessions", {})):
+                    await voice_pipeline.close_session(session_id)
             await voice_runtime_manager.close()
         if resolved_url:
             await worker.stop()
