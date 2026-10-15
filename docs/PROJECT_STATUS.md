@@ -352,11 +352,40 @@ M4-03 FSM 之上的 `VoiceSessionController`——迁移零重复、revision
 **控制协议 ≠ 真实 VAD/语音能力：检测器与 HTTP 接线属 M14-272；
 客户端只消费状态，三端零触碰**，计数不变 implemented 60 /
 partial 3）。
+**2026-10-15 M14-272a 交付服务端语音会话管线组装器（工厂
+sink 注入 + 纯域编排，fake-only）**（受控工厂新增可选
+event_sink_factory——缺省零回归、产物结构面装配期校验；
+`voice_pipeline.py`：open_session 五积木组装/幂等/会话隔离 +
+close_session 确定性四段关停——终态句柄保留审计面；15 项
+fake-only 契约测试，十六文件合计 448 passed（M14-271 基线 433
+零回归）——**组装器 ≠ 真实语音能力：HTTP 接线与 FunASR
+adapter 属 M14-272b、本机端到端属 M14-272c**，计数不变
+implemented 60 / partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-272a 服务端语音会话管线组装器（工厂 sink 注入 + 纯域编排，fake-only）**
+worktree `ai-learning-os-worktrees/m14-272-voice-pipeline`，分支
+`api/m14-272-voice-pipeline`，基于 current main `516fbfe9`
+（PR #358 merge，即 M14-271）。动因：M14-267~271 五件纯域积木
+（订阅生命周期/帧通道/ASR 消费链/会话控制/部署入口）各自就绪
+但缺组装面——且受控工厂的订阅者 sink 是内部固定的（帧路径
+无法接入会话级通道）。本切片 = M14-272（真实本机端到端验收）
+的第一子切片：**工厂每订阅者 event_sink 注入面**（缺省零回归）
++ **ServerVoicePipeline 组装器**（open_session 组装 split→受控
+工厂→订阅服务 acquire→ASR 会话+控制器；幂等 open；close_session
+确定性四段关停：停帧源→消费残余→冲刷→终态审计面；会话隔离）。
+**仍是 fake-only：不接 HTTP/lifespan、不实现 FunASR adapter
+（构造注入）、不连真实 LiveKit——真实端到端属 M14-272b/c。**
+验证与结果（单文件 15 passed、十六文件合计 448 passed
+（M14-271 基线 433 零回归——含被扩展工厂的两套既有测试）、审计
+93 passed 1 skipped、ruff/compileall/diff-check 全过）见
+`docs/evidence/m14-272a-voice-pipeline/README.md`。
+
+### 前一任务快照（M14-271 VAD/barge-in/pause-resume 服务端权威会话控制——详见 docs/evidence/m14-271-voice-session-control/README.md；本切片不改写、不弱化该证据）
 
 **M14-271 VAD/barge-in/pause-resume 服务端权威会话控制（纯域，fake-only）**
 worktree `ai-learning-os-worktrees/m14-271-voice-session-control`，
@@ -381,6 +410,7 @@ Web/Android/Harmony 对齐同一 API 契约属后续 HTTP 接线切片，
 passed、十五文件合计 433 passed（M14-270 基线 398 零回归）、
 审计 93 passed 1 skipped、ruff/compileall/diff-check 全过）见
 `docs/evidence/m14-271-voice-session-control/README.md`。
+**已合并：PR #358，CI 5/5，merge commit `516fbfe9`。**
 
 ### 前一任务快照（M14-270 流式 ASR 消费链——详见 docs/evidence/m14-270-voice-asr-stream/README.md；本切片不改写、不弱化该证据）
 

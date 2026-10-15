@@ -1,4 +1,45 @@
 # Changelog
+## M14-272a — 服务端语音会话管线组装器（工厂 sink 注入 + 纯域编排，fake-only）
+
+- **范围**：M14-272（真实本机端到端验收）的第一子切片——把
+  M14-267~271 五件纯域积木组装成一台「服务端语音会话管线」，
+  并给受控订阅者工厂补**每订阅者独立 event_sink 注入面**（帧
+  路径接入会话级通道的前提）。仍是 fake-only：不接 HTTP/
+  lifespan、不实现 FunASR adapter（构造注入）、不连真实
+  LiveKit——真实端到端属 M14-272b/c。
+- **`voice_subscriber_factory.py`（扩展，向后兼容）**：
+  `ControlledVoiceSubscriberFactory` 新增可选 `event_sink_factory`
+  ——缺省保持既有内部 `BoundedVoiceFrameSink` 装配（零回归，
+  sink_snapshot 语义不变）；给定时 create 用其产物作订阅者
+  event_sink（产物 on_event/on_frame 结构面在装配期校验；
+  无 snapshot 面时 handle.sink_snapshot 确定性净化拒绝）。
+- **`domain/voice_pipeline.py`（新增）**：
+  - `ServerVoicePipeline.open_session(session_id, room=,
+    identity=)`：每会话组装 split（计量汇+通道）→ 经注入
+    `factory_builder(split)` 构造绑定该 split 的受控工厂 →
+    `VoiceSessionSubscriptionService.acquire`（订阅只能由
+    manager 管理）→ ASR 会话 + 控制器；同 session 幂等返回
+    既有句柄；
+  - `ServerVoiceSessionHandle`：pump/submit/submit_vad/
+    transcript/control/channel/state 组合投影；
+  - `close_session`：确定性关停——停帧源（release）→ 消费
+    残余帧 → ASR finish 冲刷 → 句柄转终态审计面（transcript
+    仍可查、pump/submit 拒绝、幂等）；
+  - 会话隔离：每会话独立通道/transcript/控制器。
+- **测试**：`test_voice_pipeline.py`（新增，15 项 fake-only
+  契约测试，全真实积木 + 最内层 fake 协作者）——工厂注入五例
+  （缺省零回归/注入帧到达/无快照面拒绝/非 callable 拒绝/产物
+  无结构面拒绝）、open 注册经 manager、pump 转写顺序逐字一致、
+  控制+VAD、幂等 open、close 四段序（含残余帧进 transcript）、
+  会话隔离、ASR 失败隔离存活、未知会话拒绝、源码卫生。
+- 验证（canonical venv）：单文件 **15 passed**；十六文件合计
+  **448 passed**（M14-271 基线 433 零回归——含被扩展工厂的两套
+  既有测试）；审计 **93 passed, 1 skipped**；ruff/compileall/
+  diff-check 全过。
+- **诚实边界：组装器 ≠ 真实语音能力——HTTP/lifespan 接线与
+  FunASR adapter 属 M14-272b，本机端到端验收属 M14-272c**；
+  零真实凭据；计数不变 implemented 60 / partial 3；三 ready
+  标志均 false 不变。
 ## M14-271 — VAD/barge-in/pause-resume 服务端权威会话控制（纯域，fake-only）
 
 - **范围**：在 M4-03 VoiceSession FSM（既有权威迁移矩阵）之上包

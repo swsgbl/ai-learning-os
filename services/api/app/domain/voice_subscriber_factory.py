@@ -51,7 +51,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from app.domain.voice_frame_sink import BoundedVoiceFrameSink
 from app.domain.voice_subscription import (
@@ -76,6 +76,9 @@ _REDACTED = "[REDACTED-JWT]"
 #: 通用净化消息白名单（绝不拼接协作者/订阅者异常文本）。
 _MESSAGE_PROVIDER_CONFIG = "token provider 配置非法：token_provider 与 token_provider_factory 必须恰提供一个"
 _MESSAGE_INVALID_COLLABORATOR = "注入协作者非法：token provider（或 room-aware provider factory）/room factory/audio-stream factory 必须为可调用对象"
+_MESSAGE_INVALID_EVENT_SINK_FACTORY = "event_sink_factory 非法：必须为可调用对象"
+_MESSAGE_INVALID_EVENT_SINK = "注入 event sink 非法：需要 on_event/on_frame 结构面"
+_MESSAGE_SINK_SNAPSHOT_UNAVAILABLE = "注入 sink 无快照面：sink_snapshot 不可用（通用净化消息）"
 _MESSAGE_INVALID_MAX_EVENTS = "max_events 必须为正"
 _MESSAGE_ROOM_INVALID = "房间名非法：仅 [A-Za-z0-9_-]，长度 3–64"
 _MESSAGE_IDENTITY_INVALID = "身份标识非法：仅 [A-Za-z0-9_-]，长度 3–64"
@@ -86,6 +89,15 @@ _MESSAGE_STOP_FAILED = "订阅者停止失败（通用净化消息）"
 
 class VoiceSubscriberFactoryError(RuntimeError):
     """工厂/句柄错误（消息为通用白名单文案，绝不携带 token/异常文本）。"""
+
+
+@runtime_checkable
+class _InjectedEventSinkLike(Protocol):
+    """M14-272a：注入 event sink 的最小结构面（on_event/on_frame）。"""
+
+    def on_event(self, event: object) -> None: ...
+
+    def on_frame(self, frame: object) -> None: ...
 
 
 def validate_room(room: object) -> str:
@@ -179,8 +191,15 @@ class ControlledVoiceSubscriberHandle:
         }
 
     def sink_snapshot(self) -> dict[str, object]:
-        """有界净化汇快照（全新拷贝；不暴露原始 sink 对象）。"""
-        return self._sink.snapshot()
+        """有界净化汇快照（全新拷贝；不暴露原始 sink 对象）。
+
+        M14-272a：注入 sink 无 ``snapshot`` 面时确定性拒绝
+        （通用净化文案——注入面自带快照能力才可查询）。
+        """
+        snapshot = getattr(self._sink, "snapshot", None)
+        if not callable(snapshot):
+            raise VoiceSubscriberFactoryError(_MESSAGE_SINK_SNAPSHOT_UNAVAILABLE)
+        return snapshot()
 
     def __repr__(self) -> str:
         return "<ControlledVoiceSubscriberHandle>"
@@ -205,6 +224,7 @@ class ControlledVoiceSubscriberFactory:
         room_factory: Callable[[], RoomLike],
         audio_stream_factory: Callable[[object], AudioStreamLike],
         max_events: int = DEFAULT_MAX_EVENTS,
+        event_sink_factory: Callable[[], object] | None = None,
     ) -> None:
         # M14-264：token 协作者二选一——零参 token_provider 或
         # room-aware token_provider_factory；两者都缺/都给确定性
@@ -219,6 +239,11 @@ class ControlledVoiceSubscriberFactory:
         ):
             if collaborator is not None and not callable(collaborator):
                 raise VoiceSubscriberFactoryError(_MESSAGE_INVALID_COLLABORATOR)
+        # M14-272a：可选 event_sink_factory——缺省保持既有内部
+        # BoundedVoiceFrameSink 装配（零回归）；给定时 create 用其
+        # 产物作订阅者 event_sink（结构面在 create 期校验）。
+        if event_sink_factory is not None and not callable(event_sink_factory):
+            raise VoiceSubscriberFactoryError(_MESSAGE_INVALID_EVENT_SINK_FACTORY)
         if not isinstance(max_events, int) or isinstance(max_events, bool) or max_events <= 0:
             raise VoiceSubscriberFactoryError(_MESSAGE_INVALID_MAX_EVENTS)
         self._token_provider = token_provider
@@ -226,6 +251,7 @@ class ControlledVoiceSubscriberFactory:
         self._room_factory = room_factory
         self._audio_stream_factory = audio_stream_factory
         self._max_events = max_events
+        self._event_sink_factory = event_sink_factory
 
     def create(self, room: object, identity: object) -> ControlledVoiceSubscriberHandle:
         """装配一个订阅者 + 一个独立汇（参数先行校验；零协作者预调用）。
@@ -250,11 +276,18 @@ class ControlledVoiceSubscriberFactory:
 
         else:
             subscriber_token_provider = self._token_provider
-        sink: BoundedVoiceFrameSink | None = None
+        sink: object | None = None
         subscriber: ServerVoiceSubscriber | None = None
         assembly_failed = False
         try:
-            sink = BoundedVoiceFrameSink(max_events=self._max_events)
+            if self._event_sink_factory is not None:
+                candidate = self._event_sink_factory()
+                # 注入产物结构面校验（缺 on_event/on_face 确定性拒绝）
+                if not isinstance(candidate, _InjectedEventSinkLike):
+                    raise VoiceSubscriberFactoryError(_MESSAGE_INVALID_EVENT_SINK)
+                sink = candidate
+            else:
+                sink = BoundedVoiceFrameSink(max_events=self._max_events)
             subscriber = ServerVoiceSubscriber(
                 room=canonical_room,
                 identity=canonical_identity,

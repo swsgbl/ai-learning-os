@@ -85,6 +85,21 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-272a 状态更新（服务端语音会话管线组装器——工厂 sink 注入 + 纯域编排，fake-only 验证）
+
+- 基于 current main `516fbfe9`（PR #358 merge，即 M14-271）实施：
+  M14-272 第一子切片——五件纯域积木的组装器 + 工厂每订阅者
+  event_sink 注入面（缺省零回归）。
+- **`domain/voice_pipeline.py`（新增）**：`ServerVoicePipeline`
+  （open_session 组装 split→受控工厂→订阅服务 acquire→ASR 会话
+  +控制器；幂等 open；close_session 确定性四段关停——停帧源→
+  消费残余→冲刷→终态审计面）+ `ServerVoiceSessionHandle`（pump/
+  submit/submit_vad/快照组合投影）；会话隔离。
+- 新增 15 项 fake-only 契约测试（全真实积木）；十六文件合计
+  **448 passed**（M14-271 基线 433 零回归）；审计 93 passed
+  1 skipped；ruff/compileall/diff-check 全过。**组装器 ≠ 真实
+  语音能力：HTTP 接线与 FunASR adapter 属 M14-272b、本机端到端
+  属 M14-272c**；计数不变；三 ready 标志均 false 不变。
 ### M14-271 状态更新（VAD/barge-in/pause-resume——服务端权威会话控制，fake-only 验证）
 
 - 基于 current main `1c93d3b8`（PR #357 merge，即 M14-270）实施：
