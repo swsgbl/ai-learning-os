@@ -43,6 +43,10 @@ from app.domain.voice_session_control import VoiceSessionController
 from app.domain.voice_session_subscriptions import (
     VoiceSessionSubscriptionService,
 )
+from app.domain.voice_subscriber_factory import (
+    VoiceSubscriberFactoryError,
+    validate_identity,
+)
 
 #: 每会话帧通道默认上限（M14-269 默认同款）。
 DEFAULT_MAX_FRAMES = 256
@@ -58,6 +62,15 @@ _MESSAGE_SESSION_TERMINATED = "会话已终结，该操作不可用"
 
 class VoicePipelineError(RuntimeError):
     """管线 API 误用（消息为通用白名单文案）。"""
+
+
+def validate_identity_of(identity: object) -> str:
+    """open 入参 identity 复用工厂保守边界（转管线净化错误）。"""
+    try:
+        return validate_identity(identity)
+    except VoiceSubscriberFactoryError:
+        raise VoicePipelineError("identity 非法：仅 [A-Za-z0-9_-]，长度 3–64") from None
+
 
 
 @runtime_checkable
@@ -83,6 +96,7 @@ class ServerVoiceSessionHandle:
         "_channel",
         "_closed",
         "_control",
+        "_identity",
         "_session_id",
         "_subscription",
     )
@@ -91,12 +105,14 @@ class ServerVoiceSessionHandle:
         self,
         session_id: str,
         *,
+        identity: str,
         subscription: VoiceSessionSubscriptionService,
         channel: BoundedVoiceFrameChannel,
         asr: VoiceAsrStreamSession,
         control: VoiceSessionController,
     ) -> None:
         self._session_id = session_id
+        self._identity = identity
         self._subscription = subscription
         self._channel = channel
         self._asr = asr
@@ -106,6 +122,11 @@ class ServerVoiceSessionHandle:
     @property
     def is_closed(self) -> bool:
         return self._closed
+
+    @property
+    def identity(self) -> str:
+        """该会话服务端订阅者身份（open 时服务端给定）。"""
+        return self._identity
 
     def _require_active(self) -> None:
         if self._closed:
@@ -146,11 +167,13 @@ class ServerVoiceSessionHandle:
         channel = self._channel.snapshot()
         return {
             "session_id": self._session_id,
+            "identity": self._identity,
             "asr_status": asr_state["status"],
             "fsm_state": control["state"],
             "fsm_revision": control["revision"],
             "buffered_frames": channel["buffered_frames"],
             "buffered_bytes": channel["buffered_bytes"],
+            "closed": self._closed,
         }
 
 
@@ -203,7 +226,8 @@ class ServerVoicePipeline:
 
         订阅者只能经 runtime manager 注册（M14-268 订阅服务
         透传 acquire）；帧路径经 split 同时计量与入界（M14-269）；
-        ASR 会话与控制器每会话独立（M14-270/271）。
+        ASR 会话与控制器每会话独立（M14-270/271）。identity 由
+        调用方（路由层服务端生成）给定——句柄携带供状态投影。
         """
         from app.domain.voice_session_subscriptions import validate_session_id
 
@@ -211,6 +235,7 @@ class ServerVoicePipeline:
         existing = self._sessions.get(canonical)
         if existing is not None and not existing.is_closed:
             return existing
+        canonical_identity = validate_identity_of(identity)
         channel = BoundedVoiceFrameChannel()
         metrics = BoundedVoiceFrameSink()
         split = SplitVoiceSink(metrics_sink=metrics, frame_channel=channel)
@@ -224,6 +249,7 @@ class ServerVoicePipeline:
         )
         handle = ServerVoiceSessionHandle(
             canonical,
+            identity=canonical_identity,
             subscription=subscription,
             channel=channel,
             asr=asr,
@@ -245,6 +271,10 @@ class ServerVoicePipeline:
         self, session_id: str, event: str, *, revision: int | None = None
     ) -> dict[str, Any]:
         return self._require(session_id).submit(event, revision=revision)
+
+    def submit_vad_session(self, session_id: str, signal: str) -> dict[str, Any]:
+        """VAD 信号提交（M14-271 submit_vad 透传——HTTP 面用）。"""
+        return self._require(session_id).submit_vad(signal)
 
     def session_state(self, session_id: str) -> dict[str, Any]:
         return self._require(session_id).state()

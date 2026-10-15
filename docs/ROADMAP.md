@@ -85,6 +85,19 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-272d 状态更新（Voice live 会话路由——服务端管线 HTTP 面，fake-only 验证）
+
+- 基于 current main `7e6afb2f`（PR #361 merge，即 M14-272c）
+  实施：`/voice/live-sessions` 六端点（open/get/events/vad/
+  transcript/delete）——服务端权威（identity 服务端生成、
+  revision 409、close 携带 final transcript）；管线未安装 503；
+  三端零触碰（逐步对齐此契约）。domain 句柄 identity/closed
+  投影 + submit_vad_session 薄扩展（零回归）。
+- 新增 11 项 fake-only 契约测试；十九文件合计 **490 passed**
+  （M14-272c 基线 479 零回归）；审计 93 passed 1 skipped；ruff/
+  compileall/diff-check 全过。**HTTP 面就绪 ≠ 端到端已验收——
+  三端接入与真实浏览器端到端属 M14-272 验收批**；计数不变；
+  三 ready 标志均 false 不变。
 ### M14-272c 状态更新（语音管线 lifespan 接线 + 同步 FunASR transcriber——fake-only 验证）
 
 - 基于 current main `32d629ac`（PR #360 merge，即 M14-272b）

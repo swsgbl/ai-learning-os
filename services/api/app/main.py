@@ -30,6 +30,7 @@ from app.api.routes.validate import router as validate_router
 from app.api.routes.variant_generator import router as variant_generator_router
 from app.api.routes.voice import router as voice_router
 from app.api.routes.voice_eval import router as voice_eval_router
+from app.api.routes.voice_live import router as voice_live_router
 from app.api.routes.web import router as web_router
 from app.core.config import get_settings
 from app.core.logging import configure_logging, request_id_var
@@ -293,6 +294,7 @@ def create_app(
     app.include_router(system_router)
     app.include_router(validate_router)
     app.include_router(voice_router)
+    app.include_router(voice_live_router)  # M14-272d：服务端 live 会话（仅语音入口安装管线时有数据面）
     app.include_router(search_router)
     from app.api.routes.license import router as license_router
 

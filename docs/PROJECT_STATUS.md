@@ -378,11 +378,39 @@ transcriber（fake-only）**（`create_app` 新增 `voice_pipeline_factory`
 文件合计 479 passed（M14-272b 基线 462 零回归）——**接线就绪 ≠
 语音能力可用：HTTP 路由与部署入口切换属后续切片、本机端到端
 验收待路由后进行**，计数不变 implemented 60 / partial 3）。
+**2026-10-16 M14-272d 交付 Voice live 会话路由（服务端管线
+HTTP 面，fake-only）**（`/voice/live-sessions` 六端点：open（identity
+服务端生成/幂等）、get、events（revision 409）、vad、transcript、
+delete（四段关停 + final transcript）；503/404/409/422 错误面；
+零凭据响应；11 项 fake-only 契约测试，十九文件合计 490 passed
+（M14-272c 基线 479 零回归）——**HTTP 面就绪 ≠ 端到端已验收：
+三端接入与真实浏览器端到端属 M14-272 验收批**，计数不变
+implemented 60 / partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-272d Voice live 会话路由（服务端管线 HTTP 面，fake-only）**
+worktree `ai-learning-os-worktrees/m14-272d-voice-live-routes`，
+分支 `api/m14-272d-voice-live-routes`，基于 current main
+`7e6afb2f`（PR #361 merge，即 M14-272c）。交付
+`api/routes/voice_live.py`：`/voice/live-sessions` 六端点（open
+——identity 服务端生成 `server-sub-*`、room 既有边界、幂等 200；
+get——组合状态投影含 identity/closed；events——revision 乐观
+并发 409；vad——M14-271 信号映射；transcript——服务端权威
+（M14-270）；delete——确定性四段关停 + final transcript、幂等）。
+错误面 503/404/409/422；全部响应零凭据。domain 句柄 identity/
+closed 投影 + submit_vad_session 薄扩展（零回归）。**三端零触碰
+（Web/Android/Harmony 逐步对齐此契约）；HTTP 面就绪 ≠ 端到端
+已验收（真实 LiveKit+FunASR 浏览器验收属 M14-272 验收批）。**
+验证与结果（单文件 11 passed、十九文件合计 490 passed
+（M14-272c 基线 479 零回归）、审计 93 passed 1 skipped、ruff/
+compileall/diff-check 全过）见
+`docs/evidence/m14-272d-voice-live-routes/README.md`。
+
+### 前一任务快照（M14-272c 语音管线 lifespan 接线——详见 docs/evidence/m14-272c-voice-pipeline-entry/README.md；本切片不改写、不弱化该证据）
 
 **M14-272c 语音管线 lifespan 接线 + 同步 FunASR transcriber（fake-only）**
 worktree `ai-learning-os-worktrees/m14-272c-voice-wiring`，分支
@@ -400,6 +428,7 @@ worktree `ai-learning-os-worktrees/m14-272c-voice-wiring`，分支
 （M14-272b 基线 462 零回归）、审计 93 passed 1 skipped、ruff/
 compileall/diff-check 全过）见
 `docs/evidence/m14-272c-voice-pipeline-entry/README.md`。
+**已合并：PR #361，CI 5/5，merge commit `7e6afb2f`。**
 
 ### 前一任务快照（M14-272b FunASR 批式转写适配器——详见 docs/evidence/m14-272b-voice-funasr-adapter/README.md；本切片不改写、不弱化该证据）
 
