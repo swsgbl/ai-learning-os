@@ -1,4 +1,46 @@
 # Changelog
+## M14-269 — 有界音频帧管道（纯域层，fake-only）
+
+- **范围**：把订阅者帧路径接入**有界可消费管道**——帧字节经
+  分流汇同时进入计量（M14-260 `BoundedVoiceFrameSink` 纯计数）
+  与有界缓冲（供 M14-270 流式 ASR `drain` 拉取）。**不是
+  ASR/VAD/barge-in**，不加路由、不进 lifespan、不连真实房间。
+- **`services/api/app/domain/voice_frame_channel.py`（新增）**：
+  - `BoundedVoiceFrameChannel`：帧数/字节**双上限**缓冲（默认
+    256 帧 / 512 KiB；**任一到顶即触发丢弃**；单帧超总预算直接
+    拒绝——绝不为凑预算放宽上界）；丢弃策略 `drop_oldest`
+    （默认——满时淘汰最旧，缓冲恒为最新 N）/`drop_newest`
+    （满时拒绝新帧）；每次丢弃计数 + 有界环形审计事件（只含
+    类型/原因常量/字节数——绝不含帧内容/凭据）；`drain(limit)`
+    批量 FIFO 取走帧字节并归还预算（所有权移交，二次 drain 不
+    重复交付）；无效帧与计量汇同口径（仅 bytes/bytearray/
+    memoryview 有效，只计数绝不抛出）。**内存上界可证明**：
+    任意时刻缓冲帧数 ≤ max_frames 且缓冲字节 ≤ max_bytes。
+  - `SplitVoiceSink`：结构满足 `EventSinkLike` 的分流接线件——
+    `on_event` 只路由计量汇；`on_frame` **fan-out**（计量计数 +
+    通道入界同时发生）——可直接作为 `ServerVoiceSubscriber`
+    的 event_sink 注入。
+- **零落盘（不可落盘）**：无任何文件 I/O 代码面——内存明文
+  音频只在缓冲与 drain 交付物中短暂驻留（比「隐私配置允许才
+  落盘」更保守：根本不存在落盘路径）。
+- **测试**：`test_voice_frame_channel.py`（新增，31 项 fake-only
+  契约测试，TDD 先 RED 后 GREEN）——构造校验、FIFO 与字节
+  计量、单帧超预算拒绝、帧数限/字节限任一触发、压力下上界
+  恒成立（50 帧两策略参数化）、drop_oldest/drop_newest 语义、
+  丢弃审计单调 + 环形有界、drain FIFO/部分取/预算归还/参数
+  校验、无效帧四类、分流汇事件路由/帧 fan-out/构造校验、
+  fake-only 集成（真实订阅者 + fake 房间/流：帧字节与顺序
+  逐字到达通道、计量同步、drain 全量取回）、快照序列化无帧
+  字节/凭据、源码卫生（AST 白名单 + 禁文件/网络/线程/asyncio/
+  落盘）。
+- 验证（canonical venv）：单文件 **31 passed**；十三文件合计
+  **378 passed**（M14-268 基线 347 零回归）；m905+compose+
+  rc-smoke 审计 **93 passed, 1 skipped**；ruff（两文件）All
+  checks passed；compileall OK；`git diff --check` 干净。
+- **诚实边界：帧管道 ≠ 语音能力——不做转写/VAD/打断，消费链
+  属 M14-270**；零真实凭据；计数不变 implemented 60 /
+  partial 3；`production_ready`/`release_ready`/`public_ready`
+  均 false 不变。
 ## M14-268 — 服务端订阅生命周期编排（纯域服务，fake-only）
 
 - **范围**：voice session **显式申请/释放**服务端订阅者的纯域

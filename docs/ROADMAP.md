@@ -85,6 +85,25 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-269 状态更新（有界音频帧管道——纯域层，fake-only 验证）
+
+- 基于 current main `1f8b80b1`（PR #355 merge，即 M14-268）
+  实施：把订阅者帧路径接入有界可消费管道（fake-only，零落盘）。
+- **`domain/voice_frame_channel.py`（新增）**：
+  `BoundedVoiceFrameChannel`（帧数/字节双上限缓冲 + drop_oldest/
+  drop_newest 丢弃策略 + 有界环形审计事件 + `drain` FIFO 消费
+  ——内存上界可证明）+ `SplitVoiceSink`（EventSinkLike 分流
+  接线件：on_event → 计量汇，on_frame fan-out 计量+通道）。
+- **内存/隐私边界**：任意时刻缓冲帧数 ≤ max_frames 且字节 ≤
+  max_bytes；单帧超总预算拒绝入界；**零落盘代码面**（内存明文
+  音频只在缓冲与 drain 交付物短暂驻留）；快照/审计无帧字节/
+  凭据/token。
+- 新增 31 项 fake-only 契约测试（含真实订阅者集成：帧字节与
+  顺序逐字到达通道）；十三文件合计 **378 passed**（M14-268
+  基线 347 零回归）；审计 93 passed 1 skipped；ruff/compileall/
+  diff-check 全过。**帧管道 ≠ 语音能力——转写/VAD/打断属
+  M14-270/271**；计数不变；production_ready/release_ready/
+  public_ready 均 false 不变。
 ### M14-268 状态更新（服务端订阅生命周期编排——纯域服务，fake-only 验证）
 
 - 基于 current main `a131494f`（PR #354 merge，即 M14-267）
