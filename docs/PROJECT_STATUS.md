@@ -369,11 +369,39 @@ finish 恰一次单 final 段 + 幂等 + 内存有界 8 MiB + 失败净化
 协议就绪 ≠ FunASR 已接线：HTTP 包装与 lifespan/路由安装属最终
 接线切片、本机端到端属 M14-272c**，计数不变 implemented 60 /
 partial 3）。
+**2026-10-15 M14-272c 交付语音管线 lifespan 接线 + 同步 FunASR
+transcriber（fake-only）**（`create_app` 新增 `voice_pipeline_factory`
+显式可选注入——缺省零回归、注册 ≠ 启动、关停先管线后 manager；
+`voice_pipeline_entry.py` 设置面 + ASR endpoint fail-closed +
+同步 transcriber multipart 调用件；runtime 工厂 event_sink_factory
+透传；17 项 fake-only 契约测试（MockTransport 零真实网络），十八
+文件合计 479 passed（M14-272b 基线 462 零回归）——**接线就绪 ≠
+语音能力可用：HTTP 路由与部署入口切换属后续切片、本机端到端
+验收待路由后进行**，计数不变 implemented 60 / partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-272c 语音管线 lifespan 接线 + 同步 FunASR transcriber（fake-only）**
+worktree `ai-learning-os-worktrees/m14-272c-voice-wiring`，分支
+`api/m14-272c-voice-wiring`，基于 current main `32d629ac`
+（PR #360 merge，即 M14-272b）。最终接线：`create_app` 新增
+`voice_pipeline_factory` 显式可选注入（M14-262 语义同构——缺省
+零变化、注册 ≠ 启动；lifespan 共享同一 manager 单一管理面；
+关停先管线会话后 manager）+ `voice_pipeline_entry.py`（恰五属性
+设置面 + ASR endpoint fail-closed + 同步 FunASR transcriber
+——multipart/loopback trust_env=False/净化失败 + 部署包装
+`create_app_with_voice_pipeline`）+ runtime 工厂 event_sink_factory
+透传扩展（缺省零回归）。**不做 HTTP 路由（三端契约对齐后另
+切片）、不切换部署入口**；测试 MockTransport 拦截零真实网络。
+验证与结果（单文件 17 passed、十八文件合计 479 passed
+（M14-272b 基线 462 零回归）、审计 93 passed 1 skipped、ruff/
+compileall/diff-check 全过）见
+`docs/evidence/m14-272c-voice-pipeline-entry/README.md`。
+
+### 前一任务快照（M14-272b FunASR 批式转写适配器——详见 docs/evidence/m14-272b-voice-funasr-adapter/README.md；本切片不改写、不弱化该证据）
 
 **M14-272b FunASR 批式转写适配器（纯域层，fake-only）**
 worktree `ai-learning-os-worktrees/m14-272b-voice-funasr-wiring`，
@@ -390,6 +418,7 @@ transcriber 同步 callable 注入（真实 HTTP 客户端包装与线程池
 文件合计 462 passed（M14-272a 基线 448 零回归）、审计 93
 passed 1 skipped、ruff/compileall/diff-check 全过）见
 `docs/evidence/m14-272b-voice-funasr-adapter/README.md`。
+**已合并：PR #360，CI 5/5，merge commit `32d629ac`。**
 
 ### 前一任务快照（M14-272a 服务端语音会话管线组装器——详见 docs/evidence/m14-272a-voice-pipeline/README.md；本切片不改写、不弱化该证据）
 

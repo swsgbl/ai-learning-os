@@ -1,4 +1,48 @@
 # Changelog
+## M14-272c — 语音管线 lifespan 接线 + 同步 FunASR transcriber（fake-only）
+
+- **范围**：M14-272 第三子切片——最终接线：`create_app` 新增
+  `voice_pipeline_factory` 显式可选注入（M14-262 语义同构：缺省
+  零变化、注册 ≠ 启动）；`create_app_with_voice_pipeline` 部署
+  包装；本地 FunASR 同步 transcriber。**不做 HTTP 路由（三端
+  API 契约对齐后另切片）、不切换部署入口（voice_entrypoint 仍
+  M14-267 语义）**；测试 httpx MockTransport 拦截——零真实网络。
+- **`app/main.py`（扩展）**：`create_app` 加
+  `voice_pipeline_factory: Callable[[VoiceRuntimeManager], object] |
+  None = None`——lifespan 在 manager 建立后调用安装
+  `app.state.voice_pipeline`（共享同一 manager——单一管理面）；
+  关停顺序：先关管线会话（确定性四段关停）再关 manager（既有
+  M14-258/259 契约零变化）；缺省不安装该属性（零回归）。
+- **`app/voice_pipeline_entry.py`（新增）**：
+  - `VoicePipelineSettingsLike`（恰五属性：服务端 LiveKit 三件 +
+    `asr_local_endpoint`/`asr_local_model`；ASR endpoint 缺失/
+    空白 fail-closed——服务端订阅转写链必须有 ASR）；
+  - `sync_funasr_transcriber`：本地 FunASR OpenAI 兼容同步调用件
+    （multipart → `/audio/transcriptions`；api_key 空不发头；
+    loopback `trust_env=False` 同 M14-106——系统代理不得劫持本机
+    请求；失败统一净化文案链彻底抑制；transport 注入面供测试）；
+  - `build_voice_pipeline_factory`：M14-266 校验先行 + 每会话
+    `event_sink_factory` 绑定 split + FunAsrBatchAdapter 装配
+    （transcriber 显式注入优先）；
+  - `create_app_with_voice_pipeline`：受控工厂注册 + 管线注入
+    （非法设置先于任何 app 创建失败——绝不半装配）。
+- **`domain/voice_runtime_factory.py`（扩展，零回归）**：
+  `build_room_aware_controlled_voice_subscriber_factory` 新增可选
+  `event_sink_factory` 透传（缺省 None 行为零变化）。
+- **测试**：`test_voice_pipeline_entry.py`（新增，17 项 fake-only
+  契约测试）——lifespan 安装（注册 ≠ 启动：订阅者 0、零房间
+  构造）、管线开会话/关闭经 manager、关停顺序（manager closed）、
+  设置校验（非法 server URL 先于 app 失败透传净化、ASR endpoint
+  缺失三例 fail-closed）、transcriber 六例（请求形状/无 key 无
+  头/有 key Bearer/HTTP 错误净化/坏 JSON 净化/text 映射）、
+  main 缺省零回归（无 voice_pipeline 属性）、源码卫生。
+- 验证（canonical venv）：单文件 **17 passed**；十八文件合计
+  **479 passed**（M14-272b 基线 462 零回归）；审计 **93 passed,
+  1 skipped**；ruff/compileall/diff-check 全过。
+- **诚实边界：接线就绪 ≠ 语音能力可用——HTTP 路由与部署入口
+  切换属后续切片；本机真实端到端（LiveKit+FunASR+浏览器）验收
+  待路由后进行**；零真实凭据零真实连接；计数不变 implemented
+  60 / partial 3；三 ready 标志均 false 不变。
 ## M14-272b — FunASR 批式转写适配器（纯域层，fake-only）
 
 - **范围**：M14-272 第二子切片——把本地 FunASR 的**批式**转写
