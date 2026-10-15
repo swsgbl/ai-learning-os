@@ -196,6 +196,10 @@ class BoundedVoiceFrameChannel:
             return
         self._received_frame_count += 1
         payload = bytes(data)  # 归一 bytes（drain 交付物所有权移交）
+        # M14-272f：SDK 帧常为 int16 memoryview——len() 是样本数而非
+        # 字节数（bytes() 归一后翻倍）。计账恒用归一后字节数（入账/
+        # 出账/drop 对称——杜绝负账目）。
+        size = len(payload)
         if size > self._max_bytes:
             # 单帧超总预算：拒绝入界（绝不为凑预算放宽上界）
             self._audit_drop(REASON_OVER_BUDGET, size)

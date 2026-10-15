@@ -393,11 +393,42 @@ create_app_with_voice_pipeline；Settings.voice_asr_endpoint 新槽位
 宿主 FunASR 拓扑；pin 第六次更新；focused 20 passed、十九文件
 492 passed 零回归——**入口装配管线 ≠ 端到端已验收（真实浏览器
 端到端属 M14-272 验收批）**，计数不变 implemented 60 / partial 3）。
+**2026-10-16 M14-272f 交付服务端语音链路真实端到端验收（两轮
+PASS：SDK 发布者→dev LiveKit→服务端订阅者→有界通道→close 冲刷
+→FunASR 真实转写「希望你以后能够做到比」）+ 三处 fake-only 盲区
+缺陷修复（AudioFrameEvent 解包/int16 memoryview 计账/WAV 容器
+包装）+ live 路由前缀统一 + 可复现 harness——**服务端链路验收 ≠
+浏览器端验收（Web UI 对齐与 Android/Harmony 分批属后续）**；一次性
+环境验收后清理、生产演练栈零触碰**，计数不变 implemented 60 /
+partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-272f 服务端语音链路真实端到端验收（LiveKit+FunASR 实证 + 三处缺陷修复）**
+worktree `ai-learning-os-worktrees/m14-272e-voice-entrypoint-pipeline`，
+分支 `api/m14-272e-voice-entrypoint-pipeline`，基于 current main
+`4a1f6db3`（PR #363 merge，即 M14-272e）。**本机真实端到端两轮
+verdict=PASS**：发布者（LiveKit Python SDK，24 kHz 中文 WAV 样本
+asr_sample_zh.wav）→ 一次性 dev LiveKit 容器（17880）→ 服务端
+订阅者（voice_entrypoint 管线真实连接 server-sub-*）→ SplitVoiceSink
+→ 有界通道（256 帧/245760 字节）→ DELETE 四段关停 → WAV 包装 →
+FunASR（本机 8010 受控启动）真实转写 → 服务端权威 transcript
+（「希望你以后能够做到比」）。验收中发现并修复三处 fake-only
+盲区缺陷：①livekit>=1.1 AudioStream 产出 AudioFrameEvent（帧在
+.frame）——M14-256 适配层解包（+回归）；②SDK 帧常为 int16
+memoryview——通道计账恒用 bytes() 归一后字节数（杜绝负账目，
++回归）；③通道裸 PCM 发送前包 RIFF WAV 容器头。live 路由前缀
+统一 /api/v1/voice/live-sessions。新增可复现 harness
+tools/voice/e2e_voice_pipeline_probe.py。验证与结果（十九文件
+494 passed（+2 回归）、审计 93 passed 1 skipped、ruff/compileall/
+diff-check 全过；环境一次性：dev 容器删除/FunASR 受控停止/生产
+演练栈 8 容器零触碰）见
+`docs/evidence/m14-272f-voice-e2e/README.md`。
+
+### 前一任务快照（M14-272e 部署入口升级——详见 docs/evidence/m14-272e-voice-entrypoint-pipeline/README.md；本切片不改写、不弱化该证据）
 
 **M14-272e 部署入口升级为管线装配 + VOICE_ASR_ENDPOINT 槽位（fake-only）**
 worktree `ai-learning-os-worktrees/m14-272e-voice-entrypoint-pipeline`，
@@ -416,6 +447,7 @@ compose 双槽位断言）。验证与结果（focused 20 passed、十九文件
 合计 492 passed 零回归、审计（含 M14-01 契约）93 passed 1
 skipped、ruff/compileall/diff-check 全过）见
 `docs/evidence/m14-272e-voice-entrypoint-pipeline/README.md`。
+**已合并：PR #363，CI 5/5，merge commit `4a1f6db3`。**
 
 ### 前一任务快照（M14-272d Voice live 会话路由——详见 docs/evidence/m14-272d-voice-live-routes/README.md；本切片不改写、不弱化该证据）
 

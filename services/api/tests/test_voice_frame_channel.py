@@ -160,6 +160,25 @@ def test_frames_buffer_fifo_with_byte_accounting() -> None:
     assert channel.drain(10) == [b"AAAA", b"BB", b"C"]
 
 
+def test_int16_memoryview_accounted_in_bytes() -> None:
+    """M14-272f 回归：SDK int16 memoryview——len() 是样本数、bytes()
+    归一后翻倍；缓冲字节账目恒按归一后字节数（绝不出现负账目）。"""
+    import struct
+
+    channel = BoundedVoiceFrameChannel(max_frames=8, max_bytes=4096)
+    # 构造 int16 memoryview（480 样本 = 960 字节）
+    pcm = struct.pack("<480h", *([128] * 480))
+    view = memoryview(pcm).cast("h")  # int16 视角：len=480
+    channel.on_frame(FakeFrame(view))
+    snap = channel.snapshot()
+    assert snap["buffered_frames"] == 1
+    assert snap["buffered_bytes"] == 960  # 字节数（非样本数 480）
+    drained = channel.drain(8)
+    assert drained == [pcm]
+    assert channel.snapshot()["buffered_bytes"] == 0
+    assert channel.snapshot()["buffered_frames"] == 0  # 账目对称
+
+
 def test_single_frame_over_byte_budget_rejected_not_buffered() -> None:
     """单帧超过总字节预算：拒绝入界并审计（绝不为凑预算放宽上界）。"""
     channel = BoundedVoiceFrameChannel(max_frames=8, max_bytes=8)

@@ -227,6 +227,50 @@ def test_audio_adapter_forwards_frames_by_identity_without_retaining() -> None:
     assert all(a is b for a, b in zip(received, produced))
 
 
+class FakeAudioFrameEvent:
+    """livekit>=1.1 AudioFrameEvent 形态：帧挂在 .frame（非 .data）。"""
+
+    def __init__(self, frame: Frame) -> None:
+        self.frame = frame
+
+
+class FakeEventedAudioStream:
+    """迭代产出 AudioFrameEvent 形态的 fake 流（新 SDK 形态）。"""
+
+    def __init__(self, track: object) -> None:
+        self._pending = [FakeAudioFrameEvent(f) for f in getattr(track, "frames", [])]
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self) -> FakeAudioFrameEvent:
+        if self._pending:
+            return self._pending.pop(0)
+        await asyncio.sleep(3600)
+        raise StopAsyncIteration
+
+    async def aclose(self) -> None: ...
+
+
+def test_audio_adapter_unwraps_audio_frame_event_form() -> None:
+    """M14-272f 回归：livekit>=1.1 AudioStream 产出 AudioFrameEvent
+    （帧在 .frame）——适配器解包后转发（handler 链只认 .data）。"""
+    produced = [Frame(b"e1"), Frame(b"e2")]
+    stream = FakeEventedAudioStream(SdkLikeTrack("TR-e", 1, frames=produced))
+    adapter = LiveKitAudioStreamAdapter(stream)
+    received: list[Frame] = []
+
+    async def scenario() -> None:
+        adapter.set_frame_handler(received.append)
+        for _ in range(12):
+            await asyncio.sleep(0)
+        await adapter.close()
+
+    asyncio.run(scenario())
+    assert [frame.data for frame in received] == [b"e1", b"e2"]  # 解包成功
+    assert all(a is b for a, b in zip(received, produced))  # 帧对象直转
+
+
 def test_audio_adapter_close_cancels_task_then_aclose_idempotent() -> None:
     stream = FakeAsyncAudioStream(SdkLikeTrack("TR-x", 1))
     adapter = LiveKitAudioStreamAdapter(stream)

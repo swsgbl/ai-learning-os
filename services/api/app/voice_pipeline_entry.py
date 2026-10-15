@@ -93,12 +93,44 @@ class _TranscriptionText:
         self.text = text
 
 
+def _wrap_wav(pcm: bytes, sample_rate: int, channels: int) -> bytes:
+    """裸 PCM → WAV 容器（RIFF 头 + data；16-bit LE）。
+
+    服务端帧通道交付裸 PCM（LiveKit AudioFrame.data）——转写端点
+    按 wav 解析，发送前包装容器头。
+    """
+    import struct
+
+    bits = 16
+    data_size = len(pcm)
+    byte_rate = sample_rate * channels * bits // 8
+    block_align = channels * bits // 8
+    header = b"RIFF" + struct.pack(
+        "<I4s4sIHHIIHH4sI",
+        36 + data_size,
+        b"WAVE",
+        b"fmt ",
+        16,
+        1,
+        channels,
+        sample_rate,
+        byte_rate,
+        block_align,
+        bits,
+        b"data",
+        data_size,
+    )
+    return header + pcm
+
+
 def sync_funasr_transcriber(
     endpoint: str,
     *,
     model: str = "sensevoice",
     api_key: str = "",
     timeout: float = DEFAULT_ASR_TIMEOUT_SECONDS,
+    sample_rate: int = 48000,
+    channels: int = 1,
     transport: httpx.BaseTransport | None = None,
 ) -> Callable[[bytes], _TranscriptionText]:
     """本地 FunASR 同步转写调用件（OpenAI 兼容 multipart 表单）。
@@ -127,7 +159,13 @@ def sync_funasr_transcriber(
             with httpx.Client(**client_kwargs) as client:  # type: ignore[arg-type]
                 response = client.post(
                     f"{canonical_endpoint}/audio/transcriptions",
-                    files={"file": ("audio.wav", audio, "audio/wav")},
+                    files={
+                        "file": (
+                            "audio.wav",
+                            _wrap_wav(audio, sample_rate, channels),
+                            "audio/wav",
+                        )
+                    },
                     data={"model": model},
                     headers=headers,
                 )

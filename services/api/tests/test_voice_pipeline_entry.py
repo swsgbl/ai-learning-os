@@ -288,7 +288,7 @@ def test_create_app_default_has_no_pipeline_attribute() -> None:
 
 def test_source_hygiene_entry_module() -> None:
     tree = ast.parse(ENTRY_SOURCE)
-    allowed_roots = {"__future__", "typing", "collections"}
+    allowed_roots = {"__future__", "typing", "collections", "struct"}
     allowed_exact = {
         "fastapi",
         "httpx",
