@@ -327,11 +327,47 @@ fake-only）**（新增 `voice_session_subscriptions.py`：
 **编排 ≠ 运行时能力：不连真实 LiveKit、不加 HTTP 路由、不进
 lifespan、不做流式 ASR/VAD/barge-in**，计数不变 implemented
 60 / partial 3）。
+**2026-10-15 M14-269 交付有界音频帧管道（纯域层，fake-only）**
+（新增 `voice_frame_channel.py`：`BoundedVoiceFrameChannel`
+帧数/字节双上限缓冲 + 丢弃策略 + 有界环形审计 + `drain` FIFO
+消费——内存上界可证明、零落盘代码面；`SplitVoiceSink` 分流
+接线件把订阅者帧路径 fan-out 到计量汇与通道；31 项 fake-only
+契约测试含真实订阅者集成，十三文件合计 378 passed（M14-268
+基线 347 零回归）——**帧管道 ≠ 语音能力：转写/VAD/打断属
+M14-270/271**，计数不变 implemented 60 / partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-269 有界音频帧管道（纯域层，fake-only）**
+worktree `ai-learning-os-worktrees/m14-269-voice-frame-channel`，
+分支 `api/m14-269-voice-frame-channel`，基于 current main
+`1f8b80b1`（PR #355 merge，即 M14-268）。动因：订阅者帧路径
+（M14-255/256）只到计量（M14-260 纯计数不保留字节）——本切片
+补上有界可消费管道：帧字节经分流汇同时进入计量与有界缓冲，
+供 M14-270 流式 ASR `drain` 拉取。**不是 ASR/VAD/barge-in：
+不做转写、不加路由、不进 lifespan、不连真实房间；零落盘代码面
+（无任何文件 I/O——内存明文音频只在缓冲与 drain 交付物短暂
+驻留，比「隐私配置允许才落盘」更保守）。**交付：新增
+`domain/voice_frame_channel.py`——`BoundedVoiceFrameChannel`
+（帧数/字节双上限缓冲，默认 256 帧/512 KiB，任一到顶即触发
+丢弃；单帧超总预算拒绝入界；drop_oldest 默认/drop_newest
+策略；丢弃计数 + 有界环形审计事件只含类型/原因常量/字节数；
+`drain(limit)` FIFO 批量取走并归还预算、所有权移交、二次不
+重复交付；无效帧与计量汇同口径）+ `SplitVoiceSink`
+（EventSinkLike 分流接线件：on_event → 计量汇；on_frame
+fan-out 计量计数 + 通道入界）。新增
+`test_voice_frame_channel.py` **31 项 fake-only 契约测试**（TDD
+先 RED 后 GREEN；含真实 ServerVoiceSubscriber + fake 房间/流
+集成——帧字节与顺序逐字到达通道、计量同步、压力下上界恒
+成立）。验证与结果（单文件 31 passed、十三文件合计 378
+passed（M14-268 基线 347 零回归）、m905+compose+rc-smoke 审计
+93 passed 1 skipped、ruff/compileall/diff-check 全过）见
+`docs/evidence/m14-269-voice-frame-channel/README.md`。
+
+### 前一任务快照（M14-268 服务端订阅生命周期编排——详见 docs/evidence/m14-268-voice-session-subscriptions/README.md；本切片不改写、不弱化该证据）
 
 **M14-268 服务端订阅生命周期编排（纯域服务，fake-only）**
 worktree `ai-learning-os-worktrees/m14-268-voice-session-subscriptions`，
@@ -377,6 +413,7 @@ LiveKit/FastAPI/HTTP/socket/asyncio 调度/文件/secret + 文本
 rc-smoke 审计 93 passed 1 skipped、ruff 两文件 All checks
 passed、compileall 两文件 OK、git diff --check 干净）见
 `docs/evidence/m14-268-voice-session-subscriptions/README.md`。
+**已合并：PR #355，CI 5/5，merge commit `1f8b80b1`。**
 
 ### 前一任务快照（M14-267 显式语音部署入口与服务端 URL 拆分——详见 docs/evidence/m14-267-voice-entrypoint/README.md；本切片不改写、不弱化该证据）
 
