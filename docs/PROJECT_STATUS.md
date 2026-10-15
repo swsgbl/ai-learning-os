@@ -335,11 +335,46 @@ lifespan、不做流式 ASR/VAD/barge-in**，计数不变 implemented
 契约测试含真实订阅者集成，十三文件合计 378 passed（M14-268
 基线 347 零回归）——**帧管道 ≠ 语音能力：转写/VAD/打断属
 M14-270/271**，计数不变 implemented 60 / partial 3）。
+**2026-10-15 M14-270 交付流式 ASR 消费链（纯域层、可替换
+adapter，fake-only）**（新增 `voice_asr_stream.py`：
+`VoiceAsrAdapterLike`/`AsrSegmentLike` 结构协议 +
+`VoiceAsrStreamSession`——transcript 权威来源 = 服务端会话
+（seq 单调/有界环形/净化截断）、单 chunk 失败隔离、idle 超时
+expired、finish 冲刷终结幂等；20 项 fake-only 契约测试，十四
+文件合计 398 passed（M14-269 基线 378 零回归）——**消费链协议
+≠ 真实 ASR 可用：FunASR 实现属 M14-272；不回退浏览器语音
+识别**，计数不变 implemented 60 / partial 3）。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-270 流式 ASR 消费链（纯域层、可替换 adapter，fake-only）**
+worktree `ai-learning-os-worktrees/m14-270-voice-asr-stream`，分支
+`api/m14-270-voice-asr-stream`，基于 current main `72c0a800`
+（PR #356 merge，即 M14-269）。动因：M14-269 帧管道可 drain 但
+无消费者。本切片补上消费链：音频流交给**可替换 ASR adapter**
+（结构协议——本地 FunASR 是未来实现，本切片全 fake 验证），
+建立**transcript 权威来源、会话绑定、失败恢复和超时边界**。
+**不回退浏览器语音识别（无任何 Web Speech API 路径——服务端
+消费链是唯一 transcript 来源）；不做 VAD/barge-in（M14-271）；
+不加路由、不进 lifespan、不连真实 ASR、不落盘。**交付：新增
+`domain/voice_asr_stream.py`——`VoiceAsrAdapterLike`（feed/finish）
++ `AsrSegmentLike`（text/is_final）+ `VoiceAsrStreamSession`
+（`pump(limit)` drain→逐 chunk 顺序一致 feed→段进服务端
+transcript；`seq` 会话单调分配（权威来源）；有界环形+全量计数；
+text JWT 净化+截断；单 chunk 失败隔离（计数+有界错误事件，
+会话不崩）；可选注入 clock 的 idle 超时（expired 终结不再 feed，
+finish 幂等收尾）；active→finished/expired 状态机）。新增
+`test_voice_asr_stream.py` **20 项 fake-only 契约测试**（TDD 先
+RED 后 GREEN；ScriptedAdapter 脚本化 fake——按 chunk 序号产出
+段/抛错）。验证与结果（单文件 20 passed、十四文件合计 398
+passed（M14-269 基线 378 零回归）、审计 93 passed 1 skipped、
+ruff/compileall/diff-check 全过）见
+`docs/evidence/m14-270-voice-asr-stream/README.md`。
+
+### 前一任务快照（M14-269 有界音频帧管道——详见 docs/evidence/m14-269-voice-frame-channel/README.md；本切片不改写、不弱化该证据）
 
 **M14-269 有界音频帧管道（纯域层，fake-only）**
 worktree `ai-learning-os-worktrees/m14-269-voice-frame-channel`，
@@ -366,6 +401,7 @@ fan-out 计量计数 + 通道入界）。新增
 passed（M14-268 基线 347 零回归）、m905+compose+rc-smoke 审计
 93 passed 1 skipped、ruff/compileall/diff-check 全过）见
 `docs/evidence/m14-269-voice-frame-channel/README.md`。
+**已合并：PR #356，CI 5/5，merge commit `72c0a800`。**
 
 ### 前一任务快照（M14-268 服务端订阅生命周期编排——详见 docs/evidence/m14-268-voice-session-subscriptions/README.md；本切片不改写、不弱化该证据）
 
