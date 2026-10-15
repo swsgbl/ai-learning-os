@@ -1,4 +1,40 @@
 # Changelog
+## M14-272f — 服务端语音链路真实端到端验收（LiveKit+FunASR 实证 + 三处真实缺陷修复）
+
+- **范围**：M14-272 验收批——本机真实端到端：发布者（LiveKit
+  Python SDK，24 kHz 中文 WAV 样本）→ dev LiveKit（一次性容器）
+  → 服务端订阅者（voice_entrypoint 管线，真实连接）→ 有界帧
+  通道 → close 四段关停 → FunASR 真实 HTTP 转写 → 服务端权威
+  transcript。**两次运行 verdict=PASS**（256 帧/245760 字节/
+  转写文本「希望你以后能够做到比」——样本真实中文语音）。
+- **验收中发现并修复三处 fake-only 盲区缺陷**：
+  1. `voice_runtime.py`：livekit>=1.1 的 `AudioStream` 迭代产出
+     `AudioFrameEvent`（帧在 `.frame`）——M14-256 适配层直转导致
+     下游 `frame.data` AttributeError、帧全部被计为无效（零帧
+     入界）。修复：适配层解包 `getattr(item, "frame", item)`
+     （+回归测试，帧对象仍直转不复制）。
+  2. `voice_frame_channel.py`：SDK 帧常为 **int16 memoryview**
+     ——`len()` 是样本数、`bytes()` 归一后翻倍，入账/出账不对称
+     出现**负缓冲字节账目**。修复：计账恒用归一后字节数
+     （+int16 memoryview 回归测试）。
+  3. `voice_pipeline_entry.py`：通道交付裸 PCM 而转写端点按 wav
+     解析——发送前按 sample_rate/channels 包装 RIFF 容器头
+     （参数可注入，默认 48k mono）。
+- **契约一致性修正**：live 路由前缀统一 `/api/v1/voice/
+  live-sessions`（与主 voice 路由同层——验收实测发现）。
+- **新增 `tools/voice/e2e_voice_pipeline_probe.py`**：可复现验收
+  harness（鲁棒 RIFF 解析含 float32→int16；发布-订阅-转写全链
+  断言；JSON 证据输出）。
+- 验证（canonical venv）：十九文件合计 **494 passed**（+2 真实
+  形态回归，零回归）；审计 **93 passed, 1 skipped**；ruff/
+  compileall/diff-check 全过。**端到端环境一次性**：dev LiveKit
+  容器验收后删除、FunASR 受控停止、生产演练栈 8 容器零触碰
+  （验收前后 API /health 200）。
+- **诚实边界：本验收是服务端链路（SDK 发布者代浏览器麦克风）
+  ——真实浏览器麦克风（Web UI 对齐 live 契约）与 Android/Harmony
+  分批属后续；transcript 单段批式（流式 pump 调度需要时另切片）**
+  ；验收用 devkey/dev 容器零真实凭据；计数不变 implemented 60 /
+  partial 3；三 ready 标志均 false 不变。
 ## M14-272e — 部署入口升级为管线装配 + VOICE_ASR_ENDPOINT 槽位（fake-only）
 
 - **范围**：M14-272 第五子切片——`voice_entrypoint` 内部从「受控

@@ -38,7 +38,7 @@ from app.domain.voice_pipeline import VoicePipelineError
 from app.domain.voice_session_control import VoiceSessionControlError
 from app.domain.voice_session_subscriptions import validate_session_id
 
-router = APIRouter(prefix="/voice/live-sessions", tags=["voice-live"])
+router = APIRouter(prefix="/api/v1/voice/live-sessions", tags=["voice-live"])
 
 _MESSAGE_PIPELINE_UNAVAILABLE = "Voice pipeline requires the voice entrypoint"
 _MESSAGE_SESSION_NOT_FOUND = "live 会话不存在"

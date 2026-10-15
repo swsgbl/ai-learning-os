@@ -85,6 +85,18 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-272f 状态更新（服务端语音链路真实端到端验收——LiveKit+FunASR 实证 + 三处缺陷修复）
+
+- 基于 current main `4a1f6db3`（PR #363 merge，即 M14-272e）
+  实施：本机真实端到端两轮 PASS（SDK 发布者→dev LiveKit→服务端
+  订阅者→有界通道→close 冲刷→FunASR 真实转写——256 帧/245760
+  字节/中文文本）；修复三处 fake-only 盲区缺陷（AudioFrameEvent
+  解包/int16 memoryview 计账/WAV 容器包装）+ live 路由前缀统一；
+  新增可复现验收 harness `tools/voice/e2e_voice_pipeline_probe.py`。
+- 十九文件合计 **494 passed**（+2 真实形态回归）；审计 93 passed
+  1 skipped。**服务端链路验收 ≠ 浏览器端验收（Web UI 对齐与
+  Android/Harmony 分批属后续）**；一次性环境验收后清理（生产
+  演练栈零触碰）；计数不变；三 ready 标志均 false 不变。
 ### M14-272e 状态更新（部署入口升级为管线装配 + VOICE_ASR_ENDPOINT 槽位——fake-only 验证）
 
 - 基于 current main `de630427`（PR #362 merge，即 M14-272d）

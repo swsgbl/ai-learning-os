@@ -158,7 +158,11 @@ class LiveKitAudioStreamAdapter:
 
     async def _consume(self) -> None:
         try:
-            async for frame in self._stream:
+            async for item in self._stream:
+                # M14-272f：livekit>=1.1 的 AudioStream 迭代产出
+                # AudioFrameEvent（帧在 .frame）；旧形态直出 AudioFrame。
+                # 解包后转发——handler 链（订阅者/split/通道）只认 .data。
+                frame = getattr(item, "frame", item)
                 if self._handler is not None:
                     self._handler(frame)  # 直转——适配器不持有帧
         except asyncio.CancelledError:
