@@ -137,6 +137,10 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
     if (!examId || !sessionId || submitted.current) return;
     try {
       const outcome = await finishVoiceExam(examId, sessionId);
+      // M14-275：完卷收尾确定性——先 await 本地输入断开 + 服务端 live
+      // 会话 close（含 FunASR 冲刷）完成，再跳转 review：浏览器离开前
+      // 服务端权威转写已落（失败仍静默降级——增强面不阻塞完卷）。
+      await releaseVoiceInput();
       completeExam(outcome.report);
     } catch (cause) {
       if (cause instanceof ApiError && cause.status === 404) {
@@ -145,7 +149,7 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
       }
       setError(cause instanceof Error ? cause.message : "提交失败");
     }
-  }, [completeExam]);
+  }, [completeExam, releaseVoiceInput]);
 
   // 409 后重新对齐（验收 6）：resume 权威回读，本地不覆盖 FSM；终态分流
   // 收尾；404 如实提示不可用

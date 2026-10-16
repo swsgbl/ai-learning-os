@@ -85,6 +85,15 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-275 状态更新（完卷收尾确定性修复 + 生产收口核查——真机验收 BLOCKED 登记）
+
+- 基于 current main `1d441f5c`（PR #365 merge，即 M14-274）实施：
+  finishFlow await 收尾（服务端 close 冲刷确定完成后再跳转）；
+  生产收口三件全过（监控 critical=0 / recovery dry-run pin 9/9 /
+  7-7 healthy）；真机验收 BLOCKED 登记（adb 空/hdc 不可用——
+  M14-126 同口径；完整链路已由 M14-272f 真语音转写 + M14-274
+  浏览器 UI 双实证覆盖）。Web 全量 334 passed；三 ready 标志均
+  false 不变。
 ### M14-274 状态更新（Web 端接入服务端 live 会话——浏览器端到端实证）
 
 - 基于 current main `f798f6a`（PR #364 merge，即 M14-272f）实施：

@@ -406,11 +406,32 @@ partial 3）。
 到达服务端 256 帧/245760 字节→close 冲刷 FunASR 产出段；Web 全量
 334 passed）——真语音文本转写待真机麦克风（Android/Harmony
 分批）**，计数不变 implemented 60 / partial 3。
+**2026-10-16 M14-275 交付完卷收尾确定性修复（await 收尾后跳转）
++ 生产收口三件全过（监控 critical=0 / recovery dry-run pin 9/9 OK /
+7-7 healthy）+ 真机验收 BLOCKED 登记（adb 空/hdc 不可用——真语音
+链路已由 M14-272f/274 双实证覆盖）**，计数不变 implemented 60 /
+partial 3。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-275 完卷收尾确定性修复 + 生产收口核查（真机验收 BLOCKED 登记）**
+worktree `ai-learning-os-worktrees/m14-272e-voice-entrypoint-pipeline`，
+分支 `api/m14-272e-voice-entrypoint-pipeline`（延续），基于 current
+main `1d441f5c`（PR #365 merge，即 M14-274）。finishFlow 竞态修复
+（await 收尾含服务端 close 冲刷确定完成后再跳转——浏览器离开前
+服务端权威转写已落）。**生产收口三件全过**：监控 ok=33/warn=1
+（唯一 warn=Web 切换预期）/critical=0；recovery dry-run OK（pin 9/9
+含新 tag、7 服务 healthy、双引擎 healthy untouched）；生产栈 7/7
+healthy（API m14-272 / Web m14-274）。**真机验收 BLOCKED 登记**
+（adb 空/hdc 不可用——M14-126 同口径；真语音转写 M14-272f 已实证
++浏览器 UI 全流程 M14-274 已实证=完整链路覆盖，真机批待设备）。
+Web 全量 334 passed；三 ready 标志均 false 不变。见
+`docs/evidence/m14-275-production-closure/README.md`。
+
+### 前一任务快照（M14-274 Web 端接入服务端 live 会话——详见 docs/evidence/m14-274-web-live-e2e/README.md；本切片不改写、不弱化该证据）
 
 **M14-274 Web 端接入服务端 live 会话（浏览器端到端实证）**
 worktree `ai-learning-os-worktrees/m14-272e-voice-entrypoint-pipeline`，
@@ -428,6 +449,8 @@ open/close）+ voice-studio 接线（连接成功 open 同房间 live 会话；
 清理（生产栈与语音引擎零触碰）。**真语音文本转写待真机麦克风
 （Android/Harmony 分批）**。见
 `docs/evidence/m14-274-web-live-e2e/README.md`。
+**已合并：PR #365，CI 5/5，merge commit `1d441f5c`。生产 Web 已切
+m14-274-production（b181d1c34fb5，7/7 healthy）。**
 
 ### 前一任务快照（M14-272f 服务端语音链路真实端到端验收——详见 docs/evidence/m14-272f-voice-e2e/README.md；本切片不改写、不弱化该证据）
 
