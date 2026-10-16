@@ -29,6 +29,7 @@ transcript（M14-271 契约）；订阅与转写在服务端内部发生：
 """
 from __future__ import annotations
 
+import asyncio
 import secrets
 
 from fastapi import APIRouter, HTTPException, Request, Response
@@ -42,6 +43,57 @@ router = APIRouter(prefix="/api/v1/voice/live-sessions", tags=["voice-live"])
 
 _MESSAGE_PIPELINE_UNAVAILABLE = "Voice pipeline requires the voice entrypoint"
 _MESSAGE_SESSION_NOT_FOUND = "live 会话不存在"
+
+#: M14-276: 后台 pump 周期（秒）——帧通道 256 帧 ≈ 25.6s（10ms/帧），
+#: 长语音作答需周期性 drain 到 FunAsrBatchAdapter 8 MiB 缓冲，否则
+#: 通道溢出丢最旧音频导致 close 冲刷转写不完整。
+PUMP_INTERVAL_SECONDS = 2.0
+
+
+def _pump_registry(request: Request) -> dict:
+    """per-app pump 任务注册表（app.state 惰性建——零模块级可变全局）。"""
+    registry = getattr(request.app.state, "voice_pump_tasks", None)
+    if registry is None:
+        registry = {}
+        request.app.state.voice_pump_tasks = registry
+    return registry
+
+
+async def _pump_loop(pipeline, session_id: str, interval: float) -> None:
+    """周期 drain 通道 → ASR adapter 缓冲；会话终结（VoicePipelineError）
+    自退出（不抛出——close/终结竞态下 pump 安静退场）。"""
+    while True:
+        await asyncio.sleep(interval)
+        try:
+            pipeline.pump_session(session_id, 256)
+        except VoicePipelineError:
+            return  # 会话未知/已终结——自清理
+
+
+def _pump_interval(request: Request) -> float:
+    """周期（测试可经 app.state.voice_pump_interval 覆盖；缺省生产值）。"""
+    override = getattr(request.app.state, "voice_pump_interval", None)
+    if isinstance(override, (int, float)) and not isinstance(override, bool) and override > 0:
+        return float(override)
+    return PUMP_INTERVAL_SECONDS
+
+
+def _start_pump(request: Request, pipeline, session_id: str) -> None:
+    registry = _pump_registry(request)
+    existing = registry.get(session_id)
+    if existing is not None and not existing.done():
+        return  # 幂等：open 重入不双开
+    registry[session_id] = asyncio.ensure_future(
+        _pump_loop(pipeline, session_id, _pump_interval(request))
+    )
+
+
+async def _stop_pump(request: Request, session_id: str) -> None:
+    registry = _pump_registry(request)
+    task = registry.pop(session_id, None)
+    if task is not None and not task.done():
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 class LiveOpenRequest(BaseModel):
@@ -102,6 +154,8 @@ async def open_live_session(
         raise HTTPException(status_code=409, detail="live 会话打开失败（通用净化消息）") from None
     except Exception:  # noqa: BLE001 —— 工厂/订阅校验失败同 409（净化）
         raise HTTPException(status_code=409, detail="live 会话打开失败（通用净化消息）") from None
+    # M14-276: 长会话防溢出——周期 drain 通道到 ASR adapter 缓冲
+    _start_pump(request, pipeline, canonical)
     state = pipeline.session_state(canonical)
     # 幂等 open：既有句柄（同 identity 复用）→ 200 语义由投影携带
     return {
@@ -180,6 +234,7 @@ async def close_live_session(session_id: str, request: Request) -> dict:
         before = pipeline.session_state(canonical)
     except VoicePipelineError:
         raise HTTPException(status_code=404, detail=_MESSAGE_SESSION_NOT_FOUND) from None
+    await _stop_pump(request, canonical)  # 先停 pump 再关停（无搬运竞态）
     final_state = await pipeline.close_session(canonical)
     try:
         transcript = pipeline.final_transcript(canonical)
