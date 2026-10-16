@@ -37,6 +37,32 @@ const BASE_PATH = normalizeBasePath(process.env.NEXT_PUBLIC_BASE_PATH);
 export const LOGIN_PATH = `${BASE_PATH}/login`;
 
 // M10-02: 治理页需要区分 403（非管理员）/ 409（重复审核）做明确状态反馈
+/** M14-274: 服务端 live 会话状态投影（服务端权威——客户端只消费）。 */
+export type VoiceLiveState = {
+  session_id: string;
+  identity: string;
+  fsm_state: string;
+  fsm_revision: number;
+  asr_status: string;
+  buffered_frames: number;
+  buffered_bytes: number;
+  closed: boolean;
+};
+
+/** M14-274: close 响应（携带 final transcript）。 */
+export type VoiceLiveClosed = {
+  session_id: string;
+  fsm_state: string | null;
+  closed: boolean;
+  transcript: VoiceLiveTranscript;
+};
+
+export type VoiceLiveTranscript = {
+  session_id: string;
+  segment_count: number;
+  segments: { seq: number; text: string; is_final: boolean }[];
+};
+
 export class ApiError extends Error {
   readonly status: number;
 
@@ -142,6 +168,23 @@ export const api = {
   // VOICE_MODE 下 ASR/TTS 的实际路由与 fallback 事实，只读不判定；
   // voice-studio 以 tts.provider/fallback 透出服务端 TTS 通道身份。
   voiceProviders: () => request<VoiceProvidersView>("/api/v1/voice/providers"),
+  // M14-274: 服务端 live 会话（M14-272d 路由——服务端订阅转写链）。
+  // open：订阅者加入学生同房间（voice-<session_id>，M14-252 命名）；
+  // close：确定性四段关停（冲刷 FunASR 转写）→ final transcript；
+  // transcript：会话中查询（批式语义：段在 close 后落全）。
+  voiceLiveOpen: (sessionId: string, room: string) =>
+    request<VoiceLiveState>(
+      `/api/v1/voice/live-sessions/${encodeURIComponent(sessionId)}/open`,
+      { method: "POST", body: JSON.stringify({ room }) },
+    ),
+  voiceLiveClose: (sessionId: string) =>
+    request<VoiceLiveClosed>(`/api/v1/voice/live-sessions/${encodeURIComponent(sessionId)}`, {
+      method: "DELETE",
+    }),
+  voiceLiveTranscript: (sessionId: string) =>
+    request<VoiceLiveTranscript>(
+      `/api/v1/voice/live-sessions/${encodeURIComponent(sessionId)}/transcript`,
+    ),
   // M14-248: 服务端权威 VoiceSession 契约面（services/api voice.py）。
   // 路径/method/payload 与服务端一一对应、不增字段；status 等响应字段
   // 原样透传——客户端不推演 FSM、不缓存答案、不虚报语音结果；响应即

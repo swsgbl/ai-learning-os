@@ -49,6 +49,8 @@ import {
 } from "@/lib/voice-session-flow";
 import { speakWithServerTts, stopServerTtsPlayback } from "@/lib/server-tts";
 import { getOrCreateVoiceInput, type LiveKitVoiceInput } from "@/lib/livekit-voice-input";
+import { closeLiveSession, openLiveSession } from "@/lib/live-session-flow";
+import { voiceRoomName } from "@/lib/livekit-voice-input";
 import { stopActiveRecording } from "@/lib/wav-recorder";
 import { ErrorState, LoadingState } from "@/components/states";
 import { Waveform } from "@/components/voice/waveform";
@@ -72,6 +74,9 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
   // M14-250：服务端 TTS 通道身份（providers 视图只读透出；尽力而为，
   // 失败缺省 null——徽标缺席不阻塞作答，也不伪造通道事实）
   const [ttsChannel, setTtsChannel] = useState<{ provider: string; fallback: boolean } | null>(null);
+  // M14-274: 服务端 live 会话 final transcript（增强面——close 后
+  // 服务端 FunASR 权威转写；作答主流程不依赖）
+  const [liveTranscript, setLiveTranscript] = useState<string[] | null>(null);
   const started = useRef(false);
   const submitted = useRef(false);
   // M14-252：LiveKit 语音输入控制器（跨题复用；回调链取最新值——
@@ -102,7 +107,14 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
   const releaseVoiceInput = useCallback(async () => {
     const controller = voiceInputRef.current;
     voiceInputRef.current = null;
+    // M14-274: 先断本地输入（停帧源），再关服务端 live 会话（冲刷
+    // 服务端转写——final transcript 进增强面展示；失败静默降级）
     if (controller) await controller.disconnect();
+    const sessionId = sessionIdRef.current;
+    if (sessionId) {
+      const texts = await closeLiveSession(sessionId);
+      if (texts) setLiveTranscript(texts);
+    }
   }, []);
 
   // 收尾（验收 7）：权威语音报告进入视图模型（可断言渲染），保留既有
@@ -330,6 +342,10 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
       try {
         controller = await getOrCreateVoiceInput(controller, current.session.session_id);
         voiceInputRef.current = controller;
+        // M14-274: 连接成功即打开服务端 live 会话（同房间订阅已发布
+        // 音轨——增强面，失败静默不阻塞作答）
+        const liveRoom = voiceRoomName(current.session.session_id);
+        if (liveRoom) void openLiveSession(current.session.session_id, liveRoom);
       } catch (cause) {
         voiceInputRef.current = null; // 失败不留 stale 控制器
         setError(cause instanceof Error ? cause.message : "语音连接失败，请重试");
@@ -439,6 +455,12 @@ export function VoiceStudio({ paperId }: { paperId: string }) {
 
       <Card className="p-4">
         <Waveform active={micPhase !== "idle"} className="mb-3" />
+        {/* M14-274: 服务端 live 权威转写（增强面——close 冲刷后展示） */}
+        {liveTranscript && liveTranscript.length > 0 && (
+          <p data-testid="server-live-transcript" className="mb-2 text-xs text-muted-foreground">
+            服务端转写：{liveTranscript.join(" ")}
+          </p>
+        )}
         <div className="flex flex-wrap items-center gap-2">
           <Button
             variant="outline"
