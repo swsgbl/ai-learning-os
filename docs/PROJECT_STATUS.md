@@ -422,6 +422,19 @@ release_ready / public_ready**；生产、公网、真机、真实 provider 边�
 
 ## 当前任务
 
+**M14-277 鸿蒙端语音作答 MVP（hmharness 实现 + supervisor R1 + 模拟器验收，已合并）**
+PR #369（merge `50c6781d`）：VoiceExamPage + voiceexam/ 四模块
+（WavRecorder AudioCapturer S16LE + 手写 RIFF 头零落盘 / VoiceExamApi
+五端点 / Views / Models）；R1 修正 answer_proposed 契约（answer +
+question_id）；CI 权限白名单显式更新（+MICROPHONE）。**模拟器端到端
+验收 PASS**：baseUrl→选卷→会话→麦克风权限→录音（扬声器回环真实
+中文样本）→FunASR 转写真实文本回显→提交→ANSWER_COMMITTED。
+三端语音链路全部落地：Web（LiveKit live 订阅）+ Android（真机
+原生录音实证）+ **鸿蒙（模拟器原生录音实证）**。
+见 `docs/evidence/m14-277-harmony-voice-exam/README.md`。
+
+### 前一任务快照（M14-276 live 会话后台 pump 调度——详见 docs/evidence/m14-276-voice-live-pump/README.md；本切片不改写、不弱化该证据）
+
 **M14-276 live 会话后台 pump 调度 + Android 真机真语音端到端验收（已合并落地，docs 回填）**
 代码已合并（PR #367，`ded869b3`）：open 启动 per-session 后台 pump
 （2s 周期 drain 通道 → adapter 8 MiB 缓冲——修复长语音 >25.6s 丢帧），

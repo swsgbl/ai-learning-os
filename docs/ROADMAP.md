@@ -85,6 +85,14 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-277 状态更新（鸿蒙端语音作答 MVP——hmharness 实现 + 模拟器端到端验收）
+
+- 基于 current main `ded869b3` 实施（多智能体协作：hmharness 实现、
+  Claude Code 审核验收）：PR #369 合并 `50c6781d`。R1 契约修正
+  （answer + question_id）+ CI 权限白名单显式更新（+MICROPHONE）。
+  模拟器端到端 PASS（录音→FunASR 真实中文转写回显→提交→
+  ANSWER_COMMITTED）。**三端语音链路全部落地**（Web live 订阅 /
+  Android 真机 / 鸿蒙模拟器原生录音）。
 ### M14-276 状态更新（live 会话后台 pump 调度 + Android 真机真语音端到端验收）
 
 - 基于 current main `01f4b23b`（PR #366 merge）实施：pump 调度修复
