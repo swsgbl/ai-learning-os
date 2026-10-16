@@ -85,6 +85,15 @@
 - [ ] M13 后续切片（待评估：治理等其余业务域只读接入（学习域只读第一切片已由 M13-05 随 PR #60 合并交付、搜索域只读第一切片已由 M13-06 随 PR #61 合并交付、语音域只读第一切片已由 M13-07 随 PR #63 合并交付、考试域只读第一切片已由 M13-08 随 PR #65 合并交付，见上）、AGC 签名与发布流程（**发布链工具已交付**：readiness preflight 第一切片由 M13-10 随 PR #69 合并、完整五阶段链 preflight→release build→sign→verify→device smoke 已由 M13-16 随 PR #127 合并——fail-closed 工具、294 项测试与 `.gitignore` 材料防护；AGC 发布材料创建、真实签名接入与真机验证仍缺位，见上）、真机验证与真实 provider 冒烟——授权评估前不动工、不虚构进展）
 
 ## M14 生产语音与生产自愈（本机生产栈口径）
+### M14-276 状态更新（live 会话后台 pump 调度 + Android 真机真语音端到端验收）
+
+- 基于 current main `01f4b23b`（PR #366 merge）实施：pump 调度修复
+  长会话通道溢出（PR #367 合并 `ded869b3`）；**Android 真机（华为
+  MGA-AL00）真语音端到端 PASS**——麦克风权限弹窗授权 → 真机录音
+  （扬声器回环真实中文样本）→ transcribe 200（FunASR 真实转写）→
+  intents 200。真机 BLOCKED 登记解除（原生录音上传模式绕开浏览器
+  WebRTC 限制）。生产 API `m14-276-production` 上线 7/7 healthy。
+- 鸿蒙端开发待 hmharness 执行 M14-277 任务书。
 ### M14-275 状态更新（完卷收尾确定性修复 + 生产收口核查——真机验收 BLOCKED 登记）
 
 - 基于 current main `1d441f5c`（PR #365 merge，即 M14-274）实施：
