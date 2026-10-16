@@ -136,7 +136,15 @@ export const api = {
   studentStates: () => request<StudentStates>("/api/v1/student/states"),
   drafts: {
     courseImport: draftEndpoints<ImportDraft>("/api/v1/courses/import-drafts"),
-    courseGeneration: draftEndpoints<GenerationDraft>("/api/v1/courses/generation-drafts"),
+    // M15-001: 定制课程用户入口——生成草稿 create（body {goal}）。
+    courseGeneration: {
+      ...draftEndpoints<GenerationDraft>("/api/v1/courses/generation-drafts"),
+      create: (goal: string) =>
+        request<GenerationDraft>("/api/v1/courses/generation-drafts", {
+          method: "POST",
+          body: JSON.stringify({ goal }),
+        }),
+    },
     paperExtraction: draftEndpoints<PaperDraft>("/api/v1/papers/import-drafts"),
     variantQuestion: draftEndpoints<VariantDraft>("/api/v1/questions/variant-drafts"),
   },

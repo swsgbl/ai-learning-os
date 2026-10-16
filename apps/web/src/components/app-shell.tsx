@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   Smartphone,
   type LucideIcon,
+  Sparkles,
 } from "lucide-react";
 import { gsap, useMotion } from "@/lib/gsap";
 import { MOTION } from "@/lib/motion";
@@ -30,6 +31,7 @@ import { PageTransition } from "./motion/page-transition";
 
 const BASE_NAV: Array<{ href: string; label: string; icon: LucideIcon }> = [
   { href: "/", label: "首页", icon: Home },
+  { href: "/create", label: "定制课程", icon: Sparkles },
   { href: "/voice", label: "语音陪练", icon: Headphones },
   { href: "/exam", label: "考场审阅", icon: BookOpen },
   { href: "/library", label: "学习库", icon: Library },
