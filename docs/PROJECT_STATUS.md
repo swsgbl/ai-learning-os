@@ -411,11 +411,31 @@ partial 3）。
 7-7 healthy）+ 真机验收 BLOCKED 登记（adb 空/hdc 不可用——真语音
 链路已由 M14-272f/274 双实证覆盖）**，计数不变 implemented 60 /
 partial 3。
+**2026-10-16 M14-276 交付 live 会话后台 pump 调度（修复长语音丢帧，
+PR #367 合并）+ Android 真机真语音端到端 PASS（华为 MGA-AL00：
+麦克风录音→transcribe 200→intents 200——M14-275 真机 BLOCKED 登记
+解除）+ 生产 m14-276 上线 7/7 healthy**，计数不变 implemented 60 /
+partial 3。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-276 live 会话后台 pump 调度 + Android 真机真语音端到端验收（已合并落地，docs 回填）**
+代码已合并（PR #367，`ded869b3`）：open 启动 per-session 后台 pump
+（2s 周期 drain 通道 → adapter 8 MiB 缓冲——修复长语音 >25.6s 丢帧），
+close 先停再关、终结自清理、周期可测试注入；3 项契约测试，二十文件
+497 passed 零回归。**Android 真机（华为 MGA-AL00）真语音端到端 PASS**：
+麦克风权限 → 真机录音（扬声器回环中文样本 14s）→ transcribe 200
+（FunASR 真实转写）→ intents 200（非答案正确不提交）——M14-275 的
+真机 BLOCKED 登记解除。生产 `aios/api:m14-276-production` 上线
+（7/7 healthy；Web m14-275）。**鸿蒙端开发待 hmharness 执行
+M14-277 任务书**（任务书已就绪：鸿蒙语音作答 MVP——AVRecorder →
+transcribe → commands）。见
+`docs/evidence/m14-276-voice-live-pump/README.md`。
+
+### 前一任务快照（M14-275 完卷收尾确定性修复——详见 docs/evidence/m14-275-production-closure/README.md；本切片不改写、不弱化该证据）
 
 **M14-275 完卷收尾确定性修复 + 生产收口核查（真机验收 BLOCKED 登记）**
 worktree `ai-learning-os-worktrees/m14-272e-voice-entrypoint-pipeline`，
@@ -430,6 +450,7 @@ healthy（API m14-272 / Web m14-274）。**真机验收 BLOCKED 登记**
 +浏览器 UI 全流程 M14-274 已实证=完整链路覆盖，真机批待设备）。
 Web 全量 334 passed；三 ready 标志均 false 不变。见
 `docs/evidence/m14-275-production-closure/README.md`。
+**已合并：PR #366，CI 5/5，merge commit `01f4b23b`。**
 
 ### 前一任务快照（M14-274 Web 端接入服务端 live 会话——详见 docs/evidence/m14-274-web-live-e2e/README.md；本切片不改写、不弱化该证据）
 
