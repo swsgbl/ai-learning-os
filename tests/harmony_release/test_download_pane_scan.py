@@ -218,7 +218,10 @@ class TestNoClipboardOrBrowserAutomation:
         assert end != -1, "requestPermissions block has no closing ']'"
         block = text[start:end]
         perms = set(re.findall(r"ohos\.permission\.[A-Za-z0-9_.]+", block))
-        assert perms == {"ohos.permission.INTERNET"}, (
+        # M14-277: MICROPHONE 为语音作答（AVRecorder/AudioCapturer 录音
+        # 上传服务端转写）的合法运行时权限——显式纳入白名单（任务书
+        # 授权范围内；其余新权限仍拒绝）。
+        assert perms == {"ohos.permission.INTERNET", "ohos.permission.MICROPHONE"}, (
             "entry module must request exactly "
-            f"[ohos.permission.INTERNET], got {sorted(perms)}"
+            f"[ohos.permission.INTERNET, ohos.permission.MICROPHONE], got {sorted(perms)}"
         )

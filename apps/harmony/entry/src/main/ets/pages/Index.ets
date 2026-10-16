@@ -55,7 +55,20 @@ struct Index {
         .tabBar('搜索')
 
         TabContent() {
-          VoicePane()
+          Column() {
+            // M14-277 语音作答入口:进入录音→识别→提交的语音考试页
+            Button('🎙 开始语音作答')
+              .fontSize(15)
+              .width('90%')
+              .margin({ top: 8, bottom: 8 })
+              .onClick(() => {
+                this.getUIContext().getRouter().pushUrl({ url: 'pages/VoiceExamPage' });
+              })
+            VoicePane()
+              .layoutWeight(1)
+          }
+          .width('100%')
+          .height('100%')
         }
         .tabBar('语音')
 
