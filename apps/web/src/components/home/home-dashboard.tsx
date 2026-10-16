@@ -5,7 +5,8 @@
 // 未登录不发请求，数字如实显示待登录。
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { BookOpen, Headphones, Library } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { BookOpen, ClipboardList, GraduationCap, Headphones, Library, Search, Sparkles, X } from "lucide-react";
 import { API_BASE, api } from "@/lib/api";
 import { probeAuth, type AuthState } from "@/lib/auth";
 import type { DailyPlan, PaperSummary, StudentStates } from "@/lib/types";
@@ -71,11 +72,16 @@ function StatCard({
   );
 }
 
+const ONBOARDING_DISMISSED_KEY = "aios-onboarding-dismissed";
+
 export function HomeDashboard() {
   const rootRef = useRef<HTMLDivElement>(null);
+  const router = useRouter();
   const [auth, setAuth] = useState<AuthState | null>(null);
   const [summary, setSummary] = useState<Summary>({ plan: null, states: null, papers: null, error: null });
   const [ready, setReady] = useState(false);
+  const [searchText, setSearchText] = useState("");
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   useEffect(() => {
     let active = true;
@@ -165,6 +171,23 @@ export function HomeDashboard() {
   );
 
   const loggedIn = auth?.mode === "disabled" || auth?.mode === "authenticated";
+
+  // M15-001 首次使用引导：已登录 + 试卷为空 + 未手动关闭 → 三步引导。
+  useEffect(() => {
+    if (!ready || !loggedIn) return;
+    if (typeof window === "undefined") return;
+    if (window.localStorage.getItem(ONBOARDING_DISMISSED_KEY) === "1") return;
+    const papers = summary.papers;
+    if (papers !== null && papers.length === 0) setShowOnboarding(true);
+  }, [ready, loggedIn, summary.papers]);
+
+  function dismissOnboarding() {
+    setShowOnboarding(false);
+    if (typeof window !== "undefined") {
+      window.localStorage.setItem(ONBOARDING_DISMISSED_KEY, "1");
+    }
+  }
+
   const plan = summary.plan;
   const taskValue = loggedIn ? (plan ? `${plan.task_count}` : "—") : "登录后可见";
   const weakValue = loggedIn
@@ -184,7 +207,104 @@ export function HomeDashboard() {
         <p data-hero className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
           服务端权威考试、错因驱动的学习计划、来源治理与审计留痕。
         </p>
+
+        {/* M15-001 首页搜索直达：提交跳学习库并带查询词 */}
+        <form
+          data-hero
+          className="mt-5 flex max-w-xl items-center gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            const q = searchText.trim();
+            router.push(q ? `/library?q=${encodeURIComponent(q)}` : "/library");
+          }}
+        >
+          <div className="relative flex-1">
+            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted" aria-hidden />
+            <input
+              type="search"
+              value={searchText}
+              onChange={(event) => setSearchText(event.target.value)}
+              placeholder="搜索试卷、科目或知识点…"
+              aria-label="搜索试卷"
+              className="w-full rounded-full border bg-background py-2.5 pl-9 pr-4 text-sm outline-none focus-visible:ring-2"
+            />
+          </div>
+          <button
+            type="submit"
+            className="rounded-full border px-4 py-2.5 text-sm transition-colors hover:bg-surface-2"
+          >
+            搜索
+          </button>
+        </form>
       </section>
+
+      {/* M15-001 定制课程主 CTA */}
+      <section>
+        <Link
+          data-hero
+          href="/create"
+          className="block rounded-xl outline-offset-4 transition-transform duration-150 ease-[var(--ease-out)] hover:-translate-y-0.5 focus-visible:-translate-y-0.5"
+        >
+          <Card className="flex items-center gap-4 border-accent/40 p-5 transition-shadow duration-150 hover:shadow-border-hover">
+            <span className="flex size-11 shrink-0 items-center justify-center rounded-full bg-accent/15">
+              <Sparkles className="size-5 text-accent" aria-hidden="true" />
+            </span>
+            <span className="min-w-0">
+              <span className="block font-display text-xl">定制我的课程</span>
+              <span className="mt-1 block text-sm text-muted">
+                说出学习目标，生成章节大纲与配套评估，审阅后一键入库开练。
+              </span>
+            </span>
+            <span className="ml-auto shrink-0 text-sm text-accent-strong">开始定制 →</span>
+          </Card>
+        </Link>
+      </section>
+
+      {/* M15-001 首次使用三步引导 */}
+      {showOnboarding && (
+        <section data-testid="onboarding" className="rounded-xl border border-dashed p-5">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p className="flex items-center gap-2 text-sm font-medium">
+                <GraduationCap className="size-4 text-accent" aria-hidden />
+                欢迎使用砚席 · 三步开始
+              </p>
+              <p className="mt-1 text-xs text-muted">第一次来？跟着这三步走完你的第一个学习闭环。</p>
+            </div>
+            <button
+              type="button"
+              onClick={dismissOnboarding}
+              aria-label="关闭引导"
+              className="rounded-md p-1 text-muted transition-colors hover:bg-surface-2"
+            >
+              <X className="size-4" aria-hidden />
+            </button>
+          </div>
+          <ol className="mt-4 grid gap-3 sm:grid-cols-3">
+            <li className="rounded-lg border p-3">
+              <p className="text-xs text-muted">第 1 步</p>
+              <Link href="/create" className="mt-1 block text-sm font-medium underline underline-offset-4">
+                定制你的课程
+              </Link>
+              <p className="mt-1 text-xs text-muted">输入目标，生成大纲与评估，采纳入库。</p>
+            </li>
+            <li className="rounded-lg border p-3">
+              <p className="text-xs text-muted">第 2 步</p>
+              <Link href="/voice" className="mt-1 block text-sm font-medium underline underline-offset-4">
+                练起来（语音或考场）
+              </Link>
+              <p className="mt-1 text-xs text-muted">语音口述作答或标准考场模式均可。</p>
+            </li>
+            <li className="rounded-lg border p-3">
+              <p className="text-xs text-muted">第 3 步</p>
+              <Link href="/progress" className="mt-1 block text-sm font-medium underline underline-offset-4">
+                看报告与错因
+              </Link>
+              <p className="mt-1 text-xs text-muted">薄弱概念驱动下一轮学习计划。</p>
+            </li>
+          </ol>
+        </section>
+      )}
 
       <section className="grid gap-3 sm:grid-cols-3">
         <div data-stat>

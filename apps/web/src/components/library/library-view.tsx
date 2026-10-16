@@ -5,6 +5,7 @@
 // reduced-motion 下直接跳过动画，列表即时重排。
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Search, X } from "lucide-react";
+import { useSearchParams } from "next/navigation";
 import { api } from "@/lib/api";
 import type { PaperSummary } from "@/lib/types";
 import { Flip, gsap, useMotion } from "@/lib/gsap";
@@ -26,9 +27,11 @@ export function LibraryView() {
   const rootRef = useRef<HTMLDivElement>(null);
   const flipStateRef = useRef<Flip.FlipState | null>(null);
   const prevIdsRef = useRef<Set<string>>(new Set());
+  const searchParams = useSearchParams();
   const [papers, setPapers] = useState<PaperSummary[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
+  // M15-001: 支持首页搜索直达（/library?q=…）作为初始查询词。
+  const [query, setQuery] = useState(() => searchParams.get("q") ?? "");
   const [filter, setFilter] = useState<Filter>("all");
 
   // M14-189: 拆分 load（setState 全在 then/catch 回调路径）与 reload（重试
