@@ -401,11 +401,35 @@ PASS：SDK 发布者→dev LiveKit→服务端订阅者→有界通道→close �
 浏览器端验收（Web UI 对齐与 Android/Harmony 分批属后续）**；一次性
 环境验收后清理、生产演练栈零触碰**，计数不变 implemented 60 /
 partial 3）。
+**2026-10-16 M14-274 交付 Web 端接入服务端 live 会话（浏览器
+端到端实证：麦克风授权→LiveKit 发布→live open 201→浏览器帧实时
+到达服务端 256 帧/245760 字节→close 冲刷 FunASR 产出段；Web 全量
+334 passed）——真语音文本转写待真机麦克风（Android/Harmony
+分批）**，计数不变 implemented 60 / partial 3。
 **该判定仅为代码+仓库内测试口径，不等于 production_ready /
 release_ready / public_ready**；生产、公网、真机、真实 provider 边界
 与缺口清单以 M14-245 证据 §4–§6 为准。
 
 ## 当前任务
+
+**M14-274 Web 端接入服务端 live 会话（浏览器端到端实证）**
+worktree `ai-learning-os-worktrees/m14-272e-voice-entrypoint-pipeline`，
+分支 `api/m14-272e-voice-entrypoint-pipeline`（延续），基于 current
+main `f798f6a`（PR #364 merge，即 M14-272f）。Web 对齐 live 契约：
+api.ts voiceLive 三方法 + 新 lib live-session-flow（增强面容错
+open/close）+ voice-studio 接线（连接成功 open 同房间 live 会话；
+收尾先断输入再 close 冲刷——服务端 transcript 进
+`server-live-transcript` 展示）。**浏览器端到端实证（Playwright +
+隔离栈）**：/voice 试卷列表 → VoiceStudio（隔离 PG 测试库 + TTS
+播题 + WAITING_ANSWER）→ 麦克风授权 → getUserMedia → LiveKit 发布
+→ live open 201 → **浏览器帧实时到达服务端（256 帧/245760 字节）**
+→ close 四段关停 → FunASR 真实调用产出段。live-session-flow 8 项
+单测 + Web 全量 334 passed + typecheck/lint/build 全过。环境一次性
+清理（生产栈与语音引擎零触碰）。**真语音文本转写待真机麦克风
+（Android/Harmony 分批）**。见
+`docs/evidence/m14-274-web-live-e2e/README.md`。
+
+### 前一任务快照（M14-272f 服务端语音链路真实端到端验收——详见 docs/evidence/m14-272f-voice-e2e/README.md；本切片不改写、不弱化该证据）
 
 **M14-272f 服务端语音链路真实端到端验收（LiveKit+FunASR 实证 + 三处缺陷修复）**
 worktree `ai-learning-os-worktrees/m14-272e-voice-entrypoint-pipeline`，
@@ -427,6 +451,7 @@ tools/voice/e2e_voice_pipeline_probe.py。验证与结果（十九文件
 diff-check 全过；环境一次性：dev 容器删除/FunASR 受控停止/生产
 演练栈 8 容器零触碰）见
 `docs/evidence/m14-272f-voice-e2e/README.md`。
+**已合并：PR #364，CI 5/5，merge commit `f798f6a`。**
 
 ### 前一任务快照（M14-272e 部署入口升级——详见 docs/evidence/m14-272e-voice-entrypoint-pipeline/README.md；本切片不改写、不弱化该证据）
 
