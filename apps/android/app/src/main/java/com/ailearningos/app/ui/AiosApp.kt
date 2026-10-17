@@ -18,6 +18,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.NavHostController
@@ -103,9 +104,12 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
             modifier = Modifier.fillMaxSize().padding(padding),
         ) {
             composable(AiosDestination.Home.route) {
+                val settingsState by settingsViewModel.state.collectAsStateWithLifecycle()
                 HomeScreen(
                     sessionViewModel = sessionViewModel,
                     homeViewModel = homeViewModel,
+                    // M15-004: 从未保存过服务器地址 = 首次使用 → 首页引导横幅
+                    firstLaunch = settingsState.effectiveBaseUrl == null,
                     onOpenLogin = { navController.navigate(LOGIN_ROUTE) },
                     onOpenStudy = { navController.navigate(AiosDestination.Study.route) },
                     onOpenVoice = { navController.navigate(AiosDestination.Voice.route) },

@@ -54,6 +54,20 @@ export interface SaveResult {
 }
 
 /**
+ * M15-004:是否保存过服务器地址(首启引导判定;从未保存 = 首次使用)。
+ * 任何异常按「未保存」处理——引导宁可多显示一次,不可漏掉。
+ */
+export async function hasSavedBaseUrl(context: common.Context): Promise<boolean> {
+  try {
+    const prefs: preferences.Preferences = await preferences.getPreferences(context, PREF_NAME);
+    const raw: preferences.ValueType = prefs.getSync(KEY_API_BASE_URL, '');
+    return typeof raw === 'string' && raw.length > 0;
+  } catch (e) {
+    return false;
+  }
+}
+
+/**
  * 读取已保存的 base URL。
  * 任何异常(打开/读取失败、类型异常、白名单校验失败)都返回 DEFAULT_API_BASE_URL
  * —— 回退是安全的:默认值本身可通过白名单校验。

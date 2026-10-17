@@ -46,8 +46,10 @@ import {
 import {
   DEFAULT_API_BASE_URL,
   EVENT_ID_URL_CHANGED,
+  hasSavedBaseUrl,
   loadBaseUrl
 } from './SettingsStore';
+import { WelcomeCard } from './WelcomeCard';
 
 /** 区块状态机(六区共用同一枚举,各自持有一份状态) */
 enum ZoneStatus {
@@ -107,6 +109,8 @@ export struct HomePane {
   @State auditStatus: ZoneStatus = ZoneStatus.IDLE;
   @State auditData: Array<AuditEntry> = [];
   @State auditError: string = '';
+  // M15-004: 首启引导(从未保存过地址 → 显示 WelcomeCard)
+  @State firstLaunch: boolean = false;
   private hostContext: common.Context | undefined = undefined;
   /** 唯一回调引用,用于精确退订(emitter.off(eventId, callback)) */
   private urlChangeListener: (event: emitter.EventData) => void = (event: emitter.EventData) => {
@@ -116,6 +120,7 @@ export struct HomePane {
     }
     loadBaseUrl(ctx).then((freshUrl: string) => {
       this.baseUrl = freshUrl;
+      this.firstLaunch = false;
       this.refreshAll();
     });
   };
@@ -128,6 +133,8 @@ export struct HomePane {
       return;
     }
     this.hostContext = ctx;
+    // M15-004: 首启判定(从未保存过地址)
+    this.firstLaunch = !(await hasSavedBaseUrl(this.hostContext));
     // 初始化加载一次持久化 URL
     this.baseUrl = await loadBaseUrl(this.hostContext);
     // 注册 URL 变更订阅:SettingsStore.saveBaseUrl 成功后触发刷新
@@ -241,6 +248,14 @@ export struct HomePane {
   build() {
     Scroll() {
       Column({ space: 12 }) {
+        // M15-004: 首启引导卡(从未保存地址时置顶,保存后经 URL_CHANGED 自动刷新消失)
+        WelcomeCard({
+          show: this.firstLaunch,
+          onSaved: () => {
+            this.firstLaunch = false;
+          }
+        })
+
         Text('AIOS 只读面板')
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
