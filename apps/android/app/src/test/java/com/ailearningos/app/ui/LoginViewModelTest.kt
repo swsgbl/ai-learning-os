@@ -5,6 +5,7 @@ import com.ailearningos.app.core.AppErrorKind
 import com.ailearningos.app.testutil.FakeAuthGateway
 import com.ailearningos.app.testutil.MainDispatcherRule
 import com.ailearningos.app.testutil.userFixture
+import com.ailearningos.app.ui.login.LoginMode
 import com.ailearningos.app.ui.login.LoginViewModel
 import com.ailearningos.app.ui.login.validateCredentials
 import kotlinx.coroutines.test.advanceUntilIdle
@@ -141,5 +142,54 @@ class LoginViewModelTest {
         assertEquals(LoginViewModel.LOGIN_FAILED_MESSAGE, viewModel.state.value.error)
         viewModel.onPasswordChange("another-password")
         assertNull(viewModel.state.value.error)
+    }
+}
+
+
+// ---------- M15-002: 注册模式 ----------
+
+class LoginViewModelRegisterTest {
+
+    @get:Rule
+    val mainDispatcherRule = MainDispatcherRule()
+
+    private fun vm(gateway: FakeAuthGateway) = LoginViewModel(gateway)
+
+    @org.junit.Test
+    fun `register mode success calls register then clears form`() = kotlinx.coroutines.test.runTest {
+        val gateway = FakeAuthGateway()
+        val viewModel = vm(gateway)
+        viewModel.onUsernameChange("newuser1")
+        viewModel.onPasswordChange("password123")
+        viewModel.onModeChange(LoginMode.REGISTER)
+        viewModel.submit()
+        assert(gateway.registerCalls == 1)
+        assert(viewModel.state.value.success)
+    }
+
+    @org.junit.Test
+    fun `register conflict shows username taken message`() = kotlinx.coroutines.test.runTest {
+        val gateway = FakeAuthGateway()
+        gateway.registerResult = Result.failure(
+            AppError(AppErrorKind.CONFLICT, cause = null)
+        )
+        val viewModel = vm(gateway)
+        viewModel.onUsernameChange("dupuser1")
+        viewModel.onPasswordChange("password123")
+        viewModel.onModeChange(LoginMode.REGISTER)
+        viewModel.submit()
+        assert(!viewModel.state.value.success)
+        assert(viewModel.state.value.error == LoginViewModel.USERNAME_TAKEN_MESSAGE)
+    }
+
+    @org.junit.Test
+    fun `default mode still calls login not register`() = kotlinx.coroutines.test.runTest {
+        val gateway = FakeAuthGateway()
+        val viewModel = vm(gateway)
+        viewModel.onUsernameChange("alice01")
+        viewModel.onPasswordChange("password123")
+        viewModel.submit()
+        assert(gateway.loginCalls == 1)
+        assert(gateway.registerCalls == 0)
     }
 }

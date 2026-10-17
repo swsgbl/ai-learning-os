@@ -5,6 +5,7 @@ import com.ailearningos.app.core.AppErrorKind
 import com.ailearningos.app.data.model.PrivacySnapshot
 import com.ailearningos.app.data.model.UserProfile
 import com.ailearningos.app.data.remote.LoginRequest
+import com.ailearningos.app.data.remote.RegisterRequest
 import com.ailearningos.app.data.remote.toDomain
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -17,6 +18,9 @@ interface AuthGateway {
 
     /** 登录成功返回用户并保存 token；凭据错误 401 → UNAUTHORIZED；失败时不留半个会话 */
     suspend fun login(username: String, password: String): UserProfile
+
+    /** 注册并自动登录（M15-002）：注册 201 → 立即 login 建会话；用户名冲突 409 → CONFLICT 文案 */
+    suspend fun register(username: String, password: String): UserProfile
 
     /** 有 token 且有效 → 用户；无 token / 401 → null（并清理本地 token）；403 抛 FORBIDDEN 保留凭据；其它失败抛 [AppError] */
     suspend fun currentUser(): UserProfile?
@@ -69,6 +73,12 @@ class AuthRepository(
             }
             throw cause
         }
+    }
+
+    override suspend fun register(username: String, password: String): UserProfile = withRemoteError {
+        // 注册即登录：服务端 /register 只创建账号（201 UserOut），会话令牌仍走 /login。
+        apiProvider.get().register(RegisterRequest(username, password))
+        login(username, password)
     }
 
     override suspend fun currentUser(): UserProfile? = withRemoteError {

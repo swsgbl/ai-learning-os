@@ -121,6 +121,11 @@ class FakeAuthGateway : AuthGateway {
 
     var loginResult: Result<UserProfile> = Result.success(UserProfile("u1", "alice", "learner"))
 
+    var registerResult: Result<UserProfile> = Result.success(UserProfile("u2", "bob", "learner"))
+
+    var registerCalls = 0
+        private set
+
     var authEnabledError: AppError? = null
 
     var currentUserError: AppError? = null
@@ -153,6 +158,12 @@ class FakeAuthGateway : AuthGateway {
         lastSubmittedUsername = username
         lastSubmittedPassword = password
         return loginResult.getOrThrow()
+    }
+
+    override suspend fun register(username: String, password: String): UserProfile {
+        registerCalls += 1
+        lastSubmittedPassword = password
+        return registerResult.getOrThrow()
     }
 
     override suspend fun currentUser(): UserProfile? {
