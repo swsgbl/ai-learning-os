@@ -422,6 +422,19 @@ release_ready / public_ready**；生产、公网、真机、真实 provider 边�
 
 ## 当前任务
 
+**M15-001 产品闭环第一批（定制课程入口 + 首页搜索 + 首用引导 + materialize，已落地生产）**
+PR #371 + #372（main `ae6673c5`）：/create 定制课程页（生成→审阅→
+**materialize 私有练习卷**（学习者主路径，无需治理审核）/治理 approve
+双动作）；materialize 端点（草稿→essay 模板卷，归属调用者）；首页
+搜索直达 + 定制 CTA + 三步首用引导；导航「定制课程」。验证：12+334
+tests 全绿、本地浏览器全链 PASS（开考倒计时进行）、**生产栈 learner
+全链 PASS**（登录→草稿→materialize→4 题卷→开考 201）。**生产 API/
+Web 双 m15-001-production 上线 7/7 healthy**。后续批：移动端注册+
+首启引导、设置分区。见
+`docs/evidence/m15-001-web-product-loop/README.md`。
+
+### 前一任务快照（M14-277 鸿蒙端语音作答 MVP——详见 docs/evidence/m14-277-harmony-voice-exam/README.md；本切片不改写、不弱化该证据）
+
 **M14-277 鸿蒙端语音作答 MVP（hmharness 实现 + supervisor R1 + 模拟器验收，已合并）**
 PR #369（merge `50c6781d`）：VoiceExamPage + voiceexam/ 四模块
 （WavRecorder AudioCapturer S16LE + 手写 RIFF 头零落盘 / VoiceExamApi
