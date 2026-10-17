@@ -236,6 +236,9 @@ class SessionViewModelTest {
  * 注意按“调用序”配对而非按“探测”配对：被取消的旧探测可能永远走不到 currentUser。
  */
 private class GatedAuthGateway : AuthGateway {
+    override suspend fun register(username: String, password: String) =
+        com.ailearningos.app.data.model.UserProfile("u1", "alice", "learner")
+
 
     private val authEnabledGates = ArrayDeque<CompletableDeferred<Unit>>()
     private val authEnabledResults = ArrayDeque<Boolean>()

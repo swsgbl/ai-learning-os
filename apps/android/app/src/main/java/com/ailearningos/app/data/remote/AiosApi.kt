@@ -20,6 +20,9 @@ interface AiosApi {
     @GET("api/v1/auth/status")
     suspend fun authStatus(): AuthStatusResponse
 
+    @POST("api/v1/auth/register")
+    suspend fun register(@Body body: RegisterRequest): UserResponse
+
     @POST("api/v1/auth/login")
     suspend fun login(@Body body: LoginRequest): TokenResponse
 

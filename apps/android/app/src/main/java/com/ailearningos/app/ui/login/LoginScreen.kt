@@ -1,6 +1,7 @@
 package com.ailearningos.app.ui.login
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -11,6 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -46,9 +48,32 @@ fun LoginScreen(
             .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Text("登录", style = MaterialTheme.typography.titleLarge)
+        // M15-002: 登录/注册双模式（新用户第一步可直接注册）
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = state.mode == LoginMode.LOGIN,
+                onClick = { loginViewModel.onModeChange(LoginMode.LOGIN) },
+                label = { Text("登录") },
+                enabled = !state.submitting,
+            )
+            FilterChip(
+                selected = state.mode == LoginMode.REGISTER,
+                onClick = { loginViewModel.onModeChange(LoginMode.REGISTER) },
+                label = { Text("注册") },
+                enabled = !state.submitting,
+            )
+        }
+
         Text(
-            "登录后可以使用与账号绑定的学习数据。",
+            if (state.mode == LoginMode.LOGIN) "登录" else "注册",
+            style = MaterialTheme.typography.titleLarge,
+        )
+        Text(
+            if (state.mode == LoginMode.LOGIN) {
+                "登录后可以使用与账号绑定的学习数据。"
+            } else {
+                "第一次使用？创建账号后即可定制课程并开始练习。"
+            },
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -93,7 +118,10 @@ fun LoginScreen(
                     color = MaterialTheme.colorScheme.onPrimary,
                 )
             } else {
-                Text("登录", textAlign = TextAlign.Center)
+                Text(
+                    if (state.mode == LoginMode.LOGIN) "登录" else "注册并登录",
+                    textAlign = TextAlign.Center,
+                )
             }
         }
 
