@@ -521,6 +521,59 @@ function buildProtectedHeader(): Record<string, string> {
  * 密码只进请求体,响应/错误文案绝不回显用户名或密码。
  * 本函数不落任何持久化;token 的持有/存储由调用方(AuthSession)决定。
  */
+/**
+ * M15-003: POST /api/v1/auth/register — 注册（201 返回 UserOut；不返回 token）。
+ * 会话令牌仍走 postLogin（注册即登录由 AuthSession.register 编排）。
+ * 409 = 用户名已存在（如实文案）；其余错误口径与 postLogin 同。
+ */
+export async function postRegister(baseUrl: string, username: string, password: string): Promise<ApiResult<MeData>> {
+  const check = validateBaseUrl(baseUrl);
+  if (check.code !== UrlPolicyCode.OK) {
+    return { ok: false, status: -1, data: null, error: urlPolicyMessage(check) };
+  }
+  const base: string = check.url.endsWith('/') ? check.url.substring(0, check.url.length - 1) : check.url;
+  const fullUrl: string = `${base}/api/v1/auth/register`;
+  let bodyText: string;
+  try {
+    bodyText = JSON.stringify({ username: username, password: password });
+  } catch (e) {
+    return { ok: false, status: -1, data: null, error: '注册请求构造失败' };
+  }
+  const httpClient = http.createHttp();
+  try {
+    const resp = await httpClient.request(fullUrl, {
+      method: http.RequestMethod.POST,
+      header: { 'content-type': 'application/json', 'accept': 'application/json' },
+      extraData: bodyText,
+      expectDataType: http.HttpDataType.STRING,
+      usingCache: false,
+      connectTimeout: TIMEOUT_MS,
+      readTimeout: TIMEOUT_MS
+    });
+    const status: number = resp.responseCode;
+    const body: string = typeof resp.result === 'string' ? resp.result : `${resp.result}`;
+    if (status === 409) {
+      return { ok: false, status: status, data: null, error: '用户名已被注册，换一个或切换到登录 (HTTP 409)' };
+    }
+    if (status >= 500) {
+      return { ok: false, status: status, data: null, error: SERVER_ERROR_TEXT };
+    }
+    if (!is2xx(status)) {
+      return { ok: false, status: status, data: null, error: `注册失败 (HTTP ${status})` };
+    }
+    try {
+      const parsed = JSON.parse(body) as MeData;
+      return { ok: true, status: status, data: parsed, error: 'ok' };
+    } catch (e) {
+      return { ok: false, status: status, data: null, error: '注册响应 JSON 解析失败' };
+    }
+  } catch (e) {
+    return { ok: false, status: -1, data: null, error: `网络请求失败: ${safeErrorText(e)}` };
+  } finally {
+    httpClient.destroy();
+  }
+}
+
 export async function postLogin(baseUrl: string, username: string, password: string): Promise<ApiResult<TokenData>> {
   const check = validateBaseUrl(baseUrl);
   if (check.code !== UrlPolicyCode.OK) {

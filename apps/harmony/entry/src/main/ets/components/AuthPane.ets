@@ -16,7 +16,7 @@
 
 import { common } from '@kit.AbilityKit';
 import { ApiResult, AuthStatusData, getAuthStatus } from '../AiosApi';
-import { LoginOutcome, SimpleOutcome, getSessionState, login, logout, restoreSession } from './AuthSession';
+import { LoginOutcome, SimpleOutcome, getSessionState, login, logout, register, restoreSession } from './AuthSession';
 import { loadBaseUrl } from './SettingsStore';
 
 enum AuthUiStatus {
@@ -37,6 +37,8 @@ export struct AuthPane {
   @State usernameInput: string = '';
   @State passwordInput: string = '';
   @State busy: boolean = false;
+  // M15-003: 登录/注册双模式（新用户第一步可直接注册）
+  @State isRegisterMode: boolean = false;
   @State loggedIn: boolean = false;
   @State loggedInUser: string = '';
   @State loggedInRole: string = '';
@@ -107,7 +109,7 @@ export struct AuthPane {
     }
   }
 
-  private async doLogin(): Promise<void> {
+  private async doSubmit(): Promise<void> {
     if (this.busy) {
       return;
     }
@@ -125,13 +127,16 @@ export struct AuthPane {
     this.statusPhase = AuthUiStatus.LOADING;
     this.message = '';
     const baseUrl: string = await loadBaseUrl(this.hostContext!);
-    const outcome: LoginOutcome = await login(baseUrl, user, pass);
+    const outcome: LoginOutcome = this.isRegisterMode
+      ? await register(baseUrl, user, pass)
+      : await login(baseUrl, user, pass);
     this.busy = false;
     this.applySession();
     if (outcome.ok) {
       this.statusPhase = AuthUiStatus.SUCCESS;
       this.messageIsError = false;
-      this.message = '登录成功: ' + (outcome.user !== null ? outcome.user.username : '');
+      this.message = (this.isRegisterMode ? '注册并登录成功: ' : '登录成功: ')
+        + (outcome.user !== null ? outcome.user.username : '');
       if (outcome.error.length > 0) {
         this.message = this.message + ' (' + outcome.error + ')';
         this.messageIsError = true;
@@ -215,6 +220,34 @@ export struct AuthPane {
           .backgroundColor('#e8f5e9')
           .width('100%')
         } else {
+          // M15-003: 登录/注册模式切换
+          Row({ space: 8 }) {
+            Toggle({ type: ToggleType.Button, isOn: !this.isRegisterMode }) {
+              Text('登录').fontSize(13)
+            }
+            .onChange((isOn: boolean) => {
+              if (isOn && this.isRegisterMode) {
+                this.isRegisterMode = false;
+                this.message = '';
+              }
+            })
+            Toggle({ type: ToggleType.Button, isOn: this.isRegisterMode }) {
+              Text('注册').fontSize(13)
+            }
+            .onChange((isOn: boolean) => {
+              if (isOn && !this.isRegisterMode) {
+                this.isRegisterMode = true;
+                this.message = '';
+              }
+            })
+          }
+
+          if (this.isRegisterMode) {
+            Text('第一次使用？创建账号后即可定制课程并开始练习。')
+              .fontSize(12)
+              .fontColor('#666666')
+          }
+
           Text('用户名')
             .fontSize(13)
           TextInput({ text: this.usernameInput, placeholder: '用户名(3-32 位字母数字下划线)' })
@@ -232,16 +265,16 @@ export struct AuthPane {
             })
             .width('100%')
 
-          Button(this.busy ? '登录中…' : '登录')
+          Button(this.busy ? (this.isRegisterMode ? '注册中…' : '登录中…') : (this.isRegisterMode ? '注册并登录' : '登录'))
             .enabled(!this.busy)
             .onClick(() => {
-              this.doLogin();
+              this.doSubmit();
             })
         }
 
         if (this.statusPhase === AuthUiStatus.LOADING) {
           if (!this.loggedIn) {
-            Text('正在登录…')
+            Text(this.isRegisterMode ? '正在注册并登录…' : '正在登录…')
               .fontSize(13)
               .fontColor('#888888')
           }
