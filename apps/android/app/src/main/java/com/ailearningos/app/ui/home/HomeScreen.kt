@@ -39,6 +39,7 @@ fun HomeScreen(
     onOpenStudy: () -> Unit,
     onOpenVoice: () -> Unit,
     onOpenSettings: () -> Unit,
+    firstLaunch: Boolean = false,
     onOpenGovernance: () -> Unit,
 ) {
     val sessionState by sessionViewModel.state.collectAsStateWithLifecycle()
@@ -71,6 +72,10 @@ fun HomeScreen(
         ) {
             Text("砚席", style = BrandStyle)
             Text("AI Learning OS", style = MaterialTheme.typography.labelMedium, color = Subtle)
+        }
+
+        if (firstLaunch) {
+            WelcomeBanner(onOpenSettings = onOpenSettings)
         }
 
         SessionCard(
