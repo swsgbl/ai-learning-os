@@ -422,6 +422,15 @@ release_ready / public_ready**；生产、公网、真机、真实 provider 边�
 
 ## 当前任务
 
+**M15-004 两端首启连接引导（已合并——产品审计闭环收官）**
+PR #379（main `9debee2`）：Harmony WelcomeCard（内联连接+自动
+撤除）+ Android WelcomeBanner（直达设置）+ 首启判定。Harmony
+构建零 ERROR；Android 350 tests 全绿。**M15-005 经评估不再单独
+实施**（Web baseUrl 构建期注入无暴露面；移动端 URL 配置为自托管
+必需 + M15-004 已覆盖发现性）。**产品审计六项批评全部闭环**。
+
+### 前一任务快照（M15-003 Harmony 注册——见 docs/evidence/m15-002-android-register/README.md 附节；本切片不改写、不弱化该证据）
+
 **M15-003 Harmony 注册功能（AuthPane 双模式，已合并——三端注册收官）**
 PR #376（main `f207e62`）：postRegister + AuthSession.register
 （注册即登录编排）+ AuthPane Toggle 双模式。构建零 ERROR；模拟器
