@@ -144,6 +144,12 @@ export const api = {
           method: "POST",
           body: JSON.stringify({ goal }),
         }),
+      // M15-001: 草稿 -> 调用者私有练习卷（学习者定制闭环）。
+      materialize: (draftId: string) =>
+        request<{ paper_id: string; question_count: number; title: string }>(
+          `/api/v1/courses/generation-drafts/${encodeURIComponent(draftId)}/materialize`,
+          { method: "POST" },
+        ),
     },
     paperExtraction: draftEndpoints<PaperDraft>("/api/v1/papers/import-drafts"),
     variantQuestion: draftEndpoints<VariantDraft>("/api/v1/questions/variant-drafts"),

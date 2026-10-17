@@ -24,7 +24,9 @@ type Phase =
   | { kind: "generating" }
   | { kind: "review"; draft: GenerationDraft }
   | { kind: "approving"; draft: GenerationDraft }
+  | { kind: "materializing"; draft: GenerationDraft }
   | { kind: "done"; goal: string }
+  | { kind: "materialized"; paperId: string; questionCount: number; title: string }
   | { kind: "error"; message: string };
 
 export function CourseCreator() {
@@ -78,7 +80,29 @@ export function CourseCreator() {
     }
   }
 
-  const busy = phase.kind === "generating" || phase.kind === "approving";
+  // M15-001: 学习者主路径——草稿直接生成我的私有练习卷（无需治理审核）。
+  async function materialize(draft: GenerationDraft) {
+    setPhase({ kind: "materializing", draft });
+    try {
+      const out = await api.drafts.courseGeneration.materialize(draft.id);
+      setPhase({
+        kind: "materialized",
+        paperId: out.paper_id,
+        questionCount: out.question_count,
+        title: out.title,
+      });
+    } catch (cause) {
+      setPhase({
+        kind: "error",
+        message: cause instanceof ApiError ? cause.message : "生成练习卷失败，请重试",
+      });
+    }
+  }
+
+  const busy =
+    phase.kind === "generating" ||
+    phase.kind === "approving" ||
+    phase.kind === "materializing";
 
   return (
     <div ref={rootRef} className="mx-auto max-w-3xl space-y-6 px-4 py-8">
@@ -139,10 +163,17 @@ export function CourseCreator() {
 
       {/* 第 2 步：大纲审阅 */}
       {phase.kind === "review" && (
-        <DraftReview draft={phase.draft} onApprove={() => void approve(phase.draft)} />
+        <DraftReview
+          draft={phase.draft}
+          onApprove={() => void approve(phase.draft)}
+          onMaterialize={() => void materialize(phase.draft)}
+        />
       )}
       {phase.kind === "approving" && (
         <DraftReview draft={phase.draft} onApprove={undefined} approving />
+      )}
+      {phase.kind === "materializing" && (
+        <DraftReview draft={phase.draft} onApprove={undefined} approving materializing />
       )}
 
       {/* 第 3 步：完成 */}
@@ -159,6 +190,27 @@ export function CourseCreator() {
             </Link>
             <Link href="/library" className="text-sm underline underline-offset-4">
               去学习库看看
+            </Link>
+          </div>
+        </Card>
+      )}
+
+      {/* 练习卷生成成功（学习者主路径） */}
+      {phase.kind === "materialized" && (
+        <Card className="space-y-3 p-5" data-testid="materialized">
+          <p className="text-sm font-medium">练习卷已生成 🎉</p>
+          <p className="text-sm text-muted">
+            「{phase.title}」共 {phase.questionCount} 题（开放作答，练后可看 AI 报告）。
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href={`/exam/${phase.paperId}`}
+              className="text-sm underline underline-offset-4"
+            >
+              立即开考
+            </Link>
+            <Link href={`/voice/${phase.paperId}`} className="text-sm underline underline-offset-4">
+              语音陪练这卷
             </Link>
           </div>
         </Card>
@@ -203,11 +255,15 @@ export function CourseCreator() {
 function DraftReview({
   draft,
   onApprove,
+  onMaterialize,
   approving = false,
+  materializing = false,
 }: {
   draft: GenerationDraft;
   onApprove?: () => void;
+  onMaterialize?: () => void;
   approving?: boolean;
+  materializing?: boolean;
 }) {
   const chapters = draft.plan.outline ?? [];
   const assessments = draft.plan.assessments ?? [];
@@ -247,13 +303,32 @@ function DraftReview({
       {draft.generation_note && (
         <p className="text-xs text-muted">生成备注：{draft.generation_note}</p>
       )}
-      {onApprove && (
-        <Button onClick={onApprove} data-testid="approve-course" className="w-full sm:w-auto">
-          {approving ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <BookOpen className="size-4" aria-hidden />}
-          {approving ? "正在采纳…" : "采纳课程并入库"}
-        </Button>
+      <div className="flex flex-col gap-2 sm:flex-row">
+        {onMaterialize && (
+          <Button onClick={onMaterialize} data-testid="materialize-course" className="w-full sm:w-auto">
+            {materializing ? <Loader2 className="size-4 animate-spin" aria-hidden /> : <BookOpen className="size-4" aria-hidden />}
+            {materializing ? "正在生成练习卷…" : "生成我的练习卷（立即开练）"}
+          </Button>
+        )}
+        {onApprove && (
+          <Button
+            onClick={onApprove}
+            data-testid="approve-course"
+            variant="outline"
+            className="w-full sm:w-auto"
+          >
+            {approving ? <Loader2 className="size-4 animate-spin" aria-hidden /> : null}
+            {approving ? "正在提交…" : "提交课程库审核（治理）"}
+          </Button>
+        )}
+      </div>
+      {(approving || materializing) && (
+        <p className="text-xs text-muted">
+          {materializing
+            ? "从大纲生成你的私有练习卷，无需等待审核。"
+            : "治理审核通过后进入全局课程库（需要治理员权限）。"}
+        </p>
       )}
-      {approving && <p className="text-xs text-muted">采纳后课程进入学习库，可开考/语音陪练。</p>}
     </Card>
   );
 }
