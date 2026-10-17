@@ -422,6 +422,14 @@ release_ready / public_ready**；生产、公网、真机、真实 provider 边�
 
 ## 当前任务
 
+**M15-003 Harmony 注册功能（AuthPane 双模式，已合并——三端注册收官）**
+PR #376（main `f207e62`）：postRegister + AuthSession.register
+（注册即登录编排）+ AuthPane Toggle 双模式。构建零 ERROR；模拟器
+E2E 待手机模拟器就位后补（PC 形态实例上无法执行）。**三端注册全部
+落地**。第二批剩余：两端首启连接引导、设置分区。
+
+### 前一任务快照（M15-002 Android 注册——详见 docs/evidence/m15-002-android-register/README.md；本切片不改写、不弱化该证据）
+
 **M15-002 Android 注册功能（登录页双模式，已合并）**
 PR #374（main `842692a`）：AiosApi register 端点 + AuthRepository
 register（注册即登录）+ LoginViewModel/LoginScreen 双模式（FilterChip
