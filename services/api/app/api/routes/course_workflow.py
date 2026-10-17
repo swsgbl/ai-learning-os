@@ -6,6 +6,9 @@
 - GET  ?status=：审核队列（缺省全部）；
 - GET  /{id}：草稿详情（plan JSON 可审计）；
 - POST /{id}/approve | /{id}/reject：人工决定；终态重复审核 409。
+- POST /{id}/materialize（M15-001）：草稿 -> 调用者私有练习卷——学习者
+  生成后即可开练（admin 或草稿创建者本人；不要求 approved：自用材料
+  不等于全局课程库入库，治理路径 approve 保持 admin-only 不变）。
 """
 from __future__ import annotations
 
@@ -24,6 +27,13 @@ from app.domain.course_workflow import (
     match_competencies,
     prerequisite_closure,
 )
+from app.domain.questions import (
+    EssayAnswer,
+    PaperQuestionRef,
+    PaperSpec,
+    QuestionSpec,
+)
+from app.repositories.paper_importer import import_papers as _run_import
 
 router = APIRouter(prefix="/api/v1/courses/generation-drafts", tags=["courses"])
 
@@ -204,3 +214,73 @@ async def reject_generation_draft(draft_id: str, payload: ReviewRequest, request
     )
     record = await _repo(request).review(draft_id, "rejected", payload.note, audit)
     return _terminal_guard(record)
+
+
+class MaterializeOut(BaseModel):
+    """M15-001：草稿 -> 私有练习卷结果。"""
+
+    paper_id: str
+    question_count: int
+    title: str
+
+
+@router.post("/{draft_id}/materialize", response_model=MaterializeOut, status_code=201)
+async def materialize_generation_draft(draft_id: str, request: Request) -> MaterializeOut:
+    """草稿 -> 调用者私有练习卷（学习者定制闭环的最后一公里）。
+
+    权限：admin 或草稿创建者本人（auth off 本地模式草稿无主，放行）；
+    不要求 approved——自用练习材料不是全局课程库入库（治理 approve
+    保持 admin-only 语义零变化）。assessments 转 essay 模板题（开放
+    作答 + rubric 要点），概念挂 chapter 对应 concept_id；卷归属
+    current_owner_id（auth on 时仅本人可见）。
+    """
+    repo = _repo(request)
+    draft = await repo.get(draft_id)
+    if draft is None:
+        raise HTTPException(status_code=404, detail="课程草稿不存在")
+    caller = current_owner_id(request)
+    if not await current_is_admin(request):
+        draft_owner = await repo.get_owner(draft_id)
+        if draft_owner is not None and draft_owner != caller:
+            raise HTTPException(status_code=403, detail="仅草稿创建者或治理员可生成练习卷")
+    plan = draft.get("plan") or {}
+    assessments = plan.get("assessments") or []
+    if not assessments:
+        raise HTTPException(status_code=422, detail="课程草稿无评估题，无法组卷")
+    outline = {c["chapter_no"]: c for c in plan.get("outline") or []}
+    sessionmaker = getattr(request.app.state, "sessionmaker", None)
+    if sessionmaker is None:
+        raise HTTPException(status_code=503, detail="Course generation requires a database")
+    questions: list[PaperQuestionRef] = []
+    for item in assessments:
+        chapter = outline.get(item.get("chapter_no"), {})
+        questions.append(
+            PaperQuestionRef(
+                question=QuestionSpec(
+                    question_type="essay",
+                    stem=item.get("stem") or f"第 {item.get('chapter_no')} 章练习",
+                    difficulty=int(chapter.get("difficulty", 3)),
+                    estimated_seconds=300,
+                    concept_ids=[item.get("concept_id", "")],
+                    answer=EssayAnswer(
+                        rubric_points=["说明该概念的核心含义", "给出一个具体例子"]
+                    ),
+                ),
+                score=10.0,
+            )
+        )
+    title = f"定制课程 · {(draft.get('goal') or '练习')[:40]}"
+    spec = PaperSpec(
+        title=title,
+        duration_seconds=max(60, 300 * len(questions)),
+        policy="practice",
+        generation_method="ai_generated",
+        questions=questions,
+        total_score=float(10 * len(questions)),
+    )
+    imported = await _run_import(sessionmaker, [spec], owner_id=caller)
+    if not imported:
+        raise HTTPException(status_code=500, detail="练习卷写入失败")
+    return MaterializeOut(
+        paper_id=imported[0], question_count=len(questions), title=title
+    )

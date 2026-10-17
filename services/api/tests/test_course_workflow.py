@@ -257,3 +257,36 @@ def test_api_no_db_503() -> None:
     with TestClient(create_app(None)) as client:
         assert client.post(API, json={"goal": "我想学导数"}).status_code == 503
         assert client.get(API).status_code == 503
+
+
+# ---------- M15-001: materialize（草稿 -> 私有练习卷） ----------
+
+
+def test_materialize_creates_private_practice_paper() -> None:
+    """生成 -> materialize 201 -> 练习卷可开考（学习者定制闭环）。"""
+    with _client() as client:
+        _publish_dag(client)
+        created = client.post(API, json={"goal": "我想学导数与积分"})
+        assert created.status_code == 201
+        draft_id = created.json()["id"]
+
+        r = client.post(f"{API}/{draft_id}/materialize")
+        assert r.status_code == 201, r.text
+        out = r.json()
+        assert out["question_count"] == 3
+        assert out["title"].startswith("定制课程 ·")
+
+        papers = client.get("/api/v1/papers").json()
+        target = [p for p in papers if p["id"] == out["paper_id"]]
+        assert len(target) == 1
+        # practice 卷可开考（完整闭环）
+        exam = client.post(
+            f"/api/v1/papers/{out['paper_id']}/exams", json={"mode": "exam"}
+        )
+        assert exam.status_code == 201, exam.text
+
+
+def test_materialize_unknown_draft_404() -> None:
+    with _client() as client:
+        r = client.post(f"{API}/cgd_missing/materialize")
+        assert r.status_code == 404
