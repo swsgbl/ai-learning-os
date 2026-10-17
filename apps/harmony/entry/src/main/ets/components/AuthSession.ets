@@ -25,6 +25,7 @@ import {
   hasBearerToken,
   isUsableBearer,
   postLogin,
+  postRegister,
   setBearerToken
 } from '../AiosApi';
 import { VaultLoadResult, VaultResult, clearTokenVault, loadTokenFromVault, saveTokenToVault } from './TokenVault';
@@ -86,6 +87,19 @@ function failOutcome(error: string): SimpleOutcome {
  * 任何一步失败:清内存 token(不留半会话),如实返回错误。
  * vault 写失败:会话仍在(内存有效),但 error 如实标注「未持久化」。
  */
+/**
+ * M15-003 注册全流程：register(201) => login 建会话（服务端 /register
+ * 只建账号返回 UserOut，不含会话令牌——注册即登录由本函数编排）。
+ * 注册失败（409 用户名已存在等）如实返回，不产生任何会话痕迹。
+ */
+export async function register(baseUrl: string, username: string, password: string): Promise<LoginOutcome> {
+  const reg = await postRegister(baseUrl, username, password);
+  if (!reg.ok || reg.data === null) {
+    return { ok: false, error: reg.error, user: null };
+  }
+  return await login(baseUrl, username, password);
+}
+
 export async function login(baseUrl: string, username: string, password: string): Promise<LoginOutcome> {
   currentPhase = 'loading';
   currentError = '';
