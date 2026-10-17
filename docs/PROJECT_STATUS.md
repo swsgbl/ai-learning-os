@@ -422,6 +422,15 @@ release_ready / public_ready**；生产、公网、真机、真实 provider 边�
 
 ## 当前任务
 
+**M15-002 Android 注册功能（登录页双模式，已合并）**
+PR #374（main `842692a`）：AiosApi register 端点 + AuthRepository
+register（注册即登录）+ LoginViewModel/LoginScreen 双模式（FilterChip
+切换；409 → 用户名已注册文案；注册引导文案）。3 项新单测 + 全量
+**350 tests / 0 failures**。第二批剩余：Harmony 注册 + 两端首启
+连接引导、设置分区。
+
+### 前一任务快照（M15-001 产品闭环第一批——详见 docs/evidence/m15-001-web-product-loop/README.md；本切片不改写、不弱化该证据）
+
 **M15-001 产品闭环第一批（定制课程入口 + 首页搜索 + 首用引导 + materialize，已落地生产）**
 PR #371 + #372（main `ae6673c5`）：/create 定制课程页（生成→审阅→
 **materialize 私有练习卷**（学习者主路径，无需治理审核）/治理 approve
