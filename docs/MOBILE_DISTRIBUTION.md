@@ -194,6 +194,22 @@ Web 应用自带通用安装入口（`/download` 路由），不再单独依赖�
 - 更新检查：客户端读 manifest 比对 `versionCode`/`version` 提示更新，
   下载后先校验 SHA256 再安装。
 
+## 4b. GitHub Releases 分发源（M15-006 决策）
+
+第 7 步的 VPS 下载站仍是公网正式形态；M15-006 起**早期构建先经
+GitHub Releases 分发**（`.github/workflows/release-android.yml`：
+tag `v*` → Secrets 签名 → verify_artifact 门禁 → `--prerelease`
+发布 APK + manifest.json 附件）。纪律：
+
+- Releases 一律 **pre-release** 标记 + notes 明示「未经 M14-237
+  公网移动发布门禁」——与 `public_mobile_ready` 语义分离，不虚报；
+- manifest 契约（§4）不变：sha256 发布时当场重算并附 Release；
+  `signed=false`/debug 产物永不进入 Release 资产（CI 无 Secrets
+  显式失败，不回退 debug 签名）；
+- tag 名必须与 APK versionName 一致（CI 一致性门禁拒绝错位发布）；
+- 应用内更新检查读 `GET /api/v1/meta/latest-app`（部署 env 三项
+  齐全才透出）指向该分发源——客户端不硬编码下载地址。
+
 ## 5. 下载站（download.example.com）纪律
 
 - 目录只有：`/android/*`、`/harmony/*`、`/pwa/*`、`manifest.json`、安装说明页；
