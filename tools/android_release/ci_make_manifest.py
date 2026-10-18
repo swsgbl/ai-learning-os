@@ -39,6 +39,7 @@ def find_aapt2(android_home: str | None) -> str:
     found: list[Path] = []
     for root in roots:
         found.extend(root.glob("build-tools/*/aapt2"))
+        found.extend(root.glob("build-tools/*/aapt2.exe"))
     if not found:
         raise SystemExit("aapt2 not found (set --android-home or ANDROID_HOME)")
     return str(sorted(found)[-1])
