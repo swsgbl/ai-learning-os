@@ -1,4 +1,28 @@
 # Changelog
+## M15 真机验证收口 + M15 产品审计系列（001~004）汇总补录
+
+- **补录说明（诚实记录）**：M15-001~004（#371-#380）各切片的
+  CHANGELOG 条目此前因锚点失配静默未入册（replace 无 assert，
+  本切片已修复该写法缺陷）；系列详情以 PROJECT_STATUS 各任务
+  快照与 `docs/evidence/m15-*` 证据目录为准。系列一览：
+  Web 产品闭环（搜索/定制课程 CTA/materialize 成卷/三步引导，
+  #371）→ Android 注册（#372/#374）→ Harmony 注册（#376/#377）
+  → 两端首启连接引导（#379/#380）。
+- **真机验证收口（本切片，Huawei MGA-AL00 adb）**：M15-002 注册
+  六点全过（双模式 FilterChip / 引导文案 / 动态按钮 / **负例
+  409「用户名已被注册」** / **正例注册 201→自动登录→首页身份**
+  / 退出登录）；M15-004 首启四点全过（banner 渲染→跳设置→
+  保存生效→回首页 banner 消失+健康正常）。此前仅有单测+编译
+  验证——本切片补齐设备级实证（验收栈：隔离 PG 测试库 + 假
+  AUTH_SECRET + LAN 18000）。
+- **生产复核**（Docker 恢复窗口内）：彩排栈 7/7 healthy、镜像
+  核实 m15-001-production（移动端改动无需重建）、recovery
+  dry-run **OK**、双语音引擎恢复 HTTP 200；随后 Docker/WSL
+  再次失联为既有基础设施问题（另一智能体域），非代码回归，
+  recovery 工具可幂等收敛。
+- **待查异常登记**：退出登录后首页「登录」按钮对 adb tap
+  无响应（force-stop 后恢复）——未定位根因，后续切片排查。
+- 证据：`docs/evidence/m15-realdevice-verification/README.md`。
 ## M14-272f — 服务端语音链路真实端到端验收（LiveKit+FunASR 实证 + 三处真实缺陷修复）
 
 - **范围**：M14-272 验收批——本机真实端到端：发布者（LiveKit

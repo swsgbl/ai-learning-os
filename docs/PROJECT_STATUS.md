@@ -422,6 +422,18 @@ release_ready / public_ready**；生产、公网、真机、真实 provider 边�
 
 ## 当前任务
 
+**M15 真机验证收口（注册/首启真机 E2E + 生产复核——产品审计证据闭环补全）**
+真机（Huawei MGA-AL00）补齐 M15-002/004 设备级实证：注册六点
+（含负例 409 文案、正例注册→自动登录）+ 首启四点（banner→连接→
+保存→撤除）全过；生产复核（Docker 恢复窗口）：7/7 healthy +
+recovery dry-run OK + 双引擎 200，其后基础设施再度失联为既有
+Docker 问题非代码回归。待查异常：退出登录后「登录」按钮 tap
+无响应（重启恢复）。CHANGELOG 补录 M15 系列（此前锚点失配
+静默未入册）。证据
+`docs/evidence/m15-realdevice-verification/README.md`。
+
+### 前一任务快照（M15-004 已合并，PR #379/#380）
+
 **M15-004 两端首启连接引导（已合并——产品审计闭环收官）**
 PR #379（main `9debee2`）：Harmony WelcomeCard（内联连接+自动
 撤除）+ Android WelcomeBanner（直达设置）+ 首启判定。Harmony
