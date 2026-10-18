@@ -422,6 +422,17 @@ release_ready / public_ready**；生产、公网、真机、真实 provider 边�
 
 ## 当前任务
 
+**M15-007 产品审计二批（四项 UX 整改 + v0.1.1 已发布，真机交付验证中）**
+PR #388：首页信息架构（技术卡收设置页）/ 记住密码（Keystore 加密
+CredentialVault）/ 学习页「我的课程」mine 分组（公共卷收起 + 生产种子
+卷已清理）/ 三步上手引导。v0.1.1（versionCode 2）经流水线发布，
+tag↔版本门禁首次实战拦截 stale-tag；生产滚动 m15-007-production
+7/7 healthy + latest-app 透出 v0.1.1 + 种子卷删除。Android 360/0。
+M15-008（API 密钥治理页）+ M15-009（Harmony 对齐）已列计划。
+全面对账：docs/evidence/m15-007-product-audit2/README.md。
+
+### 前一任务快照（M15-006 已完成，PR #382-#387）
+
 **M15-006 发布渠道 + 应用内更新检查（GitHub Releases 首发 v0.1.0 已发布）**
 服务端 latest-app 端点（#382）+ Android 应用更新 UI + CI 发布流水线
 （#383-#386）+ compose 生产接线（收尾 PR）。首发 v0.1.0 pre-release：

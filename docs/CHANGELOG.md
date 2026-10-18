@@ -1,4 +1,28 @@
 # Changelog
+## M15-007 —— 产品审计二批（真机实测反馈四项整改）+ v0.1.1 发布
+
+- **PR #388**（用户真机 v0.1.0 实测反馈）：
+  - **首页信息架构**：技术卡（当前用户/API 状态/治理入口）收纳进
+    「设置」页；首页 = 登录引导卡 / 三步上手引导卡（可关闭记忆）/
+    我的学习 + 语音快速入口；移除开发期「当前边界」文案。
+  - **记住密码**：登录页勾选（默认开）→ CredentialVault（Android
+    Keystore AES-GCM 加密落盘）→ 下次预填；取消勾选即抹除；
+    vault 故障 fail-open 不阻断登录。
+  - **学习页「我的课程」**：服务端 `PaperOut.mine`
+    （list_papers_with_owner 附带归属，可见性语义不变）；学习页
+    mine 分组为主 + 空态引导去 Web 定制；公共试卷默认收起。
+    生产种子卷（函数与导数基础/算法复杂度入门）随部署清理。
+  - **上手引导**：移动端三步引导卡（定制课程→开练→错因报告）。
+- **v0.1.1（versionCode 2）**：经 M15-006 流水线发布（Release
+  pre-release）；tag↔版本一致性门禁**首次实战拦截错位 tag**
+  （stale fetch 导致 tag 打在旧 commit——门禁拒绝后重打通过）；
+  生产滚动 m15-007-production + latest-app 透出 v0.1.1。
+- 验证：Android **360 tests / 0 failures** + lint；服务端 mine
+  契约测试（materialize 闭环 + 双用户交叉）。
+- **M15-008 计划**（API 密钥配置——用户两次提出）：治理中心
+  「AI 能力与密钥」页（admin-only：状态脱敏展示 + 在线填写加密
+  落库热生效）；Harmony 端对齐列 M15-009。全面对账见
+  `docs/evidence/m15-007-product-audit2/README.md`。
 ## M15-006 —— 发布渠道 + 应用内更新检查（GitHub Releases 首发 v0.1.0）
 
 - **应用内更新检查**（#382）：服务端 `GET /api/v1/meta/latest-app`
