@@ -104,8 +104,13 @@ SCHEME_RES = {
 # Line-anchored with horizontal whitespace only: a DN line carrying nothing
 # but whitespace must NOT let "\s*" swallow the newline and capture the next
 # output line as a fake DN (which would bypass the missing-identity check).
+# 两种真实 apksigner 行格式（M15-006 CI 实证）：较新版本打印
+# ``Signer #1 certificate DN: ...``；部分 build-tools 按签名方案逐个打印
+# ``V3.0 Signer: certificate DN: ...``。安全语义不变：行首锚定 + 非空 DN
+# + 反 debug 证书检查照常。
 SIGNER_DN_RE = re.compile(
-    r"^Signer #1 certificate DN:[ \t]*(.+?)[ \t]*$", re.MULTILINE
+    r"^(?:Signer #1 certificate DN|V\d+(?:\.\d+)? Signer: certificate DN):[ \t]*(.+?)[ \t]*$",
+    re.MULTILINE,
 )
 BADGING_PACKAGE_RE = re.compile(
     r"^package:\s+name='([^']*)'\s+versionCode='(\d+)'\s+versionName='([^']*)'",
