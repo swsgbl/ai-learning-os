@@ -74,7 +74,7 @@ jobs:
           APKSIGNER="$(ls -1 "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)"
           AAPT2="$(ls -1 "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)"
           "$APKSIGNER" --version || true
-          "$APKSIGNER" verify --verbose --print-certs "$RUNNER_TEMP/$ASSET_NAME" | grep -c "certificate DN" || echo "DN-LINES-0"
+          "$APKSIGNER" verify --verbose --print-certs "$RUNNER_TEMP/$ASSET_NAME" | grep "certificate DN" | cat -A || echo "DN-LINES-0"
           python tools/android_release/verify_artifact.py --apk "$RUNNER_TEMP/$ASSET_NAME"             --manifest "$RUNNER_TEMP/manifest.json" --apksigner "$APKSIGNER" --aapt "$AAPT2"
           # 发布一致性门禁：tag（去 v 前缀）必须与 APK 真实 versionName 一致——
           # 防止 tag 名与产物版本错位的发布（如 v0.2.0 配 0.1.0 APK）
