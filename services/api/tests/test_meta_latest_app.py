@@ -86,3 +86,23 @@ def test_latest_app_exempt_from_auth_gate(client_factory):
     )
     resp = client.get("/api/v1/meta/latest-app?platform=android")
     assert resp.status_code == 200
+
+
+def test_latest_app_empty_string_env_normalized_to_none(client_factory, monkeypatch):
+    """M15-006 回归：compose 空默认插值传空字符串——必须归一为 None
+    （未配置 → 404），绝不因 int 字段收空串崩溃（CI Docker job 实证）。"""
+    monkeypatch.setenv("LATEST_ANDROID_VERSION", "")
+    monkeypatch.setenv("LATEST_ANDROID_VERSION_CODE", "")
+    monkeypatch.setenv("LATEST_ANDROID_DOWNLOAD_URL", "")
+    get_settings.cache_clear()
+    try:
+        client = TestClient(create_app())
+        resp = client.get("/api/v1/meta/latest-app?platform=android")
+        assert resp.status_code == 404
+        # 空串 + 合法值混配同样不崩（部分配置仍 404）
+        monkeypatch.setenv("LATEST_ANDROID_VERSION_CODE", "2")
+        get_settings.cache_clear()
+        resp = TestClient(create_app()).get("/api/v1/meta/latest-app?platform=android")
+        assert resp.status_code == 404
+    finally:
+        get_settings.cache_clear()
