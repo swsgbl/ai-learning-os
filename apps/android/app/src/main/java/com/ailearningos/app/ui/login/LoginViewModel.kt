@@ -82,6 +82,15 @@ class LoginViewModel(
         }
     }
 
+    /**
+     * M15-007 修复：消费 success 标志。LoginViewModel 为 activity 级共享实例，
+     * success=true 残留会让「退出登录后再次进入登录页」被 LaunchedEffect 秒弹回
+     * （真机实证：登录按钮看似无响应）。UI 触发 onSuccess 前必须消费。
+     */
+    fun consumeSuccess() {
+        _state.update { it.copy(success = false) }
+    }
+
     fun onUsernameChange(value: String) {
         _state.update { it.copy(username = value, error = null) }
     }

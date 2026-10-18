@@ -39,7 +39,11 @@ fun LoginScreen(
     val state by loginViewModel.state.collectAsStateWithLifecycle()
 
     LaunchedEffect(state.success) {
-        if (state.success) onSuccess()
+        if (state.success) {
+            // M15-007: 先消费再回调——共享 VM 实例的 success 残留会秒弹回登录页
+            loginViewModel.consumeSuccess()
+            onSuccess()
+        }
     }
 
     Column(
