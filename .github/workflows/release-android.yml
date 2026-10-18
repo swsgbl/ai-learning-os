@@ -66,8 +66,16 @@ jobs:
           set -eu
           APK="apps/android/app/build/outputs/apk/release/app-release.apk"
           test -f "$APK" || { echo "::error::未找到签名产物 $APK"; exit 1; }
+          # 规范资产名：manifest 条目按 APK basename 匹配——先改名再生成/校验清单
           python tools/android_release/ci_make_manifest.py --apk "$APK"             --alias "$AIOS_ANDROID_KEYSTORE_KEY_ALIAS"             --out "$RUNNER_TEMP/manifest.json"
-          python tools/android_release/verify_artifact.py --apk "$APK" --manifest "$RUNNER_TEMP/manifest.json"
+          ASSET_NAME="$(python -c "import json;print(json.load(open('$RUNNER_TEMP/manifest.json'))['channels']['android']['files'][0]['name'])")"
+          cp "$APK" "$RUNNER_TEMP/$ASSET_NAME"
+          # 显式最新 build-tools 工具（消除 runner 预装版本歧义）+ 输出可见性诊断
+          APKSIGNER="$(ls -1 "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -1)"
+          AAPT2="$(ls -1 "$ANDROID_HOME"/build-tools/*/aapt2 | sort -V | tail -1)"
+          "$APKSIGNER" --version || true
+          "$APKSIGNER" verify --verbose --print-certs "$RUNNER_TEMP/$ASSET_NAME" | grep -c "certificate DN" || echo "DN-LINES-0"
+          python tools/android_release/verify_artifact.py --apk "$RUNNER_TEMP/$ASSET_NAME"             --manifest "$RUNNER_TEMP/manifest.json" --apksigner "$APKSIGNER" --aapt "$AAPT2"
           # 发布一致性门禁：tag（去 v 前缀）必须与 APK 真实 versionName 一致——
           # 防止 tag 名与产物版本错位的发布（如 v0.2.0 配 0.1.0 APK）
           TAG_VER="${GITHUB_REF_NAME#v}"
@@ -83,10 +91,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -eu
-          APK="apps/android/app/build/outputs/apk/release/app-release.apk"
           TAG="${GITHUB_REF_NAME}"
           ASSET="ai-learning-os-$( python -c "import json;print(json.load(open('$RUNNER_TEMP/manifest.json'))['version'])" )-release-signed.apk"
-          cp "$APK" "$ASSET"
+          cp "$RUNNER_TEMP/$ASSET" "$ASSET"
           SHA="$( sha256sum "$ASSET" | awk '{print $1}' )"
           gh release create "$TAG" "$ASSET" "$RUNNER_TEMP/manifest.json" \
             --prerelease \
