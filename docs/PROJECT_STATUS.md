@@ -422,6 +422,15 @@ release_ready / public_ready**；生产、公网、真机、真实 provider 边�
 
 ## 当前任务
 
+**M15-006 发布渠道 + 应用内更新检查（GitHub Releases 首发 v0.1.0 已发布）**
+服务端 latest-app 端点（#382）+ Android 应用更新 UI + CI 发布流水线
+（#383-#386）+ compose 生产接线（收尾 PR）。首发 v0.1.0 pre-release：
+签名 APK + manifest 附 Release，下载回传 sha256 一致；CI apksigner
+V-scheme DN 格式兼容为实证修复。待补：真机安装冒烟（发布时手机
+断连）。证据 `docs/evidence/m15-006-release-channel/README.md`。
+
+### 前一任务快照（M15 真机验证收口，PR #381）
+
 **M15 真机验证收口（注册/首启真机 E2E + 生产复核——产品审计证据闭环补全）**
 真机（Huawei MGA-AL00）补齐 M15-002/004 设备级实证：注册六点
 （含负例 409 文案、正例注册→自动登录）+ 首启四点（banner→连接→

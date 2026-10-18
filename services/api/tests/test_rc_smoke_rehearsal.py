@@ -79,9 +79,14 @@ RUNNER_PATH = REPO_ROOT / "tools" / "ops" / "rc_smoke_rehearsal.py"
 #: 网络/卷/端口与既有 env 值生产语义零变更；rc-smoke compose api
 #: env 同步同一行（键集+值逐字一致契约保持）；见
 #: docs/evidence/m14-272e-voice-entrypoint-pipeline/。
+#: docs/evidence/m14-272e-voice-entrypoint-pipeline/。M15-006 第七次显式
+#: 更新 docker-compose.yml pin——api env 新增 LATEST_ANDROID/HARMONY_*
+#: 六槽位（应用更新检查：部署 env 三项齐全才透出，缺任一=端点 404
+#: 如实）；rc-smoke compose api env 键集同步零增零删契约保持；见
+#: docs/evidence/m15-006-release-channel/。
 PRODUCTION_FILE_PINS = {
     "infra/docker-compose.yml":
-        "1740f8ca2beb4133ea70d28a21fbc394803c4fe7f48ff798b0a0bd88f5471ed5",
+        "98b85af5c4d2b001bcbf479dbd2e0689cdc50dec59a6377a707291d25d44752e",
     "infra/build_release_candidate.sh":
         "3efa02586c8a93a1d4b26f1fc981fd1233a87ae94be797cd3f939e9b464778b2",
     "infra/smoke_docker.sh":

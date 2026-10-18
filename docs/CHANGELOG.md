@@ -1,4 +1,22 @@
 # Changelog
+## M15-006 —— 发布渠道 + 应用内更新检查（GitHub Releases 首发 v0.1.0）
+
+- **应用内更新检查**（#382）：服务端 `GET /api/v1/meta/latest-app`
+  （env 三项齐全才透出，缺任一 404 如实；认证豁免——登录前可用）
+  + Android 设置页「应用更新」（手动检查 + versionCode 判定 +
+  浏览器下载；无静默安装权限诉求）。356 tests / 0 failures。
+- **CI 发布流水线**（#383-#386 四轮迭代）：tag `v*` → Secrets
+  签名（四项前置守卫）→ verify_artifact fail-closed 门禁 →
+  tag↔版本一致性门禁 → `gh release create --prerelease`。实证修复：
+  CI apksigner 的 `V3.0 Signer:` DN 行格式兼容（安全语义不变）。
+- **首发 v0.1.0**（2026-10-18）：Release 附签名 APK（v2+v3）+
+  manifest.json；**下载回传 sha256 逐字节一致**（bfde3fa6…）。
+  下载地址见 Release 页（prerelease——未经 M14-237 公网门禁，
+  诚实边界保持）。
+- **生产接线**（收尾 PR）：compose api env +6 槽位
+  （LATEST_ANDROID/HARMONY_*）+ rc-smoke 键集同步 + pin 第七次
+  显式更新；MOBILE_DISTRIBUTION.md 补 §4b 分发源决策。
+- 证据：`docs/evidence/m15-006-release-channel/README.md`。
 ## M15 真机验证收口 + M15 产品审计系列（001~004）汇总补录
 
 - **补录说明（诚实记录）**：M15-001~004（#371-#380）各切片的

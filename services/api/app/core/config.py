@@ -127,6 +127,23 @@ class Settings(BaseSettings):
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]
 
+    @field_validator(
+        "latest_android_version",
+        "latest_android_version_code",
+        "latest_android_download_url",
+        "latest_harmony_version",
+        "latest_harmony_version_code",
+        "latest_harmony_download_url",
+        mode="before",
+    )
+    @classmethod
+    def _empty_latest_app_means_none(cls, value: object) -> object:
+        """M15-006：compose 空默认插值会传入空字符串——统一归一为 None
+        （未配置语义），绝不因空串让 int 字段验证崩溃（CI Docker job 实证）。"""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @field_validator("auth_cookie_name")
     @classmethod
     def validate_auth_cookie_name(cls, value: str) -> str:
