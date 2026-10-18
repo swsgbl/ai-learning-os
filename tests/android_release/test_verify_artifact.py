@@ -569,6 +569,19 @@ class TestApksigner:
         assert "signer_certificate_missing" in codes
         assert result["checks"]["apksigner"]["debug_certificate"] is None
 
+    def test_v3_scheme_signer_dn_format_accepted(self, tmp_path):
+        """M15-006 CI 实证：部分 build-tools 的 apksigner 按签名方案打印
+        ``V3.0 Signer: certificate DN: ...``——与 ``Signer #1`` 行等价接受，
+        安全语义（非空 DN + 反 debug）不变。"""
+        stdout = APKSIGNER_OK.replace(
+            f"Signer #1 certificate DN: {RELEASE_DN}",
+            f"V3.0 Signer: certificate DN: {RELEASE_DN}",
+        )
+        result, code = verify(tmp_path, tools=with_apksigner(stdout))
+        codes = [f["code"] for f in result["failures"]]
+        assert "signer_certificate_missing" not in codes
+        assert result["checks"]["apksigner"]["debug_certificate"] is False
+
     def test_whitespace_signer_dn_fails_closed(self, tmp_path):
         """DN 行只剩空白字符：解析结果为空，同样按证书主体缺失 fail-closed。"""
         stdout = APKSIGNER_OK.replace(
