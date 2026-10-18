@@ -303,6 +303,9 @@ def create_app(
     from app.api.routes.version import router as version_router
 
     app.include_router(version_router)
+    from app.api.routes.meta import router as meta_router
+
+    app.include_router(meta_router)  # M15-006: 应用最新版本透出（更新检查）
     from app.api.routes.auth import router as auth_router
 
     app.include_router(auth_router)

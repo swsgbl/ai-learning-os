@@ -95,6 +95,15 @@ class Settings(BaseSettings):
     # （零漂移）；有效值为标准 logging 级别名（大小写不敏感，空白归一为 None）
     log_level: str | None = None
 
+    # M15-006 应用最新版本透出（更新检查）：三项齐全才透出，缺任一 = 未配置
+    # （端点 404 如实，不虚报有新版本）。值由部署 env 注入（指向 GitHub
+    # Releases 等分发源）；不入库不入码。
+    latest_android_version: str | None = None
+    latest_android_version_code: int | None = None
+    latest_android_download_url: str | None = None
+    latest_harmony_version: str | None = None
+    latest_harmony_version_code: int | None = None
+    latest_harmony_download_url: str | None = None
     # M9-01 认证：AUTH_SECRET 未配置 = 认证关闭（status 如实透出，不虚报受保护）；
     # 生产 compose 显式注入。key 只放部署 secret/.env，不入库不入码。
     auth_secret: str | None = None

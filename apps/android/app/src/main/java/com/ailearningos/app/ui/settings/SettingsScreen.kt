@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -25,6 +26,7 @@ import com.ailearningos.app.ui.common.ContentState
 import com.ailearningos.app.ui.common.ContentStateView
 import com.ailearningos.app.ui.components.SectionCard
 import com.ailearningos.app.ui.components.SessionCard
+import com.ailearningos.app.BuildConfig
 import com.ailearningos.app.ui.components.StatusRow
 import com.ailearningos.app.ui.components.privacyLabel
 import com.ailearningos.app.ui.session.SessionViewModel
@@ -37,6 +39,7 @@ fun SettingsScreen(
     settingsViewModel: SettingsViewModel,
     sessionViewModel: SessionViewModel,
     onOpenLogin: () -> Unit,
+    onOpenUpdateUrl: (String) -> Unit = {},
 ) {
     val state by settingsViewModel.state.collectAsStateWithLifecycle()
     val sessionState by sessionViewModel.state.collectAsStateWithLifecycle()
@@ -140,6 +143,62 @@ fun SettingsScreen(
                     StatusRow("检索", privacyLabel(privacy.searchMode))
                     StatusRow("保存语音录音", if (privacy.storesAudio) "是" else "否")
                     StatusRow("上下文出站云端", if (privacy.sendsContextToCloud) "是" else "否")
+                }
+            }
+        }
+
+        SectionCard(title = "应用更新") {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "当前版本 ${BuildConfig.VERSION_NAME}",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedButton(onClick = settingsViewModel::checkUpdate) {
+                    Text("检查更新")
+                }
+            }
+            when (val check = state.updateCheck) {
+                is ContentState.Empty -> Text(
+                    "手动检查应用更新；需要已连接服务器。",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = Subtle,
+                )
+
+                is ContentState.Loading -> Text("正在检查更新…", style = MaterialTheme.typography.bodyMedium)
+
+                is ContentState.Error -> Text(
+                    check.message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Warn,
+                )
+
+                is ContentState.Success -> when (val result = check.value) {
+                    is UpdateCheckResult.NotConfigured -> Text(
+                        "服务端未配置版本信息（自托管服务器可在部署时注入）。",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Subtle,
+                    )
+
+                    is UpdateCheckResult.UpToDate -> Text(
+                        "已是最新版本（${result.currentVersionName}）。",
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+
+                    is UpdateCheckResult.Available -> Column(
+                        verticalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        Text(
+                            "发现新版本 ${result.version}，下载安装包后覆盖安装即可更新。",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+                        Button(onClick = { onOpenUpdateUrl(result.downloadUrl) }) {
+                            Text("下载更新")
+                        }
+                    }
                 }
             }
         }

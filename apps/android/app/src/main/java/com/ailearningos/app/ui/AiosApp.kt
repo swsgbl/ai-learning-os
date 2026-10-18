@@ -1,5 +1,8 @@
 package com.ailearningos.app.ui
 
+import android.content.Intent
+import android.net.Uri
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
@@ -160,10 +163,20 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
                 )
             }
             composable(AiosDestination.Settings.route) {
+                val appContext = LocalContext.current
                 SettingsScreen(
                     settingsViewModel = settingsViewModel,
                     sessionViewModel = sessionViewModel,
                     onOpenLogin = { navController.navigate(LOGIN_ROUTE) },
+                    // M15-006 更新下载：系统浏览器打开分发地址（APK 由用户确认安装，
+                    // 应用不做静默下载/安装——无 INSTALL_PACKAGES 权限诉求）
+                    onOpenUpdateUrl = { url ->
+                        appContext.startActivity(
+                            Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+                                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            },
+                        )
+                    },
                 )
             }
             composable(LOGIN_ROUTE) {

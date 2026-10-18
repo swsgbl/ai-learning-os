@@ -64,3 +64,13 @@ fun PrivacyResponse.toDomain() = PrivacySnapshot(
     storesAudio = storesAudio,
     sendsContextToCloud = sendsContextToCloud,
 )
+
+
+/** M15-006 /api/v1/meta/latest-app 响应（服务端三项齐全才透出；404=未配置） */
+@Serializable
+data class LatestAppResponse(
+    val platform: String,
+    val version: String,
+    val versionCode: Int,
+    val downloadUrl: String,
+)

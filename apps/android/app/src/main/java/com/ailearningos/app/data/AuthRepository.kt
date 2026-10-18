@@ -29,11 +29,22 @@ interface AuthGateway {
     suspend fun logout()
 }
 
-/** 系统状态面（/health、/system/privacy） */
+/** 系统状态面（/health、/system/privacy、/meta/latest-app） */
 interface SystemGateway {
     suspend fun healthOk(): Boolean
     suspend fun privacy(): PrivacySnapshot
+
+    /** M15-006 更新检查：服务端未配置（404）→ null（如实「无版本信息」）；网络/服务器故障抛 [AppError] */
+    suspend fun latestApp(): LatestAppInfo?
 }
+
+/** M15-006 服务端透出的最新应用版本（领域模型，UI 不接触 DTO） */
+data class LatestAppInfo(
+    val platform: String,
+    val version: String,
+    val versionCode: Int,
+    val downloadUrl: String,
+)
 
 class AuthRepository(
     private val apiProvider: ApiProvider,
@@ -51,6 +62,16 @@ class AuthRepository(
 
     override suspend fun privacy(): PrivacySnapshot = withRemoteError {
         apiProvider.get().privacy().toDomain()
+    }
+
+    override suspend fun latestApp(): LatestAppInfo? = try {
+        withRemoteError {
+            apiProvider.get().latestApp().let {
+                LatestAppInfo(it.platform, it.version, it.versionCode, it.downloadUrl)
+            }
+        }
+    } catch (cause: AppError) {
+        if (cause.kind == AppErrorKind.NOT_FOUND) null else throw cause
     }
 
     override suspend fun login(username: String, password: String): UserProfile = withRemoteError {
