@@ -1,0 +1,100 @@
+name: Release Android APK
+
+# M15-006 发布渠道：tag（v*）触发 → 签名 release APK → verify_artifact
+# 门禁 → GitHub Releases 发布（--prerelease：早期构建，未经 M14-237
+# 公网发布门禁——诚实边界见 docs/MOBILE_DISTRIBUTION.md）。
+# 签名材料经 GitHub Secrets 注入（keystore base64 + 三项凭据），
+# 绝不入库；无 Secrets 时工作流显式失败（不回退 debug 签名）。
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release-android:
+    name: Build + verify + publish APK
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: apps/android
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - uses: gradle/actions/wrapper-validation@07d1f8453baaff67fb503883367f8b13e6158a54 # v6
+
+      - name: Guard + decode signing inputs (fail-closed, all four)
+        env:
+          AIOS_ANDROID_KEYSTORE_BASE64: ${{ secrets.AIOS_ANDROID_KEYSTORE_BASE64 }}
+          AIOS_ANDROID_KEYSTORE_STORE_PASSWORD: ${{ secrets.AIOS_ANDROID_KEYSTORE_STORE_PASSWORD }}
+          AIOS_ANDROID_KEYSTORE_KEY_ALIAS: ${{ secrets.AIOS_ANDROID_KEYSTORE_KEY_ALIAS }}
+          AIOS_ANDROID_KEYSTORE_KEY_PASSWORD: ${{ secrets.AIOS_ANDROID_KEYSTORE_KEY_PASSWORD }}
+        run: |
+          missing=0
+          for name in AIOS_ANDROID_KEYSTORE_BASE64 AIOS_ANDROID_KEYSTORE_STORE_PASSWORD AIOS_ANDROID_KEYSTORE_KEY_ALIAS AIOS_ANDROID_KEYSTORE_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then
+              echo "::error::缺少 secret $name——签名材料不完整，拒绝 unsigned 发布"
+              missing=1
+            fi
+          done
+          [ "$missing" -eq 0 ] || exit 1
+          printf '%s' "$AIOS_ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/aios-release.keystore"
+          test -s "$RUNNER_TEMP/aios-release.keystore" || { echo "::error::keystore 解码为空"; exit 1; }
+
+      - name: assembleRelease (signed)
+        env:
+          AIOS_ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/aios-release.keystore
+          AIOS_ANDROID_KEYSTORE_STORE_PASSWORD: ${{ secrets.AIOS_ANDROID_KEYSTORE_STORE_PASSWORD }}
+          AIOS_ANDROID_KEYSTORE_KEY_ALIAS: ${{ secrets.AIOS_ANDROID_KEYSTORE_KEY_ALIAS }}
+          AIOS_ANDROID_KEYSTORE_KEY_PASSWORD: ${{ secrets.AIOS_ANDROID_KEYSTORE_KEY_PASSWORD }}
+        run: sh ./gradlew assembleRelease --no-daemon
+
+      - name: Verify artifact (fail-closed gate)
+        working-directory: .
+        env:
+          AIOS_ANDROID_KEYSTORE_KEY_ALIAS: ${{ secrets.AIOS_ANDROID_KEYSTORE_KEY_ALIAS }}
+        run: |
+          set -eu
+          APK="apps/android/app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK" || { echo "::error::未找到签名产物 $APK"; exit 1; }
+          python tools/android_release/ci_make_manifest.py --apk "$APK"             --alias "$AIOS_ANDROID_KEYSTORE_KEY_ALIAS"             --out "$RUNNER_TEMP/manifest.json"
+          python tools/android_release/verify_artifact.py --apk "$APK" --manifest "$RUNNER_TEMP/manifest.json"
+          # 发布一致性门禁：tag（去 v 前缀）必须与 APK 真实 versionName 一致——
+          # 防止 tag 名与产物版本错位的发布（如 v0.2.0 配 0.1.0 APK）
+          TAG_VER="${GITHUB_REF_NAME#v}"
+          APK_VER="$(python -c "import json;print(json.load(open('$RUNNER_TEMP/manifest.json'))['version'])")"
+          if [ "$TAG_VER" != "$APK_VER" ]; then
+            echo "::error::tag 版本($TAG_VER)与 APK versionName($APK_VER)不一致——拒绝发布"
+            exit 1
+          fi
+
+      - name: Publish GitHub Release (prerelease)
+        working-directory: .
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          APK="apps/android/app/build/outputs/apk/release/app-release.apk"
+          TAG="${GITHUB_REF_NAME}"
+          ASSET="ai-learning-os-$( python -c "import json;print(json.load(open('$RUNNER_TEMP/manifest.json'))['version'])" )-release-signed.apk"
+          cp "$APK" "$ASSET"
+          SHA="$( sha256sum "$ASSET" | awk '{print $1}' )"
+          gh release create "$TAG" "$ASSET" "$RUNNER_TEMP/manifest.json" \
+            --prerelease \
+            --title "砚席 $TAG (Android)" \
+            --notes "早期构建（pre-release）。
+
+          - APK: \`$ASSET\`
+          - SHA-256: \`$SHA\`
+          - 安装：下载 APK → 允许「安装未知应用」→ 覆盖安装（versionCode 递增，签名一致可直接覆盖）。
+          - 诚实边界：本产物经 CI 签名（v2+v3）与 verify_artifact 门禁，但**未经 M14-237 公网移动发布门禁**（4G 实网/真机冒烟/人工签认）——发布状态为 pre-release。
+          - manifest.json 同 Release 附带（aios-download-manifest/1，含 sha256/versionCode）。"
