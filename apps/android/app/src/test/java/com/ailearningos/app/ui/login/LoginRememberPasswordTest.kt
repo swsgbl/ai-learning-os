@@ -76,4 +76,15 @@ class LoginRememberPasswordTest {
         val vm = LoginViewModel(auth = FakeAuthGateway(), credentialVault = vault)
         assertEquals("", vm.state.value.username)
     }
+
+    @Test
+    fun `success 残留在重进登录页时被消费不秒弹回`() = runTest(dispatcher) {
+        val vm = LoginViewModel(auth = FakeAuthGateway(), credentialVault = FakeCredentialVault())
+        vm.onUsernameChange("dave")
+        vm.onPasswordChange("pass-word-1234")
+        vm.submit()
+        assertTrue(vm.state.value.success) // 登录成功置位
+        vm.consumeSuccess() // UI 触发 onSuccess 前消费（M15-007 修复）
+        assertEquals(false, vm.state.value.success) // 重进登录页不再弹回
+    }
 }

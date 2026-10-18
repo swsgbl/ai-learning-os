@@ -76,8 +76,10 @@ class KeystoreCredentialVault(
     }
 
     private fun secretKey(): SecretKey {
+        // 与 KeystoreTokenStore 同款读取（getEntry/SecretKeyEntry——getKey 在
+        // 部分 AndroidKeyStore 实现上对 SecretKey 返回形态不稳，真机实证）
         val keyStore = java.security.KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        (keyStore.getKey(KEY_ALIAS, null) as? SecretKey)?.let { return it }
+        (keyStore.getEntry(KEY_ALIAS, null) as? java.security.KeyStore.SecretKeyEntry)?.let { return it.secretKey }
         val generator = KeyGenerator.getInstance(KeyProperties.KEY_ALGORITHM_AES, "AndroidKeyStore")
         generator.init(
             KeyGenParameterSpec.Builder(
