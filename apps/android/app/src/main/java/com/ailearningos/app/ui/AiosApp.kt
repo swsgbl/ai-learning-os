@@ -110,7 +110,6 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
                 val settingsState by settingsViewModel.state.collectAsStateWithLifecycle()
                 HomeScreen(
                     sessionViewModel = sessionViewModel,
-                    homeViewModel = homeViewModel,
                     // M15-004: 从未保存过服务器地址 = 首次使用 → 首页引导横幅
                     firstLaunch = settingsState.effectiveBaseUrl == null,
                     onOpenLogin = { navController.navigate(LOGIN_ROUTE) },
@@ -167,6 +166,10 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
                 SettingsScreen(
                     settingsViewModel = settingsViewModel,
                     sessionViewModel = sessionViewModel,
+                    homeViewModel = homeViewModel,
+                    onOpenGovernance = {
+                        navController.navigate(GOVERNANCE_ROUTE) { launchSingleTop = true }
+                    },
                     onOpenLogin = { navController.navigate(LOGIN_ROUTE) },
                     // M15-006 更新下载：系统浏览器打开分发地址（APK 由用户确认安装，
                     // 应用不做静默下载/安装——无 INSTALL_PACKAGES 权限诉求）

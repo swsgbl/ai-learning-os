@@ -14,7 +14,7 @@ from app.repositories.memory import remaining_seconds
 router = APIRouter(prefix="/api/v1", tags=["papers"])
 
 
-def paper_out(paper: Paper) -> PaperOut:
+def paper_out(paper: Paper, mine: bool = False) -> PaperOut:
     return PaperOut(
         id=paper.id,
         title=paper.title,
@@ -27,6 +27,7 @@ def paper_out(paper: Paper) -> PaperOut:
         duration_minutes=paper.duration_minutes,
         tags=list(paper.tags),
         origin_url=paper.origin_url,
+        mine=mine,
     )
 
 
@@ -60,8 +61,10 @@ def exam_out(record: ExamSessionRecord, paper: Paper) -> ExamSessionOut:
 async def list_papers(request: Request) -> list[PaperOut]:
     # M10-03: 可见性 = 系统公共卷 + 当前用户自有卷（admin 同规则，不放大）；
     # auth off（owner=None）= 不过滤（本地调试模式）
-    papers = await request.app.state.repository.list_papers(owner_id=current_owner_id(request))
-    return [paper_out(paper) for paper in papers]
+    # M15-007: 附带归属——自有卷（materialize 的定制课程）mine=true，公共卷 false
+    caller = current_owner_id(request)
+    papers = await request.app.state.repository.list_papers_with_owner(owner_id=caller)
+    return [paper_out(paper, mine=(owner is not None and owner == caller)) for paper, owner in papers]
 
 
 @router.post("/papers/{paper_id}/exams", response_model=ExamSessionOut, status_code=201)

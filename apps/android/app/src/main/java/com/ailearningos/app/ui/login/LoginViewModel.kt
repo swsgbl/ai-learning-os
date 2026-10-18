@@ -5,6 +5,7 @@ import androidx.lifecycle.viewModelScope
 import com.ailearningos.app.core.AppErrorKind
 import com.ailearningos.app.data.AuthGateway
 import com.ailearningos.app.data.asAppError
+import com.ailearningos.app.data.local.CredentialVault
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -17,6 +18,8 @@ enum class LoginMode { LOGIN, REGISTER }
 data class LoginUiState(
     val username: String = "",
     val password: String = "",
+    /** M15-007 记住密码（默认开）：勾选经 CredentialVault（Keystore 加密）记住 */
+    val rememberPassword: Boolean = true,
     val mode: LoginMode = LoginMode.LOGIN,
     val submitting: Boolean = false,
     val error: String? = null,
@@ -32,10 +35,52 @@ data class LoginUiState(
  */
 class LoginViewModel(
     private val auth: AuthGateway,
+    private val credentialVault: CredentialVault? = null,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(LoginUiState())
     val state: StateFlow<LoginUiState> = _state.asStateFlow()
+
+    init {
+        // M15-007: 上次「记住密码」的凭据预填（Keystore 加密保险库；无库/未记住 = 空表单）
+        val vault = credentialVault
+        if (vault != null) {
+            viewModelScope.launch {
+                val remembered = try {
+                    vault.load()
+                } catch (cause: CancellationException) {
+                    throw cause
+                } catch (_: Throwable) {
+                    null
+                }
+                if (remembered != null) {
+                    _state.update {
+                        it.copy(
+                            username = remembered.first,
+                            password = remembered.second,
+                            rememberPassword = true,
+                        )
+                    }
+                }
+            }
+        }
+    }
+
+    /** M15-007: 切换记住密码（取消勾选即抹除已存密文） */
+    fun onRememberPasswordChange(value: Boolean) {
+        _state.update { it.copy(rememberPassword = value) }
+        if (!value) {
+            viewModelScope.launch {
+                try {
+                    credentialVault?.clear()
+                } catch (cause: CancellationException) {
+                    throw cause
+                } catch (_: Throwable) {
+                    // 清除失败不阻断 UI（下次保存会覆盖）
+                }
+            }
+        }
+    }
 
     fun onUsernameChange(value: String) {
         _state.update { it.copy(username = value, error = null) }
@@ -66,7 +111,22 @@ class LoginViewModel(
                 } else {
                     auth.login(current.username, current.password)
                 }
-                // 成功：清空包括密码在内的表单内容（不保存密码）
+                // M15-007: 记住密码 = Keystore 加密保险库保存；未勾选 = 确保抹除。
+                // 表单（含密码）照旧清空——界面态不残留明文。
+                val vault = credentialVault
+                if (vault != null) {
+                    try {
+                        if (current.rememberPassword) {
+                            vault.save(current.username, current.password)
+                        } else {
+                            vault.clear()
+                        }
+                    } catch (cause: CancellationException) {
+                        throw cause
+                    } catch (_: Throwable) {
+                        // 保存失败不阻断登录成功路径（下次可再勾选）
+                    }
+                }
                 _state.value = LoginUiState(success = true)
             } catch (cause: CancellationException) {
                 throw cause

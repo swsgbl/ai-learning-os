@@ -22,6 +22,8 @@ data class PaperSummary(
     val durationMinutes: Int,
     val tags: List<String>,
     val originUrl: String?,
+    /** M15-007: 自有卷（我的定制课程）= true */
+    val mine: Boolean = false,
 )
 
 data class QuestionOption(

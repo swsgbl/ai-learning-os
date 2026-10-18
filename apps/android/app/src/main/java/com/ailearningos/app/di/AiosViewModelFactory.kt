@@ -37,6 +37,7 @@ class AiosViewModelFactory(
 
             modelClass.isAssignableFrom(LoginViewModel::class.java) -> LoginViewModel(
                 auth = container.authGateway,
+                credentialVault = container.credentialVault,
             ) as T
 
             modelClass.isAssignableFrom(HomeViewModel::class.java) -> HomeViewModel(

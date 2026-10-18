@@ -25,6 +25,8 @@ data class PaperResponse(
     @SerialName("duration_minutes") val durationMinutes: Int,
     val tags: List<String> = emptyList(),
     @SerialName("origin_url") val originUrl: String? = null,
+    /** M15-007: 自有卷（materialize 定制课程）= true；公共卷 = false */
+    val mine: Boolean = false,
 )
 
 // ---------- 考试会话 ----------

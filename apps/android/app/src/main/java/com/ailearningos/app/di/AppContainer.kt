@@ -21,6 +21,8 @@ import com.ailearningos.app.data.local.DataStoreSettingsStore
 import com.ailearningos.app.data.local.DataStoreVoiceResumeStore
 import com.ailearningos.app.data.local.ExamResumeStore
 import com.ailearningos.app.data.local.KeystoreTokenStore
+import com.ailearningos.app.data.local.CredentialVault
+import com.ailearningos.app.data.local.KeystoreCredentialVault
 import com.ailearningos.app.data.local.SettingsStore
 import com.ailearningos.app.data.local.TokenStore
 import com.ailearningos.app.data.local.VoiceResumeStore
@@ -43,6 +45,9 @@ class AppContainer(context: Context) {
     private val tokenStore: TokenStore = KeystoreTokenStore(context.applicationContext)
 
     val settingsStore: SettingsStore = DataStoreSettingsStore(context.applicationContext)
+
+    /** M15-007 记住密码：Keystore 加密凭据保险库 */
+    val credentialVault: CredentialVault = KeystoreCredentialVault(context.applicationContext)
 
     /** 断线恢复槽：本地只保存 exam_id（恢复提示），不保存答案/时间/判分 */
     val examResumeStore: ExamResumeStore = DataStoreExamResumeStore(context.applicationContext)

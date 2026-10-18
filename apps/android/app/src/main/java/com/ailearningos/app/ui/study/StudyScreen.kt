@@ -1,5 +1,10 @@
 package com.ailearningos.app.ui.study
 
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.Alignment
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -67,16 +72,71 @@ fun StudyScreen(
             emptyText = "暂无可考试卷",
             onRetry = viewModel::refresh,
             success = { papers ->
+                // M15-007: 「我的课程」为主（materialize 的定制卷），公共试卷默认收起
+                val minePapers = papers.filter { it.mine }
+                val publicPapers = papers.filter { !it.mine }
+                var publicExpanded by remember { mutableStateOf(false) }
                 LazyColumn(
                     modifier = Modifier.fillMaxSize(),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    items(papers, key = { it.id }) { paper ->
-                        PaperCard(
-                            paper = paper,
-                            onStart = { onStartPaper(paper.id) },
-                            onStartVoice = { onStartVoicePaper(paper.id) },
-                        )
+                    if (minePapers.isEmpty()) {
+                        item(key = "empty-mine") {
+                            SectionCard(title = "我的课程") {
+                                Text(
+                                    "还没有定制课程。在 Web 端「定制课程」页说出你的学习目标，" +
+                                        "生成的课程卷会出现在这里。",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                    } else {
+                        item(key = "header-mine") {
+                            Text(
+                                "我的课程（${minePapers.size}）",
+                                style = MaterialTheme.typography.titleMedium,
+                            )
+                        }
+                        items(minePapers, key = { it.id }) { paper ->
+                            PaperCard(
+                                paper = paper,
+                                onStart = { onStartPaper(paper.id) },
+                                onStartVoice = { onStartVoicePaper(paper.id) },
+                            )
+                        }
+                    }
+                    if (publicPapers.isNotEmpty()) {
+                        item(key = "header-public") {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .clickable { publicExpanded = !publicExpanded }
+                                    .padding(vertical = 6.dp),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    "公共试卷（${publicPapers.size}）",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                                Text(
+                                    if (publicExpanded) "收起 ▲" else "展开 ▼",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        if (publicExpanded) {
+                            items(publicPapers, key = { it.id }) { paper ->
+                                PaperCard(
+                                    paper = paper,
+                                    onStart = { onStartPaper(paper.id) },
+                                    onStartVoice = { onStartVoicePaper(paper.id) },
+                                )
+                            }
+                        }
                     }
                 }
             },
