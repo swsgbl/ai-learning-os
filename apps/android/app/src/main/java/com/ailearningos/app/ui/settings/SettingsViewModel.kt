@@ -2,6 +2,7 @@ package com.ailearningos.app.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.ailearningos.app.BuildConfig
 import com.ailearningos.app.core.AppError
 import com.ailearningos.app.core.AppErrorKind
 import com.ailearningos.app.core.BaseUrlPolicy
@@ -33,6 +34,8 @@ data class SettingsUiState(
     val privacy: ContentState<PrivacySnapshot> = ContentState.Empty,
     /** debug 构建 = true（允许 loopback/局域网 http）；release = false（强制 https） */
     val allowInsecureHttp: Boolean = true,
+    /** M15-006 更新检查：Empty（未查）/ Loading / Success(判定结果) / Error(脱敏文案) */
+    val updateCheck: ContentState<UpdateCheckResult> = ContentState.Empty,
 )
 
 class SettingsViewModel(
@@ -40,6 +43,8 @@ class SettingsViewModel(
     private val configurationBus: ConfigurationBus,
     private val system: SystemGateway,
     allowInsecureHttp: Boolean,
+    private val currentVersionCode: Int = BuildConfig.VERSION_CODE,
+    private val currentVersionName: String = BuildConfig.VERSION_NAME,
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(SettingsUiState(allowInsecureHttp = allowInsecureHttp))
@@ -136,6 +141,27 @@ class SettingsViewModel(
                     },
                 )
             }
+        }
+    }
+
+    /** M15-006 检查更新：手动触发（不做后台静默轮询——更新意图由用户主导） */
+    fun checkUpdate() {
+        if (_state.value.updateCheck == ContentState.Loading) return
+        viewModelScope.launch {
+            _state.update { it.copy(updateCheck = ContentState.Loading) }
+            val result = try {
+                val latest = system.latestApp()
+                ContentState.Success(
+                    UpdateCheckEvaluator.evaluate(currentVersionCode, currentVersionName, latest),
+                )
+            } catch (cause: CancellationException) {
+                throw cause
+            } catch (cause: AppError) {
+                ContentState.Error(cause.userMessage)
+            } catch (_: Throwable) {
+                ContentState.Error(AppError(AppErrorKind.UNEXPECTED).userMessage)
+            }
+            _state.update { it.copy(updateCheck = result) }
         }
     }
 

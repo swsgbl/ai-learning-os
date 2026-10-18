@@ -104,6 +104,7 @@ async def require_user(request: Request) -> None:
         "/api/v1/auth/register",
         "/api/v1/auth/login",
         "/api/v1/auth/logout",  # M10-03: 清 cookie 无需有效凭据（幂等，仅作用于调用方自身）
+        "/api/v1/meta/latest-app",  # M15-006: 更新检查在登录前可用（首启流程先连服务器后登录）
     )
     if exempt:
         return

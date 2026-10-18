@@ -32,6 +32,9 @@ interface AiosApi {
     @GET("api/v1/system/privacy")
     suspend fun privacy(): PrivacyResponse
 
+    @GET("api/v1/meta/latest-app")
+    suspend fun latestApp(@Query("platform") platform: String = "android"): LatestAppResponse
+
     // ---------- M12-02 考试业务 ----------
 
     @GET("api/v1/papers")

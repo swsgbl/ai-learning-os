@@ -6,6 +6,7 @@ import com.ailearningos.app.data.AuthGateway
 import com.ailearningos.app.data.ExamGateway
 import com.ailearningos.app.data.GovernanceGateway
 import com.ailearningos.app.data.SearchGateway
+import com.ailearningos.app.data.LatestAppInfo
 import com.ailearningos.app.data.SystemGateway
 import com.ailearningos.app.data.VoiceGateway
 import com.ailearningos.app.data.local.ExamResumeStore
@@ -189,6 +190,17 @@ class FakeSystemGateway : SystemGateway {
 
     var privacyCalls = 0
         private set
+
+    /** M15-006 更新检查：null = 服务端未配置；Result.failure = 网络/服务端故障 */
+    var latestAppResult: Result<LatestAppInfo?> = Result.success(null)
+
+    var latestAppCalls = 0
+        private set
+
+    override suspend fun latestApp(): LatestAppInfo? {
+        latestAppCalls++
+        return latestAppResult.getOrThrow()
+    }
 
     override suspend fun healthOk(): Boolean {
         healthError?.let { throw it }
