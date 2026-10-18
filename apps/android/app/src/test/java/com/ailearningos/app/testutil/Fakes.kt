@@ -1326,3 +1326,29 @@ fun governanceAuditEntryFixture(
     requestId = requestId,
     createdAt = createdAt,
 )
+
+
+/** M15-007 记住密码测试替身 */
+class FakeCredentialVault : com.ailearningos.app.data.local.CredentialVault {
+    var saved: Pair<String, String>? = null
+        private set
+    var saveCalls = 0
+        private set
+    var clearCalls = 0
+        private set
+    var loadResult: Result<Pair<String, String>?> = Result.success(null)
+
+    override suspend fun save(username: String, password: String) {
+        saveCalls++
+        saved = username to password
+    }
+
+    override suspend fun load(): Pair<String, String>? {
+        return loadResult.getOrThrow()
+    }
+
+    override suspend fun clear() {
+        clearCalls++
+        saved = null
+    }
+}

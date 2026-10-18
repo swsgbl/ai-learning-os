@@ -43,6 +43,8 @@ class PaperOut(BaseModel):
     duration_minutes: int
     tags: list[str]
     origin_url: str | None
+    # M15-007: 当前用户自有卷 = true（materialize 的定制课程）；公共卷 = false
+    mine: bool = False
 
 
 class PublicQuestionOut(BaseModel):

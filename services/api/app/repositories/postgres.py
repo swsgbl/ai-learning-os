@@ -178,6 +178,19 @@ class PostgresRepository:
                 grouped.setdefault(question_row.paper_id, []).append(question_row)
             return [_paper_from_rows(row, grouped.get(row.id, ())) for row in rows]
 
+    async def list_papers_with_owner(
+        self, owner_id: str | None = None
+    ) -> list[tuple[Paper, str | None]]:
+        """M15-007: list_papers 同语义/同可见性，但附带每卷归属（paper, owner_id）。"""
+        async with self._sessionmaker() as session:
+            query = select(PaperRow).order_by(PaperRow.id)
+            if owner_id is not None:
+                query = query.where(
+                    or_(PaperRow.owner_id.is_(None), PaperRow.owner_id == owner_id)
+                )
+            rows = (await session.execute(query)).scalars().all()
+            return [(await self._paper_record(session, row), row.owner_id) for row in rows]
+
     async def get_paper(self, paper_id: str, owner_id: str | None = None) -> Paper | None:
         # M10-03：可见性与 list_papers 同规则——跨用户私有卷对调用方不存在（404 语义）
         async with self._sessionmaker() as session:

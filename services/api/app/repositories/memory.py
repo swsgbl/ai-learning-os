@@ -57,6 +57,13 @@ class MemoryRepository:
             if self._paper_owners.get(paper.id) in (None, owner_id)
         ]
 
+    async def list_papers_with_owner(
+        self, owner_id: str | None = None
+    ) -> list[tuple[Paper, str | None]]:
+        """M15-007: list_papers 同语义，但附带每卷归属（paper, owner_id）。"""
+        papers = await self.list_papers(owner_id)
+        return [(paper, self._paper_owners.get(paper.id)) for paper in papers]
+
     async def get_paper(self, paper_id: str, owner_id: str | None = None) -> Paper | None:
         paper = self._papers.get(paper_id)
         if paper is None:

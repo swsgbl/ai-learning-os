@@ -1,5 +1,9 @@
 package com.ailearningos.app.ui.settings
 
+import androidx.compose.runtime.LaunchedEffect
+import com.ailearningos.app.ui.home.HomeViewModel
+import com.ailearningos.app.ui.session.SessionState
+import com.ailearningos.app.ui.components.statusColor
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -38,12 +42,15 @@ import com.ailearningos.app.ui.theme.Warn
 fun SettingsScreen(
     settingsViewModel: SettingsViewModel,
     sessionViewModel: SessionViewModel,
-    onOpenLogin: () -> Unit,
+    homeViewModel: HomeViewModel? = null,
+    onOpenLogin: () -> Unit = {},
     onOpenUpdateUrl: (String) -> Unit = {},
+    onOpenGovernance: () -> Unit = {},
 ) {
     val state by settingsViewModel.state.collectAsStateWithLifecycle()
     val sessionState by sessionViewModel.state.collectAsStateWithLifecycle()
     val sessionNotice by sessionViewModel.notice.collectAsStateWithLifecycle()
+    val homeState = homeViewModel?.state?.collectAsStateWithLifecycle()?.value
 
     Column(
         modifier = Modifier
@@ -144,6 +151,65 @@ fun SettingsScreen(
                     StatusRow("保存语音录音", if (privacy.storesAudio) "是" else "否")
                     StatusRow("上下文出站云端", if (privacy.sendsContextToCloud) "是" else "否")
                 }
+            }
+        }
+
+        // M15-007: API 状态从首页收纳至此（技术管理面归设置页）
+        if (homeViewModel != null && homeState != null) {
+            SectionCard(title = "API 状态") {
+                LaunchedEffect(Unit) { homeViewModel.refresh() }
+                ContentStateView(
+                    state = homeState,
+                    onRetry = homeViewModel::refresh,
+                    loadingText = "正在探测 API…",
+                ) { snapshot ->
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        StatusRow(
+                            label = "服务（/health）",
+                            value = if (snapshot.apiServiceOk) "正常" else "响应异常",
+                            valueColor = statusColor(snapshot.apiServiceOk),
+                        )
+                        when (val privacy = snapshot.privacy) {
+                            is ContentState.Success -> {
+                                StatusRow("模型路由", privacyLabel(privacy.value.modelRoute))
+                                StatusRow("语音", privacyLabel(privacy.value.voiceMode))
+                                StatusRow("检索", privacyLabel(privacy.value.searchMode))
+                                StatusRow("保存语音录音", if (privacy.value.storesAudio) "是" else "否")
+                                StatusRow("上下文出站云端", if (privacy.value.sendsContextToCloud) "是" else "否")
+                            }
+
+                            is ContentState.Error -> Text(
+                                privacy.message,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.error,
+                            )
+
+                            is ContentState.Loading -> Text(
+                                "隐私路由读取中…",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+
+                            is ContentState.Empty -> Text(
+                                "暂无隐私路由信息",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 治理入口：本地免鉴权或已登录管理员（与后端治理准入一致）——从首页收纳至此
+        val governanceVisible = when (val session = sessionState) {
+            SessionState.AuthDisabled -> true
+            is SessionState.Authenticated -> session.user.isAdmin
+            else -> false
+        }
+        if (governanceVisible) {
+            OutlinedButton(onClick = onOpenGovernance, modifier = Modifier.fillMaxWidth()) {
+                Text("治理 / 发布")
             }
         }
 

@@ -1,5 +1,6 @@
 package com.ailearningos.app.ui.login
 
+import androidx.compose.material3.Checkbox
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
@@ -29,7 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ailearningos.app.ui.theme.Subtle
 
-/** 登录页：用户名 + 密码 → POST /api/v1/auth/login（密码不持久化，成功后即清空表单态） */
+/** 登录页：用户名 + 密码 → POST /api/v1/auth/login（勾选记住 = Keystore 加密保存；成功后清空表单态） */
 @Composable
 fun LoginScreen(
     loginViewModel: LoginViewModel,
@@ -97,6 +98,26 @@ fun LoginScreen(
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
             modifier = Modifier.fillMaxWidth(),
         )
+
+        // M15-007 记住密码：Keystore 加密保存，下次自动预填
+        if (state.mode == LoginMode.LOGIN) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.Start,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Checkbox(
+                    checked = state.rememberPassword,
+                    onCheckedChange = loginViewModel::onRememberPasswordChange,
+                    enabled = !state.submitting,
+                )
+                Text(
+                    "记住密码（本机加密保存）",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
 
         state.error?.let { message ->
             Text(

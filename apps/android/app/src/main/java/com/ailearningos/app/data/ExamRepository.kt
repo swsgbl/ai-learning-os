@@ -110,6 +110,7 @@ internal fun PaperResponse.toDomain() = PaperSummary(
     durationMinutes = durationMinutes,
     tags = tags,
     originUrl = originUrl,
+    mine = mine,
 )
 
 internal fun OptionResponse.toDomain() = QuestionOption(key = key, text = text)
