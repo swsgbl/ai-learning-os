@@ -615,6 +615,9 @@ class UserAiKeyRow(Base):
     slot: Mapped[str] = mapped_column(String(32), primary_key=True)
     ciphertext: Mapped[str] = mapped_column(Text)
     last4: Mapped[str] = mapped_column(String(8))
+    # M15-015: 个人 LLM 可选路由（非机密明文；空 = 沿用服务端全局配置）
+    endpoint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     updated_at: Mapped[str] = mapped_column(DateTime(timezone=True))
 
 

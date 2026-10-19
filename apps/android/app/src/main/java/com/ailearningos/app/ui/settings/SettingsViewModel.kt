@@ -185,16 +185,16 @@ class SettingsViewModel(
         }
     }
 
-    /** M15-014 保存个人密钥（明文只进不出；成功后刷新状态） */
-    fun saveMyAiKey(slot: String, apiKey: String) {
+    /** M15-015 保存个人 LLM 配置（密钥必填；接口地址/模型名可选） */
+    fun saveMyAiKey(slot: String, apiKey: String, endpoint: String? = null, model: String? = null) {
         if (apiKey.length < 8) {
             _state.update { it.copy(aiKeyNotice = "密钥过短（至少 8 位）") }
             return
         }
         viewModelScope.launch {
             try {
-                system.saveMyAiKey(slot, apiKey)
-                _state.update { it.copy(aiKeyNotice = "已保存（加密存储，仅自己可见）") }
+                system.saveMyAiKey(slot, apiKey, endpoint, model)
+                _state.update { it.copy(aiKeyNotice = "已保存（加密存储，判分即时生效）") }
                 loadMyAiKeys()
             } catch (cause: Throwable) {
                 _state.update { it.copy(aiKeyNotice = cause.asAppError().userMessage) }

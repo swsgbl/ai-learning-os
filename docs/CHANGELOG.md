@@ -1,4 +1,20 @@
 # Changelog
+## M15-015 —— 个人密钥收敛为单 LLM 槽位并真正生效（BYOK 判分）
+
+- **产品收敛**（用户指令：本地语音无需密钥）：个人层只做主模型 LLM
+  槽位（移除 asr_cloud/tts_cloud 个人槽——全局层仍三槽位）；App 卡片
+  改「我的 AI 密钥（主模型）」。
+- **个人 LLM 可选路由**：`user_ai_keys` 加 endpoint/model 明文列
+  （迁移 0030）——自带密钥指向自己的 OpenAI 兼容云服务（如
+  DeepSeek）；空 = 沿用服务端网关（同网关不同 key）。
+- **判分真正生效**：`UserAwareRubricJudge` 包装器 + 请求级 contextvar
+  ——submit 路由经 `personal_judge_scope` 解析个人配置并构建 per-key
+  judge（per-config 缓存）；判分域（rubric_grader/judge_question）
+  零改动。effect 由 saved → hot。
+- App UI：单卡三输入（密钥必填/接口地址选填/模型名选填）。
+- 测试：BYOK 契约 6 + 包装器 4 + Android ViewModel 5；全量
+  services/api 6440 passed。
+
 ## v0.1.4（versionCode 5）
 
 - **个人 AI 密钥（BYOK）App 端入口**（M15-014）：设置页新增「我的

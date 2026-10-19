@@ -37,6 +37,8 @@ data class MyAiKeyInfo(
     val configured: Boolean,
     val last4: String?,
     val effect: String,
+    val endpoint: String? = null,
+    val model: String? = null,
 )
 
 interface SystemGateway {
@@ -46,7 +48,7 @@ interface SystemGateway {
     /** M15-006 更新检查：服务端未配置（404）→ null（如实「无版本信息」）；网络/服务器故障抛 [AppError] */
     suspend fun latestApp(): LatestAppInfo?
     suspend fun myAiKeys(): List<MyAiKeyInfo>
-    suspend fun saveMyAiKey(slot: String, apiKey: String)
+    suspend fun saveMyAiKey(slot: String, apiKey: String, endpoint: String?, model: String?)
     suspend fun deleteMyAiKey(slot: String)
 }
 
@@ -90,14 +92,15 @@ class AuthRepository(
 
     override suspend fun myAiKeys(): List<MyAiKeyInfo> = withRemoteError {
         apiProvider.get().myAiKeys().keys.map {
-            MyAiKeyInfo(it.slot, it.configured, it.last4, it.effect)
+            MyAiKeyInfo(it.slot, it.configured, it.last4, it.effect, it.endpoint, it.model)
         }
     }
 
-    override suspend fun saveMyAiKey(slot: String, apiKey: String) = withRemoteError {
-        apiProvider.get().putMyAiKey(slot, UserAiKeyPutRequest(apiKey))
-        Unit
-    }
+    override suspend fun saveMyAiKey(slot: String, apiKey: String, endpoint: String?, model: String?) =
+        withRemoteError {
+            apiProvider.get().putMyAiKey(slot, UserAiKeyPutRequest(apiKey, endpoint?.ifBlank { null }, model?.ifBlank { null }))
+            Unit
+        }
 
     override suspend fun deleteMyAiKey(slot: String) = withRemoteError {
         apiProvider.get().deleteMyAiKey(slot)

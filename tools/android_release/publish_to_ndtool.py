@@ -64,8 +64,9 @@ def main() -> None:
 
         print(f"[3/4] scp → {VPS}:{REMOTE_DIR}/ …")
         run(["ssh", "-o", "ConnectTimeout=10", VPS, f"mkdir -p {REMOTE_DIR}"])
-        run(["scp", "-o", "ConnectTimeout=15", str(apk), str(tmp_dir / "manifest.json"),
-             f"{VPS}:/var/www/aios-downloads/"])
+        # APK 进 android/ 子目录；manifest 在仓库根（/aios/download-manifest.json 语义）
+        run(["scp", "-o", "ConnectTimeout=15", str(apk), f"{VPS}:{REMOTE_DIR}/"])
+        run(["scp", "-o", "ConnectTimeout=15", str(tmp_dir / "manifest.json"), f"{VPS}:/var/www/aios-downloads/"])
 
         print("[4/4] VPS 端 sha256 复算 …")
         proc = run(["ssh", "-o", "ConnectTimeout=10", VPS, f"sha256sum {REMOTE_DIR}/{apk_name}"])
