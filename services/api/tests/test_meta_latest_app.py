@@ -50,6 +50,8 @@ def test_latest_app_configured_transparent(client_factory):
         "download_url": url,
         "versionCode": 2,
         "downloadUrl": url,
+        "download_url_fallback": None,
+        "downloadUrlFallback": None,
     }
 
 
@@ -110,3 +112,23 @@ def test_latest_app_empty_string_env_normalized_to_none(client_factory, monkeypa
         assert resp.status_code == 404
     finally:
         get_settings.cache_clear()
+
+
+def test_latest_app_fallback_transparent(client_factory, monkeypatch):
+    """M15-012 多通道：fallback 配置后双命名透出（主通道 + 跨墙回退）。"""
+    monkeypatch.setenv(
+        "AIOS_LATEST_ANDROID_VERSION_FALLBACK_TEST", "1"
+    )  # 占位确保 fixture 隔离意图明确
+    url = "https://ndtool.cn/android/app.apk"
+    fallback = "https://github.com/swsgbl/ai-learning-os/releases/download/v0.2.0/app.apk"
+    client = client_factory(
+        LATEST_ANDROID_VERSION="0.2.0",
+        LATEST_ANDROID_VERSION_CODE="2",
+        LATEST_ANDROID_DOWNLOAD_URL=url,
+        LATEST_ANDROID_DOWNLOAD_URL_FALLBACK=fallback,
+    )
+    resp = client.get("/api/v1/meta/latest-app?platform=android")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["download_url_fallback"] == fallback
+    assert body["downloadUrlFallback"] == fallback

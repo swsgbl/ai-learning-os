@@ -79,4 +79,6 @@ data class LatestAppResponse(
     val version: String,
     @SerialName("version_code") val versionCode: Int,
     @SerialName("download_url") val downloadUrl: String,
+    /** M15-012 多通道回退（服务端可空）；旧字段名兼容由服务端双命名承担 */
+    @SerialName("download_url_fallback") val downloadUrlFallback: String? = null,
 )

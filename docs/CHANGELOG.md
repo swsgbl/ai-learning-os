@@ -1,4 +1,20 @@
 # Changelog
+## M15-013 —— 双仓分发第二阶段：AtomGit 镜像 + latest-app 多通道 fallback
+
+- **AtomGit 双仓**：hongfu/ai-learning-os 公开镜像仓（main + 全部
+  v* tags fast-forward 推送）；v0.1.3 Release + APK/manifest 资产
+  上线（匿名 GET 下载实测 sha256 一致；AtomGit Release 对 HEAD 请求
+  401 属平台行为，GET 正常）。
+- **latest-app 多通道**：新增
+  `AIOS_LATEST_ANDROID/HARMONY_DOWNLOAD_URL_FALLBACK` env 槽位 +
+  响应 `download_url_fallback`/`downloadUrlFallback`（可空 = 单通道
+  语义不变；compose 两文件加槽位并按 M14-96 守卫更新 pin）。
+- **Android 回退入口**：更新卡新增「备用下载地址」按钮（浏览器
+  intent 无失败回执，双入口比假自动回退更诚实）；DTO/域模型/判定层
+  fallback 全链 + 单测。
+- 生产布局：主通道 ndtool.cn/android（VPS 国内直连）、回退 AtomGit
+  Release（国内可达）、GitHub Releases 保留为开发主仓发布面。
+
 ## M15-012 —— 国内下载通道收束 + 生产 Web basePath 修复
 
 - **国内 APK 分发**（回应「国内优先」需求，第一阶段）：生产

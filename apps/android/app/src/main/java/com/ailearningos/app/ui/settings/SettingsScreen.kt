@@ -19,6 +19,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
@@ -263,6 +264,11 @@ fun SettingsScreen(
                         )
                         Button(onClick = { onOpenUpdateUrl(result.downloadUrl) }) {
                             Text("下载更新")
+                        }
+                        if (result.downloadUrlFallback != null) {
+                            TextButton(onClick = { onOpenUpdateUrl(result.downloadUrlFallback) }) {
+                                Text("备用下载地址")
+                            }
                         }
                     }
                 }

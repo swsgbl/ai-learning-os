@@ -104,6 +104,10 @@ class Settings(BaseSettings):
     latest_harmony_version: str | None = None
     latest_harmony_version_code: int | None = None
     latest_harmony_download_url: str | None = None
+    # M15-012 多通道下载：download_url 主通道（国内优先）+ fallback 回退
+    # （跨墙源，如 GitHub Releases）。fallback 可空 = 单通道语义不变。
+    latest_android_download_url_fallback: str | None = None
+    latest_harmony_download_url_fallback: str | None = None
     # M9-01 认证：AUTH_SECRET 未配置 = 认证关闭（status 如实透出，不虚报受保护）；
     # 生产 compose 显式注入。key 只放部署 secret/.env，不入库不入码。
     auth_secret: str | None = None
@@ -134,6 +138,8 @@ class Settings(BaseSettings):
         "latest_harmony_version",
         "latest_harmony_version_code",
         "latest_harmony_download_url",
+        "latest_android_download_url_fallback",
+        "latest_harmony_download_url_fallback",
         mode="before",
     )
     @classmethod

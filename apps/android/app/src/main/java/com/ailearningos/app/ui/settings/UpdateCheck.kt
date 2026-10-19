@@ -19,6 +19,8 @@ sealed interface UpdateCheckResult {
     data class Available(
         val version: String,
         val downloadUrl: String,
+        /** M15-012 多通道：主地址打不开时的备用下载入口（可空） */
+        val downloadUrlFallback: String? = null,
     ) : UpdateCheckResult
 }
 
@@ -30,7 +32,7 @@ object UpdateCheckEvaluator {
     ): UpdateCheckResult {
         if (latest == null) return UpdateCheckResult.NotConfigured
         return if (latest.versionCode > currentVersionCode) {
-            UpdateCheckResult.Available(latest.version, latest.downloadUrl)
+            UpdateCheckResult.Available(latest.version, latest.downloadUrl, latest.downloadUrlFallback)
         } else {
             UpdateCheckResult.UpToDate(currentVersionName)
         }
