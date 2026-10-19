@@ -1,4 +1,21 @@
 # Changelog
+## M15-014 —— 个人 AI 密钥（BYOK）：App 端填写，仅自己的请求使用
+
+- **定位澄清**（回应「个人 API 密钥不能在 App 端填吗」）：两层密钥
+  ——全局部署密钥（M15-008，admin 网页治理页）与**个人密钥**
+  （本批，学习者在 App 设置页填，只影响自己的请求装配）。
+- **服务端**：`user_ai_keys` 表（user_id+slot 联合 PK，迁移 0029）；
+  `GET/PUT/DELETE /api/v1/me/ai-keys`（require_user + 审计脱敏 +
+  明文永不回显）；装配优先级 **个人 > 全局在线槽位 > 部署 env**
+  （resolver 扩 user 维度，voice 云 ASR/TTS 请求级生效）。
+- **Android 设置页**：新增「我的 AI 密钥」卡（登录后显示）——三槽位
+  状态（尾 4 位）/加密保存/删除；LLM 槽位如实标注「保存待后续生效」
+  （判分器为 app 级装配，per-user 判分随惰性化改造）。
+- 测试：服务端 6 契约用例（门禁/归属隔离/不回显/审计/resolver
+  优先级）+ Android ViewModel 5 用例；全量 services/api 6436 passed
+  （注：test_draft_ownership 一用例存在既有顺序敏感 flaky，复跑绿，
+  非本批回归）。
+
 ## M15-013 —— 双仓分发第二阶段：AtomGit 镜像 + latest-app 多通道 fallback
 
 - **AtomGit 双仓**：hongfu/ai-learning-os 公开镜像仓（main + 全部

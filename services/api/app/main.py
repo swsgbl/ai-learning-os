@@ -16,6 +16,7 @@ from app.api.routes.course_workflow import router as course_workflow_router
 from app.api.routes.courses import router as courses_router
 from app.api.routes.eval import router as eval_router
 from app.api.routes.exams import router as exams_router
+from app.api.routes.me_ai_keys import router as me_ai_keys_router
 from app.api.routes.misconceptions import router as misconceptions_router
 from app.api.routes.paper_extractor import router as paper_extractor_router
 from app.api.routes.papers import router as papers_router
@@ -60,6 +61,7 @@ from app.repositories.resources import ResourceRepository
 from app.repositories.search_queries import SearchQueryRepository
 from app.repositories.sources import SourceRepository
 from app.repositories.student_state import StudentStateRepository
+from app.repositories.user_ai_keys import UserAiKeysRepository
 from app.repositories.users import UserRepository
 from app.repositories.variant_question_drafts import VariantQuestionDraftRepository
 from app.repositories.voice_answer_events import VoiceAnswerEventRepository
@@ -114,6 +116,7 @@ def create_app(
             sessionmaker = make_sessionmaker(engine)
             # M15-008: provider 密钥仓储先于 llm judge 构建（resolver 依赖它）
             ai_provider_secrets = AiProviderSecretsRepository(sessionmaker)
+            user_ai_keys = UserAiKeysRepository(sessionmaker)
             app.state.ai_provider_secrets = ai_provider_secrets
             # M10-01: LLM judge 经 OpenAI 兼容 gateway；槽位未配齐时 build 返回 None
             # （essay 全部进复核，fail-closed 不虚报模型能力）。
@@ -195,6 +198,7 @@ def create_app(
         app.state.resources = resources if resolved_url else None
         app.state.users = users if resolved_url else None
         app.state.ai_provider_secrets = ai_provider_secrets if resolved_url else None
+        app.state.user_ai_keys = user_ai_keys if resolved_url else None
         app.state.audit = audit if resolved_url else None
         app.state.objects = objects if resolved_url else None
         app.state.parsers = parsers if resolved_url else None
@@ -283,6 +287,7 @@ def create_app(
             request_id_var.reset(token)
         return response
     app.include_router(ai_providers_router)
+    app.include_router(me_ai_keys_router)
     app.include_router(paper_extractor_router)
     app.include_router(papers_router)
     app.include_router(exams_router)

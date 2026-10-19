@@ -82,3 +82,20 @@ data class LatestAppResponse(
     /** M15-012 多通道回退（服务端可空）；旧字段名兼容由服务端双命名承担 */
     @SerialName("download_url_fallback") val downloadUrlFallback: String? = null,
 )
+
+
+/** M15-014 /api/v1/me/ai-keys（个人 BYOK 密钥状态；明文永不回显） */
+@Serializable
+data class UserAiKeyStatus(
+    val slot: String,
+    val configured: Boolean,
+    val last4: String? = null,
+    val updatedAt: String? = null,
+    val effect: String,
+)
+
+@Serializable
+data class UserAiKeysResponse(val keys: List<UserAiKeyStatus>)
+
+@Serializable
+data class UserAiKeyPutRequest(val api_key: String)

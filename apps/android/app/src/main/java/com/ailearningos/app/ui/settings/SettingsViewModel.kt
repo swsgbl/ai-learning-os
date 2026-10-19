@@ -8,6 +8,7 @@ import com.ailearningos.app.core.AppErrorKind
 import com.ailearningos.app.core.BaseUrlPolicy
 import com.ailearningos.app.core.BaseUrlProblem
 import com.ailearningos.app.core.BaseUrlValidation
+import com.ailearningos.app.data.MyAiKeyInfo
 import com.ailearningos.app.data.SystemGateway
 import com.ailearningos.app.data.local.SettingsStore
 import com.ailearningos.app.data.asAppError
@@ -36,6 +37,10 @@ data class SettingsUiState(
     val allowInsecureHttp: Boolean = true,
     /** M15-006 更新检查：Empty（未查）/ Loading / Success(判定结果) / Error(脱敏文案) */
     val updateCheck: ContentState<UpdateCheckResult> = ContentState.Empty,
+    /** M15-014 个人 AI 密钥（BYOK）：null=未加载（未登录）；Empty 也未加载 */
+    val myAiKeys: ContentState<List<MyAiKeyInfo>> = ContentState.Empty,
+    /** BYOK 保存/删除的脱敏反馈 */
+    val aiKeyNotice: String? = null,
 )
 
 class SettingsViewModel(
@@ -163,6 +168,55 @@ class SettingsViewModel(
             }
             _state.update { it.copy(updateCheck = result) }
         }
+    }
+
+    /** M15-014 个人 AI 密钥：加载当前用户三槽位状态 */
+    fun loadMyAiKeys() {
+        if (_state.value.myAiKeys == ContentState.Loading) return
+        viewModelScope.launch {
+            _state.update { it.copy(myAiKeys = ContentState.Loading) }
+            val result = try {
+                ContentState.Success(system.myAiKeys())
+            } catch (cause: Throwable) {
+                val message = cause.asAppError().userMessage
+                ContentState.Error(message)
+            }
+            _state.update { it.copy(myAiKeys = result) }
+        }
+    }
+
+    /** M15-014 保存个人密钥（明文只进不出；成功后刷新状态） */
+    fun saveMyAiKey(slot: String, apiKey: String) {
+        if (apiKey.length < 8) {
+            _state.update { it.copy(aiKeyNotice = "密钥过短（至少 8 位）") }
+            return
+        }
+        viewModelScope.launch {
+            try {
+                system.saveMyAiKey(slot, apiKey)
+                _state.update { it.copy(aiKeyNotice = "已保存（加密存储，仅自己可见）") }
+                loadMyAiKeys()
+            } catch (cause: Throwable) {
+                _state.update { it.copy(aiKeyNotice = cause.asAppError().userMessage) }
+            }
+        }
+    }
+
+    /** M15-014 删除个人密钥（回退全局/服务端配置） */
+    fun deleteMyAiKey(slot: String) {
+        viewModelScope.launch {
+            try {
+                system.deleteMyAiKey(slot)
+                _state.update { it.copy(aiKeyNotice = "已删除（回退服务端配置）") }
+                loadMyAiKeys()
+            } catch (cause: Throwable) {
+                _state.update { it.copy(aiKeyNotice = cause.asAppError().userMessage) }
+            }
+        }
+    }
+
+    fun consumeAiKeyNotice() {
+        _state.update { it.copy(aiKeyNotice = null) }
     }
 
     fun messageFor(problem: BaseUrlProblem): String = when (problem) {
