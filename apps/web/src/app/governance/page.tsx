@@ -6,13 +6,14 @@
 // 时各视图收到 403 也只显示同样的提示，不泄露队列内容。
 import { useEffect, useState, type ReactNode } from "react";
 import Link from "next/link";
-import { ClipboardList, Cog, FileText, ScrollText, Shuffle } from "lucide-react";
+import { ClipboardList, Cog, FileText, ScrollText, Shuffle, KeyRound } from "lucide-react";
 import { API_BASE, api } from "@/lib/api";
 import { probeAuth, type AuthState } from "@/lib/auth";
 import type { GenerationDraft, ImportDraft, PaperDraft, VariantDraft } from "@/lib/types";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { AiProviders } from "@/components/governance/ai-providers";
 import { AuditLog } from "@/components/governance/audit-log";
 import { GovTabs } from "@/components/governance/gov-tabs";
 import { DraftQueue, formatTime, type DraftKindConfig } from "@/components/governance/draft-queue";
@@ -201,6 +202,7 @@ const GOV_TABS = [
   { id: "paper", label: "试卷抽取", icon: FileText },
   { id: "variant", label: "变式题", icon: Shuffle },
   { id: "audit", label: "审计日志", icon: ScrollText },
+  { id: "ai", label: "AI 能力", icon: KeyRound },
 ] as const;
 
 // --- 页面 ---
@@ -278,6 +280,7 @@ export default function GovernancePage() {
           {tab === "paper" && <DraftQueue config={paperQueue} />}
           {tab === "variant" && <DraftQueue config={variantQueue} />}
           {tab === "audit" && <AuditLog />}
+          {tab === "ai" && <AiProviders />}
         </>
       )}
     </div>

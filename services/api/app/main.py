@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.responses import JSONResponse
 
 from app.api.error_handlers import register_exception_handlers
+from app.api.routes.ai_providers import router as ai_providers_router
 from app.api.routes.auth import require_user
 from app.api.routes.citation_eval import router as citation_eval_router
 from app.api.routes.concepts import router as concepts_router
@@ -43,6 +44,7 @@ from app.domain.web_gate import RateLimiter
 from app.ops.readiness import Check, CheckOutcome, evaluate_checks
 from app.parsing.registry import make_default_registry
 from app.parsing.worker import ParseWorker
+from app.repositories.ai_provider_secrets import AiProviderSecretsRepository
 from app.repositories.audit import AuditRepository
 from app.repositories.chunks import ChunkRepository
 from app.repositories.concept_dag import ConceptDagRepository
@@ -102,24 +104,6 @@ def create_app(
         public_livekit_url=settings.public_livekit_url,
     )
     resolved_url = database_url if database_url is not None else settings.database_url
-    if settings.rubric_judge == "llm":
-        # M10-01: LLM judge 经 OpenAI 兼容 gateway；槽位未配齐时 build 返回 None
-        # （essay 全部进复核，fail-closed 不虚报模型能力）
-        from app.llm.rubric_judge import build_llm_judge
-
-        rubric_judge = build_llm_judge(
-            {
-                "endpoint": settings.llm_endpoint,
-                "api_key": settings.llm_api_key,
-                "model": settings.llm_model,
-                # M14-71 可选 provider 特定请求级窗口提示（兼容性不保证）
-                "num_ctx": settings.llm_num_ctx,
-                # M14-100 可选请求超时：None = gateway 既有默认 30s（cloud 零漂移）
-                "timeout_seconds": settings.llm_timeout_seconds,
-            }
-        )
-    else:
-        rubric_judge = make_rubric_judge(settings.rubric_judge)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -128,6 +112,28 @@ def create_app(
             app.state.engine = engine
             await prepare_database(engine, resolved_url)
             sessionmaker = make_sessionmaker(engine)
+            # M15-008: provider 密钥仓储先于 llm judge 构建（resolver 依赖它）
+            ai_provider_secrets = AiProviderSecretsRepository(sessionmaker)
+            app.state.ai_provider_secrets = ai_provider_secrets
+            # M10-01: LLM judge 经 OpenAI 兼容 gateway；槽位未配齐时 build 返回 None
+            # （essay 全部进复核，fail-closed 不虚报模型能力）。
+            # M15-008: llm 密钥经治理 resolver（DB 在线密钥优先，回退 env）——
+            # 在线填写后重启容器即生效。
+            if settings.rubric_judge == "llm":
+                from app.api.routes.ai_providers import resolve_provider_key
+                from app.llm.rubric_judge import build_llm_judge
+
+                rubric_judge = build_llm_judge(
+                    {
+                        "endpoint": settings.llm_endpoint,
+                        "api_key": await resolve_provider_key(app, "llm"),
+                        "model": settings.llm_model,
+                        "num_ctx": settings.llm_num_ctx,
+                        "timeout_seconds": settings.llm_timeout_seconds,
+                    }
+                )
+            else:
+                rubric_judge = make_rubric_judge(settings.rubric_judge)
             repository: PostgresRepository | MemoryRepository = PostgresRepository(
                 sessionmaker, rubric_judge=rubric_judge
             )
@@ -166,6 +172,7 @@ def create_app(
             if not is_sqlite(resolved_url):
                 worker.start()
         else:
+            rubric_judge = make_rubric_judge(settings.rubric_judge)
             repository = MemoryRepository(rubric_judge=rubric_judge)
         app.state.repository = repository
         app.state.rubric_judge = rubric_judge
@@ -187,6 +194,7 @@ def create_app(
         app.state.search_registry = search_registry if resolved_url else None
         app.state.resources = resources if resolved_url else None
         app.state.users = users if resolved_url else None
+        app.state.ai_provider_secrets = ai_provider_secrets if resolved_url else None
         app.state.audit = audit if resolved_url else None
         app.state.objects = objects if resolved_url else None
         app.state.parsers = parsers if resolved_url else None
@@ -274,6 +282,7 @@ def create_app(
         finally:
             request_id_var.reset(token)
         return response
+    app.include_router(ai_providers_router)
     app.include_router(paper_extractor_router)
     app.include_router(papers_router)
     app.include_router(exams_router)

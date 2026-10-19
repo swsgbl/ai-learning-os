@@ -589,6 +589,19 @@ class EvalRunRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class AiProviderSecretRow(Base):
+    """M15-008 provider 密钥治理：槽位唯一，密文经 AUTH_SECRET 派生密钥
+    AES-256-GCM 加密（app.core.secrets.SecretBox）；last4 是密钥尾 4 位
+    脱敏展示（供治理页状态显示），明文密钥绝不落库。"""
+
+    __tablename__ = "ai_provider_secrets"
+
+    slot: Mapped[str] = mapped_column(String(32), primary_key=True)
+    ciphertext: Mapped[str] = mapped_column(Text)
+    last4: Mapped[str] = mapped_column(String(8))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class UserRow(Base):
     """M9-01 用户：本地用户名密码账户。密码只存 bcrypt 哈希。"""
 
