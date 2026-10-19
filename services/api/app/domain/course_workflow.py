@@ -20,12 +20,23 @@ class NoCompetencyMatch(Exception):
 
 
 def match_competencies(goal: str, dag: ConceptDag) -> list[str]:
-    """Goal -> Competency：goal 命中的概念 id（canonical_name/alias 子串匹配，保序去重）。"""
+    """Goal -> Competency：goal 命中的概念 id（保序去重）。
+
+    匹配维度（M15-017b）：
+    - canonical_name / alias 子串匹配（精确到概念名）；
+    - **subject 大小写不敏感子串**——「我想学 SQL 数据分析」这类自然
+      主题表述直接命中该学科全部概念（此前仅概念名匹配，用户说学科
+      名反而 422，App 端实测暴露）。
+    """
     goal_text = goal.strip()
+    goal_lower = goal_text.lower()
     matched: list[str] = []
     for node in dag.nodes:
         names = [node.canonical_name, *(a for a in node.aliases)]
         if any(name and name in goal_text for name in names):
+            matched.append(node.id)
+            continue
+        if node.subject and node.subject.strip().lower() in goal_lower:
             matched.append(node.id)
     return matched
 
