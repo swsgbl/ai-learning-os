@@ -63,6 +63,19 @@ export type VoiceLiveTranscript = {
   segments: { seq: number; text: string; is_final: boolean }[];
 };
 
+// M15-008 AI 能力密钥槽位状态（密钥全文永不回显）
+export type AiProviderSlot = {
+  slot: string;
+  env_var: string;
+  configured: boolean;
+  source: string | null;
+  last4: string | null;
+  updated_at: string | null;
+  effect: string;
+};
+
+export type AiProviderSlots = { slots: AiProviderSlot[] };
+
 export class ApiError extends Error {
   readonly status: number;
 
@@ -132,6 +145,17 @@ export const api = {
   papers: () => request<PaperSummary[]>("/api/v1/papers"),
   me: () => request<UserProfile>("/api/v1/auth/me"),
   audit: (limit = 100) => request<AuditEntry[]>(`/api/v1/audit?limit=${limit}`),
+  // M15-008 AI 能力密钥治理（admin-only；密钥只写不读——状态视图只有尾 4 位）
+  aiProviders: () => request<AiProviderSlots>("/api/v1/admin/ai-providers"),
+  aiProviderPut: (slot: string, apiKey: string) =>
+    request<unknown>(`/api/v1/admin/ai-providers/${encodeURIComponent(slot)}`, {
+      method: "PUT",
+      body: JSON.stringify({ api_key: apiKey }),
+    }),
+  aiProviderDelete: (slot: string) =>
+    request<unknown>(`/api/v1/admin/ai-providers/${encodeURIComponent(slot)}`, {
+      method: "DELETE",
+    }),
   dailyPlan: () => request<DailyPlan>("/api/v1/student/daily-plan"),
   studentStates: () => request<StudentStates>("/api/v1/student/states"),
   drafts: {

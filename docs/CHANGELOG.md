@@ -1,4 +1,19 @@
 # Changelog
+## M15-008 —— AI 能力密钥治理（admin-only 在线配置三槽位）
+
+- **服务端**：`ai_provider_secrets` 表（AUTH_SECRET 派生密钥 HKDF+
+  AES-256-GCM 加密落库，仅存尾 4 位脱敏）；`GET/PUT/DELETE
+  /api/v1/admin/ai-providers[/{slot}]`（require_admin + 审计——载荷只含
+  脱敏状态，明文/密文永不出现）；密钥全文任何响应都不回显。
+- **装配热生效**：`resolve_provider_key(app, slot)` DB 在线密钥优先、
+  回退 env；云 ASR/TTS 按请求装配（写入即生效）；llm judge 构建挪入
+  lifespan（在线填写后重启容器生效，状态页如实标注）。
+- **Web 治理中心**：新增「AI 能力」tab——三槽位状态/在线填写/删除回
+  退 env + 生效语义说明。
+- 测试：11 个新契约用例（加密往返/损坏 fail-closed/门禁 403/白名单
+  422/不回显/审计脱敏/resolver 优先级）+ 全量 6404 passed。
+- 依赖：services/api 增加 cryptography>=44。
+
 ## M15-011 —— 修复「检查更新」全系报「API 返回数据格式异常」（latest-app 字段名不匹配）
 
 - **根因（真机 v0.1.3 复现）**：服务端 `/api/v1/meta/latest-app` 自

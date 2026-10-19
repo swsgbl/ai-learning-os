@@ -19,6 +19,7 @@ import time
 from fastapi import APIRouter, HTTPException, Request, Response, UploadFile
 from pydantic import BaseModel, Field
 
+from app.api.routes.ai_providers import resolve_provider_key
 from app.api.routes.auth import current_owner_id
 from app.core.config import get_settings
 from app.domain import voice_session_fsm as fsm
@@ -172,12 +173,15 @@ def _voice_mode(settings) -> str:
 
 
 @router.get("/providers", response_model=ProvidersOut)
-async def list_providers() -> ProvidersOut:
+async def list_providers(request: Request) -> ProvidersOut:
     """provider 配置视图：当前 VOICE_MODE 下 ASR/TTS 的实际选择（含 M14-01 本地真实引擎）。"""
     settings = get_settings()
     mode = _voice_mode(settings)
-    asr_ready = bool(settings.asr_cloud_endpoint and settings.asr_cloud_api_key)
-    tts_ready = bool(settings.tts_cloud_endpoint and settings.tts_cloud_api_key)
+    # M15-008: 云 ASR/TTS 密钥经治理 resolver（DB 在线密钥优先，回退 env）
+    asr_cloud_key = await resolve_provider_key(request.app, "asr_cloud")
+    tts_cloud_key = await resolve_provider_key(request.app, "tts_cloud")
+    asr_ready = bool(settings.asr_cloud_endpoint and asr_cloud_key)
+    tts_ready = bool(settings.tts_cloud_endpoint and tts_cloud_key)
     # M14-01：本地真实引擎 readiness 只看 endpoint（key 可选——本地服务默认无鉴权）
     asr_local_ready = bool(settings.asr_local_endpoint)
     tts_local_ready = bool(settings.tts_local_endpoint)
@@ -192,7 +196,7 @@ async def list_providers() -> ProvidersOut:
     )
 
 
-def _build_asr(settings, choice_provider: str):
+def _build_asr(settings, choice_provider: str, asr_cloud_key: str | None = None):
     if choice_provider == LOCAL_ASR:
         return FakeAsrProvider()
     if choice_provider == ASR_LOCAL_FUNASR:
@@ -205,13 +209,13 @@ def _build_asr(settings, choice_provider: str):
     if choice_provider == "cloud-openai":
         return CloudOpenAiAsrProvider(
             settings.asr_cloud_endpoint or "",
-            settings.asr_cloud_api_key or "",
+            asr_cloud_key or "",
             settings.asr_cloud_model,
         )
     raise HTTPException(status_code=422, detail=f"未知 ASR provider: {choice_provider}")
 
 
-def _build_tts(settings, choice_provider: str):
+def _build_tts(settings, choice_provider: str, tts_cloud_key: str | None = None):
     if choice_provider == LOCAL_TTS:
         return ToneTtsProvider()
     if choice_provider == TTS_LOCAL_COSYVOICE:
@@ -224,7 +228,7 @@ def _build_tts(settings, choice_provider: str):
     if choice_provider == "cloud-openai-tts":
         return CloudOpenAiTtsProvider(
             settings.tts_cloud_endpoint or "",
-            settings.tts_cloud_api_key or "",
+            tts_cloud_key or "",
             settings.tts_cloud_model,
             settings.tts_cloud_voice,  # M14-65: 音色透传（默认 tongtong；空=不带 voice 字段）
         )
@@ -249,13 +253,14 @@ async def transcribe(request: Request, response: Response, audio: UploadFile) ->
     if len(data) > MAX_AUDIO_BYTES:
         raise HTTPException(status_code=413, detail="音频超过 20MB 上限")
 
+    asr_cloud_key = await resolve_provider_key(request.app, "asr_cloud")
     choice = resolve_asr(
         mode,
         settings.asr_provider,
-        cloud_ready=bool(settings.asr_cloud_endpoint and settings.asr_cloud_api_key),
+        cloud_ready=bool(settings.asr_cloud_endpoint and asr_cloud_key),
         local_ready=bool(settings.asr_local_endpoint),
     )
-    provider = _build_asr(settings, choice.provider)
+    provider = _build_asr(settings, choice.provider, asr_cloud_key)
     t0 = time.monotonic()
     try:
         result = await provider.transcribe(data, content_type=audio.content_type or "audio/wav")
@@ -318,13 +323,14 @@ async def synthesize(payload: SynthesizeRequest, request: Request) -> Response:
     """文本→WAV。合成不落库（派生音频无留存需求），provider 透出响应头。"""
     settings = get_settings()
     mode = _voice_mode(settings)
+    tts_cloud_key = await resolve_provider_key(request.app, "tts_cloud")
     choice = resolve_tts(
         mode,
         settings.tts_provider,
-        cloud_ready=bool(settings.tts_cloud_endpoint and settings.tts_cloud_api_key),
+        cloud_ready=bool(settings.tts_cloud_endpoint and tts_cloud_key),
         local_ready=bool(settings.tts_local_endpoint),
     )
-    provider = _build_tts(settings, choice.provider)
+    provider = _build_tts(settings, choice.provider, tts_cloud_key)
     t0 = time.monotonic()
     try:
         result = await provider.synthesize(payload.text)
