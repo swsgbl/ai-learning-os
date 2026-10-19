@@ -171,7 +171,18 @@ async def delete_ai_provider_key(
     )
 
 
-async def resolve_provider_key(app, slot: str) -> str | None:
+async def resolve_provider_key(app, slot: str, user_id: str | None = None) -> str | None:
+    """装配 resolver（M15-014 扩展个人优先维度）。
+
+    优先级：个人密钥（BYOK，user_id 非空时）> 全局在线槽位 > 部署 env。
+    其余语义（槽位白名单 fail-fast / 密文损坏回退 env）不变。
+    """
+    if user_id is not None:
+        from app.api.routes.me_ai_keys import resolve_user_provider_key
+
+        personal = await resolve_user_provider_key(app, slot, user_id)
+        if personal is not None:
+            return personal
     """装配 resolver：DB 在线密钥优先，回退 env（None=两端都未配置）。
 
     槽位白名单外的 slot 一律返回 env 语义不可达（编程错误，fail-fast）。

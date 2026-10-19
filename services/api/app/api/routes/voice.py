@@ -178,8 +178,8 @@ async def list_providers(request: Request) -> ProvidersOut:
     settings = get_settings()
     mode = _voice_mode(settings)
     # M15-008: 云 ASR/TTS 密钥经治理 resolver（DB 在线密钥优先，回退 env）
-    asr_cloud_key = await resolve_provider_key(request.app, "asr_cloud")
-    tts_cloud_key = await resolve_provider_key(request.app, "tts_cloud")
+    asr_cloud_key = await resolve_provider_key(request.app, "asr_cloud", current_owner_id(request))
+    tts_cloud_key = await resolve_provider_key(request.app, "tts_cloud", current_owner_id(request))
     asr_ready = bool(settings.asr_cloud_endpoint and asr_cloud_key)
     tts_ready = bool(settings.tts_cloud_endpoint and tts_cloud_key)
     # M14-01：本地真实引擎 readiness 只看 endpoint（key 可选——本地服务默认无鉴权）
@@ -253,7 +253,7 @@ async def transcribe(request: Request, response: Response, audio: UploadFile) ->
     if len(data) > MAX_AUDIO_BYTES:
         raise HTTPException(status_code=413, detail="音频超过 20MB 上限")
 
-    asr_cloud_key = await resolve_provider_key(request.app, "asr_cloud")
+    asr_cloud_key = await resolve_provider_key(request.app, "asr_cloud", current_owner_id(request))
     choice = resolve_asr(
         mode,
         settings.asr_provider,
@@ -323,7 +323,7 @@ async def synthesize(payload: SynthesizeRequest, request: Request) -> Response:
     """文本→WAV。合成不落库（派生音频无留存需求），provider 透出响应头。"""
     settings = get_settings()
     mode = _voice_mode(settings)
-    tts_cloud_key = await resolve_provider_key(request.app, "tts_cloud")
+    tts_cloud_key = await resolve_provider_key(request.app, "tts_cloud", current_owner_id(request))
     choice = resolve_tts(
         mode,
         settings.tts_provider,

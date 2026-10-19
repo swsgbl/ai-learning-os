@@ -602,6 +602,22 @@ class AiProviderSecretRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+class UserAiKeyRow(Base):
+    """M15-014 个人 AI 密钥（BYOK）：学习者自带的 LLM/云 ASR/TTS 密钥。
+
+    与 AiProviderSecretRow（全局部署槽位）同款加密语义（SecretBox
+    AES-256-GCM，明文不落库），差异仅在归属维度：user_id + slot 联合
+    主键，请求装配时个人密钥优先于全局槽位。"""
+
+    __tablename__ = "user_ai_keys"
+
+    user_id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    slot: Mapped[str] = mapped_column(String(32), primary_key=True)
+    ciphertext: Mapped[str] = mapped_column(Text)
+    last4: Mapped[str] = mapped_column(String(8))
+    updated_at: Mapped[str] = mapped_column(DateTime(timezone=True))
+
+
 class UserRow(Base):
     """M9-01 用户：本地用户名密码账户。密码只存 bcrypt 哈希。"""
 

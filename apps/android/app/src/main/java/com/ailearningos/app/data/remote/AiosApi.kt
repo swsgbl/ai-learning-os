@@ -3,6 +3,7 @@ package com.ailearningos.app.data.remote
 import okhttp3.MultipartBody
 import okhttp3.ResponseBody
 import retrofit2.http.Body
+import retrofit2.http.DELETE
 import retrofit2.http.GET
 import retrofit2.http.Multipart
 import retrofit2.http.POST
@@ -34,6 +35,14 @@ interface AiosApi {
 
     @GET("api/v1/meta/latest-app")
     suspend fun latestApp(@Query("platform") platform: String = "android"): LatestAppResponse
+    @GET("api/v1/me/ai-keys")
+    suspend fun myAiKeys(): UserAiKeysResponse
+
+    @PUT("api/v1/me/ai-keys/{slot}")
+    suspend fun putMyAiKey(@Path("slot") slot: String, @Body body: UserAiKeyPutRequest): UserAiKeyStatus
+
+    @DELETE("api/v1/me/ai-keys/{slot}")
+    suspend fun deleteMyAiKey(@Path("slot") slot: String): UserAiKeyStatus
 
     // ---------- M12-02 考试业务 ----------
 

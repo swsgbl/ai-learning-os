@@ -29,7 +29,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ailearningos.app.core.BaseUrlValidation
 import com.ailearningos.app.ui.common.ContentState
 import com.ailearningos.app.ui.common.ContentStateView
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import com.ailearningos.app.ui.components.SectionCard
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import com.ailearningos.app.data.MyAiKeyInfo
 import com.ailearningos.app.ui.components.SessionCard
 import com.ailearningos.app.BuildConfig
 import com.ailearningos.app.ui.components.StatusRow
@@ -136,6 +141,15 @@ fun SettingsScreen(
             onLogout = sessionViewModel::logout,
             onRetry = sessionViewModel::refresh,
         )
+
+        if (sessionState is SessionState.Authenticated) {
+            MyAiKeysCard(
+                state = state,
+                onLoad = settingsViewModel::loadMyAiKeys,
+                onSave = settingsViewModel::saveMyAiKey,
+                onDelete = settingsViewModel::deleteMyAiKey,
+            )
+        }
 
         SectionCard(title = "隐私路由") {
             ContentStateView(
@@ -289,6 +303,77 @@ fun SettingsScreen(
                 style = MaterialTheme.typography.bodySmall,
                 color = Subtle,
             )
+        }
+    }
+}
+
+
+@Composable
+private fun MyAiKeysCard(
+    state: SettingsUiState,
+    onLoad: () -> Unit,
+    onSave: (String, String) -> Unit,
+    onDelete: (String) -> Unit,
+) {
+    LaunchedEffect(Unit) { onLoad() }
+    SectionCard(title = "我的 AI 密钥") {
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(
+                "自带云端密钥（BYOK）：加密保存、仅自己的请求使用；不填则用服务端配置。" +
+                    "云语音密钥立即生效；LLM 密钥保存后随后续版本生效。",
+                style = MaterialTheme.typography.bodySmall,
+                color = Subtle,
+            )
+            when (val keys = state.myAiKeys) {
+                is ContentState.Success -> keys.value.forEach { key -> MyAiKeyRow(key, onSave, onDelete) }
+                is ContentState.Error -> Text(keys.message, color = Warn, style = MaterialTheme.typography.bodySmall)
+                else -> Text("加载中…", style = MaterialTheme.typography.bodySmall, color = Subtle)
+            }
+            state.aiKeyNotice?.let { notice ->
+                Text(notice, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary)
+            }
+        }
+    }
+}
+
+@Composable
+private fun MyAiKeyRow(
+    key: MyAiKeyInfo,
+    onSave: (String, String) -> Unit,
+    onDelete: (String) -> Unit,
+) {
+    val label = when (key.slot) {
+        "llm" -> "LLM（判分/生成）"
+        "asr_cloud" -> "云语音识别"
+        "tts_cloud" -> "云语音合成"
+        else -> key.slot
+    }
+    var input by remember(key.slot) { mutableStateOf("") }
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Text(
+                if (key.configured) "已配置 ····${key.last4}" else "未配置",
+                style = MaterialTheme.typography.bodySmall,
+                color = if (key.configured) MaterialTheme.colorScheme.primary else Subtle,
+            )
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedTextField(
+                value = input,
+                onValueChange = { input = it },
+                placeholder = { Text("粘贴密钥（不回显）", style = MaterialTheme.typography.bodySmall) },
+                visualTransformation = PasswordVisualTransformation(),
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(0.65f),
+            )
+            Button(
+                onClick = { onSave(key.slot, input); input = "" },
+                enabled = input.length >= 8,
+            ) { Text("保存") }
+            if (key.configured) {
+                TextButton(onClick = { onDelete(key.slot) }) { Text("删除") }
+            }
         }
     }
 }

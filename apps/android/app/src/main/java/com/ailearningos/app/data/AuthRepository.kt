@@ -5,6 +5,7 @@ import com.ailearningos.app.core.AppErrorKind
 import com.ailearningos.app.data.model.PrivacySnapshot
 import com.ailearningos.app.data.model.UserProfile
 import com.ailearningos.app.data.remote.LoginRequest
+import com.ailearningos.app.data.remote.UserAiKeyPutRequest
 import com.ailearningos.app.data.remote.RegisterRequest
 import com.ailearningos.app.data.remote.toDomain
 import kotlinx.coroutines.NonCancellable
@@ -30,12 +31,23 @@ interface AuthGateway {
 }
 
 /** 系统状态面（/health、/system/privacy、/meta/latest-app） */
+/** M15-014 个人 AI 密钥状态（BYOK）：明文只进不出 */
+data class MyAiKeyInfo(
+    val slot: String,
+    val configured: Boolean,
+    val last4: String?,
+    val effect: String,
+)
+
 interface SystemGateway {
     suspend fun healthOk(): Boolean
     suspend fun privacy(): PrivacySnapshot
 
     /** M15-006 更新检查：服务端未配置（404）→ null（如实「无版本信息」）；网络/服务器故障抛 [AppError] */
     suspend fun latestApp(): LatestAppInfo?
+    suspend fun myAiKeys(): List<MyAiKeyInfo>
+    suspend fun saveMyAiKey(slot: String, apiKey: String)
+    suspend fun deleteMyAiKey(slot: String)
 }
 
 /** M15-006 服务端透出的最新应用版本（领域模型，UI 不接触 DTO） */
@@ -74,6 +86,22 @@ class AuthRepository(
         }
     } catch (cause: AppError) {
         if (cause.kind == AppErrorKind.NOT_FOUND) null else throw cause
+    }
+
+    override suspend fun myAiKeys(): List<MyAiKeyInfo> = withRemoteError {
+        apiProvider.get().myAiKeys().keys.map {
+            MyAiKeyInfo(it.slot, it.configured, it.last4, it.effect)
+        }
+    }
+
+    override suspend fun saveMyAiKey(slot: String, apiKey: String) = withRemoteError {
+        apiProvider.get().putMyAiKey(slot, UserAiKeyPutRequest(apiKey))
+        Unit
+    }
+
+    override suspend fun deleteMyAiKey(slot: String) = withRemoteError {
+        apiProvider.get().deleteMyAiKey(slot)
+        Unit
     }
 
     override suspend fun login(username: String, password: String): UserProfile = withRemoteError {

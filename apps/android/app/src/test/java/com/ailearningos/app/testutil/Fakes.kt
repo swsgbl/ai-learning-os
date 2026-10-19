@@ -3,6 +3,7 @@ package com.ailearningos.app.testutil
 import com.ailearningos.app.core.AppError
 import com.ailearningos.app.core.AppErrorKind
 import com.ailearningos.app.data.AuthGateway
+import com.ailearningos.app.data.MyAiKeyInfo
 import com.ailearningos.app.data.ExamGateway
 import com.ailearningos.app.data.GovernanceGateway
 import com.ailearningos.app.data.SearchGateway
@@ -196,6 +197,25 @@ class FakeSystemGateway : SystemGateway {
 
     var latestAppCalls = 0
         private set
+
+    /** M15-014 个人 AI 密钥（BYOK）：默认空列表；save/delete 即时反映到列表 */
+    private val _myAiKeys = mutableMapOf<String, MyAiKeyInfo>()
+    var myAiKeysError: AppError? = null
+
+    override suspend fun myAiKeys(): List<MyAiKeyInfo> {
+        myAiKeysError?.let { throw it }
+        return listOf("llm", "asr_cloud", "tts_cloud").map { slot ->
+            _myAiKeys[slot] ?: MyAiKeyInfo(slot = slot, configured = false, last4 = null, effect = if (slot == "llm") "saved" else "hot")
+        }
+    }
+
+    override suspend fun saveMyAiKey(slot: String, apiKey: String) {
+        _myAiKeys[slot] = MyAiKeyInfo(slot = slot, configured = true, last4 = apiKey.takeLast(4), effect = if (slot == "llm") "saved" else "hot")
+    }
+
+    override suspend fun deleteMyAiKey(slot: String) {
+        _myAiKeys.remove(slot)
+    }
 
     override suspend fun latestApp(): LatestAppInfo? {
         latestAppCalls++
