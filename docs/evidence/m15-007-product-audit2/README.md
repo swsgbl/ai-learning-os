@@ -3,6 +3,18 @@
 - 基点 current main（#387 后）。PR **#388**（四项 UX 整改）+
   **#389**（v0.1.1 版本号）；tag `v0.1.1` 经 M15-006 发布流水线
   出包（用户手机 app 内「检查更新」可见新版本——闭环验证）。
+- **M15-010 后续（#393 / tag v0.1.3）**：真机 instrumented test 实锤
+  「记住密码」自 M15-007 引入即全失效——`KeystoreCredentialVault` 加密
+  时预生成 IV 传入 `init()`，AndroidKeyStore 抛
+  `InvalidAlgorithmParameterException: Caller-provided IV not permitted`，
+  被上层 `catch (_: Throwable)` 吞掉 → 密文静默不落盘（JVM 单测走
+  FakeVault 覆盖不到 Keystore 路径，360 tests 全绿掩盖）。修复对齐
+  `KeystoreTokenStore`（加密不传 IV 由 Keystore 生成、解密才传 caller
+  IV）；新增真机回归 `CredentialVaultDiagTest`（修复前 FAILED 给出确切
+  异常栈，修复后 PASS）。真机全链验证：登录落盘 61B（run-as 实证）→
+  冷启动登录态保持 → 退出重登预填 → 预填一键登录成功。v0.1.2 安装
+  冒烟中另实证 consumeSuccess 修复（退出重进登录页稳定打开）与
+  token 冷启动恢复正常。
 
 ## 一、用户实测反馈 → 本批整改（PR #388）
 
