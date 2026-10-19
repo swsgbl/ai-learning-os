@@ -1,5 +1,13 @@
 # Changelog
 # Changelog
+## M15-017c —— App materialize DTO 对齐服务端 paper_id（真机实测暴露）
+
+materialize 响应真实字段为 {paper_id, question_count, title}，App DTO
+误写 id——「生成试卷并开练」解析必失败（M15-011 同类：字段名必须以
+服务端真实 payload 为准）。对齐后真机全链验证通过：定制课程 → 生成
+4 章方案 → 一键开练 → 自动跳学习页「我的课程」出现私有卷。
+
+# Changelog
 ## M15-016b/017 —— 模型列表最新优先 + App 端定制课程闭环（回归初衷）
 
 - **M15-016b 模型列表最新优先**：/models 带 created 时间戳的平台按
