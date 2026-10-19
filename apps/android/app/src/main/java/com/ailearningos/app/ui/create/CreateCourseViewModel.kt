@@ -78,7 +78,7 @@ class CreateCourseViewModel(private val system: SystemGateway) : ViewModel() {
                 _state.update {
                     it.copy(
                         materializing = false,
-                        createdPaper = MaterializedPaper(paper.id, paper.title),
+                        createdPaper = MaterializedPaper(paper.paperId, paper.title),
                     )
                 }
             } catch (cause: Throwable) {

@@ -134,10 +134,10 @@ data class GenerationDraftResponse(
     val plan: JsonObject,
 )
 
-/** materialize 产物：私有练习卷（对齐 PaperResponse 最小集） */
+/** materialize 产物：私有练习卷——字段名对齐服务端真实 payload（paper_id） */
 @Serializable
 data class MaterializedPaperResponse(
-    val id: String,
+    @SerialName("paper_id") val paperId: String,
     val title: String,
     val question_count: Int,
 )

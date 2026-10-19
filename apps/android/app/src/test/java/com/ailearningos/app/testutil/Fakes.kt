@@ -235,7 +235,7 @@ class FakeSystemGateway : SystemGateway {
     var generateCourseResult: Result<GenerationDraftResponse> = Result.success(draftFixture())
 
     var materializeCourseResult: Result<MaterializedPaperResponse> = Result.success(
-        MaterializedPaperResponse(id = "paper_1", title = "定制课程：SQL 数据分析", question_count = 3)
+        MaterializedPaperResponse(paperId = "paper_1", title = "定制课程：SQL 数据分析", question_count = 3)
     )
 
     override suspend fun generateCourse(goal: String): GenerationDraftResponse =
