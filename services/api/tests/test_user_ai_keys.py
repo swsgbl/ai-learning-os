@@ -115,3 +115,32 @@ def test_audit_recorded_without_plaintext(client: TestClient):
     assert entry["target_type"] == "user_ai_key"
     assert "sk-audit-555666" not in str(entry)
     assert entry["after"]["last4"] == "5666"
+
+
+def test_personal_endpoint_ssrf_guard(client: TestClient):
+    """M15-015 安全：个人 LLM endpoint 禁内网/环回/元数据（SSRF 缓解）。"""
+    alice = _register_login(client, "byok_ssrf")
+    for bad in (
+        "http://127.0.0.1:8000/v1",
+        "http://localhost:11434/v1",
+        "http://192.168.1.10/v1",
+        "http://10.0.0.5/v1",
+        "http://169.254.169.254/latest/meta-data",
+        "http://0.0.0.0/v1",
+        "ftp://example.com",
+        "not-a-url",
+    ):
+        resp = client.put(
+            "/api/v1/me/ai-keys/llm",
+            json={"api_key": "sk-ssrf-12345678", "endpoint": bad},
+            headers=alice,
+        )
+        assert resp.status_code == 422, f"{bad} 应被拒绝"
+    # 公有地址放行
+    ok = client.put(
+        "/api/v1/me/ai-keys/llm",
+        json={"api_key": "sk-ssrf-12345678", "endpoint": "https://api.deepseek.com/v1"},
+        headers=alice,
+    )
+    assert ok.status_code == 200
+    client.delete("/api/v1/me/ai-keys/llm", headers=alice)

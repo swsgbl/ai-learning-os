@@ -1,4 +1,18 @@
 # Changelog
+## M15-015b —— BYOK 安全修复（安全审查 4 项发现处置）
+
+- **SSRF 缓解**（真实缺陷）：个人 LLM endpoint 为任一登录用户可填、
+  服务端会主动请求的 URL——PUT 时结构化校验：仅 http/https、拒
+  环回/私网/链路本地/保留/未指定 IP 直填、拒 localhost /
+  host.docker.internal / *.local 恒内网域名（422 不落库）；新增
+  SSRF 回归测试（8 非法 + 1 合法放行）。残余面 = 公有域名 DNS
+  重绑定（低风险，注释明示）。
+- **DoS 缓解**（真实缺陷）：per-config judge 缓存加 128 条 LRU
+  上限（恶意换 key 刷缓存条目耗尽内存的路径封死）。
+- **判分完整性明示**（架构语义）：UserAwareRubricJudge 注释明示
+  BYOK 信任语义（自带模型判自己的卷=自担信任；判分管道与落库仍
+  全程服务端；部署方可经 RUBRIC_JUDGE 关闭 llm 判分整体退出）。
+
 ## M15-015 —— 个人密钥收敛为单 LLM 槽位并真正生效（BYOK 判分）
 
 - **产品收敛**（用户指令：本地语音无需密钥）：个人层只做主模型 LLM
