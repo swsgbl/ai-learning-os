@@ -66,11 +66,17 @@ fun PrivacyResponse.toDomain() = PrivacySnapshot(
 )
 
 
-/** M15-006 /api/v1/meta/latest-app 响应（服务端三项齐全才透出；404=未配置） */
+/**
+ * M15-006 /api/v1/meta/latest-app 响应（服务端三项齐全才透出；404=未配置）。
+ * M15-011 修复：服务端线上的字段名是 snake_case（version_code/download_url），
+ * 本 DTO 曾误写 camelCase 无 @SerialName——「检查更新」全系客户端报
+ * 「API 返回数据格式异常」（真机 v0.1.3 复现）。服务端已加 camelCase
+ * 兼容通道救已发布包；本 DTO 对齐契约口径 snake_case。
+ */
 @Serializable
 data class LatestAppResponse(
     val platform: String,
     val version: String,
-    val versionCode: Int,
-    val downloadUrl: String,
+    @SerialName("version_code") val versionCode: Int,
+    @SerialName("download_url") val downloadUrl: String,
 )

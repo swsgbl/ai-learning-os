@@ -3,6 +3,7 @@ package com.ailearningos.app.data
 import com.ailearningos.app.data.remote.AiosJson
 import com.ailearningos.app.data.remote.AuthStatusResponse
 import com.ailearningos.app.data.remote.HealthResponse
+import com.ailearningos.app.data.remote.LatestAppResponse
 import com.ailearningos.app.data.remote.LoginRequest
 import com.ailearningos.app.data.remote.PrivacyResponse
 import com.ailearningos.app.data.remote.TokenResponse
@@ -123,5 +124,39 @@ class DtoParsingTest {
         assertEquals("cloud", snapshot.searchMode)
         assertTrue(snapshot.storesAudio)
         assertFalse(snapshot.sendsContextToCloud)
+    }
+
+    // ---------- /meta/latest-app（M15-011 契约回归） ----------
+
+    /**
+     * 服务端线上 shape 是 snake_case（M15-011 起另携 camelCase 兼容字段）。
+     * v0.1.0~v0.1.3 本 DTO 误写 camelCase 无 @SerialName——「检查更新」
+     * 全系真机报「API 返回数据格式异常」。此处用服务端真实 payload
+     * （双字段并存）锁定解析。
+     */
+    @Test
+    fun `parses latest-app response in server snake_case shape`() {
+        val dto = AiosJson.decodeFromString<LatestAppResponse>(
+            """
+            {"platform":"android","version":"0.1.4","version_code":5,
+             "download_url":"https://example.com/app.apk",
+             "versionCode":5,"downloadUrl":"https://example.com/app.apk"}
+            """.trimIndent(),
+        )
+        assertEquals("android", dto.platform)
+        assertEquals("0.1.4", dto.version)
+        assertEquals(5, dto.versionCode)
+        assertEquals("https://example.com/app.apk", dto.downloadUrl)
+    }
+
+    @Test
+    fun `latest-app snake_case only payload still parses`() {
+        // 服务端若未来撤掉 camelCase 兼容通道，纯 snake_case 响应必须仍可解析
+        val dto = AiosJson.decodeFromString<LatestAppResponse>(
+            """{"platform":"android","version":"0.2.0","version_code":9,
+               "download_url":"https://example.com/next.apk"}""",
+        )
+        assertEquals(9, dto.versionCode)
+        assertEquals("https://example.com/next.apk", dto.downloadUrl)
     }
 }
