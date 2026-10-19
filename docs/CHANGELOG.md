@@ -1,4 +1,23 @@
 # Changelog
+## M15-010 —— v0.1.3：修复「记住密码」真机不落盘（caller-provided IV）
+
+- **根因（真机 instrumented test 实锤）**：AndroidKeyStore 密钥不允许
+  「加密时」由调用方提供 IV——`KeystoreCredentialVault.cipher()` 在
+  ENCRYPT 模式预生成 IV 传入 `init()`，抛
+  `InvalidAlgorithmParameterException: Caller-provided IV not permitted`，
+  被 `catch (_: Throwable)` 吞掉 → `remembered_credentials.bin` 静默
+  不落盘（v0.1.1/v0.1.2 真机「记住密码」全失效；JVM 单测走 FakeVault
+  覆盖不到 Keystore 路径）。
+- **修复**：对齐 `KeystoreTokenStore`——加密 `init(mode, key)` 由
+  Keystore 生成 IV（`cipher.iv` 事后读）；解密才传 caller IV（允许）。
+- **回归防线**：新增 instrumented 测试
+  `CredentialVaultDiagTest`（真机 save→load→clear 往返——JVM 测不到
+  的 Keystore 行为首次入防）+ androidTest 依赖。
+- **真机验证（MGA-AL00，v0.1.3 debug）**：登录 → vault 落盘 61B ✓ →
+  冷启动登录态保持（token 恢复）✓ → 退出重登后预填 ✓ → 预填凭据
+  一键登录成功 ✓。
+- versionCode 3→4 / versionName 0.1.2→0.1.3。
+
 ## M15-007 —— 产品审计二批（真机实测反馈四项整改）+ v0.1.1 发布
 
 - **PR #388**（用户真机 v0.1.0 实测反馈）：
