@@ -4,7 +4,6 @@ import android.content.Context
 import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import java.io.File
-import java.security.SecureRandom
 import javax.crypto.Cipher
 import javax.crypto.KeyGenerator
 import javax.crypto.SecretKey
@@ -69,9 +68,16 @@ class KeystoreCredentialVault(
     }
 
     private fun cipher(mode: Int, iv: ByteArray? = null): Cipher {
-        val effectiveIv = iv ?: ByteArray(IV_BYTES).also { SecureRandom().nextBytes(it) }
+        // 真机实证（M15-007 修复）：AndroidKeyStore 密钥不允许「加密时」由调用方
+        // 提供 IV（InvalidAlgorithmParameterException: Caller-provided IV not
+        // permitted——被上层 catch 吞掉即静默不落盘）。与 [KeystoreTokenStore]
+        // 同款：加密让 Keystore 生成 IV（cipher.iv 事后读）；解密才传 caller IV。
         return Cipher.getInstance("AES/GCM/NoPadding").apply {
-            init(mode, secretKey(), GCMParameterSpec(GCM_TAG_BITS, effectiveIv))
+            if (iv == null) {
+                init(mode, secretKey())
+            } else {
+                init(mode, secretKey(), GCMParameterSpec(GCM_TAG_BITS, iv))
+            }
         }
     }
 
