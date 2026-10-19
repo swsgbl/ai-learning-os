@@ -290,3 +290,23 @@ def test_materialize_unknown_draft_404() -> None:
     with _client() as client:
         r = client.post(f"{API}/cgd_missing/materialize")
         assert r.status_code == 404
+
+
+def test_match_competencies_by_subject_natural_goal():
+    """M15-017b：学科名自然表述（「我想学 SQL 数据分析」）经 subject 命中。"""
+    from app.domain.course_workflow import match_competencies
+    from app.repositories.concept_dag import ConceptDag, ConceptNode
+
+    dag = ConceptDag(
+        version=1,
+        note="t",
+        nodes=[
+            ConceptNode(id="sql:select", canonical_name="SELECT 基础查询", aliases=[], subject="sql", description="d", difficulty=1),
+            ConceptNode(id="math:limit", canonical_name="极限", aliases=[], subject="math", description="d", difficulty=2),
+        ],
+        edges=[],
+    )
+    matched = match_competencies("我想学 SQL 数据分析", dag)
+    assert matched == ["sql:select"]  # subject 命中、跨学科不误伤
+    assert match_competencies("学极限", dag) == ["math:limit"]  # 概念名路径不回归
+    assert match_competencies("我想学天体物理", dag) == []
