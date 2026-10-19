@@ -148,6 +148,8 @@ fun SettingsScreen(
                 onLoad = settingsViewModel::loadMyAiKeys,
                 onSave = { slot, key, ep, m -> settingsViewModel.saveMyAiKey(slot, key, ep, m) },
                 onDelete = settingsViewModel::deleteMyAiKey,
+                onProbeModels = settingsViewModel::probeLlmModels,
+                onModelPicked = { m -> settingsViewModel.consumeLlmModels() },
             )
         }
 
@@ -314,6 +316,8 @@ private fun MyAiKeysCard(
     onLoad: () -> Unit,
     onSave: (String, String, String?, String?) -> Unit,
     onDelete: (String) -> Unit,
+    onProbeModels: (String, String) -> Unit,
+    onModelPicked: (String) -> Unit,
 ) {
     LaunchedEffect(Unit) { onLoad() }
     SectionCard(title = "我的 AI 密钥（主模型）") {
@@ -325,7 +329,9 @@ private fun MyAiKeysCard(
                 color = Subtle,
             )
             when (val keys = state.myAiKeys) {
-                is ContentState.Success -> keys.value.forEach { key -> MyAiKeyRow(key, onSave, onDelete) }
+                is ContentState.Success -> keys.value.forEach { key ->
+                    MyAiKeyRow(key, onSave, onDelete, onProbeModels, state.llmModels, onModelPicked)
+                }
                 is ContentState.Error -> Text(keys.message, color = Warn, style = MaterialTheme.typography.bodySmall)
                 else -> Text("加载中…", style = MaterialTheme.typography.bodySmall, color = Subtle)
             }
@@ -341,7 +347,11 @@ private fun MyAiKeyRow(
     key: MyAiKeyInfo,
     onSave: (String, String, String?, String?) -> Unit,
     onDelete: (String) -> Unit,
+    onProbeModels: (String, String) -> Unit,
+    modelsState: ContentState<List<String>>,
+    onModelPicked: (String) -> Unit,
 ) {
+    var showModelPicker by remember { mutableStateOf(false) }
     var keyInput by remember(key.slot) { mutableStateOf("") }
     var endpointInput by remember(key.slot) { mutableStateOf("") }
     var modelInput by remember(key.slot) { mutableStateOf("") }
@@ -374,13 +384,41 @@ private fun MyAiKeyRow(
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
-        OutlinedTextField(
-            value = modelInput,
-            onValueChange = { modelInput = it },
-            placeholder = { Text("模型名（选填，如 deepseek-chat；不填用服务器默认）", style = MaterialTheme.typography.bodySmall) },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedTextField(
+                value = modelInput,
+                onValueChange = { modelInput = it },
+                placeholder = { Text("模型名（选填）", style = MaterialTheme.typography.bodySmall) },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(0.62f),
+            )
+            OutlinedButton(onClick = { onProbeModels(keyInput, endpointInput); showModelPicker = true }) {
+                Text("获取列表", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+        when (val models = modelsState) {
+            is ContentState.Loading -> if (showModelPicker) {
+                Text("正在获取模型列表…", style = MaterialTheme.typography.bodySmall, color = Subtle)
+            }
+            is ContentState.Error -> if (showModelPicker) {
+                Text(models.message, style = MaterialTheme.typography.bodySmall, color = Warn)
+            }
+            is ContentState.Success -> if (showModelPicker && models.value.isNotEmpty()) {
+                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("选择模型：", style = MaterialTheme.typography.bodySmall, color = Subtle)
+                    models.value.take(8).forEach { name ->
+                        TextButton(
+                            onClick = { modelInput = name; showModelPicker = false; onModelPicked(name) },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text(name, style = MaterialTheme.typography.bodySmall) }
+                    }
+                    if (models.value.size > 8) {
+                        Text("共 ${models.value.size} 个，其余可手动输入", style = MaterialTheme.typography.bodySmall, color = Subtle)
+                    }
+                }
+            }
+            else -> {}
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = {

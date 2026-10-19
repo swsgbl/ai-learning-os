@@ -186,3 +186,42 @@ def test_build_personal_revalidates_stored_endpoint():
         side_effect=PersonalEndpointRejected("bad"),
     ):
         assert wrapper.build_personal(api_key="sk-x-12345678", endpoint="http://127.0.0.1/v1", model=None) is None
+
+
+def test_probe_llm_models_success(client: TestClient, monkeypatch):
+    """模型列表探测：OpenAI 兼容负载 → 去重排序列表（服务端代理）。"""
+    from unittest.mock import AsyncMock, patch
+
+    alice = _register_login(client, "byok_probe")
+
+    class _Resp:
+        status_code = 200
+
+        def json(self):
+            return {"data": [{"id": "deepseek-chat"}, {"id": "deepseek-reasoner"}, {"id": "deepseek-chat"}]}
+
+    with patch("httpx.AsyncClient") as client_cls:
+        client_cls.return_value.__aenter__ = AsyncMock(return_value=AsyncMock(get=AsyncMock(return_value=_Resp())))
+        client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        resp = client.post(
+            "/api/v1/me/ai-keys/llm/models",
+            json={"api_key": "sk-probe-12345678", "endpoint": "https://api.deepseek.com/v1"},
+            headers=alice,
+        )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["models"] == ["deepseek-chat", "deepseek-reasoner"]
+
+
+def test_probe_llm_models_ssrf_rejected(client: TestClient):
+    alice = _register_login(client, "byok_probe2")
+    resp = client.post(
+        "/api/v1/me/ai-keys/llm/models",
+        json={"api_key": "sk-probe-12345678", "endpoint": "http://169.254.169.254/v1"},
+        headers=alice,
+    )
+    assert resp.status_code == 422
+
+
+def test_probe_llm_models_requires_input_or_saved(client: TestClient):
+    alice = _register_login(client, "byok_probe3")
+    assert client.post("/api/v1/me/ai-keys/llm/models", json={}, headers=alice).status_code == 422

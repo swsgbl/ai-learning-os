@@ -43,6 +43,8 @@ interface AiosApi {
 
     @DELETE("api/v1/me/ai-keys/{slot}")
     suspend fun deleteMyAiKey(@Path("slot") slot: String): UserAiKeyStatus
+    @POST("api/v1/me/ai-keys/llm/models")
+    suspend fun probeLlmModels(@Body body: LlmModelsProbeRequest): LlmModelsProbeResponse
 
     // ---------- M12-02 考试业务 ----------
 

@@ -41,6 +41,8 @@ data class SettingsUiState(
     val myAiKeys: ContentState<List<MyAiKeyInfo>> = ContentState.Empty,
     /** BYOK 保存/删除的脱敏反馈 */
     val aiKeyNotice: String? = null,
+    /** M15-016 模型列表探测：null=未探测；Loading/Success(模型名列表)/Error */
+    val llmModels: ContentState<List<String>> = ContentState.Empty,
 )
 
 class SettingsViewModel(
@@ -217,6 +219,24 @@ class SettingsViewModel(
 
     fun consumeAiKeyNotice() {
         _state.update { it.copy(aiKeyNotice = null) }
+    }
+
+    /** M15-016 获取模型列表（服务端代理探测；密钥/地址取当前输入或已保存值） */
+    fun probeLlmModels(apiKey: String, endpoint: String) {
+        if (_state.value.llmModels == ContentState.Loading) return
+        viewModelScope.launch {
+            _state.update { it.copy(llmModels = ContentState.Loading) }
+            val result = try {
+                ContentState.Success(system.probeLlmModels(apiKey.ifBlank { null }, endpoint.ifBlank { null }))
+            } catch (cause: Throwable) {
+                ContentState.Error(cause.asAppError().userMessage)
+            }
+            _state.update { it.copy(llmModels = result) }
+        }
+    }
+
+    fun consumeLlmModels() {
+        _state.update { it.copy(llmModels = ContentState.Empty) }
     }
 
     fun messageFor(problem: BaseUrlProblem): String = when (problem) {

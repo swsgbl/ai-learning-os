@@ -76,7 +76,7 @@ def main() -> None:
         print(f"      OK {remote[:16]}…")
 
     print(
-        f"\n[DONE] {apk_name} 已上线 https://ndtool.cn/downloads/android/{apk_name}\n"
+        f"\n[DONE] {apk_name} 已上线 https://ndtool.cn/android/{apk_name}\n"
         f"下一步（手动）：infra/env.production-recovery 更新 "
         f"AIOS_LATEST_ANDROID_VERSION/_CODE/_DOWNLOAD_URL 后\n"
         f"  docker compose -f infra/docker-compose.yml -p aios-m14-03-production-rehearsal "
