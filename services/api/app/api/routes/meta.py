@@ -22,10 +22,22 @@ _PLATFORMS = ("android", "harmony")
 
 
 class LatestAppOut(BaseModel):
+    """响应同时携带 snake_case 与 camelCase 字段名。
+
+    v0.1.0~v0.1.3 客户端 DTO 误用 camelCase（versionCode/downloadUrl），
+    而本端点自 M15-006 起一直是 snake_case——「检查更新」全系报
+    「API 返回数据格式异常」（真机 v0.1.3 复现）。双字段兼容：旧客户端
+    （kotlinx ignoreUnknownKeys=true）忽略 snake 字段命中 camel 字段；
+    v0.1.4+ 客户端已对齐 snake_case，两组字段等值由构造点保证。
+    camelCase 别名不独立演化，仅作已发布版本的兼容通道。
+    """
+
     platform: str
     version: str
     version_code: int
     download_url: str
+    versionCode: int
+    downloadUrl: str
 
 
 @router.get("/latest-app", response_model=LatestAppOut)
@@ -58,4 +70,6 @@ async def latest_app(platform: str = "android") -> LatestAppOut:
         version=version,
         version_code=code,
         download_url=url,
+        versionCode=code,
+        downloadUrl=url,
     )

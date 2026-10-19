@@ -41,11 +41,15 @@ def test_latest_app_configured_transparent(client_factory):
     )
     resp = client.get("/api/v1/meta/latest-app?platform=android")
     assert resp.status_code == 200
+    # M15-011：双字段名——snake_case（契约口径）+ camelCase
+    # （v0.1.0~v0.1.3 客户端 DTO 兼容；两组等值，见 LatestAppOut docstring）
     assert resp.json() == {
         "platform": "android",
         "version": "0.2.0",
         "version_code": 2,
         "download_url": url,
+        "versionCode": 2,
+        "downloadUrl": url,
     }
 
 

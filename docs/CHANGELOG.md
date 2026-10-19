@@ -1,4 +1,21 @@
 # Changelog
+## M15-011 —— 修复「检查更新」全系报「API 返回数据格式异常」（latest-app 字段名不匹配）
+
+- **根因（真机 v0.1.3 复现）**：服务端 `/api/v1/meta/latest-app` 自
+  M15-006 起响应字段为 snake_case（version_code/download_url），而
+  Android 客户端 `LatestAppResponse` DTO 误写 camelCase 无
+  @SerialName——v0.1.0~v0.1.3 全系「检查更新」反序列化必失败
+  （BAD_RESPONSE）。此前 M15-006 的「闭环验证」只到 UpdateCheckEvaluator
+  纯逻辑单测层，DTO↔服务端 payload 的契约级解析从未被测试覆盖。
+- **服务端热修（救已发布包）**：`LatestAppOut` 同时输出 snake_case 与
+  camelCase 字段（构造点保证等值）；旧客户端 kotlinx
+  ignoreUnknownKeys=true 忽略多余字段命中 camel 字段，立即恢复。
+- **客户端对齐**：DTO 加 `@SerialName("version_code"/"download_url")`
+  对齐契约口径；新增契约回归（服务端真实 payload 双字段解析 + 纯
+  snake_case 亦兼容——服务端未来撤兼容通道不破客户端）。
+- 验证：pytest test_meta_latest_app 7 passed；Android testDebugUnitTest
+  全绿。
+
 ## M15-010 —— v0.1.3：修复「记住密码」真机不落盘（caller-provided IV）
 
 - **根因（真机 instrumented test 实锤）**：AndroidKeyStore 密钥不允许
