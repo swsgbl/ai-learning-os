@@ -38,6 +38,9 @@ class LatestAppOut(BaseModel):
     download_url: str
     versionCode: int
     downloadUrl: str
+    # M15-012 多通道：主通道不可达时的回退地址（可空 = 单通道语义不变）
+    download_url_fallback: str | None = None
+    downloadUrlFallback: str | None = None
 
 
 @router.get("/latest-app", response_model=LatestAppOut)
@@ -49,16 +52,18 @@ async def latest_app(platform: str = "android") -> LatestAppOut:
         )
     s = get_settings()
     if platform == "android":
-        version, code, url = (
+        version, code, url, fallback = (
             s.latest_android_version,
             s.latest_android_version_code,
             s.latest_android_download_url,
+            s.latest_android_download_url_fallback,
         )
     else:
-        version, code, url = (
+        version, code, url, fallback = (
             s.latest_harmony_version,
             s.latest_harmony_version_code,
             s.latest_harmony_download_url,
+            s.latest_harmony_download_url_fallback,
         )
     if not (version and code and url):
         raise HTTPException(
@@ -72,4 +77,6 @@ async def latest_app(platform: str = "android") -> LatestAppOut:
         download_url=url,
         versionCode=code,
         downloadUrl=url,
+        download_url_fallback=fallback,
+        downloadUrlFallback=fallback,
     )

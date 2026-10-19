@@ -15,6 +15,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -104,5 +105,28 @@ class UpdateCheckTest {
         val state = vm.state.value.updateCheck
         assertTrue(state is ContentState.Error)
         assertEquals("无法连接 API，请检查网络后重试", (state as ContentState.Error).message)
+    }
+
+    @Test
+    fun `evaluate 透出多通道回退地址`() {
+        val latest = LatestAppInfo(
+            platform = "android",
+            version = "0.2.0",
+            versionCode = 9,
+            downloadUrl = "https://ndtool.cn/android/app.apk",
+            downloadUrlFallback = "https://atomgit.com/hongfu/ai-learning-os/releases/download/v0.2.0/app.apk",
+        )
+        val result = UpdateCheckEvaluator.evaluate(1, "0.1.0", latest)
+        assertTrue(result is UpdateCheckResult.Available)
+        result as UpdateCheckResult.Available
+        assertEquals("https://ndtool.cn/android/app.apk", result.downloadUrl)
+        assertEquals("https://atomgit.com/hongfu/ai-learning-os/releases/download/v0.2.0/app.apk", result.downloadUrlFallback)
+    }
+    
+    @Test
+    fun `evaluate 无回退地址时 fallback 为 null`() {
+        val latest = LatestAppInfo("android", "0.2.0", 9, "https://ndtool.cn/android/app.apk")
+        val result = UpdateCheckEvaluator.evaluate(1, "0.1.0", latest)
+        assertNull((result as UpdateCheckResult.Available).downloadUrlFallback)
     }
 }
