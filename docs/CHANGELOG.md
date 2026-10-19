@@ -1,5 +1,14 @@
 # Changelog
 # Changelog
+## v0.1.7（versionCode 8）
+
+- **App 端定制课程闭环**（M15-017/017b/017c）：首页「定制课程（说出
+  想学的）」→ 输入主题/学科/行业 → 章节方案 → 一键生成私有试卷开练。
+  学科名自然表述直接命中（subject 匹配）；无匹配主题如实列出当前
+  支持范围引导。
+- **模型列表最新优先**（M15-016b）+ materialize DTO 对齐（017c）。
+
+# Changelog
 ## M15-017c —— App materialize DTO 对齐服务端 paper_id（真机实测暴露）
 
 materialize 响应真实字段为 {paper_id, question_count, title}，App DTO
