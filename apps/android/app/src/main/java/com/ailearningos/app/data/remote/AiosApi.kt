@@ -45,6 +45,11 @@ interface AiosApi {
     suspend fun deleteMyAiKey(@Path("slot") slot: String): UserAiKeyStatus
     @POST("api/v1/me/ai-keys/llm/models")
     suspend fun probeLlmModels(@Body body: LlmModelsProbeRequest): LlmModelsProbeResponse
+    @POST("api/v1/courses/generation-drafts")
+    suspend fun createGenerationDraft(@Body body: GenerationDraftRequest): GenerationDraftResponse
+
+    @POST("api/v1/courses/generation-drafts/{id}/materialize")
+    suspend fun materializeDraft(@Path("id") id: String): MaterializedPaperResponse
 
     // ---------- M12-02 考试业务 ----------
 

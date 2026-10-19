@@ -205,9 +205,23 @@ async def probe_my_llm_models(request: Request, body: LlmModelsProbeIn) -> LlmMo
         raise HTTPException(status_code=502, detail=f"模型列表接口返回 {resp.status_code}")
     try:
         data = resp.json().get("data") or []
-        models = sorted({str(item["id"]) for item in data if isinstance(item, dict) and item.get("id")})
+        items = [
+            (str(item["id"]), item.get("created"))
+            for item in data
+            if isinstance(item, dict) and item.get("id")
+        ]
     except Exception as cause:
         raise HTTPException(status_code=502, detail="响应不是 OpenAI 兼容的模型列表格式") from cause
+    # M15-016b：最新模型优先——带 created 时间戳的平台按时间降序；
+    # 不带的保持平台返回序（主流平台本身最新在前）。保持首见去重。
+    seen: set[str] = set()
+    if items and all(created is not None for _, created in items):
+        items.sort(key=lambda pair: pair[1] or 0, reverse=True)
+    models: list[str] = []
+    for model_id, _ in items:
+        if model_id not in seen:
+            seen.add(model_id)
+            models.append(model_id)
     return LlmModelsProbeOut(models=models[:100])
 
 

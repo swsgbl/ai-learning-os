@@ -153,7 +153,13 @@ async def create_generation_draft(payload: GenerateRequest, request: Request) ->
     try:
         plan = generate_course_plan(payload.goal, dag, resources_by_concept)
     except NoCompetencyMatch as cause:
-        raise HTTPException(status_code=422, detail=str(cause)) from cause
+        # M15-017：移动端闭环——422 如实告知当前概念图能支撑的主题，
+        # 让用户可直接换可匹配的目标（不虚构空课程，也不让用户盲猜）
+        topics = "、".join(node.canonical_name for node in dag.nodes[:20])
+        raise HTTPException(
+            status_code=422,
+            detail=f"{cause}。当前已发布概念图支持的主题：{topics}",
+        ) from cause
     record = await _repo(request).create({
         "goal": payload.goal,
         "dag_version": plan["dag_version"],

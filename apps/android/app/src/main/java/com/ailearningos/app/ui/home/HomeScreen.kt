@@ -36,6 +36,7 @@ fun HomeScreen(
     sessionViewModel: SessionViewModel,
     onOpenLogin: () -> Unit,
     onOpenStudy: () -> Unit,
+    onOpenCreateCourse: () -> Unit = {},
     onOpenVoice: () -> Unit,
     onOpenSettings: () -> Unit,
     firstLaunch: Boolean = false,
@@ -90,7 +91,10 @@ fun HomeScreen(
 
         SectionCard(title = "快速入口") {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onOpenStudy, modifier = Modifier.fillMaxWidth()) {
+                Button(onClick = onOpenCreateCourse, modifier = Modifier.fillMaxWidth()) {
+                    Text("定制课程（说出想学的）")
+                }
+                OutlinedButton(onClick = onOpenStudy, modifier = Modifier.fillMaxWidth()) {
                     Text("我的课程 / 考场")
                 }
                 OutlinedButton(onClick = onOpenVoice, modifier = Modifier.fillMaxWidth()) {
