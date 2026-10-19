@@ -1,4 +1,24 @@
 # Changelog
+## M15-012 —— 国内下载通道收束 + 生产 Web basePath 修复
+
+- **国内 APK 分发**（回应「国内优先」需求，第一阶段）：生产
+  latest-app `download_url` 切换至 VPS 既有公共下载面
+  `https://ndtool.cn/android/...`（M14-176 通道，不经 frp 家机隧道，
+  国内直连）；v0.1.3 APK 上线该通道（sha256 与 GitHub Releases 一致，
+  全量下载复核）。所有已装客户端（v0.1.0~v0.1.3）检查更新即走国内源。
+- **发布同步脚本** `tools/android_release/publish_to_ndtool.py`：
+  gh 下载 Release 资产 → sha256 校验 → scp 上线 → VPS 端复算，
+  fail-closed；每版发布后一键执行。
+- **生产 Web basePath 修复（事故）**：滚动 m15-012 web 镜像时漏传
+  `NEXT_PUBLIC_BASE_PATH=/aios`（Git Bash 下 MSYS 路径转换会吞
+  `/aios`，须 `MSYS_NO_PATHCONV=1` 前置——PUBLIC_EDGE_DEPLOYMENT 文档
+  的「Docker --build-arg 不受影响」断言在本机不成立，已实证并修正
+  构建命令），致 `/aios` 页面 404；按文档参数重建后恢复（/aios、
+  /aios/login、/aios/governance 全 200，治理页含 M15-008「AI 能力」
+  tab 一并上线）。
+- 第二阶段（待用户 AtomGit 仓库地址）：双仓镜像 + latest-app 多通道
+  fallback 字段 + Android 客户端下载回退（v0.1.4）。
+
 ## M15-008 —— AI 能力密钥治理（admin-only 在线配置三槽位）
 
 - **服务端**：`ai_provider_secrets` 表（AUTH_SECRET 派生密钥 HKDF+
