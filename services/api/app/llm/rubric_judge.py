@@ -172,6 +172,18 @@ class UserAwareRubricJudge:
 
         s = get_settings()
         effective_endpoint = endpoint or s.llm_endpoint
+        if endpoint is not None:
+            # TOCTOU 纵深（M15-015b）：保存时校验之外，请求构建时复验并
+            # 规范化——库中值被旁路改动（直改库/未来代码路径）同样被拦。
+            from app.api.routes.me_ai_keys import (
+                PersonalEndpointRejected,
+                normalize_personal_endpoint,
+            )
+
+            try:
+                effective_endpoint = normalize_personal_endpoint(endpoint)
+            except PersonalEndpointRejected:
+                return None
         effective_model = model or s.llm_model
         cache_key = f"{api_key}|{effective_endpoint}|{effective_model}"
         judge = self._personal_cache.get(cache_key)

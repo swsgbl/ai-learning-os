@@ -1,4 +1,17 @@
 # Changelog
+## M15-015c —— SSRF 纵深加固（TOCTOU 复验 + 规范化重建）
+
+- **TOCTOU 复验**：`build_personal` 请求构建时经
+  `normalize_personal_endpoint` 复验——库中 endpoint 被旁路改动（直改
+  库/未来代码路径绕过 PUT）同样被拦（回落全局 judge，不阻断判分）。
+- **parser-differential 根除**：校验通过即返回校验器重建的规范形态
+  `scheme://hostname[:port]path`（剥 userinfo/query/fragment）——实际
+  请求使用重建串，校验对象与请求对象严格一致。
+- **异常层次**：`PersonalEndpointRejected`（领域级）+ PUT 转 422；
+  llm 层直接复用领域函数（无 web 异常依赖）。
+- 测试：规范化重建断言（userinfo 剥离）+ 旁路改动拒绝（mock 复验
+  路径）——13 passed。
+
 ## M15-015b —— BYOK 安全修复（安全审查 4 项发现处置）
 
 - **SSRF 缓解**（真实缺陷）：个人 LLM endpoint 为任一登录用户可填、

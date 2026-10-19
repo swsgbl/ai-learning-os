@@ -99,7 +99,10 @@ async def put_my_ai_key(request: Request, slot: str, body: UserApiKeyIn) -> User
     endpoint = (body.endpoint or "").strip() or None
     model = (body.model or "").strip() or None
     if endpoint is not None:
-        _validate_personal_endpoint(endpoint)
+        try:
+            endpoint = normalize_personal_endpoint(endpoint)
+        except PersonalEndpointRejected as cause:
+            raise HTTPException(status_code=422, detail=str(cause)) from cause
     record = await repo.upsert(
         user_id,
         slot,
@@ -193,7 +196,11 @@ async def resolve_user_provider_key(app, slot: str, user_id: str | None) -> str 
         return None
 
 
-def _validate_personal_endpoint(endpoint: str) -> None:
+class PersonalEndpointRejected(ValueError):
+    """个人 LLM endpoint 校验失败（SSRF 防线——领域级异常，web 层转 422）。"""
+
+
+def normalize_personal_endpoint(endpoint: str) -> str:
     """SSRF 缓解（M15-015 安全修复）：个人 LLM endpoint 是任一登录用户
     可填、且服务端会主动向其发请求的 URL——必须拒绝内网/环回/链路本
     地/云元数据目标。非法即 422（不落库）。解析失败同样拒绝。
@@ -203,20 +210,27 @@ def _validate_personal_endpoint(endpoint: str) -> None:
 
     parsed = urlparse(endpoint)
     if parsed.scheme not in ("http", "https") or not parsed.hostname:
-        raise HTTPException(status_code=422, detail="接口地址必须是 http/https URL")
+        raise PersonalEndpointRejected("接口地址必须是 http/https URL")
     host = parsed.hostname
     # 恒内网域名黑名单（localhost 及容器语境里的宿主别名——解析必为环回/网关）
     if host.lower() in {"localhost", "host.docker.internal", "gateway.docker.internal"} or host.lower().endswith(".local"):
-        raise HTTPException(status_code=422, detail="接口地址不允许指向本机/内网域名")
+        raise PersonalEndpointRejected("接口地址不允许指向本机/内网域名")
     try:
         addr = ipaddress.ip_address(host)
     except ValueError:
-        return  # 其余公有域名：DNS 在请求时解析（残余面=DNS 重绑定，见注释）
-    if (
+        addr = None  # 其余公有域名：DNS 在请求时解析（残余面=DNS 重绑定，见注释）
+    if addr is not None and (
         addr.is_private
         or addr.is_loopback
         or addr.is_link_local
         or addr.is_unspecified
         or addr.is_reserved
     ):
-        raise HTTPException(status_code=422, detail="接口地址不允许指向内网/保留地址")
+        raise PersonalEndpointRejected("接口地址不允许指向内网/保留地址")
+    # parser-differential 缓解：返回校验器重建的规范形态
+    # （scheme://hostname[:port]path），丢弃 userinfo/query/fragment——
+    # 实际请求使用该重建串，校验对象与请求对象严格一致。
+    host_part = parsed.hostname.lower()
+    if parsed.port is not None:
+        host_part = f"{host_part}:{parsed.port}"
+    return f"{parsed.scheme}://{host_part}{parsed.path or ''}"
