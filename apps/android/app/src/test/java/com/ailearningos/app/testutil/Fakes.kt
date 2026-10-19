@@ -224,6 +224,11 @@ class FakeSystemGateway : SystemGateway {
         _myAiKeys.remove(slot)
     }
 
+    var probeLlmModelsResult: Result<List<String>> = Result.success(listOf("deepseek-chat", "deepseek-reasoner"))
+
+    override suspend fun probeLlmModels(apiKey: String?, endpoint: String?): List<String> =
+        probeLlmModelsResult.getOrThrow()
+
     override suspend fun latestApp(): LatestAppInfo? {
         latestAppCalls++
         return latestAppResult.getOrThrow()

@@ -156,6 +156,61 @@ async def delete_my_ai_key(request: Request, slot: str) -> UserAiKeyOut:
     return UserAiKeyOut(slot=slot, configured=False, effect=_effect_label(slot))
 
 
+class LlmModelsProbeIn(BaseModel):
+    """模型列表探测：密钥/接口地址直接传当前输入值（未保存前即可探测）；
+    省略则用已保存的个人配置。密钥只在本次请求内使用，不落库。"""
+
+    api_key: str | None = Field(default=None, min_length=8, max_length=512)
+    endpoint: str | None = Field(default=None, max_length=512)
+
+
+class LlmModelsProbeOut(BaseModel):
+    models: list[str]
+
+
+@router.post("/llm/models", response_model=LlmModelsProbeOut)
+async def probe_my_llm_models(request: Request, body: LlmModelsProbeIn) -> LlmModelsProbeOut:
+    """列出用户自带 LLM 服务的模型（OpenAI 兼容 GET {endpoint}/models）。
+
+    服务端代理探测（App 不直连）：endpoint 经同款 SSRF 校验/规范化；
+    失败如实透传（密钥错 401/地址不可达等 → 4xx + 脱敏 detail）。
+    """
+    import httpx
+
+    await require_user(request)
+    user_id = current_owner_id(request)
+    endpoint = body.endpoint
+    api_key = body.api_key
+    if api_key is None or endpoint is None:
+        saved = await resolve_user_llm_config(request.app, user_id)
+        if saved is None:
+            raise HTTPException(status_code=422, detail="请先填写密钥与接口地址（或先保存）")
+        api_key = api_key or saved["api_key"]
+        endpoint = endpoint or saved["endpoint"] or get_settings().llm_endpoint
+    if not endpoint:
+        raise HTTPException(status_code=422, detail="缺少接口地址")
+    try:
+        base = normalize_personal_endpoint(endpoint)
+    except PersonalEndpointRejected as cause:
+        raise HTTPException(status_code=422, detail=str(cause)) from cause
+    url = f"{base.rstrip('/')}/models"
+    try:
+        async with httpx.AsyncClient(timeout=8.0, follow_redirects=False) as client:
+            resp = await client.get(url, headers={"Authorization": f"Bearer {api_key}"})
+    except httpx.HTTPError as cause:
+        raise HTTPException(status_code=502, detail="接口地址不可达") from cause
+    if resp.status_code == 401:
+        raise HTTPException(status_code=401, detail="密钥无效（服务返回 401）")
+    if resp.status_code != 200:
+        raise HTTPException(status_code=502, detail=f"模型列表接口返回 {resp.status_code}")
+    try:
+        data = resp.json().get("data") or []
+        models = sorted({str(item["id"]) for item in data if isinstance(item, dict) and item.get("id")})
+    except Exception as cause:
+        raise HTTPException(status_code=502, detail="响应不是 OpenAI 兼容的模型列表格式") from cause
+    return LlmModelsProbeOut(models=models[:100])
+
+
 async def resolve_user_llm_config(app, user_id: str | None) -> dict | None:
     """个人 LLM 判分配置：{api_key, endpoint, model}——endpoint/model 空值
     由调用方回落服务端全局配置。无个人密钥/密文损坏 → None（用全局）。"""

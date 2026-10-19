@@ -106,3 +106,14 @@ data class UserAiKeyPutRequest(
     val endpoint: String? = null,
     val model: String? = null,
 )
+
+
+/** M15-016 模型列表探测（服务端代理 /me/ai-keys/llm/models） */
+@Serializable
+data class LlmModelsProbeRequest(
+    val api_key: String? = null,
+    val endpoint: String? = null,
+)
+
+@Serializable
+data class LlmModelsProbeResponse(val models: List<String>)

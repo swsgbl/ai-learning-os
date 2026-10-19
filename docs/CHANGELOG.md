@@ -1,4 +1,15 @@
 # Changelog
+## M15-016 —— 模型名自动获取列表选择（App 端）
+
+- **服务端** `POST /api/v1/me/ai-keys/llm/models`：服务端代理探测
+  用户自带 LLM 服务的 OpenAI 兼容 `GET {endpoint}/models`（App 不直连
+  ——endpoint 经同款 SSRF 校验/规范化；密钥只在本请求内使用不落库；
+  401/不可达/非兼容负载如实脱敏透传；列表去重排序截断 100）。
+- **App 端**：模型名输入旁「获取列表」按钮——取当前输入的密钥/接口
+  地址（未保存即可探测）→ 列表按钮点选回填（>8 个折叠提示手动输入）。
+- 测试：探测 3 契约（成功/SSRF 拒绝/缺输入 422）+ 全量 6446 passed；
+  Android testDebugUnitTest + lintDebug 全绿。
+
 ## v0.1.5（versionCode 6）
 
 - **个人 AI 密钥收敛为单主模型（LLM）槽位并真正生效**（M15-015/015b/015c）：

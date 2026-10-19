@@ -4,6 +4,7 @@ import com.ailearningos.app.core.AppError
 import com.ailearningos.app.core.AppErrorKind
 import com.ailearningos.app.data.model.PrivacySnapshot
 import com.ailearningos.app.data.model.UserProfile
+import com.ailearningos.app.data.remote.LlmModelsProbeRequest
 import com.ailearningos.app.data.remote.LoginRequest
 import com.ailearningos.app.data.remote.UserAiKeyPutRequest
 import com.ailearningos.app.data.remote.RegisterRequest
@@ -50,6 +51,7 @@ interface SystemGateway {
     suspend fun myAiKeys(): List<MyAiKeyInfo>
     suspend fun saveMyAiKey(slot: String, apiKey: String, endpoint: String?, model: String?)
     suspend fun deleteMyAiKey(slot: String)
+    suspend fun probeLlmModels(apiKey: String?, endpoint: String?): List<String>
 }
 
 /** M15-006 服务端透出的最新应用版本（领域模型，UI 不接触 DTO） */
@@ -105,6 +107,12 @@ class AuthRepository(
     override suspend fun deleteMyAiKey(slot: String) = withRemoteError {
         apiProvider.get().deleteMyAiKey(slot)
         Unit
+    }
+
+    override suspend fun probeLlmModels(apiKey: String?, endpoint: String?): List<String> = withRemoteError {
+        apiProvider.get().probeLlmModels(
+            LlmModelsProbeRequest(api_key = apiKey?.ifBlank { null }, endpoint = endpoint?.ifBlank { null })
+        ).models
     }
 
     override suspend fun login(username: String, password: String): UserProfile = withRemoteError {
