@@ -4,6 +4,7 @@ import com.ailearningos.app.data.model.PrivacySnapshot
 import com.ailearningos.app.data.model.UserProfile
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonObject
 
 /**
  * M12-01 第一切片 DTO：GET /health、auth status/login/me、system/privacy。
@@ -117,3 +118,26 @@ data class LlmModelsProbeRequest(
 
 @Serializable
 data class LlmModelsProbeResponse(val models: List<String>)
+
+
+/** M15-017 课程生成（/courses/generation-drafts）——plan 保留原始 JSON，渲染时取 outline */
+@Serializable
+data class GenerationDraftRequest(val goal: String)
+
+@Serializable
+data class GenerationDraftResponse(
+    val id: String,
+    val goal: String,
+    val status: String,
+    val chapter_count: Int,
+    val generation_note: String,
+    val plan: JsonObject,
+)
+
+/** materialize 产物：私有练习卷（对齐 PaperResponse 最小集） */
+@Serializable
+data class MaterializedPaperResponse(
+    val id: String,
+    val title: String,
+    val question_count: Int,
+)

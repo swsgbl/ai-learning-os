@@ -1,6 +1,8 @@
 package com.ailearningos.app.testutil
 
 import com.ailearningos.app.core.AppError
+import com.ailearningos.app.data.remote.GenerationDraftResponse
+import com.ailearningos.app.data.remote.MaterializedPaperResponse
 import com.ailearningos.app.core.AppErrorKind
 import com.ailearningos.app.data.AuthGateway
 import com.ailearningos.app.data.MyAiKeyInfo
@@ -228,6 +230,29 @@ class FakeSystemGateway : SystemGateway {
 
     override suspend fun probeLlmModels(apiKey: String?, endpoint: String?): List<String> =
         probeLlmModelsResult.getOrThrow()
+
+    /** M15-017 定制课程 */
+    var generateCourseResult: Result<GenerationDraftResponse> = Result.success(draftFixture())
+
+    var materializeCourseResult: Result<MaterializedPaperResponse> = Result.success(
+        MaterializedPaperResponse(id = "paper_1", title = "定制课程：SQL 数据分析", question_count = 3)
+    )
+
+    override suspend fun generateCourse(goal: String): GenerationDraftResponse =
+        generateCourseResult.getOrThrow()
+
+    override suspend fun materializeCourse(draftId: String): MaterializedPaperResponse =
+        materializeCourseResult.getOrThrow()
+
+    private fun draftFixture(): GenerationDraftResponse {
+        val plan = kotlinx.serialization.json.Json.parseToJsonElement(
+            """{"outline":[{"chapter_no":1,"concept_id":"sql:select-basics","title":"SELECT 基础查询","difficulty":1}],"assessments":[{"chapter_no":1,"concept_id":"sql:select-basics","assessment_kind":"explain","stem":"解释 SELECT"}]}"""
+        ) as kotlinx.serialization.json.JsonObject
+        return GenerationDraftResponse(
+            id = "draft_1", goal = "学 SQL", status = "pending_review",
+            chapter_count = 1, generation_note = "生成 1 章", plan = plan,
+        )
+    }
 
     override suspend fun latestApp(): LatestAppInfo? {
         latestAppCalls++

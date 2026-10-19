@@ -40,6 +40,8 @@ import com.ailearningos.app.ui.search.SearchScreen
 import com.ailearningos.app.ui.search.SearchViewModel
 import com.ailearningos.app.ui.session.SessionViewModel
 import com.ailearningos.app.ui.settings.SettingsScreen
+import com.ailearningos.app.ui.create.CreateCourseScreen
+import com.ailearningos.app.ui.create.CreateCourseViewModel
 import com.ailearningos.app.ui.study.StudyScreen
 import com.ailearningos.app.ui.study.StudyViewModel
 import com.ailearningos.app.ui.voice.VoiceScreen
@@ -61,6 +63,7 @@ const val EXAM_PAPER_ROUTE = "exam-paper/{paperId}"
 const val EXAM_RESUME_ROUTE = "exam/{examId}"
 const val REVIEW_ROUTE = "review/{examId}"
 const val GOVERNANCE_ROUTE = "governance"
+const val CREATE_COURSE_ROUTE = "create-course"
 const val VOICE_PAPER_ROUTE = "voice-paper/{paperId}"
 const val VOICE_SESSION_ROUTE = "voice-session/{sessionId}"
 
@@ -114,11 +117,19 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
                     firstLaunch = settingsState.effectiveBaseUrl == null,
                     onOpenLogin = { navController.navigate(LOGIN_ROUTE) },
                     onOpenStudy = { navController.navigate(AiosDestination.Study.route) },
+                    onOpenCreateCourse = { navController.navigate(CREATE_COURSE_ROUTE) },
                     onOpenVoice = { navController.navigate(AiosDestination.Voice.route) },
                     onOpenSettings = { navController.navigate(AiosDestination.Settings.route) },
                     onOpenGovernance = {
                         navController.navigate(GOVERNANCE_ROUTE) { launchSingleTop = true }
                     },
+                )
+            }
+            composable(CREATE_COURSE_ROUTE) {
+                val vm: CreateCourseViewModel = viewModel(factory = viewModelFactory)
+                CreateCourseScreen(
+                    viewModel = vm,
+                    onOpenStudy = { navController.navigate(AiosDestination.Study.route) },
                 )
             }
             composable(AiosDestination.Study.route) {

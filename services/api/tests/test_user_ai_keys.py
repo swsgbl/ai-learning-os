@@ -198,7 +198,15 @@ def test_probe_llm_models_success(client: TestClient, monkeypatch):
         status_code = 200
 
         def json(self):
-            return {"data": [{"id": "deepseek-chat"}, {"id": "deepseek-reasoner"}, {"id": "deepseek-chat"}]}
+            # created 时间戳乱序给出——断言按最新优先重排
+            return {
+                "data": [
+                    {"id": "deepseek-chat", "created": 100},
+                    {"id": "deepseek-reasoner", "created": 300},
+                    {"id": "deepseek-chat", "created": 100},
+                    {"id": "deepseek-v3.2", "created": 200},
+                ]
+            }
 
     with patch("httpx.AsyncClient") as client_cls:
         client_cls.return_value.__aenter__ = AsyncMock(return_value=AsyncMock(get=AsyncMock(return_value=_Resp())))
@@ -209,7 +217,7 @@ def test_probe_llm_models_success(client: TestClient, monkeypatch):
             headers=alice,
         )
     assert resp.status_code == 200, resp.text
-    assert resp.json()["models"] == ["deepseek-chat", "deepseek-reasoner"]
+    assert resp.json()["models"] == ["deepseek-reasoner", "deepseek-v3.2", "deepseek-chat"]  # 最新优先+去重
 
 
 def test_probe_llm_models_ssrf_rejected(client: TestClient):
