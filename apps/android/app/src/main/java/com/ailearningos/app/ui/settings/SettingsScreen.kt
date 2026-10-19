@@ -146,7 +146,7 @@ fun SettingsScreen(
             MyAiKeysCard(
                 state = state,
                 onLoad = settingsViewModel::loadMyAiKeys,
-                onSave = settingsViewModel::saveMyAiKey,
+                onSave = { slot, key, ep, m -> settingsViewModel.saveMyAiKey(slot, key, ep, m) },
                 onDelete = settingsViewModel::deleteMyAiKey,
             )
         }
@@ -312,15 +312,15 @@ fun SettingsScreen(
 private fun MyAiKeysCard(
     state: SettingsUiState,
     onLoad: () -> Unit,
-    onSave: (String, String) -> Unit,
+    onSave: (String, String, String?, String?) -> Unit,
     onDelete: (String) -> Unit,
 ) {
     LaunchedEffect(Unit) { onLoad() }
-    SectionCard(title = "我的 AI 密钥") {
+    SectionCard(title = "我的 AI 密钥（主模型）") {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                "自带云端密钥（BYOK）：加密保存、仅自己的请求使用；不填则用服务端配置。" +
-                    "云语音密钥立即生效；LLM 密钥保存后随后续版本生效。",
+                "自带云端大模型密钥（如 DeepSeek/OpenAI），自己的答题判分即时走自己的模型；" +
+                    "不填则用本机部署的默认模型。语音为本机部署，无需密钥。",
                 style = MaterialTheme.typography.bodySmall,
                 color = Subtle,
             )
@@ -339,37 +339,55 @@ private fun MyAiKeysCard(
 @Composable
 private fun MyAiKeyRow(
     key: MyAiKeyInfo,
-    onSave: (String, String) -> Unit,
+    onSave: (String, String, String?, String?) -> Unit,
     onDelete: (String) -> Unit,
 ) {
-    val label = when (key.slot) {
-        "llm" -> "LLM（判分/生成）"
-        "asr_cloud" -> "云语音识别"
-        "tts_cloud" -> "云语音合成"
-        else -> key.slot
-    }
-    var input by remember(key.slot) { mutableStateOf("") }
-    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+    var keyInput by remember(key.slot) { mutableStateOf("") }
+    var endpointInput by remember(key.slot) { mutableStateOf("") }
+    var modelInput by remember(key.slot) { mutableStateOf("") }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text(label, style = MaterialTheme.typography.bodyMedium)
+            Text("主模型（LLM 判分）", style = MaterialTheme.typography.bodyMedium)
             Text(
-                if (key.configured) "已配置 ····${key.last4}" else "未配置",
+                if (key.configured) {
+                    val route = listOfNotNull(key.endpoint, key.model).joinToString(" · ")
+                    if (route.isBlank()) "已配置 ····${key.last4}" else "已配置 ····${key.last4}（$route）"
+                } else {
+                    "未配置"
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = if (key.configured) MaterialTheme.colorScheme.primary else Subtle,
             )
         }
+        OutlinedTextField(
+            value = keyInput,
+            onValueChange = { keyInput = it },
+            placeholder = { Text("API 密钥（必填，不回显）", style = MaterialTheme.typography.bodySmall) },
+            visualTransformation = PasswordVisualTransformation(),
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = endpointInput,
+            onValueChange = { endpointInput = it },
+            placeholder = { Text("接口地址（选填，如 https://api.deepseek.com/v1）", style = MaterialTheme.typography.bodySmall) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
+        OutlinedTextField(
+            value = modelInput,
+            onValueChange = { modelInput = it },
+            placeholder = { Text("模型名（选填，如 deepseek-chat；不填用服务器默认）", style = MaterialTheme.typography.bodySmall) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedTextField(
-                value = input,
-                onValueChange = { input = it },
-                placeholder = { Text("粘贴密钥（不回显）", style = MaterialTheme.typography.bodySmall) },
-                visualTransformation = PasswordVisualTransformation(),
-                singleLine = true,
-                modifier = Modifier.fillMaxWidth(0.65f),
-            )
             Button(
-                onClick = { onSave(key.slot, input); input = "" },
-                enabled = input.length >= 8,
+                onClick = {
+                    onSave(key.slot, keyInput, endpointInput, modelInput)
+                    keyInput = ""; endpointInput = ""; modelInput = ""
+                },
+                enabled = keyInput.length >= 8,
             ) { Text("保存") }
             if (key.configured) {
                 TextButton(onClick = { onDelete(key.slot) }) { Text("删除") }

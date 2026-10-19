@@ -204,13 +204,20 @@ class FakeSystemGateway : SystemGateway {
 
     override suspend fun myAiKeys(): List<MyAiKeyInfo> {
         myAiKeysError?.let { throw it }
-        return listOf("llm", "asr_cloud", "tts_cloud").map { slot ->
-            _myAiKeys[slot] ?: MyAiKeyInfo(slot = slot, configured = false, last4 = null, effect = if (slot == "llm") "saved" else "hot")
+        return listOf("llm").map { slot ->
+            _myAiKeys[slot] ?: MyAiKeyInfo(slot = slot, configured = false, last4 = null, effect = "hot")
         }
     }
 
-    override suspend fun saveMyAiKey(slot: String, apiKey: String) {
-        _myAiKeys[slot] = MyAiKeyInfo(slot = slot, configured = true, last4 = apiKey.takeLast(4), effect = if (slot == "llm") "saved" else "hot")
+    override suspend fun saveMyAiKey(slot: String, apiKey: String, endpoint: String?, model: String?) {
+        _myAiKeys[slot] = MyAiKeyInfo(
+            slot = slot,
+            configured = true,
+            last4 = apiKey.takeLast(4),
+            effect = "hot",
+            endpoint = endpoint?.ifBlank { null },
+            model = model?.ifBlank { null },
+        )
     }
 
     override suspend fun deleteMyAiKey(slot: String) {

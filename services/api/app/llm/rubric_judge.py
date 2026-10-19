@@ -122,3 +122,90 @@ def build_llm_judge(config: dict) -> LlmRubricJudge | None:
             timeout_seconds=timeout_seconds,
         )
     )
+
+
+# ---- M15-015 per-user 判分（BYOK）----
+
+# 判分请求级 judge 上下文：submit 路由在 async 上下文里解析个人 LLM 配置
+# 并 set 已构建的 judge（同步 judge() 内不能 await，故传对象不传 user_id）。
+from contextlib import asynccontextmanager
+from contextvars import ContextVar
+
+grading_judge_ctxvar: ContextVar[LlmRubricJudge | None] = ContextVar(
+    "aios_grading_judge", default=None
+)
+
+
+class UserAwareRubricJudge:
+    """RubricJudge 协议包装器：判分瞬间读请求级上下文。
+
+    - 请求链设置了个人 judge（用户自带 LLM 密钥）→ 用个人 judge；
+    - 否则 → 全局装配的 judge（可能为 None = 主观题进复核，客观题照判）。
+    判分域（rubric_grader/judge_question）零改动——同一接口形态。
+    """
+
+    def __init__(self, global_judge) -> None:
+        self._global = global_judge
+        self._personal_cache: dict[str, LlmRubricJudge] = {}
+
+    @property
+    def judge_model(self) -> str:
+        active = grading_judge_ctxvar.get() or self._global
+        return active.judge_model
+
+    def build_personal(self, *, api_key: str, endpoint: str | None, model: str | None):
+        """按个人配置构建（或复用缓存的）judge——同配置幂等。
+
+        endpoint/model 未填 → 回落服务端全局配置（同网关不同 key 场景）；
+        三项仍不齐 → build_llm_judge 返回 None（本次判分回落全局 judge）。
+        """
+        from app.core.config import get_settings
+
+        s = get_settings()
+        effective_endpoint = endpoint or s.llm_endpoint
+        effective_model = model or s.llm_model
+        cache_key = f"{api_key}|{effective_endpoint}|{effective_model}"
+        judge = self._personal_cache.get(cache_key)
+        if judge is None:
+            judge = build_llm_judge(
+                {
+                    "endpoint": effective_endpoint,
+                    "api_key": api_key,
+                    "model": effective_model,
+                    "num_ctx": None,
+                    "timeout_seconds": None,
+                }
+            )
+            if judge is None:
+                return None
+            self._personal_cache[cache_key] = judge
+        return judge
+
+    def judge(self, stem: str, rubric_points: tuple[str, ...], given: str):
+        active = grading_judge_ctxvar.get() or self._global
+        if active is None:
+            return None
+        return active.judge(stem, rubric_points, given)
+
+
+@asynccontextmanager
+async def personal_judge_scope(request, wrapper: UserAwareRubricJudge):
+    """请求判分上下文：当前用户有个人 LLM 密钥时构建 per-key judge 并
+    set 进 contextvar；块内所有判分（repository.submit 等）经个人 judge。
+    解析失败/无个人密钥 → 透传全局（行为与无 BYOK 完全一致）。"""
+    from app.api.routes.auth import current_owner_id
+    from app.api.routes.me_ai_keys import resolve_user_llm_config
+
+    token = None
+    try:
+        config = await resolve_user_llm_config(request.app, current_owner_id(request))
+        if config:
+            personal = wrapper.build_personal(
+                api_key=config["api_key"], endpoint=config["endpoint"], model=config["model"]
+            )
+            if personal is not None:
+                token = grading_judge_ctxvar.set(personal)
+        yield
+    finally:
+        if token is not None:
+            grading_judge_ctxvar.reset(token)

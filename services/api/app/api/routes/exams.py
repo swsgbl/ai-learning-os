@@ -76,8 +76,16 @@ async def save_answer(exam_id: str, payload: SaveAnswerRequest, request: Request
 @router.post("/{exam_id}/submit", response_model=SubmissionOut)
 async def submit_exam(exam_id: str, _payload: SubmitRequest, request: Request) -> SubmissionOut:
     await require_exam(request, exam_id)  # M9-02 归属门
+    from app.llm.rubric_judge import UserAwareRubricJudge, personal_judge_scope
+
+    judge = getattr(request.app.state, "rubric_judge", None)
     try:
-        submission = await request.app.state.repository.submit(exam_id)
+        if isinstance(judge, UserAwareRubricJudge):
+            # M15-015 BYOK：用户配了个人 LLM 密钥时本次判分经个人模型
+            async with personal_judge_scope(request, judge):
+                submission = await request.app.state.repository.submit(exam_id)
+        else:
+            submission = await request.app.state.repository.submit(exam_id)
     except KeyError as cause:
         raise HTTPException(status_code=404, detail=str(cause)) from cause
     except ValueError as cause:

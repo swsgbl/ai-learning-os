@@ -124,16 +124,18 @@ def create_app(
             # 在线填写后重启容器即生效。
             if settings.rubric_judge == "llm":
                 from app.api.routes.ai_providers import resolve_provider_key
-                from app.llm.rubric_judge import build_llm_judge
+                from app.llm.rubric_judge import UserAwareRubricJudge, build_llm_judge
 
-                rubric_judge = build_llm_judge(
-                    {
-                        "endpoint": settings.llm_endpoint,
-                        "api_key": await resolve_provider_key(app, "llm"),
-                        "model": settings.llm_model,
-                        "num_ctx": settings.llm_num_ctx,
-                        "timeout_seconds": settings.llm_timeout_seconds,
-                    }
+                rubric_judge = UserAwareRubricJudge(
+                    build_llm_judge(
+                        {
+                            "endpoint": settings.llm_endpoint,
+                            "api_key": await resolve_provider_key(app, "llm"),
+                            "model": settings.llm_model,
+                            "num_ctx": settings.llm_num_ctx,
+                            "timeout_seconds": settings.llm_timeout_seconds,
+                        }
+                    )
                 )
             else:
                 rubric_judge = make_rubric_judge(settings.rubric_judge)

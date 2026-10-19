@@ -50,7 +50,7 @@ class MyAiKeysViewModelTest {
         vm.loadMyAiKeys()
         val state = vm.state.value.myAiKeys
         assertTrue(state is ContentState.Success)
-        assertEquals(listOf("llm", "asr_cloud", "tts_cloud"), (state as ContentState.Success).value.map { it.slot })
+        assertEquals(listOf("llm"), (state as ContentState.Success).value.map { it.slot })
         assertEquals(false, state.value.first().configured)
     }
 
@@ -58,7 +58,7 @@ class MyAiKeysViewModelTest {
     fun `saveMyAiKey 短密钥被拒且不调网关`() = runTest(dispatcher) {
         val system = FakeSystemGateway()
         val vm = vm(system)
-        vm.saveMyAiKey("llm", "short")
+        vm.saveMyAiKey("llm", "short", null, null)
         assertEquals("密钥过短（至少 8 位）", vm.state.value.aiKeyNotice)
         assertTrue(vm.state.value.myAiKeys is ContentState.Empty)
     }
@@ -66,21 +66,21 @@ class MyAiKeysViewModelTest {
     @Test
     fun `save 后状态刷新为已配置`() = runTest(dispatcher) {
         val vm = vm(FakeSystemGateway())
-        vm.saveMyAiKey("asr_cloud", "sk-mine-987654")
+        vm.saveMyAiKey("llm", "sk-mine-987654", null, null)
         val state = vm.state.value.myAiKeys as ContentState.Success
-        val asr = state.value.first { it.slot == "asr_cloud" }
+        val asr = state.value.first { it.slot == "llm" }
         assertEquals(true, asr.configured)
         assertEquals("7654", asr.last4)
-        assertEquals("已保存（加密存储，仅自己可见）", vm.state.value.aiKeyNotice)
+        assertEquals("已保存（加密存储，判分即时生效）", vm.state.value.aiKeyNotice)
     }
 
     @Test
     fun `delete 后回退未配置`() = runTest(dispatcher) {
         val vm = vm(FakeSystemGateway())
-        vm.saveMyAiKey("tts_cloud", "sk-tts-123456")
-        vm.deleteMyAiKey("tts_cloud")
+        vm.saveMyAiKey("llm", "sk-tts-123456", null, null)
+        vm.deleteMyAiKey("llm")
         val state = vm.state.value.myAiKeys as ContentState.Success
-        assertEquals(false, state.value.first { it.slot == "tts_cloud" }.configured)
+        assertEquals(false, state.value.first { it.slot == "llm" }.configured)
     }
 
     @Test

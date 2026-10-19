@@ -22,6 +22,8 @@ class UserAiKeyRecord(BaseModel):
     slot: str
     ciphertext: str
     last4: str
+    endpoint: str | None = None
+    model: str | None = None
     updated_at: datetime
 
     model_config = {"frozen": True}
@@ -62,6 +64,8 @@ class UserAiKeysRepository:
                 slot=row.slot,
                 ciphertext=row.ciphertext,
                 last4=row.last4,
+                endpoint=row.endpoint,
+                model=row.model,
                 updated_at=row.updated_at,
             )
 
@@ -80,27 +84,52 @@ class UserAiKeysRepository:
                     slot=r.slot,
                     ciphertext=r.ciphertext,
                     last4=r.last4,
+                    endpoint=r.endpoint,
+                    model=r.model,
                     updated_at=r.updated_at,
                 )
                 for r in rows
             ]
 
-    async def upsert(self, user_id: str, slot: str, ciphertext: str, last4: str) -> UserAiKeyRecord:
+    async def upsert(
+        self,
+        user_id: str,
+        slot: str,
+        ciphertext: str,
+        last4: str,
+        *,
+        endpoint: str | None = None,
+        model: str | None = None,
+    ) -> UserAiKeyRecord:
         now = self._clock()
         values = {
             "user_id": user_id,
             "slot": slot,
             "ciphertext": ciphertext,
             "last4": last4,
+            "endpoint": endpoint,
+            "model": model,
             "updated_at": now,
         }
-        set_ = {"ciphertext": ciphertext, "last4": last4, "updated_at": now}
+        set_ = {
+            "ciphertext": ciphertext,
+            "last4": last4,
+            "endpoint": endpoint,
+            "model": model,
+            "updated_at": now,
+        }
         async with self._sessionmaker() as session:
             dialect = session.bind.dialect.name if session.bind is not None else ""
             await session.execute(_upsert_stmt(dialect, values, set_))
             await session.commit()
         return UserAiKeyRecord(
-            user_id=user_id, slot=slot, ciphertext=ciphertext, last4=last4, updated_at=now
+            user_id=user_id,
+            slot=slot,
+            ciphertext=ciphertext,
+            last4=last4,
+            endpoint=endpoint,
+            model=model,
+            updated_at=now,
         )
 
     async def clear(self, user_id: str, slot: str) -> bool:

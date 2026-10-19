@@ -92,10 +92,17 @@ data class UserAiKeyStatus(
     val last4: String? = null,
     val updatedAt: String? = null,
     val effect: String,
+    /** M15-015 个人 LLM 可选路由（空 = 沿用服务端网关配置） */
+    val endpoint: String? = null,
+    val model: String? = null,
 )
 
 @Serializable
 data class UserAiKeysResponse(val keys: List<UserAiKeyStatus>)
 
 @Serializable
-data class UserAiKeyPutRequest(val api_key: String)
+data class UserAiKeyPutRequest(
+    val api_key: String,
+    val endpoint: String? = null,
+    val model: String? = null,
+)
