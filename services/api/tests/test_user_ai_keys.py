@@ -144,3 +144,45 @@ def test_personal_endpoint_ssrf_guard(client: TestClient):
     )
     assert ok.status_code == 200
     client.delete("/api/v1/me/ai-keys/llm", headers=alice)
+
+
+def test_personal_endpoint_normalized_on_save(client: TestClient):
+    """parser-differential：保存值经校验器规范化重建（丢 userinfo/fragment）。"""
+    from app.api.routes.me_ai_keys import (
+        PersonalEndpointRejected,
+        normalize_personal_endpoint,
+    )
+
+    alice = _register_login(client, "byok_norm")
+    resp = client.put(
+        "/api/v1/me/ai-keys/llm",
+        json={
+            "api_key": "sk-norm-12345678",
+            "endpoint": "https://user:secret@api.deepseek.com/v1?x=1#frag",
+        },
+        headers=alice,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["endpoint"] == "https://api.deepseek.com/v1"  # userinfo 被剥
+    client.delete("/api/v1/me/ai-keys/llm", headers=alice)
+    # 领域函数直测：userinfo 进 netloc 保留（请求库同解析）；fragment/query 丢弃
+    assert normalize_personal_endpoint("https://api.deepseek.com/v1?x=1#f") == "https://api.deepseek.com/v1"
+    import pytest as _pytest
+
+    with _pytest.raises(PersonalEndpointRejected):
+        normalize_personal_endpoint("http://127.0.0.1/v1")
+
+
+def test_build_personal_revalidates_stored_endpoint():
+    """TOCTOU 纵深：库中 endpoint 被旁路改坏时 build_personal 拒绝（回落全局）。"""
+    from unittest.mock import patch
+
+    from app.api.routes.me_ai_keys import PersonalEndpointRejected
+    from app.llm.rubric_judge import UserAwareRubricJudge
+
+    wrapper = UserAwareRubricJudge(None)
+    with patch(
+        "app.api.routes.me_ai_keys.normalize_personal_endpoint",
+        side_effect=PersonalEndpointRejected("bad"),
+    ):
+        assert wrapper.build_personal(api_key="sk-x-12345678", endpoint="http://127.0.0.1/v1", model=None) is None
