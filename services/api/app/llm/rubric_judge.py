@@ -142,11 +142,20 @@ class UserAwareRubricJudge:
     - 请求链设置了个人 judge（用户自带 LLM 密钥）→ 用个人 judge；
     - 否则 → 全局装配的 judge（可能为 None = 主观题进复核，客观题照判）。
     判分域（rubric_grader/judge_question）零改动——同一接口形态。
+
+    信任语义（明示）：BYOK 判分 = 用户自带模型参与判自己的卷，判分管道
+    与落库仍全程服务端（架构规则不变）；自带模型的结果属于用户自担的
+    信任选择（审计留痕 user_ai_key.set/clear），部署方不采信时可经
+    RUBRIC_JUDGE 配置整体关闭 llm 判分回到 keyword/复核。
     """
+
+    _CACHE_MAX = 128  # DoS 缓解：per-config 缓存上限（LRU 驱逐最旧）
 
     def __init__(self, global_judge) -> None:
         self._global = global_judge
-        self._personal_cache: dict[str, LlmRubricJudge] = {}
+        from collections import OrderedDict
+
+        self._personal_cache: OrderedDict[str, LlmRubricJudge] = OrderedDict()
 
     @property
     def judge_model(self) -> str:
@@ -179,6 +188,10 @@ class UserAwareRubricJudge:
             if judge is None:
                 return None
             self._personal_cache[cache_key] = judge
+            while len(self._personal_cache) > self._CACHE_MAX:
+                self._personal_cache.popitem(last=False)
+        else:
+            self._personal_cache.move_to_end(cache_key)
         return judge
 
     def judge(self, stem: str, rubric_points: tuple[str, ...], given: str):
