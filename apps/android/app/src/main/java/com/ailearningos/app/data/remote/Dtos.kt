@@ -168,3 +168,44 @@ data class ProfileCreateRequest(
 
 @Serializable
 data class ProfileDeleteResponse(val deleted: String)
+
+
+/** M15-022 学生工作台（/student/daily-plan + /student/states） */
+@Serializable
+data class PlanTaskDto(
+    val kind: String,
+    val question_id: String? = null,
+    val concept_ids: List<String> = emptyList(),
+    val title: String,
+    val reason: String? = null,
+    // M15-022 服务端 Python float 序列化为 2.0——Int 会解析失败（真实 payload 实证）
+    val priority: Double = 0.0,
+)
+
+@Serializable
+data class DailyPlanDto(
+    val generated_at: String,
+    val plan_date: String,
+    val task_count: Int,
+    val review_count: Int,
+    val mistake_retry_count: Int,
+    val new_learning_count: Int,
+    val tasks: List<PlanTaskDto>,
+)
+
+@Serializable
+data class ConceptStateDto(
+    val concept_id: String,
+    val mastery: Double,
+    val confidence: Double,
+    val forgetting_risk: Double,
+    val evidence_count: Int,
+    val correct_count: Int,
+    val wrong_count: Int,
+)
+
+@Serializable
+data class StudentStatesDto(
+    val concept_count: Int,
+    val states: List<ConceptStateDto> = emptyList(),
+)

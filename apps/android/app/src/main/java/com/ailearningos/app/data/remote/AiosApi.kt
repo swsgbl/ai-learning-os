@@ -54,6 +54,12 @@ interface AiosApi {
     @DELETE("api/v1/me/ai-keys/llm/profiles/{id}")
     suspend fun deleteLlmProfile(@Path("id") id: String): ProfileDeleteResponse
 
+    @GET("api/v1/student/daily-plan")
+    suspend fun dailyPlan(): DailyPlanDto
+
+    @GET("api/v1/student/states")
+    suspend fun studentStates(): StudentStatesDto
+
     @POST("api/v1/courses/generation-drafts")
     suspend fun createGenerationDraft(@Body body: GenerationDraftRequest): GenerationDraftResponse
 

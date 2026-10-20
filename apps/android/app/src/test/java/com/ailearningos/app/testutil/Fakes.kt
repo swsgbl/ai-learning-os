@@ -1,6 +1,10 @@
 package com.ailearningos.app.testutil
 
 import com.ailearningos.app.core.AppError
+import com.ailearningos.app.data.remote.DailyPlanDto
+import com.ailearningos.app.data.remote.PlanTaskDto
+import com.ailearningos.app.data.remote.StudentStatesDto
+import com.ailearningos.app.data.remote.ConceptStateDto
 import com.ailearningos.app.data.remote.GenerationDraftResponse
 import com.ailearningos.app.data.remote.LlmProfile
 import com.ailearningos.app.data.remote.MaterializedPaperResponse
@@ -254,6 +258,28 @@ class FakeSystemGateway : SystemGateway {
 
     override suspend fun activateLlmProfile(profileId: String) = Unit
     override suspend fun deleteLlmProfile(profileId: String) = Unit
+
+    /** M15-022 工作台 */
+    var dailyPlanResult: Result<DailyPlanDto?> = Result.success(
+        DailyPlanDto(
+            generated_at = "2026-10-20T00:00:00Z", plan_date = "2026-10-20",
+            task_count = 2, review_count = 1, mistake_retry_count = 1, new_learning_count = 0,
+            tasks = listOf(
+                PlanTaskDto(kind = "review", title = "复习：SELECT 基础查询", reason = "遗忘风险高", priority = 1.0),
+                PlanTaskDto(kind = "mistake_retry", title = "错题重测：聚合与分组", reason = "上次答错", priority = 2.0),
+            ),
+        )
+    )
+
+    var studentStatesResult: Result<StudentStatesDto?> = Result.success(
+        StudentStatesDto(concept_count = 2, states = listOf(
+            ConceptStateDto(concept_id = "sql:select", mastery = 0.4, confidence = 0.5, forgetting_risk = 0.8, evidence_count = 3, correct_count = 1, wrong_count = 2),
+        ))
+    )
+
+    override suspend fun dailyPlan(): DailyPlanDto? = dailyPlanResult.getOrThrow()
+
+    override suspend fun studentStates(): StudentStatesDto? = studentStatesResult.getOrThrow()
 
     override suspend fun generateCourse(goal: String): GenerationDraftResponse =
         generateCourseResult.getOrThrow()
