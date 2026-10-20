@@ -208,3 +208,23 @@ data class SubmissionResponse(
     val items: List<GradedItemResponse> = emptyList(),
     val questions: List<ReviewQuestionResponse> = emptyList(),
 )
+
+
+/** M15-023 我的考试历史（/exams/history）——回看审阅报告入口 */
+@Serializable
+data class ExamHistoryItemDto(
+    val exam_id: String,
+    val paper_id: String,
+    val paper_title: String,
+    val mode: String,
+    val status: String,
+    val started_at: String,
+    val submitted_at: String? = null,
+    val score: Int? = null,
+    val correct_count: Int? = null,
+    val question_count: Int? = null,
+    val has_report: Boolean = false,
+)
+
+@Serializable
+data class ExamHistoryOutDto(val items: List<ExamHistoryItemDto> = emptyList())

@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
+import androidx.compose.material3.TextButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -23,6 +24,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.ailearningos.app.data.remote.ExamHistoryItemDto
 import com.ailearningos.app.data.model.PaperSummary
 import com.ailearningos.app.ui.common.ContentStateView
 import com.ailearningos.app.ui.common.difficultyLabel
@@ -40,8 +42,16 @@ fun StudyScreen(
     onStartPaper: (String) -> Unit,
     onResumeExam: (String) -> Unit,
     onStartVoicePaper: (String) -> Unit = {},
+    onOpenReview: (String) -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    // M15-023：试卷 id → 该卷的考试历史（用于试卷卡「历史成绩+查看报告」）
+    val history: Map<String, List<ExamHistoryItemDto>> = remember(state.examHistory) {
+        state.examHistory
+            ?.groupBy { it.paper_id }
+            ?.mapValues { (_, v) -> v.sortedByDescending { it.started_at } }
+            ?: emptyMap()
+    }
 
     Column(
         modifier = Modifier
@@ -103,6 +113,8 @@ fun StudyScreen(
                                 paper = paper,
                                 onStart = { onStartPaper(paper.id) },
                                 onStartVoice = { onStartVoicePaper(paper.id) },
+                                historyForPaper = history[paper.id].orEmpty(),
+                                onOpenReport = onOpenReview,
                             )
                         }
                     }
@@ -134,6 +146,8 @@ fun StudyScreen(
                                     paper = paper,
                                     onStart = { onStartPaper(paper.id) },
                                     onStartVoice = { onStartVoicePaper(paper.id) },
+                                    historyForPaper = history[paper.id].orEmpty(),
+                                    onOpenReport = onOpenReview,
                                 )
                             }
                         }
@@ -164,6 +178,8 @@ private fun PaperCard(
     paper: PaperSummary,
     onStart: () -> Unit,
     onStartVoice: () -> Unit,
+    historyForPaper: List<ExamHistoryItemDto> = emptyList(),
+    onOpenReport: (String) -> Unit = {},
 ) {
     SectionCard(title = paper.title) {
         Text(
@@ -188,6 +204,34 @@ private fun PaperCard(
         }
         Button(onClick = onStart, modifier = Modifier.fillMaxWidth()) { Text("开始考试") }
         OutlinedButton(onClick = onStartVoice, modifier = Modifier.fillMaxWidth()) { Text("语音陪练") }
+        // M15-023：考场审阅历史——该卷历次成绩 + 回看报告（与 Web「考场审阅→
+        // 交卷后逐题审阅」闭环对齐；App 此前只能在交卷瞬间看一次报告）
+        if (historyForPaper.isNotEmpty()) {
+            Text(
+                "历史成绩（${historyForPaper.size}）",
+                style = MaterialTheme.typography.bodySmall,
+                color = Subtle,
+            )
+            historyForPaper.take(3).forEach { item ->
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        buildString {
+                            append(item.score?.let { "$it 分" } ?: "未交卷")
+                            item.correct_count?.let { append(" · $it/${item.question_count ?: "?"} 对") }
+                            append(" · ${item.started_at.take(10)}")
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.fillMaxWidth(0.62f),
+                    )
+                    if (item.has_report) {
+                        TextButton(onClick = { onOpenReport(item.exam_id) }) { Text("查看报告") }
+                    }
+                }
+            }
+        }
     }
 }
 

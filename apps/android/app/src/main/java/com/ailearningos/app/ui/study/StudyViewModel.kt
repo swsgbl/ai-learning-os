@@ -4,6 +4,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ailearningos.app.core.AppError
 import com.ailearningos.app.core.AppErrorKind
+import com.ailearningos.app.data.remote.ExamHistoryItemDto
 import com.ailearningos.app.data.ExamGateway
 import com.ailearningos.app.data.local.ExamResumeStore
 import com.ailearningos.app.data.model.PaperSummary
@@ -20,6 +21,8 @@ data class StudyState(
     val papers: ContentState<List<PaperSummary>> = ContentState.Loading,
     /** 本地恢复提示：仅 exam_id；是否有进行中考试以进入考场后的 GET 为准 */
     val resumeExamId: String? = null,
+    /** M15-023 我的考试历史（回看审阅报告入口）；null=未加载 */
+    val examHistory: List<ExamHistoryItemDto>? = null,
 )
 
 /**
@@ -64,7 +67,16 @@ class StudyViewModel(
             } catch (_: Throwable) {
                 ContentState.Error(AppError(AppErrorKind.UNEXPECTED).userMessage)
             }
-            _state.value = StudyState(papers = papers, resumeExamId = resumeExamId)
+            // M15-023：考试历史并行拉取（失败不阻塞列表——历史是增强不是门槛）
+            val history = try {
+                exam.examHistory()
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Throwable) {
+                // 守卫测试禁 UI 层日志——历史失败静默降级（列表照常渲染）
+                null
+            }
+            _state.value = StudyState(papers = papers, resumeExamId = resumeExamId, examHistory = history)
         }
     }
 }
