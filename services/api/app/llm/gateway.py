@@ -20,6 +20,7 @@ M14-100 超时与 loopback 代理边界（docs/evidence/m14-100-local-llm-timeou
 from __future__ import annotations
 
 import ipaddress
+import os
 from dataclasses import dataclass
 from typing import Any, Protocol
 from urllib.parse import urlsplit
@@ -71,12 +72,16 @@ class HttpxTransport:
         self._timeout = timeout_seconds
 
     def post_json(self, url: str, *, headers: dict[str, str], payload: dict) -> tuple[int, Any]:
+        # M15-019d：可选出网代理（LLM_OUTBOUND_PROXY，如 http://u:p@host:port）
+        # ——家机直连部分云服务商被 TLS 重置时，经 VPS 隧道代理出网；
+        # loopback 端点不受影响（_is_loopback_url 分支继续 trust_env=False）。
+        outbound_proxy = os.environ.get("LLM_OUTBOUND_PROXY") or None
         client_kwargs: dict[str, Any] = {
             "timeout": self._timeout,
             # M15-019c：强制 IPv4（local_address=0.0.0.0）——容器部署的 v6
             # 出网常为黑洞，httpx 默认先试 AAAA 会 SSL 握手超时 30s（真实
             # 云端 Agnes 实证：urllib 迭代 v4 秒通而 httpx 卡 v6）。
-            "transport": httpx.HTTPTransport(local_address="0.0.0.0"),
+            "transport": httpx.HTTPTransport(local_address="0.0.0.0", proxy=outbound_proxy),
         }
         if _is_loopback_url(url):
             client_kwargs["trust_env"] = False
