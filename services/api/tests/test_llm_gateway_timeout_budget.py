@@ -267,7 +267,14 @@ def test_transport_loopback_urls_bypass_env_proxy(monkeypatch, url: str) -> None
     )
     assert status == 200
     assert body["choices"]
-    assert created == [{"timeout": 30.0, "trust_env": False}]
+    # M15-019c：新增 transport=HTTPTransport(local_address=0.0.0.0)（容器
+    # v6 黑洞强制 IPv4）——精确 kwargs 断言改为语义断言（timeout 值 +
+    # trust_env=False + IPv4 transport 存在）
+    assert len(created) == 1
+    kwargs = created[0]
+    assert kwargs["timeout"] == 30.0
+    assert kwargs["trust_env"] is False
+    assert kwargs["transport"]._pool._local_address == "0.0.0.0"
 
 
 @pytest.mark.parametrize(
@@ -283,7 +290,12 @@ def test_transport_cloud_urls_keep_default_trust_env(monkeypatch, url: str) -> N
     配置，cloud 语义零漂移）。"""
     created = _patch_client(monkeypatch, response=_ok_response(url))
     HttpxTransport().post_json(url, headers={}, payload={})
-    assert created == [{"timeout": 30.0}]
+    # M15-019c：同上——语义断言（不传 trust_env + IPv4 transport）
+    assert len(created) == 1
+    kwargs = created[0]
+    assert kwargs["timeout"] == 30.0
+    assert "trust_env" not in kwargs
+    assert kwargs["transport"]._pool._local_address == "0.0.0.0"
 
 
 def test_transport_custom_timeout_reaches_client(monkeypatch) -> None:
@@ -291,7 +303,9 @@ def test_transport_custom_timeout_reaches_client(monkeypatch) -> None:
     url = "http://127.0.0.1:11434/v1/chat/completions"
     created = _patch_client(monkeypatch, response=_ok_response(url))
     HttpxTransport(timeout_seconds=300.0).post_json(url, headers={}, payload={})
-    assert created == [{"timeout": 300.0, "trust_env": False}]
+    # M15-019c：语义断言（transport kwarg 新增，见 loopback 用例注）
+    assert created[0]["timeout"] == 300.0
+    assert created[0]["trust_env"] is False
 
 
 def test_transport_timeout_exception_maps_to_llm_unavailable(monkeypatch) -> None:
