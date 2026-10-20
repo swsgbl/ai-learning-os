@@ -13,6 +13,7 @@ import com.ailearningos.app.data.model.RemediationTask
 import com.ailearningos.app.data.model.ReportItem
 import com.ailearningos.app.data.model.ReviewQuestion
 import com.ailearningos.app.data.model.QuestionOption
+import com.ailearningos.app.data.remote.ExamHistoryItemDto
 import com.ailearningos.app.data.remote.AnglesResponse
 import com.ailearningos.app.data.remote.ConceptScoreResponse
 import com.ailearningos.app.data.remote.ExamSessionResponse
@@ -41,6 +42,7 @@ import com.ailearningos.app.data.remote.SubmitRequest
  */
 interface ExamGateway {
     suspend fun papers(): List<PaperSummary>
+    suspend fun examHistory(): List<ExamHistoryItemDto>
 
     suspend fun startExam(paperId: String): ExamSession
 
@@ -61,6 +63,10 @@ class ExamRepository(
 
     override suspend fun papers(): List<PaperSummary> = withRemoteError {
         apiProvider.get().papers().map { it.toDomain() }
+    }
+
+    override suspend fun examHistory(): List<ExamHistoryItemDto> = withRemoteError {
+        apiProvider.get().examHistory().items
     }
 
     override suspend fun startExam(paperId: String): ExamSession = withRemoteError {

@@ -152,6 +152,7 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
                     viewModel = studyViewModel,
                     onStartPaper = { paperId -> navController.navigateExamPaper(paperId) },
                     onResumeExam = { examId -> navController.navigateExamResume(examId) },
+                    onOpenReview = { examId -> navController.navigate("review/$examId") },
                     onStartVoicePaper = { paperId -> navController.navigateVoicePaper(paperId) },
                 )
             }
