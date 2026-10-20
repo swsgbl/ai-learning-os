@@ -27,6 +27,11 @@ from app.domain.course_workflow import (
     match_competencies,
     prerequisite_closure,
 )
+from app.domain.llm_course_generator import (
+    LlmCourseConfig,
+    LlmCourseUnavailable,
+    generate_course_plan_with_llm,
+)
 from app.domain.questions import (
     EssayAnswer,
     PaperQuestionRef,
@@ -108,6 +113,21 @@ def _deps(request: Request):
     return dag_repo, chunks
 
 
+async def _generate_with_llm_fallback(request: Request, goal: str) -> dict:
+    """解析 LLM 来源（BYOK active > 全局）并动态生成课程 plan。"""
+    from app.api.routes.me_ai_keys import resolve_user_llm_config
+    from app.core.config import get_settings
+
+    s = get_settings()
+    endpoint, api_key, model = s.llm_endpoint, s.llm_api_key, s.llm_model
+    personal = await resolve_user_llm_config(request.app, current_owner_id(request))
+    if personal:
+        endpoint = personal["endpoint"] or endpoint
+        api_key = personal["api_key"]
+        model = personal["model"] or model
+    return generate_course_plan_with_llm(goal, LlmCourseConfig(endpoint, api_key, model))
+
+
 async def _require_draft_readable(request: Request, draft_id: str) -> None:
     """M9-05 草稿读取门：auth on 时普通用户只能读自己的（他人/无主 404）。"""
     if await current_is_admin(request):
@@ -153,13 +173,18 @@ async def create_generation_draft(payload: GenerateRequest, request: Request) ->
     try:
         plan = generate_course_plan(payload.goal, dag, resources_by_concept)
     except NoCompetencyMatch as cause:
-        # M15-017：移动端闭环——422 如实告知当前概念图能支撑的主题，
-        # 让用户可直接换可匹配的目标（不虚构空课程，也不让用户盲猜）
-        topics = "、".join(node.canonical_name for node in dag.nodes[:20])
-        raise HTTPException(
-            status_code=422,
-            detail=f"{cause}。当前已发布概念图支持的主题：{topics}",
-        ) from cause
+        # M15-019：概念图未覆盖该主题 → LLM 动态生成兜底（用户初衷：
+        # 任意主题/学科/行业可定制）。LLM 来源：BYOK active profile 优先，
+        # 回落服务端全局 LLM。LLM 不可用才 422（附概念图支持主题引导）。
+        try:
+            plan = await _generate_with_llm_fallback(request, payload.goal)
+        except LlmCourseUnavailable as llm_cause:
+            topics = "、".join(node.canonical_name for node in dag.nodes[:20])
+            raise HTTPException(
+                status_code=422,
+                detail=f"{cause}；LLM 动态生成也未成功（{llm_cause}）。"
+                f"当前已发布概念图支持的主题：{topics}",
+            ) from llm_cause
     record = await _repo(request).create({
         "goal": payload.goal,
         "dag_version": plan["dag_version"],

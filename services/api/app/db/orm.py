@@ -24,6 +24,9 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy import (
+    false as sa_false,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -619,6 +622,26 @@ class UserAiKeyRow(Base):
     endpoint: Mapped[str | None] = mapped_column(Text, nullable=True)
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     updated_at: Mapped[str] = mapped_column(DateTime(timezone=True))
+
+
+class UserLlmProfileRow(Base):
+    """M15-018 多厂商 LLM 密钥库：每用户多 profile，恰一条激活。
+
+    密钥密文（SecretBox）+ 用户命名 label + 可选 endpoint/model；
+    判分取 active profile；无 profile = 全局配置（语义不变）。
+    """
+
+    __tablename__ = "user_llm_profiles"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    user_id: Mapped[str] = mapped_column(String(32), index=True)
+    label: Mapped[str] = mapped_column(String(64))
+    ciphertext: Mapped[str] = mapped_column(Text)
+    last4: Mapped[str] = mapped_column(String(8))
+    endpoint: Mapped[str | None] = mapped_column(Text, nullable=True)
+    model: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, server_default=sa_false())
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 class UserRow(Base):

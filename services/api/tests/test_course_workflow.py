@@ -310,3 +310,85 @@ def test_match_competencies_by_subject_natural_goal():
     assert matched == ["sql:select"]  # subject 命中、跨学科不误伤
     assert match_competencies("学极限", dag) == ["math:limit"]  # 概念名路径不回归
     assert match_competencies("我想学天体物理", dag) == []
+
+
+
+def test_generate_draft_llm_fallback_for_unmatched_goal(monkeypatch):
+    """M15-019：无概念匹配的任意主题 → LLM 动态生成（mock 模型输出）。"""
+    from unittest.mock import patch
+
+    from fastapi.testclient import TestClient
+
+    from app.core.config import get_settings
+    from app.main import create_app
+
+    monkeypatch.setenv("LLM_ENDPOINT", "https://llm.test/v1")
+    monkeypatch.setenv("LLM_API_KEY", "sk-test-00000000")
+    monkeypatch.setenv("LLM_MODEL", "test-model")
+    get_settings.cache_clear()
+    llm_json = (
+        '{"concepts": ["循环", "函数", "列表", "字典", "模块"],'
+        '"outline": ['
+        '{"chapter_no": 1, "title": "变量与循环", "difficulty": 1},'
+        '{"chapter_no": 2, "title": "函数", "difficulty": 2},'
+        '{"chapter_no": 3, "title": "列表与字典", "difficulty": 3},'
+        '{"chapter_no": 4, "title": "模块与实战", "difficulty": 4}],'
+        '"assessments": [{"chapter_no": 1, "stem": "解释循环"}]}'
+    )
+    try:
+        with TestClient(create_app("sqlite+aiosqlite:///:memory:")) as client:
+            dag = client.post(
+                "/api/v1/concept-dag/versions",
+                json={
+                    "nodes": [
+                        {"id": "sql:select", "canonical_name": "SELECT 基础查询", "subject": "sql",
+                         "description": "d", "difficulty": 1},
+                    ],
+                    "edges": [],
+                    "note": "t",
+                },
+            )
+            assert dag.status_code == 201, dag.text
+            with patch("app.domain.llm_course_generator.LlmGateway") as gateway_cls:
+                gateway_cls.return_value.chat.return_value = llm_json
+                resp = client.post(
+                    "/api/v1/courses/generation-drafts",
+                    json={"goal": "我想学 Python 自动化办公"},
+                )
+            assert resp.status_code == 201, resp.text
+            body = resp.json()
+            assert body["chapter_count"] == 4
+            assert body["plan"]["outline"][0]["title"] == "变量与循环"
+            assert "LLM 动态生成" in body["generation_note"]
+            mat = client.post(f"/api/v1/courses/generation-drafts/{body['id']}/materialize")
+            assert mat.status_code == 201, mat.text
+    finally:
+        get_settings.cache_clear()
+
+
+def test_generate_draft_llm_unavailable_falls_to_422(monkeypatch):
+    """LLM 未配置且概念图不匹配 → 422 如实 + 主题引导。"""
+    from unittest.mock import patch
+
+    from fastapi.testclient import TestClient
+
+    from app.domain.llm_course_generator import LlmCourseUnavailable
+    from app.main import create_app
+
+    with TestClient(create_app("sqlite+aiosqlite:///:memory:")) as client:
+        client.post(
+            "/api/v1/concept-dag/versions",
+            json={
+                "nodes": [{"id": "sql:select", "canonical_name": "SELECT 基础查询", "subject": "sql",
+                           "description": "d", "difficulty": 1}],
+                "edges": [], "note": "t2",
+            },
+        )
+        with patch(
+            "app.api.routes.course_workflow.generate_course_plan_with_llm",
+            side_effect=LlmCourseUnavailable("未配置 LLM"),
+        ):
+            resp = client.post("/api/v1/courses/generation-drafts", json={"goal": "我想学天体物理"})
+        assert resp.status_code == 422
+        assert "LLM 动态生成也未成功" in resp.json()["detail"]
+        assert "SELECT 基础查询" in resp.json()["detail"]

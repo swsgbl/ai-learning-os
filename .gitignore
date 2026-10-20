@@ -53,3 +53,4 @@ infra/env.production-recovery
 # M14-135 secret 文件语义创建于固定路径；scheduler/wrapper 仅存在性检查，
 # 绝不读取内容——内容校验全部由 M14-135 承担）
 infra/env.production-drift-watch-alert-secret.json
+infra/env.production-recovery.before-*

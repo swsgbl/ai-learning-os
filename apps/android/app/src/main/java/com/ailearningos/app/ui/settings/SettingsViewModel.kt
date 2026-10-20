@@ -43,6 +43,10 @@ data class SettingsUiState(
     val aiKeyNotice: String? = null,
     /** M15-016 模型列表探测：null=未探测；Loading/Success(模型名列表)/Error */
     val llmModels: ContentState<List<String>> = ContentState.Empty,
+    /** M15-018 多厂商配置列表（含激活标志） */
+    val llmProfiles: List<com.ailearningos.app.data.remote.LlmProfile> = emptyList(),
+    /** 添加/切换/删除中的 profile id（防抖） */
+    val profileBusy: String? = null,
 )
 
 class SettingsViewModel(
@@ -237,6 +241,67 @@ class SettingsViewModel(
 
     fun consumeLlmModels() {
         _state.update { it.copy(llmModels = ContentState.Empty) }
+    }
+
+    /** M15-018 多厂商：加载列表（随 myAiKeys 一并刷新） */
+    private suspend fun refreshProfiles() {
+        try {
+            val profiles = system.llmProfiles()
+            _state.update { it.copy(llmProfiles = profiles) }
+        } catch (_: Throwable) {
+            // 列表加载失败不阻断（keys 已有独立状态）
+        }
+    }
+
+    fun addLlmProfile(label: String, apiKey: String, endpoint: String?, model: String?, activate: Boolean) {
+        if (apiKey.length < 8 || label.isBlank()) {
+            _state.update { it.copy(aiKeyNotice = "请填写名称与至少 8 位密钥") }
+            return
+        }
+        viewModelScope.launch {
+            try {
+                system.createLlmProfile(label.trim(), apiKey, endpoint, model, activate)
+                _state.update { it.copy(aiKeyNotice = "已添加厂商配置${if (activate) "并切换" else ""}") }
+                loadMyAiKeys()
+                refreshProfiles()
+            } catch (cause: Throwable) {
+                _state.update { it.copy(aiKeyNotice = cause.asAppError().userMessage) }
+            }
+        }
+    }
+
+    fun switchLlmProfile(profileId: String) {
+        if (_state.value.profileBusy != null) return
+        viewModelScope.launch {
+            _state.update { it.copy(profileBusy = profileId) }
+            try {
+                system.activateLlmProfile(profileId)
+                _state.update { it.copy(aiKeyNotice = "已切换，判分即时走该厂商") }
+                loadMyAiKeys()
+                refreshProfiles()
+            } catch (cause: Throwable) {
+                _state.update { it.copy(aiKeyNotice = cause.asAppError().userMessage) }
+            } finally {
+                _state.update { it.copy(profileBusy = null) }
+            }
+        }
+    }
+
+    fun removeLlmProfile(profileId: String) {
+        if (_state.value.profileBusy != null) return
+        viewModelScope.launch {
+            _state.update { it.copy(profileBusy = profileId) }
+            try {
+                system.deleteLlmProfile(profileId)
+                _state.update { it.copy(aiKeyNotice = "已删除") }
+                loadMyAiKeys()
+                refreshProfiles()
+            } catch (cause: Throwable) {
+                _state.update { it.copy(aiKeyNotice = cause.asAppError().userMessage) }
+            } finally {
+                _state.update { it.copy(profileBusy = null) }
+            }
+        }
     }
 
     fun messageFor(problem: BaseUrlProblem): String = when (problem) {

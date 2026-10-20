@@ -76,6 +76,18 @@ export type AiProviderSlot = {
 
 export type AiProviderSlots = { slots: AiProviderSlot[] };
 
+// M15-018 个人 LLM 多厂商密钥库（Web 与 App 同口径）
+export type LlmProfile = {
+  id: string;
+  label: string;
+  last4: string;
+  endpoint: string | null;
+  model: string | null;
+  active: boolean;
+};
+
+export type LlmProfilesEnvelope = { profiles?: LlmProfile[] };
+
 export class ApiError extends Error {
   readonly status: number;
 
@@ -144,6 +156,27 @@ function draftEndpoints<T>(base: string) {
 export const api = {
   papers: () => request<PaperSummary[]>("/api/v1/papers"),
   me: () => request<UserProfile>("/api/v1/auth/me"),
+  // M15-018/019 个人 LLM 多厂商密钥库（与 App 同口径）
+  llmProfiles: () =>
+    request<LlmProfilesEnvelope>("/api/v1/me/ai-keys").then((env) => env.profiles ?? []),
+  createLlmProfile: (label: string, apiKey: string, endpoint?: string, model?: string, activate = false) =>
+    request<LlmProfile>("/api/v1/me/ai-keys/llm/profiles", {
+      method: "POST",
+      body: JSON.stringify({ label, api_key: apiKey, endpoint, model, activate }),
+    }),
+  activateLlmProfile: (id: string) =>
+    request<LlmProfile>(`/api/v1/me/ai-keys/llm/profiles/${encodeURIComponent(id)}/activate`, {
+      method: "POST",
+    }),
+  deleteLlmProfile: (id: string) =>
+    request<{ deleted: string }>(`/api/v1/me/ai-keys/llm/profiles/${encodeURIComponent(id)}`, {
+      method: "DELETE",
+    }),
+  probeLlmModels: (apiKey?: string, endpoint?: string) =>
+    request<{ models: string[] }>("/api/v1/me/ai-keys/llm/models", {
+      method: "POST",
+      body: JSON.stringify({ api_key: apiKey, endpoint }),
+    }).then((r) => r.models),
   audit: (limit = 100) => request<AuditEntry[]>(`/api/v1/audit?limit=${limit}`),
   // M15-008 AI 能力密钥治理（admin-only；密钥只写不读——状态视图只有尾 4 位）
   aiProviders: () => request<AiProviderSlots>("/api/v1/admin/ai-providers"),
