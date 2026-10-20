@@ -132,8 +132,8 @@ android {
         applicationId = "com.ailearningos.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.2.0"
+        versionCode = 12
+        versionName = "0.2.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
