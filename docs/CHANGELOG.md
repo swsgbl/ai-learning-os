@@ -1,5 +1,15 @@
 # Changelog
 # Changelog
+## M15-021 —— Web 设置导航入口补齐（用户实测不可见）+ 学习库我的课程分组
+
+- **Web 导航新增「设置」**：/settings 页面（多厂商 AI 密钥管理）早已
+  存在但导航无入口——用户在网页端找不到配置 API 密钥的地方（用户
+  实测反馈）。桌面 header 与移动底栏同步可见，与 App 端功能对齐。
+- **学习库「我的课程」分组**：Web /library 与 App 学习页同口径——
+  materialize 定制卷置顶分组（PaperSummary.mine），公共试卷随后。
+- 教训入记忆：Web 新增页面必须同时加导航入口（页面存在 ≠ 可发现）。
+
+# Changelog
 ## v0.1.9（versionCode 10）
 
 - **修复云端 LLM 课程生成在 App 端必超时**（M15-019e）：OkHttp 读
