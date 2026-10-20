@@ -201,7 +201,17 @@ class LlmGateway:
             f"{self._endpoint}/chat/completions", headers=headers, payload=payload
         )
         if status != 200:
-            raise LlmUnavailable(f"LLM 端点 HTTP {status}")
+            # M15-020：透出上游真实原因（如 "Insufficient user quota"——
+            # 余额耗尽/限流等用户可自处置的问题），截断防泄漏；无 message
+            # 时维持原状态码文案。响应体不含密钥（请求头才有），可安全透出。
+            upstream = ""
+            if isinstance(body, dict):
+                err = body.get("error")
+                if isinstance(err, dict) and isinstance(err.get("message"), str):
+                    upstream = f"：{err['message'][:120]}"
+                elif isinstance(body.get("message"), str):
+                    upstream = f"：{body['message'][:120]}"
+            raise LlmUnavailable(f"LLM 端点 HTTP {status}{upstream}")
         try:
             return str(body["choices"][0]["message"]["content"])
         except (KeyError, IndexError, TypeError) as cause:

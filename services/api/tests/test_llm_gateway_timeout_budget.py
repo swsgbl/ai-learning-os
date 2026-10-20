@@ -365,3 +365,23 @@ def test_failure_messages_never_leak_api_key(monkeypatch) -> None:
             transport=_ErrorTransport(),  # type: ignore[arg-type]
         ).chat((ChatMessage(role="user", content="q"),))
     assert _SECRET_KEY not in str(excinfo.value)
+
+
+def test_upstream_error_message_surfaced() -> None:
+    """M15-020：上游 4xx/5xx 的 error.message 透出（如余额耗尽）。"""
+    from app.llm.gateway import LlmGateway, LlmUnavailable
+
+    class _QuotaTransport:
+        def post_json(self, url, *, headers, payload):
+            return 403, {"error": {"message": "Insufficient user quota, remaining: $-0.000098", "code": "insufficient_user_quota"}}
+
+    gateway = LlmGateway(endpoint="https://api.example.com/v1", api_key="k", model="m")
+    gateway._transport = _QuotaTransport()
+    try:
+        gateway.chat(
+            (ChatMessage(role="user", content="hi"),)
+        )
+        raise AssertionError("should raise LlmUnavailable")
+    except LlmUnavailable as e:
+        assert "HTTP 403" in str(e)
+        assert "Insufficient user quota" in str(e)
