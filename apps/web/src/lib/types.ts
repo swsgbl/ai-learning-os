@@ -27,6 +27,8 @@ export type PaperSummary = {
   duration_minutes: number;
   tags: string[];
   origin_url?: string;
+  /** M15-021：materialize 定制课程归属当前用户（服务端 PaperOut.mine） */
+  mine?: boolean;
 };
 
 export type QuestionOption = {

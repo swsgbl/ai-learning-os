@@ -186,12 +186,30 @@ export function LibraryView() {
               {filtered?.length ?? 0} / {papers.length} 份
             </p>
           </div>
-          <div className="mt-3 grid gap-3 sm:grid-cols-2">
-            {filtered?.map((paper) => (
-              <div key={paper.id} data-paper-card={paper.id}>
-                <PaperCard paper={paper} compact />
+          {/* M15-021：与 App 端学习页同口径——「我的课程」（materialize
+              定制卷）置顶分组，公共试卷随后 */}
+          {filtered && filtered.some((paper) => paper.mine) && (
+            <div className="mt-4">
+              <p className="text-sm font-medium text-ink">我的课程（{filtered.filter((p) => p.mine).length}）</p>
+              <div className="mt-2 grid gap-3 sm:grid-cols-2">
+                {filtered
+                  .filter((paper) => paper.mine)
+                  .map((paper) => (
+                    <div key={paper.id} data-paper-card={paper.id}>
+                      <PaperCard paper={paper} compact />
+                    </div>
+                  ))}
               </div>
-            ))}
+            </div>
+          )}
+          <div className="mt-4 grid gap-3 sm:grid-cols-2">
+            {filtered
+              ?.filter((paper) => !paper.mine)
+              .map((paper) => (
+                <div key={paper.id} data-paper-card={paper.id}>
+                  <PaperCard paper={paper} compact />
+                </div>
+              ))}
           </div>
           {filtered?.length === 0 && (
             <div className="mt-3">

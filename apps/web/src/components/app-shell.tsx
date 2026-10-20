@@ -16,6 +16,7 @@ import {
   Library,
   LineChart,
   LogIn,
+  Settings,
   ShieldCheck,
   Smartphone,
   type LucideIcon,
@@ -36,6 +37,9 @@ const BASE_NAV: Array<{ href: string; label: string; icon: LucideIcon }> = [
   { href: "/exam", label: "考场审阅", icon: BookOpen },
   { href: "/library", label: "学习库", icon: Library },
   { href: "/progress", label: "工作台", icon: LineChart },
+  // M15-021：设置入口（我的 AI 密钥/多厂商管理）——与 App 端功能对齐；
+  // 页面早已存在（/settings）但导航无入口导致用户不可见（用户实测反馈）
+  { href: "/settings", label: "设置", icon: Settings },
 ];
 
 function isActive(pathname: string, href: string) {
