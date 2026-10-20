@@ -86,7 +86,7 @@ RUNNER_PATH = REPO_ROOT / "tools" / "ops" / "rc_smoke_rehearsal.py"
 #: docs/evidence/m15-006-release-channel/。
 PRODUCTION_FILE_PINS = {
     "infra/docker-compose.yml":
-        "4f8284757462b9448fb4bbe28493edf588825356e3258aa98bbad46ef2616293",
+        "83c5e4f7e7bb665c40e53f06dc262a910c2ddc753ab0102e9aff8b337d1a66d4",
     "infra/build_release_candidate.sh":
         "3efa02586c8a93a1d4b26f1fc981fd1233a87ae94be797cd3f939e9b464778b2",
     "infra/smoke_docker.sh":
