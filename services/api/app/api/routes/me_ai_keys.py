@@ -271,7 +271,12 @@ async def probe_my_llm_models(request: Request, body: LlmModelsProbeIn) -> LlmMo
         raise HTTPException(status_code=422, detail=str(cause)) from cause
     url = f"{base.rstrip('/')}/models"
     try:
-        async with httpx.AsyncClient(timeout=8.0, follow_redirects=False) as client:
+        async with httpx.AsyncClient(
+            timeout=8.0,
+            follow_redirects=False,
+            # M15-019c：强制 IPv4（同 LlmGateway——容器 v6 出网黑洞，httpx 默认先 AAAA 握手超时）
+            transport=httpx.AsyncHTTPTransport(local_address="0.0.0.0"),
+        ) as client:
             resp = await client.get(url, headers={"Authorization": f"Bearer {api_key}"})
     except httpx.HTTPError as cause:
         raise HTTPException(status_code=502, detail="接口地址不可达") from cause

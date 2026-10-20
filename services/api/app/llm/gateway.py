@@ -71,7 +71,13 @@ class HttpxTransport:
         self._timeout = timeout_seconds
 
     def post_json(self, url: str, *, headers: dict[str, str], payload: dict) -> tuple[int, Any]:
-        client_kwargs: dict[str, Any] = {"timeout": self._timeout}
+        client_kwargs: dict[str, Any] = {
+            "timeout": self._timeout,
+            # M15-019c：强制 IPv4（local_address=0.0.0.0）——容器部署的 v6
+            # 出网常为黑洞，httpx 默认先试 AAAA 会 SSL 握手超时 30s（真实
+            # 云端 Agnes 实证：urllib 迭代 v4 秒通而 httpx 卡 v6）。
+            "transport": httpx.HTTPTransport(local_address="0.0.0.0"),
+        }
         if _is_loopback_url(url):
             client_kwargs["trust_env"] = False
         try:
