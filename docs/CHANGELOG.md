@@ -1,5 +1,12 @@
 # Changelog
 # Changelog
+## v0.1.9（versionCode 10）
+
+- **修复云端 LLM 课程生成在 App 端必超时**（M15-019e）：OkHttp 读
+  超时 20s→180s——真实云端模型生成完整课程需 30-120s（真机实测
+  Agnes 8 章 ~60s，此前 App 20s 先于服务端失败）。
+
+# Changelog
 ## v0.1.8（versionCode 9）
 
 - **多厂商 LLM 密钥库**（M15-018）：设置页可保存多家厂商（DeepSeek/
