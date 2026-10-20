@@ -9,6 +9,8 @@ import com.ailearningos.app.data.remote.GenerationDraftResponse
 import com.ailearningos.app.data.remote.MaterializedPaperResponse
 import com.ailearningos.app.data.remote.LlmProfile
 import com.ailearningos.app.data.remote.ProfileCreateRequest
+import com.ailearningos.app.data.remote.DailyPlanDto
+import com.ailearningos.app.data.remote.StudentStatesDto
 import com.ailearningos.app.data.remote.LlmModelsProbeRequest
 import com.ailearningos.app.data.remote.LoginRequest
 import com.ailearningos.app.data.remote.UserAiKeyPutRequest
@@ -61,6 +63,9 @@ interface SystemGateway {
     /** M15-017 定制课程：目标 → 课程方案 → 私有练习卷（App 端闭环） */
     suspend fun generateCourse(goal: String): GenerationDraftResponse
     suspend fun materializeCourse(draftId: String): MaterializedPaperResponse
+    /** M15-022 工作台 */
+    suspend fun dailyPlan(): DailyPlanDto?
+    suspend fun studentStates(): StudentStatesDto?
     /** M15-018 多厂商密钥库 */
     suspend fun createLlmProfile(label: String, apiKey: String, endpoint: String?, model: String?, activate: Boolean): LlmProfile
     suspend fun activateLlmProfile(profileId: String)
@@ -138,6 +143,18 @@ class AuthRepository(
 
     override suspend fun materializeCourse(draftId: String): MaterializedPaperResponse = withRemoteError {
         apiProvider.get().materializeDraft(draftId)
+    }
+
+    override suspend fun dailyPlan(): DailyPlanDto? = try {
+        withRemoteError { apiProvider.get().dailyPlan() }
+    } catch (cause: AppError) {
+        if (cause.kind == AppErrorKind.NOT_FOUND) null else throw cause
+    }
+
+    override suspend fun studentStates(): StudentStatesDto? = try {
+        withRemoteError { apiProvider.get().studentStates() }
+    } catch (cause: AppError) {
+        if (cause.kind == AppErrorKind.NOT_FOUND) null else throw cause
     }
 
     override suspend fun createLlmProfile(label: String, apiKey: String, endpoint: String?, model: String?, activate: Boolean): LlmProfile = withRemoteError {

@@ -1,5 +1,18 @@
 # Changelog
 # Changelog
+## M15-022 —— App 端工作台 + 首页搜索框（与 Web 全面对齐）
+
+- **App 新增「工作台」**（与 Web /progress 同口径）：底栏新 tab——
+  三统计卡（今日任务/薄弱概念/可练试卷）+ 任务分组（新学/复习/错题
+  重测，含每条原因）+ 空态引导；数据 /student/daily-plan +
+  /student/states + papers 三源并行容错（单源失败不拖垮整页）。
+- **首页搜索框**（与 Web 首页同形态）：底栏「搜索」移入首页搜索框
+  （路由保留）。
+- 契约坑（真实 payload 实证）：服务端 Python float 序列化
+  `"priority": 2.0`——DTO 用 Int 解析必失败（同 M15-011 教训的数值
+  变体）；新增真实 payload JVM 契约测试锁定。
+
+# Changelog
 ## v0.1.9（versionCode 10）
 
 - **修复云端 LLM 课程生成在 App 端必超时**（M15-019e）：OkHttp 读
