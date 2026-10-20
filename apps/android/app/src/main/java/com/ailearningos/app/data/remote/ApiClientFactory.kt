@@ -21,8 +21,10 @@ object ApiClientFactory {
     fun create(baseUrl: String, tokenProvider: () -> String?): AiosApi {
         val client = OkHttpClient.Builder()
             .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(20, TimeUnit.SECONDS)
-            .writeTimeout(20, TimeUnit.SECONDS)
+            // M15-019e：LLM 动态课程生成（云端真实模型）单次可达 60-120s
+            // ——20s 读超时会让 App 端先于服务端失败（真机实测 NETWORK 错误）
+            .readTimeout(180, TimeUnit.SECONDS)
+            .writeTimeout(60, TimeUnit.SECONDS)
             .addInterceptor(AuthInterceptor(tokenProvider))
             .build()
 
