@@ -1,5 +1,14 @@
-# Changelog
-# Changelog
+## M15-022 —— App 端工作台 + 首页搜索框（与 Web 全面对齐）
+
+- **App 新增「工作台」**（与 Web /progress 同口径）：底栏新 tab——
+  三统计卡（今日任务/薄弱概念/可练试卷）+ 任务分组（新学/复习/错题
+  重测，含每条原因）+ 空态引导；数据 /student/daily-plan +
+  /student/states + papers 三源并行容错（单源失败不拖垮整页）。
+- **首页搜索框**（与 Web 首页同形态）：底栏「搜索」移入首页搜索框
+  （路由保留）。
+- 契约坑（真实 payload 实证）：服务端 Python float 序列化
+  `"priority": 2.0`——DTO 用 Int 解析必失败（同 M15-011 教训的数值
+  变体）；新增真实 payload JVM 契约测试锁定。
 ## M15-021 —— Web 设置导航入口补齐（用户实测不可见）+ 学习库我的课程分组
 
 - **Web 导航新增「设置」**：/settings 页面（多厂商 AI 密钥管理）早已
@@ -9,14 +18,12 @@
   materialize 定制卷置顶分组（PaperSummary.mine），公共试卷随后。
 - 教训入记忆：Web 新增页面必须同时加导航入口（页面存在 ≠ 可发现）。
 
-# Changelog
 ## v0.1.9（versionCode 10）
 
 - **修复云端 LLM 课程生成在 App 端必超时**（M15-019e）：OkHttp 读
   超时 20s→180s——真实云端模型生成完整课程需 30-120s（真机实测
   Agnes 8 章 ~60s，此前 App 20s 先于服务端失败）。
 
-# Changelog
 ## v0.1.8（versionCode 9）
 
 - **多厂商 LLM 密钥库**（M15-018）：设置页可保存多家厂商（DeepSeek/
@@ -27,7 +34,6 @@
 - **任意主题定制课程**（M15-019，服务端已上线）：概念图没覆盖的
   主题由 LLM（你的厂商密钥）动态生成课程——App 定制课程页直接受益。
 
-# Changelog
 ## M15-018/019 —— 多厂商 LLM 密钥库 + 任意主题 LLM 动态课程生成 + 全端同步
 
 - **M15-018 多厂商密钥库**（回应「同时填几个厂商密钥自由切换」）：
@@ -50,7 +56,6 @@
   主题」引导、502「接口地址不可达」等不再被吞成通用文案；数组/非
   JSON 形态仍走固定脱敏文案（不泄漏 URL/header/底层异常）。
 
-# Changelog
 ## v0.1.7（versionCode 8）
 
 - **App 端定制课程闭环**（M15-017/017b/017c）：首页「定制课程（说出
@@ -59,7 +64,6 @@
   支持范围引导。
 - **模型列表最新优先**（M15-016b）+ materialize DTO 对齐（017c）。
 
-# Changelog
 ## M15-017c —— App materialize DTO 对齐服务端 paper_id（真机实测暴露）
 
 materialize 响应真实字段为 {paper_id, question_count, title}，App DTO

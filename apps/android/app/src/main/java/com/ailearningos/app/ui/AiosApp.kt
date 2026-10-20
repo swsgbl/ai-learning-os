@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -41,6 +42,8 @@ import com.ailearningos.app.ui.search.SearchViewModel
 import com.ailearningos.app.ui.session.SessionViewModel
 import com.ailearningos.app.ui.settings.SettingsScreen
 import com.ailearningos.app.ui.create.CreateCourseScreen
+import com.ailearningos.app.ui.progress.ProgressScreen
+import com.ailearningos.app.ui.progress.ProgressViewModel
 import com.ailearningos.app.ui.create.CreateCourseViewModel
 import com.ailearningos.app.ui.study.StudyScreen
 import com.ailearningos.app.ui.study.StudyViewModel
@@ -53,10 +56,20 @@ import com.ailearningos.app.ui.voice.VoiceScreen
 enum class AiosDestination(val route: String, val label: String, val icon: ImageVector) {
     Home("home", "首页", Icons.Filled.Home),
     Study("study", "学习", AiosIcons.School),
+    Progress("progress", "工作台", Icons.Filled.List),
     Search("search", "搜索", Icons.Filled.Search),
     Voice("voice", "语音", AiosIcons.Mic),
     Settings("settings", "设置", Icons.Filled.Settings),
 }
+
+/** M15-022：底栏展示集（搜索移至首页搜索框进入，工作台入底栏——与 Web 对齐） */
+val bottomBarDestinations: List<AiosDestination> = listOf(
+    AiosDestination.Home,
+    AiosDestination.Study,
+    AiosDestination.Progress,
+    AiosDestination.Voice,
+    AiosDestination.Settings,
+)
 
 const val LOGIN_ROUTE = "login"
 const val EXAM_PAPER_ROUTE = "exam-paper/{paperId}"
@@ -81,10 +94,10 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         bottomBar = {
-            val showBottomBar = AiosDestination.entries.any { it.route == currentRoute }
+            val showBottomBar = bottomBarDestinations.any { it.route == currentRoute }
             if (showBottomBar) {
                 NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
-                    AiosDestination.entries.forEach { destination ->
+                    bottomBarDestinations.forEach { destination ->
                         NavigationBarItem(
                             selected = currentRoute == destination.route,
                             onClick = {
@@ -118,6 +131,7 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
                     onOpenLogin = { navController.navigate(LOGIN_ROUTE) },
                     onOpenStudy = { navController.navigate(AiosDestination.Study.route) },
                     onOpenCreateCourse = { navController.navigate(CREATE_COURSE_ROUTE) },
+                    onOpenSearch = { navController.navigate(AiosDestination.Search.route) },
                     onOpenVoice = { navController.navigate(AiosDestination.Voice.route) },
                     onOpenSettings = { navController.navigate(AiosDestination.Settings.route) },
                     onOpenGovernance = {
@@ -139,6 +153,13 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
                     onStartPaper = { paperId -> navController.navigateExamPaper(paperId) },
                     onResumeExam = { examId -> navController.navigateExamResume(examId) },
                     onStartVoicePaper = { paperId -> navController.navigateVoicePaper(paperId) },
+                )
+            }
+            composable(AiosDestination.Progress.route) {
+                val progressVm: ProgressViewModel = viewModel(factory = viewModelFactory)
+                ProgressScreen(
+                    viewModel = progressVm,
+                    onOpenStudy = { navController.navigate(AiosDestination.Study.route) },
                 )
             }
             composable(AiosDestination.Search.route) {

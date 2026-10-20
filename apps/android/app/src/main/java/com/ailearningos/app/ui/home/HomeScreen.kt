@@ -37,6 +37,7 @@ fun HomeScreen(
     onOpenLogin: () -> Unit,
     onOpenStudy: () -> Unit,
     onOpenCreateCourse: () -> Unit = {},
+    onOpenSearch: () -> Unit = {},
     onOpenVoice: () -> Unit,
     onOpenSettings: () -> Unit,
     firstLaunch: Boolean = false,
@@ -87,6 +88,14 @@ fun HomeScreen(
             is SessionState.Authenticated -> OnboardingCard()
 
             else -> Unit
+        }
+
+        // M15-022：搜索入口（底栏「搜索」移入首页搜索框——与 Web 首页同形态）
+        OutlinedButton(
+            onClick = onOpenSearch,
+            modifier = Modifier.fillMaxWidth(),
+        ) {
+            Text("搜索试卷、科目或知识点…", style = MaterialTheme.typography.bodyMedium, color = Subtle)
         }
 
         SectionCard(title = "快速入口") {
