@@ -35,6 +35,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import com.ailearningos.app.data.MyAiKeyInfo
+import com.ailearningos.app.data.remote.LlmProfile
 import com.ailearningos.app.ui.components.SessionCard
 import com.ailearningos.app.BuildConfig
 import com.ailearningos.app.ui.components.StatusRow
@@ -149,7 +150,10 @@ fun SettingsScreen(
                 onSave = { slot, key, ep, m -> settingsViewModel.saveMyAiKey(slot, key, ep, m) },
                 onDelete = settingsViewModel::deleteMyAiKey,
                 onProbeModels = settingsViewModel::probeLlmModels,
-                onModelPicked = { m -> settingsViewModel.consumeLlmModels() },
+                onModelPicked = { settingsViewModel.consumeLlmModels() },
+                onAddProfile = settingsViewModel::addLlmProfile,
+                onSwitchProfile = settingsViewModel::switchLlmProfile,
+                onRemoveProfile = settingsViewModel::removeLlmProfile,
             )
         }
 
@@ -317,20 +321,34 @@ private fun MyAiKeysCard(
     onSave: (String, String, String?, String?) -> Unit,
     onDelete: (String) -> Unit,
     onProbeModels: (String, String) -> Unit,
-    onModelPicked: (String) -> Unit,
+    onModelPicked: () -> Unit,
+    onAddProfile: (String, String, String?, String?, Boolean) -> Unit,
+    onSwitchProfile: (String) -> Unit,
+    onRemoveProfile: (String) -> Unit,
 ) {
     LaunchedEffect(Unit) { onLoad() }
-    SectionCard(title = "我的 AI 密钥（主模型）") {
+    SectionCard(title = "我的 AI 密钥（多厂商）") {
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                "自带云端大模型密钥（如 DeepSeek/OpenAI），自己的答题判分即时走自己的模型；" +
+                "可保存多家厂商密钥（如 DeepSeek/OpenAI）自由切换，判分即时走当前选中厂商；" +
                     "不填则用本机部署的默认模型。语音为本机部署，无需密钥。",
                 style = MaterialTheme.typography.bodySmall,
                 color = Subtle,
             )
+            if (state.llmProfiles.isNotEmpty()) {
+                Text("已保存厂商（「切换」即时生效）：", style = MaterialTheme.typography.bodySmall, color = Subtle)
+                state.llmProfiles.forEach { profile ->
+                    LlmProfileRow(
+                        profile = profile,
+                        busy = state.profileBusy == profile.id,
+                        onSwitch = { onSwitchProfile(profile.id) },
+                        onRemove = { onRemoveProfile(profile.id) },
+                    )
+                }
+            }
             when (val keys = state.myAiKeys) {
                 is ContentState.Success -> keys.value.forEach { key ->
-                    MyAiKeyRow(key, onSave, onDelete, onProbeModels, state.llmModels, onModelPicked)
+                    MyAiKeyRow(key, onSave, onDelete, onProbeModels, state.llmModels, onModelPicked, onAddProfile)
                 }
                 is ContentState.Error -> Text(keys.message, color = Warn, style = MaterialTheme.typography.bodySmall)
                 else -> Text("加载中…", style = MaterialTheme.typography.bodySmall, color = Subtle)
@@ -343,15 +361,47 @@ private fun MyAiKeysCard(
 }
 
 @Composable
+private fun LlmProfileRow(
+    profile: LlmProfile,
+    busy: Boolean,
+    onSwitch: () -> Unit,
+    onRemove: () -> Unit,
+) {
+    Row(
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth(0.58f)) {
+            Text(
+                if (profile.active) "${profile.label}（使用中）" else profile.label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (profile.active) MaterialTheme.colorScheme.primary else androidx.compose.ui.graphics.Color.Unspecified,
+            )
+            Text(
+                listOfNotNull(profile.model, "····" + profile.last4).joinToString(" · "),
+                style = MaterialTheme.typography.bodySmall,
+                color = Subtle,
+            )
+        }
+        if (!profile.active) {
+            TextButton(onClick = onSwitch, enabled = !busy) { Text("切换") }
+        }
+        TextButton(onClick = onRemove, enabled = !busy) { Text("删除") }
+    }
+}
+
+@Composable
 private fun MyAiKeyRow(
     key: MyAiKeyInfo,
     onSave: (String, String, String?, String?) -> Unit,
     onDelete: (String) -> Unit,
     onProbeModels: (String, String) -> Unit,
     modelsState: ContentState<List<String>>,
-    onModelPicked: (String) -> Unit,
+    onModelPicked: () -> Unit,
+    onAddProfile: (String, String, String?, String?, Boolean) -> Unit,
 ) {
     var showModelPicker by remember { mutableStateOf(false) }
+    var labelInput by remember { mutableStateOf("") }
     var keyInput by remember(key.slot) { mutableStateOf("") }
     var endpointInput by remember(key.slot) { mutableStateOf("") }
     var modelInput by remember(key.slot) { mutableStateOf("") }
@@ -369,6 +419,13 @@ private fun MyAiKeyRow(
                 color = if (key.configured) MaterialTheme.colorScheme.primary else Subtle,
             )
         }
+        OutlinedTextField(
+            value = labelInput,
+            onValueChange = { labelInput = it },
+            placeholder = { Text("厂商名称（如 DeepSeek）", style = MaterialTheme.typography.bodySmall) },
+            singleLine = true,
+            modifier = Modifier.fillMaxWidth(),
+        )
         OutlinedTextField(
             value = keyInput,
             onValueChange = { keyInput = it },
@@ -408,7 +465,7 @@ private fun MyAiKeyRow(
                     Text("选择模型：", style = MaterialTheme.typography.bodySmall, color = Subtle)
                     models.value.take(8).forEach { name ->
                         TextButton(
-                            onClick = { modelInput = name; showModelPicker = false; onModelPicked(name) },
+                            onClick = { modelInput = name; showModelPicker = false; onModelPicked() },
                             modifier = Modifier.fillMaxWidth(),
                         ) { Text(name, style = MaterialTheme.typography.bodySmall) }
                     }
@@ -422,13 +479,13 @@ private fun MyAiKeyRow(
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(
                 onClick = {
-                    onSave(key.slot, keyInput, endpointInput, modelInput)
-                    keyInput = ""; endpointInput = ""; modelInput = ""
+                    onAddProfile(labelInput, keyInput, endpointInput, modelInput, !key.configured)
+                    labelInput = ""; keyInput = ""; endpointInput = ""; modelInput = ""
                 },
-                enabled = keyInput.length >= 8,
-            ) { Text("保存") }
+                enabled = keyInput.length >= 8 && labelInput.isNotBlank(),
+            ) { Text("添加厂商配置") }
             if (key.configured) {
-                TextButton(onClick = { onDelete(key.slot) }) { Text("删除") }
+                TextButton(onClick = { onDelete(key.slot) }) { Text("清空当前") }
             }
         }
     }

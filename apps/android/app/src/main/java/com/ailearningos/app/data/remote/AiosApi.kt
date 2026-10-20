@@ -45,6 +45,15 @@ interface AiosApi {
     suspend fun deleteMyAiKey(@Path("slot") slot: String): UserAiKeyStatus
     @POST("api/v1/me/ai-keys/llm/models")
     suspend fun probeLlmModels(@Body body: LlmModelsProbeRequest): LlmModelsProbeResponse
+    @POST("api/v1/me/ai-keys/llm/profiles")
+    suspend fun createLlmProfile(@Body body: ProfileCreateRequest): LlmProfile
+
+    @POST("api/v1/me/ai-keys/llm/profiles/{id}/activate")
+    suspend fun activateLlmProfile(@Path("id") id: String): LlmProfile
+
+    @DELETE("api/v1/me/ai-keys/llm/profiles/{id}")
+    suspend fun deleteLlmProfile(@Path("id") id: String): ProfileDeleteResponse
+
     @POST("api/v1/courses/generation-drafts")
     suspend fun createGenerationDraft(@Body body: GenerationDraftRequest): GenerationDraftResponse
 

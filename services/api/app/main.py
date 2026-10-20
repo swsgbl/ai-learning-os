@@ -62,6 +62,7 @@ from app.repositories.search_queries import SearchQueryRepository
 from app.repositories.sources import SourceRepository
 from app.repositories.student_state import StudentStateRepository
 from app.repositories.user_ai_keys import UserAiKeysRepository
+from app.repositories.user_llm_profiles import UserLlmProfilesRepository
 from app.repositories.users import UserRepository
 from app.repositories.variant_question_drafts import VariantQuestionDraftRepository
 from app.repositories.voice_answer_events import VoiceAnswerEventRepository
@@ -117,6 +118,7 @@ def create_app(
             # M15-008: provider 密钥仓储先于 llm judge 构建（resolver 依赖它）
             ai_provider_secrets = AiProviderSecretsRepository(sessionmaker)
             user_ai_keys = UserAiKeysRepository(sessionmaker)
+            llm_profiles = UserLlmProfilesRepository(sessionmaker)
             app.state.ai_provider_secrets = ai_provider_secrets
             # M10-01: LLM judge 经 OpenAI 兼容 gateway；槽位未配齐时 build 返回 None
             # （essay 全部进复核，fail-closed 不虚报模型能力）。
@@ -201,6 +203,7 @@ def create_app(
         app.state.users = users if resolved_url else None
         app.state.ai_provider_secrets = ai_provider_secrets if resolved_url else None
         app.state.user_ai_keys = user_ai_keys if resolved_url else None
+        app.state.llm_profiles = llm_profiles if resolved_url else None
         app.state.audit = audit if resolved_url else None
         app.state.objects = objects if resolved_url else None
         app.state.parsers = parsers if resolved_url else None

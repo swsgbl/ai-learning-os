@@ -2,6 +2,7 @@ package com.ailearningos.app.testutil
 
 import com.ailearningos.app.core.AppError
 import com.ailearningos.app.data.remote.GenerationDraftResponse
+import com.ailearningos.app.data.remote.LlmProfile
 import com.ailearningos.app.data.remote.MaterializedPaperResponse
 import com.ailearningos.app.core.AppErrorKind
 import com.ailearningos.app.data.AuthGateway
@@ -237,6 +238,22 @@ class FakeSystemGateway : SystemGateway {
     var materializeCourseResult: Result<MaterializedPaperResponse> = Result.success(
         MaterializedPaperResponse(paperId = "paper_1", title = "定制课程：SQL 数据分析", question_count = 3)
     )
+
+    /** M15-018 多厂商 */
+    var llmProfilesResult: Result<List<LlmProfile>> = Result.success(emptyList())
+
+    override suspend fun llmProfiles(): List<LlmProfile> = llmProfilesResult.getOrThrow()
+
+    override suspend fun createLlmProfile(
+        label: String, apiKey: String, endpoint: String?, model: String?, activate: Boolean,
+    ): LlmProfile = LlmProfile(
+        id = "ulp_${label.hashCode().toUInt()}", label = label, last4 = apiKey.takeLast(4),
+        endpoint = endpoint?.ifBlank { null }, model = model?.ifBlank { null },
+        active = activate || llmProfilesResult.getOrThrow().isEmpty(),
+    )
+
+    override suspend fun activateLlmProfile(profileId: String) = Unit
+    override suspend fun deleteLlmProfile(profileId: String) = Unit
 
     override suspend fun generateCourse(goal: String): GenerationDraftResponse =
         generateCourseResult.getOrThrow()

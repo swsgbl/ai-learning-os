@@ -39,8 +39,18 @@ class UserAiKeyOut(BaseModel):
     model: str | None = None
 
 
+class LlmProfileOut(BaseModel):
+    id: str
+    label: str
+    last4: str
+    endpoint: str | None = None
+    model: str | None = None
+    active: bool
+
+
 class UserAiKeysOut(BaseModel):
     keys: list[UserAiKeyOut]
+    profiles: list[LlmProfileOut] = []
 
 
 class UserApiKeyIn(BaseModel):
@@ -64,23 +74,39 @@ def _repo(request: Request):
 
 @router.get("", response_model=UserAiKeysOut)
 async def list_my_ai_keys(request: Request) -> UserAiKeysOut:
+    """M15-018 多厂商密钥库：profiles 列表 + 兼容字段（keys.llm 汇总激活条）。"""
     await require_user(request)
-    repo = _repo(request)
     user_id = current_owner_id(request)
-    rows = {r.slot: r for r in await repo.list_for_user(user_id)}
+    profiles_repo = getattr(request.app.state, "llm_profiles", None)
+    profiles = (
+        [
+            LlmProfileOut(
+                id=p.id,
+                label=p.label,
+                last4=p.last4,
+                endpoint=p.endpoint,
+                model=p.model,
+                active=p.is_active,
+            )
+            for p in await profiles_repo.list_for_user(user_id)
+        ]
+        if profiles_repo is not None
+        else []
+    )
+    active = next((p for p in profiles if p.active), None)
     return UserAiKeysOut(
         keys=[
             UserAiKeyOut(
-                slot=slot,
-                configured=slot in rows,
-                last4=rows[slot].last4 if slot in rows else None,
-                updated_at=rows[slot].updated_at.isoformat() if slot in rows else None,
-                effect=_effect_label(slot),
-                endpoint=rows[slot].endpoint if slot in rows else None,
-                model=rows[slot].model if slot in rows else None,
+                slot="llm",
+                configured=active is not None,
+                last4=active.last4 if active else None,
+                updated_at=None,
+                effect="hot" if active else "none",
+                endpoint=active.endpoint if active else None,
+                model=active.model if active else None,
             )
-            for slot in _SLOTS
-        ]
+        ],
+        profiles=profiles,
     )
 
 
@@ -103,6 +129,35 @@ async def put_my_ai_key(request: Request, slot: str, body: UserApiKeyIn) -> User
             endpoint = normalize_personal_endpoint(endpoint)
         except PersonalEndpointRejected as cause:
             raise HTTPException(status_code=422, detail=str(cause)) from cause
+    # M15-018：单槽 PUT 兼容 = 覆盖当前激活 profile（无则新建「默认」）
+    profiles_repo = getattr(request.app.state, "llm_profiles", None)
+    if profiles_repo is not None:
+        existing = next(
+            (p for p in await profiles_repo.list_for_user(user_id) if p.is_active), None
+        )
+        if existing is not None:
+            record = await profiles_repo.update_fields(
+                existing.id, user_id,
+                ciphertext=box.encrypt_to_b64(body.api_key),
+                last4=body.api_key[-4:],
+                endpoint=endpoint, model=model,
+            )
+        else:
+            record = await profiles_repo.create(
+                user_id, "默认", box.encrypt_to_b64(body.api_key), body.api_key[-4:],
+                endpoint=endpoint, model=model, activate=True,
+            )
+        payload = await build_audit_payload(
+            request, action="user_ai_key.set", target_type="user_ai_key",
+            target_id=f"{user_id}:llm",
+            before=None, after={"last4": record.last4},
+        )
+        if payload is not None:
+            await request.app.state.audit.record(**payload)
+        return UserAiKeyOut(
+            slot="llm", configured=True, last4=record.last4, updated_at=None,
+            effect="hot", endpoint=record.endpoint, model=record.model,
+        )
     record = await repo.upsert(
         user_id,
         slot,
@@ -134,11 +189,31 @@ async def put_my_ai_key(request: Request, slot: str, body: UserApiKeyIn) -> User
 
 @router.delete("/{slot}", response_model=UserAiKeyOut)
 async def delete_my_ai_key(request: Request, slot: str) -> UserAiKeyOut:
+    """M15-018：单槽删除兼容 = 删除当前激活 profile（剩余最早条自动顶上）。"""
     await require_user(request)
     if slot not in _SLOTS:
         raise HTTPException(status_code=422, detail=f"slot 必须是 {'/'.join(_SLOTS)} 之一")
-    repo = _repo(request)
     user_id = current_owner_id(request)
+    profiles_repo = getattr(request.app.state, "llm_profiles", None)
+    if profiles_repo is not None:
+        active = next(
+            (p for p in await profiles_repo.list_for_user(user_id) if p.is_active), None
+        )
+        if active is None:
+            raise HTTPException(status_code=404, detail=f"slot {slot} 无个人密钥")
+        await profiles_repo.delete(active.id, user_id)
+        payload = await build_audit_payload(
+            request,
+            action="user_ai_key.clear",
+            target_type="user_ai_key",
+            target_id=f"{user_id}:{slot}",
+            before={"last4": active.last4},
+            after=None,
+        )
+        if payload is not None:
+            await request.app.state.audit.record(**payload)
+        return UserAiKeyOut(slot=slot, configured=False, effect=_effect_label(slot))
+    repo = _repo(request)
     before = await repo.get(user_id, slot)
     deleted = await repo.clear(user_id, slot)
     if not deleted:
@@ -154,6 +229,7 @@ async def delete_my_ai_key(request: Request, slot: str) -> UserAiKeyOut:
     if payload is not None:
         await request.app.state.audit.record(**payload)
     return UserAiKeyOut(slot=slot, configured=False, effect=_effect_label(slot))
+
 
 
 class LlmModelsProbeIn(BaseModel):
@@ -225,11 +301,145 @@ async def probe_my_llm_models(request: Request, body: LlmModelsProbeIn) -> LlmMo
     return LlmModelsProbeOut(models=models[:100])
 
 
+class ProfileCreateIn(BaseModel):
+    label: str = Field(min_length=1, max_length=64)
+    api_key: str = Field(min_length=8, max_length=512)
+    endpoint: str | None = Field(default=None, max_length=512)
+    model: str | None = Field(default=None, max_length=128)
+    activate: bool = False
+
+
+class ProfileUpdateIn(BaseModel):
+    label: str | None = Field(default=None, min_length=1, max_length=64)
+    api_key: str | None = Field(default=None, min_length=8, max_length=512)
+    endpoint: str | None = Field(default=None, max_length=512)
+    model: str | None = Field(default=None, max_length=128)
+
+
+def _profiles_repo(request: Request):
+    repo = getattr(request.app.state, "llm_profiles", None)
+    if repo is None:
+        raise HTTPException(status_code=503, detail="LLM profiles require a database")
+    return repo
+
+
+def _normalized_optional(body_endpoint: str | None, body_model: str | None) -> tuple[str | None, str | None]:
+    endpoint = (body_endpoint or "").strip() or None
+    model = (body_model or "").strip() or None
+    if endpoint is not None:
+        try:
+            endpoint = normalize_personal_endpoint(endpoint)
+        except PersonalEndpointRejected as cause:
+            raise HTTPException(status_code=422, detail=str(cause)) from cause
+    return endpoint, model
+
+
+@router.post("/llm/profiles", response_model=LlmProfileOut, status_code=201)
+async def create_llm_profile(request: Request, body: ProfileCreateIn) -> LlmProfileOut:
+    """M15-018 新增厂商配置（首条自动激活；activate=true 显式切换）。"""
+    await require_user(request)
+    try:
+        box = SecretBox(get_settings().auth_secret)
+    except SecretBoxError as cause:
+        raise HTTPException(status_code=503, detail=str(cause)) from cause
+    endpoint, model = _normalized_optional(body.endpoint, body.model)
+    user_id = current_owner_id(request)
+    try:
+        p = await _profiles_repo(request).create(
+            user_id, body.label.strip(), box.encrypt_to_b64(body.api_key),
+            body.api_key[-4:], endpoint=endpoint, model=model, activate=body.activate,
+        )
+    except ValueError as cause:
+        raise HTTPException(status_code=409, detail=str(cause)) from cause
+    payload = await build_audit_payload(
+        request, action="llm_profile.create", target_type="llm_profile",
+        target_id=f"{user_id}:{p.id}", before=None,
+        after={"label": p.label, "last4": p.last4, "active": p.is_active},
+    )
+    if payload is not None:
+        await request.app.state.audit.record(**payload)
+    return LlmProfileOut(id=p.id, label=p.label, last4=p.last4, endpoint=p.endpoint, model=p.model, active=p.is_active)
+
+
+@router.put("/llm/profiles/{profile_id}", response_model=LlmProfileOut)
+async def update_llm_profile(request: Request, profile_id: str, body: ProfileUpdateIn) -> LlmProfileOut:
+    await require_user(request)
+    profiles = _profiles_repo(request)
+    user_id = current_owner_id(request)
+    existing = await profiles.get(profile_id, user_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="厂商配置不存在")
+    endpoint, model = _normalized_optional(body.endpoint, body.model)
+    ciphertext = None
+    last4 = None
+    if body.api_key is not None:
+        try:
+            box = SecretBox(get_settings().auth_secret)
+        except SecretBoxError as cause:
+            raise HTTPException(status_code=503, detail=str(cause)) from cause
+        ciphertext = box.encrypt_to_b64(body.api_key)
+        last4 = body.api_key[-4:]
+    p = await profiles.update_fields(
+        profile_id, user_id, label=body.label.strip() if body.label else None,
+        ciphertext=ciphertext, last4=last4, endpoint=endpoint, model=model,
+    )
+    return LlmProfileOut(id=p.id, label=p.label, last4=p.last4, endpoint=p.endpoint, model=p.model, active=p.is_active)
+
+
+@router.post("/llm/profiles/{profile_id}/activate", response_model=LlmProfileOut)
+async def activate_llm_profile(request: Request, profile_id: str) -> LlmProfileOut:
+    """M15-018 切换当前生效厂商（判分即时走它）。"""
+    await require_user(request)
+    user_id = current_owner_id(request)
+    p = await _profiles_repo(request).activate(profile_id, user_id)
+    if p is None:
+        raise HTTPException(status_code=404, detail="厂商配置不存在")
+    payload = await build_audit_payload(
+        request, action="llm_profile.activate", target_type="llm_profile",
+        target_id=f"{user_id}:{p.id}", before=None, after={"label": p.label},
+    )
+    if payload is not None:
+        await request.app.state.audit.record(**payload)
+    return LlmProfileOut(id=p.id, label=p.label, last4=p.last4, endpoint=p.endpoint, model=p.model, active=True)
+
+
+@router.delete("/llm/profiles/{profile_id}")
+async def delete_llm_profile(request: Request, profile_id: str) -> dict:
+    await require_user(request)
+    user_id = current_owner_id(request)
+    deleted = await _profiles_repo(request).delete(profile_id, user_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="厂商配置不存在")
+    payload = await build_audit_payload(
+        request, action="llm_profile.delete", target_type="llm_profile",
+        target_id=f"{user_id}:{profile_id}", before=None, after=None,
+    )
+    if payload is not None:
+        await request.app.state.audit.record(**payload)
+    return {"deleted": profile_id}
+
+
 async def resolve_user_llm_config(app, user_id: str | None) -> dict | None:
-    """个人 LLM 判分配置：{api_key, endpoint, model}——endpoint/model 空值
-    由调用方回落服务端全局配置。无个人密钥/密文损坏 → None（用全局）。"""
+    """个人 LLM 判分配置（M15-018：取 active profile）——空值回落全局；
+    无 profile/密文损坏 → None（用全局）。"""
     if user_id is None:
         return None
+    profiles = getattr(app.state, "llm_profiles", None)
+    if profiles is not None:
+        active = next(
+            (p for p in await profiles.list_for_user(user_id) if p.is_active), None
+        )
+        if active is None:
+            return None
+        try:
+            box = SecretBox(get_settings().auth_secret)
+            return {
+                "api_key": box.decrypt_from_b64(active.ciphertext),
+                "endpoint": active.endpoint,
+                "model": active.model,
+            }
+        except SecretBoxError:
+            return None
     repo = getattr(app.state, "user_ai_keys", None)
     if repo is None:
         return None

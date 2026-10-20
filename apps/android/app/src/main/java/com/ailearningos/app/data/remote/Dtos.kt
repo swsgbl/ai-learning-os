@@ -99,7 +99,10 @@ data class UserAiKeyStatus(
 )
 
 @Serializable
-data class UserAiKeysResponse(val keys: List<UserAiKeyStatus>)
+data class UserAiKeysResponse(
+    val keys: List<UserAiKeyStatus>,
+    val profiles: List<LlmProfile> = emptyList(),
+)
 
 @Serializable
 data class UserAiKeyPutRequest(
@@ -141,3 +144,27 @@ data class MaterializedPaperResponse(
     val title: String,
     val question_count: Int,
 )
+
+
+/** M15-018 多厂商 LLM 密钥库 */
+@Serializable
+data class LlmProfile(
+    val id: String,
+    val label: String,
+    val last4: String,
+    val endpoint: String? = null,
+    val model: String? = null,
+    val active: Boolean = false,
+)
+
+@Serializable
+data class ProfileCreateRequest(
+    val label: String,
+    val api_key: String,
+    val endpoint: String? = null,
+    val model: String? = null,
+    val activate: Boolean = false,
+)
+
+@Serializable
+data class ProfileDeleteResponse(val deleted: String)

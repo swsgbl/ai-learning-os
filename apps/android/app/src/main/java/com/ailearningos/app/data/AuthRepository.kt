@@ -7,6 +7,8 @@ import com.ailearningos.app.data.model.UserProfile
 import com.ailearningos.app.data.remote.GenerationDraftRequest
 import com.ailearningos.app.data.remote.GenerationDraftResponse
 import com.ailearningos.app.data.remote.MaterializedPaperResponse
+import com.ailearningos.app.data.remote.LlmProfile
+import com.ailearningos.app.data.remote.ProfileCreateRequest
 import com.ailearningos.app.data.remote.LlmModelsProbeRequest
 import com.ailearningos.app.data.remote.LoginRequest
 import com.ailearningos.app.data.remote.UserAiKeyPutRequest
@@ -52,12 +54,17 @@ interface SystemGateway {
     /** M15-006 更新检查：服务端未配置（404）→ null（如实「无版本信息」）；网络/服务器故障抛 [AppError] */
     suspend fun latestApp(): LatestAppInfo?
     suspend fun myAiKeys(): List<MyAiKeyInfo>
+    suspend fun llmProfiles(): List<LlmProfile>
     suspend fun saveMyAiKey(slot: String, apiKey: String, endpoint: String?, model: String?)
     suspend fun deleteMyAiKey(slot: String)
     suspend fun probeLlmModels(apiKey: String?, endpoint: String?): List<String>
     /** M15-017 定制课程：目标 → 课程方案 → 私有练习卷（App 端闭环） */
     suspend fun generateCourse(goal: String): GenerationDraftResponse
     suspend fun materializeCourse(draftId: String): MaterializedPaperResponse
+    /** M15-018 多厂商密钥库 */
+    suspend fun createLlmProfile(label: String, apiKey: String, endpoint: String?, model: String?, activate: Boolean): LlmProfile
+    suspend fun activateLlmProfile(profileId: String)
+    suspend fun deleteLlmProfile(profileId: String)
 }
 
 /** M15-006 服务端透出的最新应用版本（领域模型，UI 不接触 DTO） */
@@ -98,6 +105,10 @@ class AuthRepository(
         if (cause.kind == AppErrorKind.NOT_FOUND) null else throw cause
     }
 
+    override suspend fun llmProfiles(): List<LlmProfile> = withRemoteError {
+        apiProvider.get().myAiKeys().profiles
+    }
+
     override suspend fun myAiKeys(): List<MyAiKeyInfo> = withRemoteError {
         apiProvider.get().myAiKeys().keys.map {
             MyAiKeyInfo(it.slot, it.configured, it.last4, it.effect, it.endpoint, it.model)
@@ -127,6 +138,22 @@ class AuthRepository(
 
     override suspend fun materializeCourse(draftId: String): MaterializedPaperResponse = withRemoteError {
         apiProvider.get().materializeDraft(draftId)
+    }
+
+    override suspend fun createLlmProfile(label: String, apiKey: String, endpoint: String?, model: String?, activate: Boolean): LlmProfile = withRemoteError {
+        apiProvider.get().createLlmProfile(
+            ProfileCreateRequest(label, apiKey, endpoint?.ifBlank { null }, model?.ifBlank { null }, activate)
+        )
+    }
+
+    override suspend fun activateLlmProfile(profileId: String) = withRemoteError {
+        apiProvider.get().activateLlmProfile(profileId)
+        Unit
+    }
+
+    override suspend fun deleteLlmProfile(profileId: String) = withRemoteError {
+        apiProvider.get().deleteLlmProfile(profileId)
+        Unit
     }
 
     override suspend fun login(username: String, password: String): UserProfile = withRemoteError {

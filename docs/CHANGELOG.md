@@ -1,5 +1,28 @@
 # Changelog
 # Changelog
+## M15-018/019 —— 多厂商 LLM 密钥库 + 任意主题 LLM 动态课程生成 + 全端同步
+
+- **M15-018 多厂商密钥库**（回应「同时填几个厂商密钥自由切换」）：
+  - 服务端 `user_llm_profiles` 表（迁移 0031，每用户最多 8 条、恰一条
+    激活；存量单槽自动迁入为「默认」条）；`POST/PUT/DELETE
+    /me/ai-keys/llm/profiles[...]` + `/{id}/activate`（审计脱敏）；
+    判分 resolver 取 active 条；旧单槽 GET/PUT/DELETE 兼容封装。
+  - **App**：设置页「我的 AI 密钥（多厂商）」——厂商列表（使用中/
+    切换/删除）+ 添加表单（名称/密钥/接口地址/模型名+获取列表）。
+  - **Web 新增 /settings 页**（两端同步——用户指令）：同口径多厂商
+    管理 + 模型列表点选。
+- **M15-019 LLM 动态课程生成**（回应「只有 SQL 一个概念图，其他主题
+  全被 422 拒绝」）：goal 无概念匹配时走 LLM 兜底生成概念集+章节+
+  评估（`llm_course_generator`——严格 JSON 解析、4-8 章校验、plan 与
+  DAG 版同形态故 materialize/判分链零改动）；LLM 来源 **BYOK active
+  条优先**、回落服务端全局；LLM 不可用才 422（附概念图主题引导）。
+- **M15-019b Android 错误文案修复**（真机实测「填完密钥后定制课程报
+  API 返回数据格式异常」根因）：HttpException 解析 `{"detail": "..."}`
+  纯字符串形态透出为 userMessage（与 Web 同口径）——422 的「当前支持
+  主题」引导、502「接口地址不可达」等不再被吞成通用文案；数组/非
+  JSON 形态仍走固定脱敏文案（不泄漏 URL/header/底层异常）。
+
+# Changelog
 ## v0.1.7（versionCode 8）
 
 - **App 端定制课程闭环**（M15-017/017b/017c）：首页「定制课程（说出

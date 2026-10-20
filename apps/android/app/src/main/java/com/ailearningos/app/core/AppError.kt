@@ -41,10 +41,14 @@ enum class AppErrorKind {
 class AppError(
     val kind: AppErrorKind,
     cause: Throwable? = null,
+    /** M15-019：服务端 detail 文案（纯字符串时透出——服务端 4xx/5xx 的
+     * detail 均为有意给出的友好中文，如「当前支持的主题：…」；Fastapi
+     * 校验错误的数组形态不会进入此字段，仍走固定脱敏文案）。 */
+    private val messageOverride: String? = null,
 ) : Exception(cause) {
 
     val userMessage: String
-        get() = when (kind) {
+        get() = messageOverride ?: when (kind) {
             AppErrorKind.NETWORK -> "无法连接 API，请检查网络后重试"
             AppErrorKind.UNAUTHORIZED -> "登录状态已失效，请重新登录"
             AppErrorKind.FORBIDDEN -> "当前账号没有权限执行该操作"

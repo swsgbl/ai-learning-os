@@ -178,11 +178,19 @@ async def resolve_provider_key(app, slot: str, user_id: str | None = None) -> st
     其余语义（槽位白名单 fail-fast / 密文损坏回退 env）不变。
     """
     if user_id is not None:
-        from app.api.routes.me_ai_keys import resolve_user_provider_key
+        if slot == "llm":
+            # M15-018：llm 槽位走多厂商 profile（active 条）语义
+            from app.api.routes.me_ai_keys import resolve_user_llm_config
 
-        personal = await resolve_user_provider_key(app, slot, user_id)
-        if personal is not None:
-            return personal
+            personal = await resolve_user_llm_config(app, user_id)
+            if personal is not None:
+                return personal["api_key"]
+        else:
+            from app.api.routes.me_ai_keys import resolve_user_provider_key
+
+            personal = await resolve_user_provider_key(app, slot, user_id)
+            if personal is not None:
+                return personal
     """装配 resolver：DB 在线密钥优先，回退 env（None=两端都未配置）。
 
     槽位白名单外的 slot 一律返回 env 语义不可达（编程错误，fail-fast）。
