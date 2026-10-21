@@ -30,3 +30,5 @@ job；本机 SQLite 契约测试覆盖迁移 up/down 语义。
 | 复习闭环 API（建队幂等/present/attempt 判分/滚动排期） | M16-005 | pass（SQLite 文件库契约） | `test_sprint_assessment_api.py::test_follow_up_review_lifecycle` |
 | 判分题型解析差异修复（normalize_type 单一事实源回归） | M16-004b | pass（essay/unknown/alias 三态收录测试） | `test_assessment_blueprint.py::test_essay_and_unknown_types_excluded` |
 | FSRS 真实算法接入（py-fsrs 依赖与 license 审查） | — | not_executed（MVP 调度器已留 adapter 协议） | `domain/review_schedule.py` 注释 |
+| Web 学习工作台（合同/蓝图/前后测作答/报告/掌握度/复习面板） | M16-006 | pass（typecheck/lint/build + 334 测试） | `apps/web/src/app/learning/page.tsx` |
+| 前后测提交原子化（并发双提交仅一方生效） | M16-006b | pass（重复提交 409 回归） | `test_sprint_assessment_api.py`（dup 提交路径） |

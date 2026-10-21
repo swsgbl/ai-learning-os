@@ -402,6 +402,26 @@ async def create_sprint(contract_id: str, request: Request) -> SprintOut:
     return _sprint_out(row)
 
 
+@router.get("/contracts/{contract_id}/sprints", response_model=list[SprintOut])
+async def list_contract_sprints(contract_id: str, request: Request) -> list[SprintOut]:
+    """该合同的 Sprint 列表（最新在前）——Web 工作台按合同恢复冲刺面板。"""
+    await _owned_contract(request, contract_id)
+    async with request.app.state.sessionmaker() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(LearningSprintRow)
+                    .where(LearningSprintRow.contract_id == contract_id)
+                    .order_by(LearningSprintRow.created_at.desc())
+                    .limit(20)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    return [_sprint_out(row) for row in rows]
+
+
 @router.get("/sprints/{sprint_id}", response_model=SprintOut)
 async def get_sprint(sprint_id: str, request: Request) -> SprintOut:
     row = await _owned_sprint(request, sprint_id)
@@ -1204,11 +1224,31 @@ async def submit_sprint_assessment(
             "ungraded_count": ungraded,
             "submitted_at": now.isoformat(),
         }
-        db_sprint = await session.get(LearningSprintRow, sprint.id)
-        assert db_sprint is not None
-        setattr(db_sprint, result_field, result_payload)
-        db_sprint.phase = PHASE_AFTER_SUBMIT[phase]
-        db_sprint.updated_at = now
+        # M16-006b（安全审查修复）：条件更新原子绑定结果+推进——
+        # WHERE 须仍处于该阶段且该侧结果为空。并发双提交只有一方
+        # rowcount=1；期间被推进/已提交的（TOCTOU）一律 409，
+        # 绝不绕过状态机硬改 phase（race-condition + logic-bypass）。
+        from sqlalchemy import update
+
+        result = await session.execute(
+            update(LearningSprintRow)
+            .where(
+                LearningSprintRow.id == sprint.id,
+                LearningSprintRow.phase == PHASE_REQUIRED_SPRINT_PHASE[phase],
+                getattr(LearningSprintRow, result_field).is_(None),
+            )
+            .values(
+                **{result_field: result_payload},
+                phase=PHASE_AFTER_SUBMIT[phase],
+                updated_at=now,
+            )
+        )
+        if result.rowcount != 1:
+            await session.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="提交冲突：Sprint 状态已变化（已提交或已推进）——刷新后重试",
+            )
         await session.commit()
 
     await _record_event(

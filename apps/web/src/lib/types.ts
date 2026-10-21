@@ -540,3 +540,105 @@ export type StudyView = {
   chapter_count: number;
   chapters: StudyChapter[];
 };
+
+// --- M16 学习引擎（升级方案 Phase 1-6） ---
+
+export interface TargetOutcome {
+  statement: string;
+  criteria: string;
+}
+
+export interface LearningContract {
+  id: string;
+  title: string;
+  domain: string;
+  mode: string;
+  target_outcomes: TargetOutcome[];
+  scope_included: string[];
+  scope_excluded: string[];
+  prerequisites: string[];
+  time_budget_hours: number;
+  deadline: string | null;
+  pass_criteria: string;
+  confirmed_at: string | null;
+  created_at: string;
+}
+
+export interface LearningSprint {
+  id: string;
+  contract_id: string;
+  phase: string;
+  paused: boolean;
+  pause_reason: string;
+  plan_version: number;
+  started_at: string | null;
+  ends_at: string | null;
+  expired: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AssessmentResult {
+  score: number;
+  correct_count: number;
+  question_count: number;
+  ungraded_count: number;
+}
+
+export interface SprintReport {
+  sprint_id: string;
+  expired: boolean;
+  baseline: AssessmentResult | null;
+  posttest: AssessmentResult | null;
+  gain: number | null;
+  mastery_snapshot: Array<{
+    concept_id: string;
+    state: string;
+    evidence_count: number;
+    independent_correct: number;
+    high_confidence_errors: number;
+  }>;
+  incomplete: string[];
+}
+
+export interface BlueprintInfo {
+  contract_id: string;
+  complete: boolean;
+  gaps: string[];
+  plans: Array<{
+    concept_id: string;
+    pretest_item_ids: string[];
+    posttest_item_ids: string[];
+    complete: boolean;
+    note: string;
+  }>;
+}
+
+export interface AssessmentItem {
+  item_id: string;
+  concept_id: string;
+  question_type: string;
+  stem: string;
+  options: Array<{ key: string; text: string }> | null;
+  score: number;
+}
+
+export interface MasteryOverviewItem {
+  concept_id: string;
+  state: string;
+  evidence_count: number;
+  independent_correct: number;
+  distinct_contexts: number;
+  delayed_or_transfer_correct: number;
+  high_confidence_errors: number;
+}
+
+export interface ReviewQueueItem {
+  id: string;
+  concept_id: string;
+  sprint_id: string | null;
+  status: string;
+  due_at: string;
+  interval_days: number | null;
+  overdue: boolean;
+}
