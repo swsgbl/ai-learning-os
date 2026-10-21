@@ -88,6 +88,15 @@ materialize 响应真实字段为 {paper_id, question_count, title}，App DTO
 
 # Changelog
 # Changelog
+## v0.3.0（versionCode 13）—— 学习模式 + 语音全链上线
+
+- **学习模式（先学习再考试）**：试卷卡「学习模式」→ 逐章学习目标
+  与练一练 → 学完去考试（M15-024）。
+- **语音引擎上线**：TTS CosyVoice + ASR FunASR 全链打通（生产
+  实测 roundtrip 0.9s）；provider 空串 422 根修。
+- 迁移 0032（materialized_paper_id 反查学习材料）。
+
+# Changelog
 ## M15-024/024b —— 学习模式 + 语音引擎上线（TTS 全链打通）
 
 - **根因**（用户核心反馈「学习系统应该先学习再考试，不是只有考试
