@@ -17,6 +17,7 @@ from app.api.routes.courses import router as courses_router
 from app.api.routes.eval import router as eval_router
 from app.api.routes.exam_history import router as exam_history_router
 from app.api.routes.exams import router as exams_router
+from app.api.routes.learning import router as learning_router
 from app.api.routes.me_ai_keys import router as me_ai_keys_router
 from app.api.routes.misconceptions import router as misconceptions_router
 from app.api.routes.paper_extractor import router as paper_extractor_router
@@ -298,6 +299,7 @@ def create_app(
     app.include_router(paper_extractor_router)
     app.include_router(papers_router)
     app.include_router(exam_history_router)
+    app.include_router(learning_router)
     app.include_router(study_router)
     app.include_router(exams_router)
     app.include_router(concepts_router)

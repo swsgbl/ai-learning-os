@@ -1,3 +1,46 @@
+## M16-002 —— 作答证据 + 概念掌握度 MVP（升级方案 Phase 2）
+
+- **Attempt 证据**（迁移 0034 learning_attempts）：判分三态（correct
+  可空=未判分不折算）、提交前信心 1-5、耗时、提示次数、独立/延迟/
+  迁移标记、错误类型标签、作答上下文（题型/阶段）。API：
+  POST/GET /api/v1/learning/attempts。
+- **掌握度证据状态机**（domain/mastery.py，可解释规则 MVP）：unknown →
+  emerging → practicing → provisional → mastered；延迟/迁移复测失败 →
+  at_risk。规则要点：同一题型反复答对不升 provisional（需 ≥3 独立正确
+  + ≥2 不同上下文）；mastered 需延迟或迁移独立证据；提示作答与独立
+  作答区分；高信心错误（confidence≥4 且错）可检测为误概念信号。
+- **ConceptMastery 不落表**——派生视图由 derive_mastery 从原始 attempts
+  实时重算（幂等：同证据恒同输出）。API：GET /api/v1/learning/mastery
+  [/{concept_id}] 返回状态+关键统计（estimator_version 标注规则版本）。
+- 阈值为 MVP 事先声明值（黄金集校准前，见 LEARNING_EVIDENCE_STATUS）。
+- 验证：域层 11 测试（穷举状态链/时间序敏感降级/确定性）+ API 契约
+  6 测试（三态落库/全状态链经 API/概览聚合）；全量 6468 passed / ruff
+  clean。
+
+## M16-001 —— 学习合同 / Sprint 状态机 / 学习事件（升级方案 Phase 1）
+
+- **LearningContract**：可观察能力目标（1-8 条「给定 X 能在 Z 标准下完成
+  Y」）+ 范围/排除项/先验/时间预算/通过标准 + 四模式（exam_sprint/
+  intro/project/research）；确认仅经用户显式 /confirm（confirmed_at 唯一
+  写入口，LLM 无权代确认，重复确认幂等）。
+- **Sprint 状态机**：11 阶段单向链 created→…→follow_up（域层穷举 121
+  组合，全非法跳段/回退拒绝）；同状态推进幂等 no-op；暂停/恢复独立于
+  主线（进行中可暂停、恢复不丢证据）；REPLANNABLE 阶段外拒绝改范围。
+- **LearningEvent**：幂等键全局唯一去重（重复提交返回既有事件）；source
+  （api/llm/voice/system）+ trace_id + privacy_class 审计字段；Sprint
+  事件流含合同级事件（contract.confirmed 等）。
+- 迁移 0033 三表（owner_id 可空=本地模式无主写，与考试/草稿既有语义
+  一致）；API /api/v1/learning/contracts|sprints|events（归属门与考试
+  同款：auth on 严格 owner，本地无主可见）。
+- 治理：新增 `docs/LEARNING_EVIDENCE_STATUS.md`（实现/验证状态分离）；
+  ROADMAP 增 M16 节（Phase 0-8）。验证：域层+契约 13 测试新绿，全量
+  6451 passed / ruff clean；PG 迁移 job 与生产部署 not_executed（按
+  方案不自动部署）。
+- **M16-001b 安全修复（提交前审查发现）**：学习事件幂等键改租户命名
+  空间作用域（idem_scope_key = "{owner}#{用户键}" 承载唯一约束）——
+  修复跨租户同键 IDOR（B 用 A 的键读到 A 的事件）与键预占压制（B 先
+  占键吞掉 A 的事件）；补双用户同键隔离回归测试。
+
 ## M15-025 —— App 考场审阅独立入口 + 设置菜单化 + 多厂商密钥列表 + LLM 本机代理修复
 
 - **App「考场审阅」独立标签**（用户实测找不到入口）：底栏新增第 6 个
