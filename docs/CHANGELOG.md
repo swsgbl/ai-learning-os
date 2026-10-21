@@ -1,3 +1,24 @@
+## M16-004 —— Sprint 编排：评估蓝图 + 等值前后测 + 报告（升级方案 Phase 4）
+
+- **评估蓝图**（domain/assessment_blueprint.py + 迁移 0035）：按概念从
+  owner 题池（定制课程卷+公共卷客观题）分配前测/后测题——**等值不重叠**
+  （难度奇偶配平；后测绝不复用前测原题，方案核心验收）；题量不足如实
+  partial + gaps（不虚报完整）。API：POST /contracts/{id}/blueprint/build
+  （幂等重建）+ GET blueprint。
+- **Sprint 前后测**：GET /sprints/{id}/assessment?phase=baseline|posttest
+  下发题目公开面（answer/explanation 绝不下发——答案隔离不变式）；
+  阶段前置校验（不在对应阶段 409）。
+- **提交判分编排**：POST .../assessment/{phase}/submit——服务端
+  grade_answer 三态判分 → 每题落 LearningAttempt 证据（context=
+  题型:阶段）→ 绑定 baseline/posttest_result → 自动推进阶段；重复
+  提交 409（证据不可覆盖，重考=新 Sprint）。
+- **Sprint 报告**：GET /sprints/{id}/report——前后测对比+增益、按概念
+  掌握快照（attempts 实时重算）、未完成项诚实列出（报告未就绪 409，
+  绝不虚构掌握结论）。
+- 验证：蓝图域层 7 测试（等值不重叠/配平/不足如实/概念独立划分）+
+  编排 API 5 测试（全链：蓝图→前测隔离下发→判分→推进→后测不重叠→
+  报告增益）；全量 6498 passed / ruff clean。
+
 ## M16-003 —— 教学微循环与自适应练习策略（升级方案 Phase 3）
 
 - **微循环策略引擎**（domain/practice_loop.py，纯函数无状态可复算）：
