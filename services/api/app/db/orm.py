@@ -657,3 +657,82 @@ class UserRow(Base):
     # M9-04: 角色——默认 learner；admin 仅经安全运维 CLI 提升（无默认管理员账号）
     role: Mapped[str] = mapped_column(String(16), default="learner", server_default="learner")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class LearningContractRow(Base):
+    """M16-001 学习合同：可观察能力目标 + 范围/排除项 + 先验 + 通过标准。
+
+    升级方案 Phase 1——目标不是主题名，是 3-8 个「给定 X，能在 Z 标准
+    下完成 Y」的可观察结果（target_outcomes JSON）；确认由用户显式
+    （confirmed_at），LLM 不可代确认。
+    """
+
+    __tablename__ = "learning_contracts"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    title: Mapped[str] = mapped_column(String(200))
+    domain: Mapped[str] = mapped_column(String(64), default="", server_default="")
+    # exam_sprint / intro / project / research 四种模式（方案 Phase 4）
+    mode: Mapped[str] = mapped_column(String(32), default="exam_sprint", server_default="exam_sprint")
+    target_outcomes: Mapped[list[dict[str, Any]]] = mapped_column(JSON)
+    scope_included: Mapped[list[str]] = mapped_column(JSON)
+    scope_excluded: Mapped[list[str]] = mapped_column(JSON)
+    prerequisites: Mapped[list[str]] = mapped_column(JSON)
+    time_budget_hours: Mapped[float] = mapped_column(Float)
+    deadline: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    pass_criteria: Mapped[str] = mapped_column(Text)
+    # Phase 2 接入（前测/等值后测蓝图）；无蓝图 = 评估走既有题库
+    assessment_blueprint_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class LearningSprintRow(Base):
+    """M16-001 学习 Sprint：48h 编排状态机（phase 主线 + paused 独立标志）。
+
+    只有领域服务（sprint_state + 路由服务层）可推进；plan_version 在
+    REPLANNABLE 阶段修改范围时递增，不覆盖旧计划。
+    """
+
+    __tablename__ = "learning_sprints"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    contract_id: Mapped[str] = mapped_column(String(32), ForeignKey("learning_contracts.id"), index=True)
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    phase: Mapped[str] = mapped_column(String(32), default="created", server_default="created")
+    paused: Mapped[bool] = mapped_column(Boolean, server_default=sa_false())
+    pause_reason: Mapped[str] = mapped_column(Text, default="", server_default="")
+    plan_version: Mapped[int] = mapped_column(Integer, default=1, server_default="1")
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    baseline_result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    posttest_result: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class LearningEventRow(Base):
+    """M16-001 学习事件：幂等键去重的审计事实流（不可静默覆盖）。
+
+    idempotency_key 全局唯一（重复提交返回既有事件，不重复落库）；
+    source 区分 api/llm/voice/system；privacy_class 供日志脱敏分层。
+    """
+
+    __tablename__ = "learning_events"
+    __table_args__ = (
+        UniqueConstraint("idempotency_key", name="uq_learning_events_idem"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    sprint_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
+    contract_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
+    owner_id: Mapped[str | None] = mapped_column(String(32), index=True, nullable=True)
+    event_type: Mapped[str] = mapped_column(String(64))
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    source: Mapped[str] = mapped_column(String(16), default="api", server_default="api")
+    trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    privacy_class: Mapped[str] = mapped_column(String(16), default="normal", server_default="normal")
+    occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

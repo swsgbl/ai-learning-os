@@ -1,3 +1,23 @@
+## M16-001 —— 学习合同 / Sprint 状态机 / 学习事件（升级方案 Phase 1）
+
+- **LearningContract**：可观察能力目标（1-8 条「给定 X 能在 Z 标准下完成
+  Y」）+ 范围/排除项/先验/时间预算/通过标准 + 四模式（exam_sprint/
+  intro/project/research）；确认仅经用户显式 /confirm（confirmed_at 唯一
+  写入口，LLM 无权代确认，重复确认幂等）。
+- **Sprint 状态机**：11 阶段单向链 created→…→follow_up（域层穷举 121
+  组合，全非法跳段/回退拒绝）；同状态推进幂等 no-op；暂停/恢复独立于
+  主线（进行中可暂停、恢复不丢证据）；REPLANNABLE 阶段外拒绝改范围。
+- **LearningEvent**：幂等键全局唯一去重（重复提交返回既有事件）；source
+  （api/llm/voice/system）+ trace_id + privacy_class 审计字段；Sprint
+  事件流含合同级事件（contract.confirmed 等）。
+- 迁移 0033 三表（owner_id 可空=本地模式无主写，与考试/草稿既有语义
+  一致）；API /api/v1/learning/contracts|sprints|events（归属门与考试
+  同款：auth on 严格 owner，本地无主可见）。
+- 治理：新增 `docs/LEARNING_EVIDENCE_STATUS.md`（实现/验证状态分离）；
+  ROADMAP 增 M16 节（Phase 0-8）。验证：域层+契约 13 测试新绿，全量
+  6451 passed / ruff clean；PG 迁移 job 与生产部署 not_executed（按
+  方案不自动部署）。
+
 ## M15-025 —— App 考场审阅独立入口 + 设置菜单化 + 多厂商密钥列表 + LLM 本机代理修复
 
 - **App「考场审阅」独立标签**（用户实测找不到入口）：底栏新增第 6 个
