@@ -310,3 +310,18 @@ def test_event_idempotency_is_tenant_scoped_no_idor_no_suppression(
     finally:
         monkeypatch.delenv("AUTH_SECRET", raising=False)
         get_settings.cache_clear()
+
+
+def test_contract_sprints_listing() -> None:
+    """M16-006：按合同列 Sprint（最新在前）——Web 工作台恢复冲刺面板。"""
+    with _client() as client:
+        contract_id = _make_confirmed_contract(client)
+        first = client.post(f"/api/v1/learning/contracts/{contract_id}/sprints")
+        assert first.status_code == 201
+        second = client.post(f"/api/v1/learning/contracts/{contract_id}/sprints")
+        assert second.status_code == 201
+        listed = client.get(f"/api/v1/learning/contracts/{contract_id}/sprints")
+        assert listed.status_code == 200
+        items = listed.json()
+        assert len(items) == 2
+        assert items[0]["id"] == second.json()["id"]  # 最新在前

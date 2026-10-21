@@ -35,6 +35,8 @@ const BASE_NAV: Array<{ href: string; label: string; icon: LucideIcon }> = [
   { href: "/create", label: "定制课程", icon: Sparkles },
   { href: "/voice", label: "语音陪练", icon: Headphones },
   { href: "/exam", label: "考场审阅", icon: BookOpen },
+  // M16-006 学习冲刺工作台（学习引擎用户入口——合同/Sprint/掌握度/复习）
+  { href: "/learning", label: "学习冲刺", icon: BookOpen },
   { href: "/library", label: "学习库", icon: Library },
   { href: "/progress", label: "工作台", icon: LineChart },
   // M15-021：设置入口（我的 AI 密钥/多厂商管理）——与 App 端功能对齐；

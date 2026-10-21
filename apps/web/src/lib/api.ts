@@ -24,6 +24,14 @@ import type {
   VoiceSessionResume,
   VoiceSessions,
   VoiceTokenResponse,
+  AssessmentItem,
+  AssessmentResult,
+  BlueprintInfo,
+  LearningContract,
+  LearningSprint,
+  MasteryOverviewItem,
+  ReviewQueueItem,
+  SprintReport,
 } from "./types";
 import { normalizeBasePath } from "./base-path";
 
@@ -155,6 +163,60 @@ function draftEndpoints<T>(base: string) {
 }
 
 export const api = {
+  // M16 学习引擎（升级方案 Phase 1-6）
+  learning: {
+    contracts: () => request<LearningContract[]>("/api/v1/learning/contracts"),
+    createContract: (payload: object) =>
+      request<LearningContract>("/api/v1/learning/contracts", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      }),
+    confirmContract: (id: string) =>
+      request<LearningContract>(`/api/v1/learning/contracts/${encodeURIComponent(id)}/confirm`, { method: "POST" }),
+    buildBlueprint: (contractId: string, concepts: string[] = []) =>
+      request<BlueprintInfo>(`/api/v1/learning/contracts/${encodeURIComponent(contractId)}/blueprint/build`, {
+        method: "POST",
+        body: JSON.stringify({ concepts }),
+      }),
+    getBlueprint: (contractId: string) =>
+      request<BlueprintInfo>(`/api/v1/learning/contracts/${encodeURIComponent(contractId)}/blueprint`),
+    createSprint: (contractId: string) =>
+      request<LearningSprint>(`/api/v1/learning/contracts/${encodeURIComponent(contractId)}/sprints`, { method: "POST" }),
+    getSprint: (id: string) =>
+      request<LearningSprint>(`/api/v1/learning/sprints/${encodeURIComponent(id)}`),
+    contractSprints: (contractId: string) =>
+      request<LearningSprint[]>(`/api/v1/learning/contracts/${encodeURIComponent(contractId)}/sprints`),
+    presentReview: (reviewId: string) =>
+      request<ReviewQueueItem>(`/api/v1/learning/review-queue/${encodeURIComponent(reviewId)}/present`, { method: "POST" }),
+    advanceSprint: (id: string, toPhase: string) =>
+      request<LearningSprint>(`/api/v1/learning/sprints/${encodeURIComponent(id)}/advance`, {
+        method: "POST",
+        body: JSON.stringify({ to_phase: toPhase }),
+      }),
+    pauseSprint: (id: string, reason: string) =>
+      request<LearningSprint>(`/api/v1/learning/sprints/${encodeURIComponent(id)}/pause`, {
+        method: "POST",
+        body: JSON.stringify({ reason }),
+      }),
+    resumeSprint: (id: string) =>
+      request<LearningSprint>(`/api/v1/learning/sprints/${encodeURIComponent(id)}/resume`, { method: "POST" }),
+    getAssessment: (sprintId: string, phase: "baseline" | "posttest") =>
+      request<{ sprint_id: string; phase: string; items: AssessmentItem[] }>(
+        `/api/v1/learning/sprints/${encodeURIComponent(sprintId)}/assessment?phase=${phase}`,
+      ),
+    submitAssessment: (sprintId: string, phase: "baseline" | "posttest", responses: Array<{ item_id: string; response: string; confidence?: number }>) =>
+      request<AssessmentResult & { sprint_phase: string; per_concept: Record<string, { correct: number; total: number }> }>(
+        `/api/v1/learning/sprints/${encodeURIComponent(sprintId)}/assessment/${phase}/submit`,
+        { method: "POST", body: JSON.stringify({ responses }) },
+      ),
+    report: (sprintId: string) =>
+      request<SprintReport>(`/api/v1/learning/sprints/${encodeURIComponent(sprintId)}/report`),
+    mastery: () => request<MasteryOverviewItem[]>("/api/v1/learning/mastery"),
+    reviewQueue: () => request<ReviewQueueItem[]>("/api/v1/learning/review-queue"),
+    scheduleFollowUp: (sprintId: string) =>
+      request<ReviewQueueItem[]>(`/api/v1/learning/sprints/${encodeURIComponent(sprintId)}/follow-up/schedule`, { method: "POST" }),
+  },
+
   papers: () => request<PaperSummary[]>("/api/v1/papers"),
   paperStudy: (paperId: string) =>
     request<StudyView>(`/api/v1/papers/${encodeURIComponent(paperId)}/study`),
