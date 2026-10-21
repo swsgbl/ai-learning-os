@@ -110,3 +110,50 @@ def test_mastery_deterministic_recompute() -> None:
         first = client.get("/api/v1/learning/mastery/c_sql_select").json()
         second = client.get("/api/v1/learning/mastery/c_sql_select").json()
         assert first == second
+
+
+def test_practice_decision_endpoints() -> None:
+    """M16-003 微循环决策 API：先尝试起步 + 错误定向再教学 + 交错计划。"""
+    with _client() as client:
+        start = client.post(
+            "/api/v1/learning/practice/next-step",
+            json={"concept_id": "c_join", "completed_steps": []},
+        )
+        assert start.status_code == 200
+        assert start.json()["next_step"] == "first_attempt"
+
+        wrong = client.post(
+            "/api/v1/learning/practice/next-step",
+            json={
+                "concept_id": "c_join",
+                "completed_steps": ["independent_practice"],
+                "last_attempt": {"correct": False, "error_tags": ["confusion"]},
+            },
+        )
+        assert wrong.status_code == 200
+        assert wrong.json()["next_step"] == "contrast_case"
+        assert wrong.json()["strategy"] == "reteach:confusion"
+
+        bad = client.post(
+            "/api/v1/learning/practice/next-step",
+            json={
+                "concept_id": "c_join",
+                "completed_steps": ["first_attempt"],
+                "last_attempt": {"correct": False, "error_tags": ["lazy"]},
+            },
+        )
+        assert bad.status_code == 422
+
+        plan = client.post(
+            "/api/v1/learning/practice/interleave-plan",
+            json={
+                "concepts": [
+                    {"concept_id": "c_join", "state": "provisional", "confusable_with": ["c_sub"]},
+                    {"concept_id": "c_sub", "state": "practicing"},
+                    {"concept_id": "c_new", "state": "unknown"},
+                ]
+            },
+        )
+        assert plan.status_code == 200
+        assert plan.json()["order"] == ["c_join", "c_sub"]
+        assert plan.json()["skipped"] == ["c_new"]

@@ -1,3 +1,21 @@
+## M16-003 —— 教学微循环与自适应练习策略（升级方案 Phase 3）
+
+- **微循环策略引擎**（domain/practice_loop.py，纯函数无状态可复算）：
+  8 步骨架 first_attempt→minimal_explanation→worked_example→
+  contrast_case→recall_practice→faded_practice→independent_practice→
+  exit_ticket——学生先尝试后解释（测试效应）；未判分不推进（诚实状态）。
+- **六类错误标签定向再教学**：missing_knowledge→先决复查 / confusion→
+  对比案例 / procedure_error→worked example / reasoning_gap→最小解释 /
+  careless→自查清单（不重教内容）/ material_failure→换来源；反馈策略
+  由域层独占，LLM 只产解释与题目内容。
+- **有目的交错**（非随机）：仅达到基础掌握（practicing+）的概念参与，
+  按易混淆关系交替出列（促「何时用哪个」判断）；未达标概念走各自
+  微循环。
+- API：POST /learning/practice/next-step（决策）+ /practice/interleave-plan
+  （交错序）；步骤历史由调用方存 LearningEvent（可审计可恢复）。
+- 验证：域层 17 测试（含完整微循环 E2E：先试→混淆错误→对比再教学→
+  重试→独立→出口）+ API 契约 1；全量 6486 passed / ruff clean。
+
 ## M16-002 —— 作答证据 + 概念掌握度 MVP（升级方案 Phase 2）
 
 - **Attempt 证据**（迁移 0034 learning_attempts）：判分三态（correct
