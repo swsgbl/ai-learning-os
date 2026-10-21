@@ -43,6 +43,7 @@ fun StudyScreen(
     onResumeExam: (String) -> Unit,
     onStartVoicePaper: (String) -> Unit = {},
     onOpenReview: (String) -> Unit = {},
+    onOpenStudyMode: (String) -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     // M15-023：试卷 id → 该卷的考试历史（用于试卷卡「历史成绩+查看报告」）
@@ -115,6 +116,7 @@ fun StudyScreen(
                                 onStartVoice = { onStartVoicePaper(paper.id) },
                                 historyForPaper = history[paper.id].orEmpty(),
                                 onOpenReport = onOpenReview,
+                                onStudy = { onOpenStudyMode(paper.id) },
                             )
                         }
                     }
@@ -148,6 +150,7 @@ fun StudyScreen(
                                     onStartVoice = { onStartVoicePaper(paper.id) },
                                     historyForPaper = history[paper.id].orEmpty(),
                                     onOpenReport = onOpenReview,
+                                    onStudy = { onOpenStudyMode(paper.id) },
                                 )
                             }
                         }
@@ -180,6 +183,7 @@ private fun PaperCard(
     onStartVoice: () -> Unit,
     historyForPaper: List<ExamHistoryItemDto> = emptyList(),
     onOpenReport: (String) -> Unit = {},
+    onStudy: () -> Unit = {},
 ) {
     SectionCard(title = paper.title) {
         Text(
@@ -202,7 +206,8 @@ private fun PaperCard(
                 color = Subtle,
             )
         }
-        Button(onClick = onStart, modifier = Modifier.fillMaxWidth()) { Text("开始考试") }
+        Button(onClick = onStudy, modifier = Modifier.fillMaxWidth()) { Text("学习模式（先学习）") }
+        OutlinedButton(onClick = onStart, modifier = Modifier.fillMaxWidth()) { Text("直接考试") }
         OutlinedButton(onClick = onStartVoice, modifier = Modifier.fillMaxWidth()) { Text("语音陪练") }
         // M15-023：考场审阅历史——该卷历次成绩 + 回看报告（与 Web「考场审阅→
         // 交卷后逐题审阅」闭环对齐；App 此前只能在交卷瞬间看一次报告）

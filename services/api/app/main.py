@@ -28,6 +28,7 @@ from app.api.routes.search import router as search_router
 from app.api.routes.selection import router as selection_router
 from app.api.routes.sources import router as sources_router
 from app.api.routes.student import router as student_router
+from app.api.routes.study import router as study_router
 from app.api.routes.system import router as system_router
 from app.api.routes.validate import router as validate_router
 from app.api.routes.variant_generator import router as variant_generator_router
@@ -297,6 +298,7 @@ def create_app(
     app.include_router(paper_extractor_router)
     app.include_router(papers_router)
     app.include_router(exam_history_router)
+    app.include_router(study_router)
     app.include_router(exams_router)
     app.include_router(concepts_router)
     app.include_router(course_workflow_router)

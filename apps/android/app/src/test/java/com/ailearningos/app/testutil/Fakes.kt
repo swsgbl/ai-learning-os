@@ -1,6 +1,7 @@
 package com.ailearningos.app.testutil
 
 import com.ailearningos.app.core.AppError
+import com.ailearningos.app.data.remote.StudyViewDto
 import com.ailearningos.app.data.remote.ExamHistoryItemDto
 import com.ailearningos.app.data.remote.DailyPlanDto
 import com.ailearningos.app.data.remote.PlanTaskDto
@@ -432,6 +433,11 @@ class FakeExamGateway : ExamGateway {
     var examHistoryResult: Result<List<ExamHistoryItemDto>> = Result.success(emptyList())
 
     override suspend fun examHistory(): List<ExamHistoryItemDto> = examHistoryResult.getOrThrow()
+
+    /** M15-024 学习视图 */
+    var paperStudyResult: Result<StudyViewDto?> = Result.success(null)
+
+    override suspend fun paperStudy(paperId: String): StudyViewDto? = paperStudyResult.getOrThrow()
     override suspend fun exam(examId: String): ExamSession {
         examCalls.add(examId)
         failNextExam?.let { error ->

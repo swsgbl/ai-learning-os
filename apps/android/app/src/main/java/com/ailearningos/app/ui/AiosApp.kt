@@ -75,6 +75,7 @@ const val LOGIN_ROUTE = "login"
 const val EXAM_PAPER_ROUTE = "exam-paper/{paperId}"
 const val EXAM_RESUME_ROUTE = "exam/{examId}"
 const val REVIEW_ROUTE = "review/{examId}"
+const val STUDY_MODE_ROUTE = "study-mode/{paperId}"
 const val GOVERNANCE_ROUTE = "governance"
 const val CREATE_COURSE_ROUTE = "create-course"
 const val VOICE_PAPER_ROUTE = "voice-paper/{paperId}"
@@ -154,6 +155,7 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
                     onResumeExam = { examId -> navController.navigateExamResume(examId) },
                     onOpenReview = { examId -> navController.navigate("review/$examId") },
                     onStartVoicePaper = { paperId -> navController.navigateVoicePaper(paperId) },
+                    onOpenStudyMode = { paperId -> navController.navigate("study-mode/$paperId") },
                 )
             }
             composable(AiosDestination.Progress.route) {
@@ -239,6 +241,16 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
                 ExamScreen(
                     viewModel = examViewModel,
                     onOpenReview = { examId -> navController.navigateReviewFromExam(examId) },
+                    onBack = { navController.popBackStack() },
+                )
+            }
+            composable(STUDY_MODE_ROUTE) { backStackEntry ->
+                val paperId = backStackEntry.arguments?.getString("paperId") ?: return@composable
+                val vm: com.ailearningos.app.ui.study.StudyModeViewModel = viewModel(factory = viewModelFactory)
+                com.ailearningos.app.ui.study.StudyModeScreen(
+                    viewModel = vm,
+                    paperId = paperId,
+                    onStartPaperExam = { navController.navigateExamPaper(paperId) },
                     onBack = { navController.popBackStack() },
                 )
             }

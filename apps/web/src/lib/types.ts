@@ -515,3 +515,28 @@ export type VoiceSessionReport = {
   remediation_summary: VoiceRemediationSummary[];
   written_report_url: string;
 };
+
+// M15-024 学习视图（先学习再考试）
+export type StudyQuestion = {
+  question_id: string;
+  stem: string;
+  question_type: string;
+  options: Record<string, string> | null;
+};
+
+export type StudyChapter = {
+  chapter_no: number;
+  title: string;
+  difficulty: number;
+  objectives: string;
+  assessment_stem: string;
+  questions: StudyQuestion[];
+};
+
+export type StudyView = {
+  paper_id: string;
+  paper_title: string;
+  goal: string;
+  chapter_count: number;
+  chapters: StudyChapter[];
+};

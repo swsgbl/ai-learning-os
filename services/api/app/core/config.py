@@ -127,6 +127,15 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
+    @field_validator("asr_provider", "tts_provider", mode="before")
+    @classmethod
+    def _empty_provider_means_none(cls, value: object) -> object:
+        """M15-024b：compose `${VAR:-}` 传空串 → None（未指定 provider，
+        使用 voice_mode 默认——空串会被 resolve 当作未知 provider 名 422）。"""
+        if isinstance(value, str) and not value.strip():
+            return None
+        return value
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [origin.strip() for origin in self.cors_origins.split(",") if origin.strip()]

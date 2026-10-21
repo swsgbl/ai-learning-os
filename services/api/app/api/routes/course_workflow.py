@@ -21,6 +21,7 @@ from app.api.routes.auth import (
     current_owner_id,
     require_admin,
 )
+from app.db.orm import CourseGenerationDraftRow
 from app.domain.course_workflow import (
     NoCompetencyMatch,
     generate_course_plan,
@@ -312,6 +313,17 @@ async def materialize_generation_draft(draft_id: str, request: Request) -> Mater
     imported = await _run_import(sessionmaker, [spec], owner_id=caller)
     if not imported:
         raise HTTPException(status_code=500, detail="练习卷写入失败")
+    # M15-024：回写 materialized_paper_id（学习视图反查锚点）
+    paper_id = imported[0].get("id") if isinstance(imported[0], dict) else getattr(imported[0], "id", None)
+    if paper_id:
+        from sqlalchemy import update as _update
+        async with sessionmaker() as _session:
+            await _session.execute(
+                _update(CourseGenerationDraftRow)
+                .where(CourseGenerationDraftRow.id == draft_id)
+                .values(materialized_paper_id=paper_id)
+            )
+            await _session.commit()
     return MaterializeOut(
         paper_id=imported[0], question_count=len(questions), title=title
     )

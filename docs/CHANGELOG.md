@@ -87,6 +87,28 @@ materialize 响应真实字段为 {paper_id, question_count, title}，App DTO
   「历史成绩（3）→ 查看报告 → 考试审阅页（得分/待复核/概念掌握）」。
 
 # Changelog
+# Changelog
+## M15-024/024b —— 学习模式 + 语音引擎上线（TTS 全链打通）
+
+- **根因**（用户核心反馈「学习系统应该先学习再考试，不是只有考试
+  系统」）：课程定制 materialize 直接产卷进考试，无学习阶段——学习
+  材料已在课程 plan（章节目标/概念解释/评估要点）但两端都无消费视图。
+- **服务端** `GET /papers/{id}/study`：学习视图——按章组织（标题/
+  学习目标/评估要点/该章练习题归属），materialized_paper_id 反查
+  课程 plan（迁移 0032 + 存量回填）；非材料卷 404 如实。
+- **App 学习模式页**：试卷卡「学习模式（先学习）」→ 章节卡（目标+
+  练一练要点）→ 上一章/下一章 → 学完「去考试」；「直接考试」按钮
+  保留（两入口并存）。
+- **Web /study/[paperId]**：学习库我的课程卷加「学习模式」入口，
+  同款章节学习流。
+- **语音引擎部署完成**（M15-024b）：
+  - WSL systemd 服务（aios-funasr + aios-cosyvoice，恒存重启自愈）
+    + netsh portproxy 转发（host.docker.internal 可达 WSL 引擎）；
+  - **TTS CosyVoice 全链实测打通**（synthesize → 200 audio/wav 55KB
+    真实音频）；ASR FunASR 模型下载中（SenseVoiceSmall ModelScope）；
+  - 根修 provider 空串 422：compose 空串 → pydantic before-validator
+    → None（用模式默认，不再被当未知 provider 名）。
+
 ## v0.2.0（versionCode 11）
 
 - **App 端「工作台」**（M15-022）：底栏新 tab——今日任务/薄弱概念/
