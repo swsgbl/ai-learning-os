@@ -173,6 +173,11 @@ export const api = {
       }),
     confirmContract: (id: string) =>
       request<LearningContract>(`/api/v1/learning/contracts/${encodeURIComponent(id)}/confirm`, { method: "POST" }),
+    generateItems: (contractId: string, concepts: string[] = [], perConcept = 4) =>
+      request<{ paper_id: string; generated: number; dropped: number; drop_reasons: string[] }>(
+        `/api/v1/learning/contracts/${encodeURIComponent(contractId)}/generate-items`,
+        { method: "POST", body: JSON.stringify({ concepts, per_concept: perConcept }) },
+      ),
     buildBlueprint: (contractId: string, concepts: string[] = []) =>
       request<BlueprintInfo>(`/api/v1/learning/contracts/${encodeURIComponent(contractId)}/blueprint/build`, {
         method: "POST",

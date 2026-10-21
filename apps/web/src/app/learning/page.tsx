@@ -362,14 +362,33 @@ function ContractCard({
           </Button>
         )}
         {contract.confirmed_at && (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={busy}
-            onClick={() => act(() => api.learning.buildBlueprint(contract.id), "蓝图已构建（等值前后测题集）")}
-          >
-            构建/重建蓝图
-          </Button>
+          <>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() =>
+                act(
+                  () => api.learning.generateItems(contract.id).then((r) => {
+                    onNotice(
+                      `已生成 ${r.generated} 道客观题（丢弃 ${r.dropped}）——现在可以构建蓝图`,
+                    );
+                  }),
+                  "",
+                )
+              }
+            >
+              生成客观题
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={busy}
+              onClick={() => act(() => api.learning.buildBlueprint(contract.id), "蓝图已构建（等值前后测题集）")}
+            >
+              构建/重建蓝图
+            </Button>
+          </>
         )}
         {sprint?.phase === "baseline_assessment" && (
           <Button size="sm" onClick={() => setAssessing("baseline")}>
