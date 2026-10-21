@@ -770,3 +770,23 @@ class LearningAttemptRow(Base):
     grading_method: Mapped[str] = mapped_column(String(32), default="manual", server_default="manual")
     grader_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class AssessmentBlueprintRow(Base):
+    """M16-004 等值前后测蓝图：每概念 pretest/posttest 分配（不重叠）。
+
+    由 domain/assessment_blueprint.build_blueprint 构建（纯函数），此处
+    持久化；complete=False 如实记录覆盖缺口。
+    """
+
+    __tablename__ = "assessment_blueprints"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    contract_id: Mapped[str] = mapped_column(String(32), index=True)
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    concept_id: Mapped[str] = mapped_column(String(64))
+    pretest_item_ids: Mapped[list[str]] = mapped_column(JSON)
+    posttest_item_ids: Mapped[list[str]] = mapped_column(JSON)
+    complete: Mapped[bool] = mapped_column(Boolean, server_default=sa_false())
+    note: Mapped[str] = mapped_column(Text, default="", server_default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

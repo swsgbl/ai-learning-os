@@ -1,0 +1,256 @@
+"""M16-004 Sprint 前后测编排 API 契约测试（升级方案 Phase 4 验收）。
+
+覆盖：蓝图构建（等值不重叠/覆盖缺口如实）；前测下发答案隔离（answer/
+explanation 绝不出现在响应）；阶段前置 409；提交判分三态→attempts 落库
+→自动推进；重复提交 409（不覆盖证据）；后测独立题集；报告（前后增益/
+掌握快照/未完成项诚实汇总）。
+"""
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+from fastapi.testclient import TestClient
+
+from app.db.orm import PaperRow, QuestionRow
+from app.main import create_app
+
+
+@pytest.fixture()
+def sqlite_url(tmp_path):
+    return f"sqlite+aiosqlite:///{tmp_path / 'learning.db'}"
+
+#: 测试题池：2 概念 × 5 题（客观 mcq，answer 服务端权威）
+POOL = {
+    "c_select": [("SELECT 基础", i) for i in range(5)],
+    "c_join": [("JOIN 连接", i) for i in range(5)],
+}
+
+
+def _seed_pool(client: TestClient, sqlite_url: str) -> None:
+    """独立 engine 写文件库（与 TestClient 引擎共享同一 SQLite 文件）。"""
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.db.base import Base
+
+    async def _seed() -> None:
+        engine = create_async_engine(sqlite_url)
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        maker = async_sessionmaker(engine, expire_on_commit=False)
+        async with maker() as session:
+            paper = PaperRow(
+                id="pap_test_pool",
+                title="蓝图测试卷",
+                subtitle="",
+                source="test",
+                subject="sql",
+                difficulty="medium",
+                duration_minutes=10,
+                tags=[],
+                license="test",
+            )
+            session.add(paper)
+            seq = 0
+            for concept, items in POOL.items():
+                for stem, index in items:
+                    session.add(
+                        QuestionRow(
+                            id=f"q_{concept}_{index}",
+                            paper_id=paper.id,
+                            question_type="mcq",
+                            stem=f"{stem}-{index}",
+                            options=[{"key": "A", "text": "甲"}, {"key": "B", "text": "乙"}],
+                            answer="A",  # 服务端权威；绝不下发
+                            explanation="解释（机密）",
+                            knowledge=[concept],
+                            difficulty=1 + index % 3,
+                            sort_order=seq,
+                            score=1.0,
+                        )
+                    )
+                    seq += 1
+            await session.commit()
+        await engine.dispose()
+
+    asyncio.run(_seed())
+
+
+def _contract_payload() -> dict:
+    return {
+        "title": "SQL 冲刺",
+        "mode": "exam_sprint",
+        "target_outcomes": [
+            {"statement": "能写出基础 SELECT", "criteria": "样例通过"},
+            {"statement": "能选择正确 JOIN", "criteria": "解释行数变化"},
+        ],
+        "time_budget_hours": 48,
+        "pass_criteria": "后测≥80",
+    }
+
+
+def _make_sprint_ready_for_baseline(client: TestClient) -> str:
+    created = client.post("/api/v1/learning/contracts", json=_contract_payload())
+    assert created.status_code == 201
+    contract_id = created.json()["id"]
+    assert client.post(f"/api/v1/learning/contracts/{contract_id}/confirm").status_code == 200
+    blueprint = client.post(
+        f"/api/v1/learning/contracts/{contract_id}/blueprint/build",
+        json={"concepts": ["c_select", "c_join"]},
+    )
+    assert blueprint.status_code == 201, blueprint.text
+    assert blueprint.json()["complete"] is True  # 2 概念 ×5 题 → 每概念 4 题够
+    sprint = client.post(f"/api/v1/learning/contracts/{contract_id}/sprints")
+    assert sprint.status_code == 201
+    sprint_id = sprint.json()["id"]
+    for phase in ("contract_confirmed", "baseline_assessment"):
+        advanced = client.post(
+            f"/api/v1/learning/sprints/{sprint_id}/advance", json={"to_phase": phase}
+        )
+        assert advanced.status_code == 200
+    return sprint_id
+
+
+def test_blueprint_equivalent_no_overlap(sqlite_url) -> None:
+    with TestClient(create_app(sqlite_url)) as client:
+        _seed_pool(client, sqlite_url)
+        created = client.post("/api/v1/learning/contracts", json=_contract_payload())
+        contract_id = created.json()["id"]
+        client.post(f"/api/v1/learning/contracts/{contract_id}/confirm")
+        bp = client.post(
+        f"/api/v1/learning/contracts/{contract_id}/blueprint/build",
+        json={"concepts": ["c_select", "c_join"]},
+    )
+        assert bp.status_code == 201
+        body = bp.json()
+        assert body["complete"] is True
+        for plan in body["plans"]:
+            assert set(plan["pretest_item_ids"]).isdisjoint(plan["posttest_item_ids"])
+            assert len(plan["pretest_item_ids"]) == 2
+            assert len(plan["posttest_item_ids"]) == 2
+        # 重复构建幂等（重建不残留旧行——GET 恰一套）
+        rebuilt = client.post(
+        f"/api/v1/learning/contracts/{contract_id}/blueprint/build",
+        json={"concepts": ["c_select", "c_join"]},
+    )
+        assert rebuilt.status_code == 201
+        got = client.get(f"/api/v1/learning/contracts/{contract_id}/blueprint")
+        assert len(got.json()["plans"]) == 2
+
+
+def test_blueprint_insufficient_pool_reports_partial(sqlite_url) -> None:
+    with TestClient(create_app(sqlite_url)) as client:
+        _seed_pool(client, sqlite_url)
+        created = client.post("/api/v1/learning/contracts", json=_contract_payload())
+        contract_id = created.json()["id"]
+        client.post(f"/api/v1/learning/contracts/{contract_id}/confirm")
+        bp = client.post(
+            f"/api/v1/learning/contracts/{contract_id}/blueprint/build",
+            json={"concepts": ["c_thin"]},  # 概念无题——空 plans → 409 如实
+        )
+        assert bp.status_code == 409
+
+
+def test_baseline_flow_answer_isolation_and_grading(sqlite_url) -> None:
+    with TestClient(create_app(sqlite_url)) as client:
+        _seed_pool(client, sqlite_url)
+        sprint_id = _make_sprint_ready_for_baseline(client)
+
+        # 阶段前置：posttest 在 baseline 阶段 409
+        wrong_phase = client.get(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment", params={"phase": "posttest"}
+        )
+        assert wrong_phase.status_code == 409
+
+        assessment = client.get(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment", params={"phase": "baseline"}
+        )
+        assert assessment.status_code == 200
+        items = assessment.json()["items"]
+        assert len(items) == 4  # 2 概念 × 2 前测题
+        # 答案隔离不变式：响应不含 answer/explanation
+        raw = assessment.text
+        assert "answer" not in raw and "explanation" not in raw
+
+        # 全对提交（answer=A）
+        responses = [{"item_id": item["item_id"], "response": "A"} for item in items]
+        submitted = client.post(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment/baseline/submit",
+            json={"responses": responses},
+        )
+        assert submitted.status_code == 200, submitted.text
+        result = submitted.json()
+        assert result["score"] == 100.0
+        assert result["correct_count"] == 4
+        assert result["sprint_phase"] == "concept_map_review"  # 自动推进
+
+        # 重复提交 409（证据不可覆盖）
+        dup = client.post(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment/baseline/submit",
+            json={"responses": responses},
+        )
+        assert dup.status_code == 409
+
+        # attempts 已落库（掌握度证据源）
+        attempts = client.get("/api/v1/learning/attempts")
+        assert len(attempts.json()) == 4
+
+
+def test_posttest_uses_disjoint_items_and_report_shows_gain(sqlite_url) -> None:
+    with TestClient(create_app(sqlite_url)) as client:
+        _seed_pool(client, sqlite_url)
+        sprint_id = _make_sprint_ready_for_baseline(client)
+        baseline_items = client.get(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment", params={"phase": "baseline"}
+        ).json()["items"]
+        baseline_ids = {item["item_id"] for item in baseline_items}
+        # 前测全错（增益对照）
+        client.post(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment/baseline/submit",
+            json={"responses": [{"item_id": i, "response": "B"} for i in baseline_ids]},
+        )
+
+        # 推进到 posttest
+        for phase in ("concept_map_review", "plan_confirmed", "learning",
+                      "targeted_practice", "transfer_check", "posttest"):
+            advanced = client.post(
+                f"/api/v1/learning/sprints/{sprint_id}/advance", json={"to_phase": phase}
+            )
+            assert advanced.status_code == 200, f"{phase}: {advanced.text}"
+
+        posttest = client.get(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment", params={"phase": "posttest"}
+        )
+        assert posttest.status_code == 200
+        post_ids = {item["item_id"] for item in posttest.json()["items"]}
+        # 等值验收：后测不复用前测原题
+        assert post_ids.isdisjoint(baseline_ids)
+
+        # 后测全对 → 增益 +100
+        submitted = client.post(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment/posttest/submit",
+            json={"responses": [{"item_id": i, "response": "A"} for i in post_ids]},
+        )
+        assert submitted.status_code == 200
+        assert submitted.json()["score"] == 100.0
+
+        report = client.get(f"/api/v1/learning/sprints/{sprint_id}/report")
+        assert report.status_code == 200
+        body = report.json()
+        assert body["baseline"]["score"] == 0.0
+        assert body["posttest"]["score"] == 100.0
+        assert body["gain"] == 100.0
+        # 掌握快照来自 attempts 重算（前测错+后测对 → 中间态）
+        assert len(body["mastery_snapshot"]) == 2
+        # 未完成项只含 follow_up 之外的后续（report 已到 → 只 follow_up 被排除）
+        assert "posttest" not in body["incomplete"]
+        assert body["incomplete"] == []
+
+
+def test_report_rejects_when_not_ready(sqlite_url) -> None:
+    with TestClient(create_app(sqlite_url)) as client:
+        _seed_pool(client, sqlite_url)
+        sprint_id = _make_sprint_ready_for_baseline(client)
+        # 停在 baseline_assessment 未提交 → 报告 409（诚实：不虚构结果）
+        report = client.get(f"/api/v1/learning/sprints/{sprint_id}/report")
+        assert report.status_code == 409

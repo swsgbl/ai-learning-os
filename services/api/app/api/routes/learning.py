@@ -26,11 +26,19 @@ from sqlalchemy import select
 
 from app.api.routes.auth import current_owner_id, require_user
 from app.db.orm import (
+    AssessmentBlueprintRow,
     LearningAttemptRow,
     LearningContractRow,
     LearningEventRow,
     LearningSprintRow,
+    PaperRow,
+    QuestionRow,
 )
+from app.domain.assessment_blueprint import (
+    CandidateItem,
+    build_blueprint,
+)
+from app.domain.grading import grade_answer
 from app.domain.mastery import AttemptEvidence, derive_mastery
 from app.domain.practice_loop import (
     AttemptSummary,
@@ -834,4 +842,435 @@ async def practice_interleave_plan(payload: InterleaveRequest, request: Request)
     )
     return InterleaveOut(
         order=list(plan.order), skipped=list(plan.skipped), rationale=plan.rationale
+    )
+
+
+# ---------------------------------------------------------------- 评估蓝图与 Sprint 前后测（Phase 4）
+
+
+class BlueprintBuildRequest(BaseModel):
+    """蓝图构建：候选题池限定为 owner 定制课程卷（含公共卷）的客观题。
+
+    concepts 可选——缺省从题池聚合全部概念。
+    """
+
+    concepts: list[str] = Field(default_factory=list, max_length=50)
+
+
+class BlueprintPlanOut(BaseModel):
+    concept_id: str
+    pretest_item_ids: list[str]
+    posttest_item_ids: list[str]
+    complete: bool
+    note: str
+
+
+class BlueprintOut(BaseModel):
+    contract_id: str
+    complete: bool
+    gaps: list[str]
+    plans: list[BlueprintPlanOut]
+
+
+class AssessmentItemOut(BaseModel):
+    """题目公开面——answer/explanation 绝不下发（答案隔离不变式）。"""
+
+    item_id: str
+    concept_id: str
+    question_type: str
+    stem: str
+    options: list[dict] | None = None
+    score: float = 1.0
+
+
+class AssessmentOut(BaseModel):
+    sprint_id: str
+    phase: str  # baseline | posttest
+    items: list[AssessmentItemOut]
+
+
+class AssessmentSubmitItem(BaseModel):
+    item_id: str
+    response: str = Field(default="", max_length=4000)
+    confidence: int | None = Field(default=None, ge=1, le=5)
+
+
+class AssessmentSubmitRequest(BaseModel):
+    responses: list[AssessmentSubmitItem] = Field(min_length=1, max_length=200)
+
+
+class AssessmentResultOut(BaseModel):
+    sprint_id: str
+    phase: str
+    score: float  # 百分比 0-100
+    correct_count: int
+    question_count: int
+    ungraded_count: int
+    per_concept: dict[str, dict[str, float | int]]
+    sprint_phase: str
+
+
+class ReportOut(BaseModel):
+    sprint_id: str
+    expired: bool
+    baseline: dict[str, object] | None
+    posttest: dict[str, object] | None
+    gain: float | None  # posttest - baseline（百分比分）；无双侧结果为 None
+    mastery_snapshot: list[dict[str, object]]
+    incomplete: list[str]
+
+
+#: Sprint 阶段 <-> 蓝图 phase 的映射与前置（M16-004 编排）
+PHASE_TO_BLUEPRINT = {"baseline": "pretest", "posttest": "posttest"}
+PHASE_REQUIRED_SPRINT_PHASE = {"baseline": "baseline_assessment", "posttest": "posttest"}
+PHASE_AFTER_SUBMIT = {"baseline": "concept_map_review", "posttest": "report"}
+
+
+@router.post("/contracts/{contract_id}/blueprint/build", response_model=BlueprintOut, status_code=201)
+async def build_contract_blueprint(
+    contract_id: str, payload: BlueprintBuildRequest, request: Request
+) -> BlueprintOut:
+    """从题池构建等值前后测蓝图（重复构建全量重建——幂等）。"""
+    await require_user(request)
+    contract = await _owned_contract(request, contract_id)
+    owner = current_owner_id(request)
+
+    async with request.app.state.sessionmaker() as session:
+        paper_query = select(PaperRow)
+        if owner is not None:
+            paper_query = paper_query.where(
+                (PaperRow.owner_id == owner) | (PaperRow.owner_id.is_(None))
+            )
+        papers = (await session.execute(paper_query)).scalars().all()
+        if not papers:
+            raise HTTPException(status_code=409, detail="题池为空：先定制课程生成练习卷")
+        questions = (
+            (
+                await session.execute(
+                    select(QuestionRow).where(QuestionRow.paper_id.in_([p.id for p in papers]))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        concept_filter = set(payload.concepts) if payload.concepts else None
+        candidates: list[CandidateItem] = []
+        for q in questions:
+            for concept_id in q.knowledge if isinstance(q.knowledge, list) else []:
+                if not isinstance(concept_id, str):
+                    continue
+                if concept_filter is not None and concept_id not in concept_filter:
+                    continue
+                candidates.append(
+                    CandidateItem(
+                        item_id=q.id,
+                        concept_id=concept_id,
+                        difficulty=q.difficulty,
+                        question_type=q.question_type,
+                    )
+                )
+        bp = build_blueprint(candidates)
+        if not bp.plans:
+            raise HTTPException(status_code=409, detail="无可用于前测/后测的客观题（概念关联为空）")
+        old_rows = (
+            await session.execute(
+                select(AssessmentBlueprintRow).where(
+                    AssessmentBlueprintRow.contract_id == contract.id
+                )
+            )
+        ).scalars().all()
+        for row in old_rows:
+            await session.delete(row)
+        now = _now()
+        for plan in bp.plans:
+            session.add(
+                AssessmentBlueprintRow(
+                    id=f"abp_{uuid4().hex[:24]}",
+                    contract_id=contract.id,
+                    owner_id=contract.owner_id,
+                    concept_id=plan.concept_id,
+                    pretest_item_ids=list(plan.pretest_item_ids),
+                    posttest_item_ids=list(plan.posttest_item_ids),
+                    complete=plan.complete,
+                    note=plan.note,
+                    created_at=now,
+                )
+            )
+        await session.commit()
+    return BlueprintOut(
+        contract_id=contract.id,
+        complete=bp.complete,
+        gaps=list(bp.gaps),
+        plans=[
+            BlueprintPlanOut(
+                concept_id=p.concept_id,
+                pretest_item_ids=list(p.pretest_item_ids),
+                posttest_item_ids=list(p.posttest_item_ids),
+                complete=p.complete,
+                note=p.note,
+            )
+            for p in bp.plans
+        ],
+    )
+
+
+@router.get("/contracts/{contract_id}/blueprint", response_model=BlueprintOut)
+async def get_contract_blueprint(contract_id: str, request: Request) -> BlueprintOut:
+    await _owned_contract(request, contract_id)
+    async with request.app.state.sessionmaker() as session:
+        rows = (
+            (
+                await session.execute(
+                    select(AssessmentBlueprintRow)
+                    .where(AssessmentBlueprintRow.contract_id == contract_id)
+                    .order_by(AssessmentBlueprintRow.concept_id.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+    if not rows:
+        raise HTTPException(status_code=404, detail="蓝图未构建")
+    return BlueprintOut(
+        contract_id=contract_id,
+        complete=all(r.complete for r in rows),
+        gaps=[f"{r.concept_id}：{r.note}" for r in rows if not r.complete],
+        plans=[
+            BlueprintPlanOut(
+                concept_id=r.concept_id,
+                pretest_item_ids=r.pretest_item_ids,
+                posttest_item_ids=r.posttest_item_ids,
+                complete=r.complete,
+                note=r.note,
+            )
+            for r in rows
+        ],
+    )
+
+
+async def _sprint_assessment_items(
+    request: Request, sprint: LearningSprintRow, phase: str
+) -> list[tuple[QuestionRow, str]]:
+    """按蓝图取某阶段题（返回 (题行, 概念) 列表；不下发答案）。"""
+    blueprint_phase = PHASE_TO_BLUEPRINT[phase]
+    async with request.app.state.sessionmaker() as session:
+        plans = (
+            (
+                await session.execute(
+                    select(AssessmentBlueprintRow).where(
+                        AssessmentBlueprintRow.contract_id == sprint.contract_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not plans:
+            raise HTTPException(status_code=409, detail="蓝图未构建：先 /blueprint/build")
+        field = "pretest_item_ids" if blueprint_phase == "pretest" else "posttest_item_ids"
+        item_concepts: dict[str, str] = {}
+        for plan in plans:
+            for item_id in getattr(plan, field):
+                item_concepts[item_id] = plan.concept_id
+        if not item_concepts:
+            raise HTTPException(status_code=409, detail=f"蓝图 {blueprint_phase} 题集为空")
+        questions = (
+            (
+                await session.execute(
+                    select(QuestionRow).where(QuestionRow.id.in_(list(item_concepts.keys())))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return [(q, item_concepts[q.id]) for q in questions]
+
+
+@router.get("/sprints/{sprint_id}/assessment", response_model=AssessmentOut)
+async def get_sprint_assessment(
+    sprint_id: str, request: Request, phase: str = "baseline"
+) -> AssessmentOut:
+    """下发前测/后测题（公开面——答案隔离；阶段前置校验）。"""
+    await require_user(request)
+    sprint = await _owned_sprint(request, sprint_id)
+    if phase not in PHASE_TO_BLUEPRINT:
+        raise HTTPException(status_code=422, detail="phase 必须是 baseline/posttest")
+    required = PHASE_REQUIRED_SPRINT_PHASE[phase]
+    if sprint.phase != required:
+        raise HTTPException(
+            status_code=409, detail=f"前测/后测未在对应阶段：当前 {sprint.phase}（需 {required}）"
+        )
+    pairs = await _sprint_assessment_items(request, sprint, phase)
+    return AssessmentOut(
+        sprint_id=sprint.id,
+        phase=phase,
+        items=[
+            AssessmentItemOut(
+                item_id=q.id,
+                concept_id=concept,
+                question_type=q.question_type,
+                stem=q.stem,
+                options=q.options if isinstance(q.options, list) else None,
+                score=q.score,
+            )
+            for q, concept in pairs
+        ],
+    )
+
+
+@router.post("/sprints/{sprint_id}/assessment/{phase}/submit", response_model=AssessmentResultOut)
+async def submit_sprint_assessment(
+    sprint_id: str, phase: str, payload: AssessmentSubmitRequest, request: Request
+) -> AssessmentResultOut:
+    """提交前测/后测：服务端判分（三态）→ 落 Attempt 证据 → 绑定结果并推进。
+
+    幂等边界：该阶段已有结果 → 409（重考=新 Sprint，绝不覆盖旧证据）。
+    """
+    await require_user(request)
+    sprint = await _owned_sprint(request, sprint_id)
+    if phase not in PHASE_TO_BLUEPRINT:
+        raise HTTPException(status_code=422, detail="phase 必须是 baseline/posttest")
+    if sprint.phase != PHASE_REQUIRED_SPRINT_PHASE[phase]:
+        raise HTTPException(status_code=409, detail=f"不在 {phase} 阶段：当前 {sprint.phase}")
+    result_field = "baseline_result" if phase == "baseline" else "posttest_result"
+    if getattr(sprint, result_field) is not None:
+        raise HTTPException(status_code=409, detail=f"{phase} 已提交（重考请新建 Sprint）")
+
+    pairs = await _sprint_assessment_items(request, sprint, phase)
+    by_item = {q.id: (q, concept) for q, concept in pairs}
+    valid_ids = set(by_item.keys())
+    unknown = [r.item_id for r in payload.responses if r.item_id not in valid_ids]
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"题目不在本次蓝图题集: {unknown[:3]}")
+
+    now = _now()
+    correct_count = 0
+    ungraded = 0
+    per_concept: dict[str, dict[str, float | int]] = {}
+    async with request.app.state.sessionmaker() as session:
+        for item in payload.responses:
+            question, concept = by_item[item.item_id]
+            correct = grade_answer(question.question_type, question.answer, item.response)
+            if correct is None:
+                ungraded += 1
+            elif correct:
+                correct_count += 1
+            agg = per_concept.setdefault(concept, {"correct": 0, "total": 0})
+            agg["total"] = int(agg["total"]) + 1
+            if correct:
+                agg["correct"] = int(agg["correct"]) + 1
+            session.add(
+                LearningAttemptRow(
+                    id=f"lat_{uuid4().hex[:24]}",
+                    owner_id=sprint.owner_id,
+                    sprint_id=sprint.id,
+                    contract_id=sprint.contract_id,
+                    item_id=item.item_id,
+                    concept_id=concept,
+                    response=item.response,
+                    correct=correct,
+                    confidence=item.confidence,
+                    independent=True,
+                    error_tags=[],
+                    context=f"{question.question_type}:{phase}",
+                    grading_method="answer_key",
+                    grader_version="grading-v1",
+                    created_at=now,
+                )
+            )
+        total = len(payload.responses)
+        score = round(100.0 * correct_count / total, 1) if total else 0.0
+        result_payload: dict[str, object] = {
+            "score": score,
+            "correct_count": correct_count,
+            "question_count": total,
+            "ungraded_count": ungraded,
+            "submitted_at": now.isoformat(),
+        }
+        db_sprint = await session.get(LearningSprintRow, sprint.id)
+        assert db_sprint is not None
+        setattr(db_sprint, result_field, result_payload)
+        db_sprint.phase = PHASE_AFTER_SUBMIT[phase]
+        db_sprint.updated_at = now
+        await session.commit()
+
+    await _record_event(
+        request,
+        owner_id=sprint.owner_id,
+        contract_id=sprint.contract_id,
+        sprint_id=sprint.id,
+        event_type=f"sprint.{phase}_submitted",
+        payload=result_payload,
+        idempotency_key=f"sprint:{sprint.id}:{phase}:submitted",
+    )
+    return AssessmentResultOut(
+        sprint_id=sprint.id,
+        phase=phase,
+        score=score,
+        correct_count=correct_count,
+        question_count=total,
+        ungraded_count=ungraded,
+        per_concept=per_concept,
+        sprint_phase=PHASE_AFTER_SUBMIT[phase],
+    )
+
+
+#: 报告用完整阶段序（报告未完成项判定）
+_ALL_SPRINT_PHASES = (
+    "created", "contract_confirmed", "baseline_assessment", "concept_map_review",
+    "plan_confirmed", "learning", "targeted_practice", "transfer_check",
+    "posttest", "report", "follow_up",
+)
+
+
+@router.get("/sprints/{sprint_id}/report", response_model=ReportOut)
+async def sprint_report(sprint_id: str, request: Request) -> ReportOut:
+    """Sprint 报告：前后对比 + 掌握快照 + 未完成项（诚实汇总，不虚构掌握）。"""
+    sprint = await _owned_sprint(request, sprint_id)
+    if sprint.phase not in {"report", "follow_up"} and sprint.posttest_result is None:
+        raise HTTPException(status_code=409, detail=f"报告未就绪：当前 {sprint.phase}")
+
+    owner = current_owner_id(request)
+    async with request.app.state.sessionmaker() as session:
+        query = select(LearningAttemptRow).order_by(LearningAttemptRow.created_at.asc())
+        if owner is not None:
+            query = query.where(LearningAttemptRow.owner_id == owner)
+        attempts = (await session.execute(query)).scalars().all()
+    grouped: dict[str, list[LearningAttemptRow]] = {}
+    for row in attempts:
+        grouped.setdefault(row.concept_id, []).append(row)
+    snapshot = [
+        {
+            "concept_id": concept_id,
+            **{
+                k: v
+                for k, v in _mastery_out(concept_id, rows).model_dump().items()
+                if k != "concept_id"
+            },
+        }
+        for concept_id, rows in grouped.items()
+    ]
+
+    incomplete: list[str] = []
+    current_index = (
+        _ALL_SPRINT_PHASES.index(sprint.phase) if sprint.phase in _ALL_SPRINT_PHASES else 0
+    )
+    for expected in _ALL_SPRINT_PHASES:
+        expected_index = _ALL_SPRINT_PHASES.index(expected)
+        if expected_index > current_index and expected != "follow_up":
+            incomplete.append(expected)
+
+    baseline = sprint.baseline_result
+    posttest = sprint.posttest_result
+    gain = None
+    if baseline and posttest:
+        gain = round(float(posttest.get("score", 0)) - float(baseline.get("score", 0)), 1)
+    return ReportOut(
+        sprint_id=sprint.id,
+        expired=_sprint_out(sprint).expired,
+        baseline=baseline,
+        posttest=posttest,
+        gain=gain,
+        mastery_snapshot=snapshot,
+        incomplete=incomplete,
     )

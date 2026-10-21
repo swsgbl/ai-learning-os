@@ -24,3 +24,5 @@ job；本机 SQLite 契约测试覆盖迁移 up/down 语义。
 | 掌握度阈值黄金集校准 | — | not_executed（Phase 7 黄金集建立后） | 常量在 `domain/mastery.py` 显式标注 |
 | 微循环策略域层（骨架/六类错误路由/未判分保持/交错队列） | M16-003 | pass（2026-10-22，17 测试含完整微循环 E2E） | `services/api/tests/test_practice_loop.py` |
 | 练习决策 API（next-step/interleave-plan） | M16-003 | pass（SQLite 契约） | `test_learning_attempts_api.py::test_practice_decision_endpoints` |
+| 蓝图域层（等值不重叠/难度配平/不足如实 partial） | M16-004 | pass（2026-10-22，7 测试） | `services/api/tests/test_assessment_blueprint.py` |
+| 前后测编排 API（答案隔离/阶段前置/三态判分落证据/重复提交 409/报告增益） | M16-004 | pass（SQLite 文件库契约，5 测试全链） | `services/api/tests/test_sprint_assessment_api.py` |
