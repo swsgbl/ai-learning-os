@@ -1,3 +1,34 @@
+## M15-025 —— App 考场审阅独立入口 + 设置菜单化 + 多厂商密钥列表 + LLM 本机代理修复
+
+- **App「考场审阅」独立标签**（用户实测找不到入口）：底栏新增第 6 个
+  tab（首页/学习/考场/工作台/语音/设置，与 Web 考场审阅导航对齐）——
+  全部考试记录（跨卷历次成绩 + 审阅报告回看）+ 选择试卷开考 + 未完成
+  考试恢复提示；数据复用 StudyViewModel（papers + /exams/history）。
+- **设置页菜单化重构**（用户反馈"应做成列表，点开再展开"）：根页 =
+  账号卡片 + 设置菜单列表（每行标题 + 动态状态副标题 + › 箭头），点击
+  进入子页（AI 密钥 / API 地址 / 隐私路由 / API 状态 / 治理发布 /
+  应用更新 / 数据与安全），返回键回根页。
+- **多厂商 AI 密钥列表**（用户核心诉求"支持多少列多少、配没配一目了
+  然"）：预设厂商全列（DeepSeek/OpenAI/智谱 GLM/Kimi/Agnes Hub/硅基
+  流动/自定义），每行状态徽章（使用中/已配置/未配置）；点开厂商展开
+  配置表单（endpoint 预填 + 密钥 + 模型在线获取列表选择）；已配置可
+  随时「切换/删除」，同厂商多配置并存；未匹配预设的自定义厂商单独
+  分组。真机全状态流转实测（保存→使用中→第二家→切换→删除→服务端
+  核对清空）。
+- **修复：本机 LLM 端点被出网代理劫持**（生产实例）：LLM_OUTBOUND_PROXY
+  经 httpx HTTPTransport(proxy=) 对 host.docker.internal 也生效——VPS
+  隧道掉线时连本机 Ollama 都 ConnectError，无 BYOK 用户定制课程全灭。
+  本机端点（loopback + host.docker.internal/gateway.docker.internal）
+  现在直连（不读环境代理也不套出网代理）；补回归测试。
+- **修复：切 API 地址后 tab 页残留旧错误态**：学习/考场页 VM 随
+  backstack 复用不重跑 init，进入标签时主动刷新（LaunchedEffect）。
+- **debug 构建包名后缀 .debug**：与真机已装 release 正式包共存（此前
+  签名不同无法覆盖安装，只能卸正式包破坏登录态）。
+- **部署事实记录**：公共入口迁移至 https://ndtool.cn/aios（VPS 同域
+  并站，/aios 子路径经 frps 到家机；App 端 base URL 需填
+  https://ndtool.cn/aios）；真机公网链路全功能验证通过（登录/考场
+  历史/审阅报告/开考）。
+
 ## M15-022 —— App 端工作台 + 首页搜索框（与 Web 全面对齐）
 
 - **App 新增「工作台」**（与 Web /progress 同口径）：底栏新 tab——

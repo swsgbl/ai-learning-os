@@ -132,8 +132,8 @@ android {
         applicationId = "com.ailearningos.app"
         minSdk = 26
         targetSdk = 36
-        versionCode = 13
-        versionName = "0.3.0"
+        versionCode = 14
+        versionName = "0.3.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
@@ -168,6 +168,9 @@ android {
 
     buildTypes {
         debug {
+            // M15-025：debug 独立包名后缀——与真机上已装的 release 正式包共存
+            // （签名不同无法覆盖安装；此前只能卸载正式包才能装 debug，破坏登录态）
+            applicationIdSuffix = ".debug"
             // debug 允许 loopback/局域网 HTTP（模拟器 10.0.2.2 / LAN 调试 API）。
             // 明文流量放行也只在 debug 变体（src/debug/AndroidManifest.xml），release 保持默认禁止。
             buildConfigField("boolean", "ALLOW_INSECURE_HTTP", "true")

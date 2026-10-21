@@ -30,6 +30,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
+import com.ailearningos.app.ui.exam.ExamCenterScreen
 import com.ailearningos.app.ui.exam.ExamScreen
 import com.ailearningos.app.ui.governance.GovernanceScreen
 import com.ailearningos.app.ui.governance.GovernanceViewModel
@@ -56,16 +57,18 @@ import com.ailearningos.app.ui.voice.VoiceScreen
 enum class AiosDestination(val route: String, val label: String, val icon: ImageVector) {
     Home("home", "首页", Icons.Filled.Home),
     Study("study", "学习", AiosIcons.School),
+    ExamCenter("exam-center", "考场", AiosIcons.BookOpen),
     Progress("progress", "工作台", Icons.Filled.List),
     Search("search", "搜索", Icons.Filled.Search),
     Voice("voice", "语音", AiosIcons.Mic),
     Settings("settings", "设置", Icons.Filled.Settings),
 }
 
-/** M15-022：底栏展示集（搜索移至首页搜索框进入，工作台入底栏——与 Web 对齐） */
+/** M15-025：底栏展示集——考场审阅入底栏（与 Web「考场审阅」导航对齐，用户实测找不到入口） */
 val bottomBarDestinations: List<AiosDestination> = listOf(
     AiosDestination.Home,
     AiosDestination.Study,
+    AiosDestination.ExamCenter,
     AiosDestination.Progress,
     AiosDestination.Voice,
     AiosDestination.Settings,
@@ -156,6 +159,15 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
                     onOpenReview = { examId -> navController.navigate("review/$examId") },
                     onStartVoicePaper = { paperId -> navController.navigateVoicePaper(paperId) },
                     onOpenStudyMode = { paperId -> navController.navigate("study-mode/$paperId") },
+                )
+            }
+            composable(AiosDestination.ExamCenter.route) {
+                val examCenterViewModel: StudyViewModel = viewModel(factory = viewModelFactory)
+                ExamCenterScreen(
+                    viewModel = examCenterViewModel,
+                    onStartPaper = { paperId -> navController.navigateExamPaper(paperId) },
+                    onResumeExam = { examId -> navController.navigateExamResume(examId) },
+                    onOpenReview = { examId -> navController.navigate("review/$examId") },
                 )
             }
             composable(AiosDestination.Progress.route) {

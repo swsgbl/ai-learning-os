@@ -59,6 +59,18 @@ def _is_loopback_url(url: str) -> bool:
         return False
 
 
+def _is_local_endpoint_url(url: str) -> bool:
+    """端点是否「本机部署」——loopback 或容器→宿主机地址。
+
+    M15-025：host.docker.internal 解析为非 loopback IP（如 192.168.65.254），
+    此前不被视为本机——LLM_OUTBOUND_PROXY 对本机 Ollama 也生效，隧道
+    断开时本地 LLM 全部 ConnectError（生产实例：家机 tinyproxy 隧道掉线，
+    无 BYOK 用户定制课程全灭）。本机端点必须直连。
+    """
+    host = (urlsplit(url).hostname or "").lower()
+    return _is_loopback_url(url) or host in {"host.docker.internal", "gateway.docker.internal"}
+
+
 class HttpxTransport:
     """真实传输：OpenAI 兼容端点的薄封装。
 
@@ -73,9 +85,13 @@ class HttpxTransport:
 
     def post_json(self, url: str, *, headers: dict[str, str], payload: dict) -> tuple[int, Any]:
         # M15-019d：可选出网代理（LLM_OUTBOUND_PROXY，如 http://u:p@host:port）
-        # ——家机直连部分云服务商被 TLS 重置时，经 VPS 隧道代理出网；
-        # loopback 端点不受影响（_is_loopback_url 分支继续 trust_env=False）。
+        # ——家机直连部分云服务商被 TLS 重置时，经 VPS 隧道代理出网。
+        # M15-025：本机端点（loopback / host.docker.internal）直连——既不
+        # 读环境代理也不套出网代理（proxy= 参数对 loopback 同样生效，此前
+        # 隧道掉线连本地 Ollama 都被劫持成 ConnectError）。
         outbound_proxy = os.environ.get("LLM_OUTBOUND_PROXY") or None
+        if _is_local_endpoint_url(url):
+            outbound_proxy = None
         client_kwargs: dict[str, Any] = {
             "timeout": self._timeout,
             # M15-019c：强制 IPv4（local_address=0.0.0.0）——容器部署的 v6
