@@ -22,3 +22,5 @@ job；本机 SQLite 契约测试覆盖迁移 up/down 语义。
 | 作答证据+掌握度 API（三态/全状态链/概览重算） | M16-002 | pass（SQLite 契约，6 测试） | `services/api/tests/test_learning_attempts_api.py` |
 | 幂等键租户隔离（IDOR/预占压制修复回归） | M16-001b | pass（双用户同键隔离测试） | `test_learning_contract_api.py::test_event_idempotency_is_tenant_scoped_no_idor_no_suppression` |
 | 掌握度阈值黄金集校准 | — | not_executed（Phase 7 黄金集建立后） | 常量在 `domain/mastery.py` 显式标注 |
+| 微循环策略域层（骨架/六类错误路由/未判分保持/交错队列） | M16-003 | pass（2026-10-22，17 测试含完整微循环 E2E） | `services/api/tests/test_practice_loop.py` |
+| 练习决策 API（next-step/interleave-plan） | M16-003 | pass（SQLite 契约） | `test_learning_attempts_api.py::test_practice_decision_endpoints` |

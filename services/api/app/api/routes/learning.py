@@ -32,6 +32,12 @@ from app.db.orm import (
     LearningSprintRow,
 )
 from app.domain.mastery import AttemptEvidence, derive_mastery
+from app.domain.practice_loop import (
+    AttemptSummary,
+    ConceptForInterleave,
+    interleave_queue,
+    next_step,
+)
 from app.domain.sprint_state import (
     SPRINT_PHASES,
     IllegalSprintTransition,
@@ -735,4 +741,97 @@ def _mastery_out(concept_id: str, rows: list[LearningAttemptRow]) -> MasteryOut:
         delayed_or_transfer_correct=outcome.delayed_or_transfer_correct,
         high_confidence_errors=outcome.high_confidence_errors,
         estimator_version=outcome.estimator_version,
+    )
+
+
+# ---------------------------------------------------------------- 教学微循环决策（Phase 3）
+
+
+class AttemptSummaryIn(BaseModel):
+    """最近作答摘要（策略决策输入）。"""
+
+    correct: bool | None = None
+    confidence: int | None = Field(default=None, ge=1, le=5)
+    hints_used: int = Field(default=0, ge=0)
+    error_tags: list[str] = Field(default_factory=list)
+
+
+class NextStepRequest(BaseModel):
+    concept_id: str = Field(min_length=1, max_length=64)
+    completed_steps: list[str] = Field(default_factory=list)
+    last_attempt: AttemptSummaryIn | None = None
+
+
+class NextStepOut(BaseModel):
+    concept_id: str
+    next_step: str
+    strategy: str
+    rationale: str
+    loop_complete: bool
+    retry_after_step: str | None
+
+
+class ConceptForInterleaveIn(BaseModel):
+    concept_id: str = Field(min_length=1, max_length=64)
+    state: str
+    confusable_with: list[str] = Field(default_factory=list)
+
+
+class InterleaveRequest(BaseModel):
+    concepts: list[ConceptForInterleaveIn] = Field(min_length=1, max_length=50)
+
+
+class InterleaveOut(BaseModel):
+    order: list[str]
+    skipped: list[str]
+    rationale: str
+
+
+@router.post("/practice/next-step", response_model=NextStepOut)
+async def practice_next_step(payload: NextStepRequest, request: Request) -> NextStepOut:
+    """下一步教学动作（纯函数决策：策略由域层独占，LLM 只产内容）。
+
+    completed_steps 由调用方从 LearningEvent 恢复（可审计可恢复）。
+    """
+    await require_user(request)
+    last = (
+        AttemptSummary(
+            correct=payload.last_attempt.correct,
+            confidence=payload.last_attempt.confidence,
+            hints_used=payload.last_attempt.hints_used,
+            error_tags=tuple(payload.last_attempt.error_tags),
+        )
+        if payload.last_attempt is not None
+        else None
+    )
+    try:
+        decision = next_step(payload.completed_steps, last)
+    except ValueError as cause:
+        raise HTTPException(status_code=422, detail=str(cause)) from cause
+    return NextStepOut(
+        concept_id=payload.concept_id,
+        next_step=decision.next_step,
+        strategy=decision.strategy,
+        rationale=decision.rationale,
+        loop_complete=decision.loop_complete,
+        retry_after_step=decision.retry_after_step,
+    )
+
+
+@router.post("/practice/interleave-plan", response_model=InterleaveOut)
+async def practice_interleave_plan(payload: InterleaveRequest, request: Request) -> InterleaveOut:
+    """交错练习序（有目的交错：达标概念按易混淆关系交替，未达标跳过）。"""
+    await require_user(request)
+    plan = interleave_queue(
+        [
+            ConceptForInterleave(
+                concept_id=c.concept_id,
+                state=c.state,
+                confusable_with=tuple(c.confusable_with),
+            )
+            for c in payload.concepts
+        ]
+    )
+    return InterleaveOut(
+        order=list(plan.order), skipped=list(plan.skipped), rationale=plan.rationale
     )
