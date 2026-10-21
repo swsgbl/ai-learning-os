@@ -254,3 +254,54 @@ def test_llm_judge_end_to_end_needs_second_judge_when_model_absent() -> None:
     assert correct is None  # 三态：不确定 -> 复核队列
     assert result is not None
     assert result.score_ratio is None  # 模型缺席绝不产生分数
+
+
+# --- M15-025 本机端点不套出网代理（生产实例：隧道掉线连本地 Ollama 全灭）---
+
+
+def test_local_endpoint_bypasses_outbound_proxy(monkeypatch) -> None:
+    """host.docker.internal / loopback 端点：proxy=None + trust_env=False（直连）。"""
+    from app.llm import gateway as gw
+
+    captured: dict[str, object] = {}
+
+    class _TransportSpy(gw.HttpxTransport):
+        def __init__(self, *, timeout_seconds: float = 30.0) -> None:
+            super().__init__(timeout_seconds=timeout_seconds)
+
+        def post_json(self, url: str, *, headers: dict[str, str], payload: dict) -> tuple[int, object]:
+            outbound_proxy = "http://tunnel:17893"
+            if gw._is_local_endpoint_url(url):
+                outbound_proxy = None
+            kwargs: dict[str, object] = {
+                "transport": object(),  # 仅记录决策，不真发请求
+                "outbound_proxy": outbound_proxy,
+            }
+            if gw._is_loopback_url(url):
+                kwargs["trust_env"] = False
+            captured[url] = kwargs
+            return 200, {}
+
+    spy = _TransportSpy()
+    spy.post_json("http://host.docker.internal:11434/v1/chat/completions", headers={}, payload={})
+    spy.post_json("http://127.0.0.1:11434/v1/chat/completions", headers={}, payload={})
+    spy.post_json("https://api.example.com/v1/chat/completions", headers={}, payload={})
+
+    local_docker = captured["http://host.docker.internal:11434/v1/chat/completions"]
+    loopback = captured["http://127.0.0.1:11434/v1/chat/completions"]
+    cloud = captured["https://api.example.com/v1/chat/completions"]
+    assert local_docker["outbound_proxy"] is None  # 本机端点绝不走隧道
+    assert loopback["outbound_proxy"] is None
+    assert loopback["trust_env"] is False
+    assert cloud["outbound_proxy"] == "http://tunnel:17893"  # 云端照常出网代理
+
+
+def test_is_local_endpoint_url_classifier() -> None:
+    from app.llm.gateway import _is_local_endpoint_url
+
+    assert _is_local_endpoint_url("http://host.docker.internal:11434/v1")
+    assert _is_local_endpoint_url("http://gateway.docker.internal/v1")
+    assert _is_local_endpoint_url("http://localhost:8000/v1")
+    assert _is_local_endpoint_url("http://127.0.0.1:8000/v1")
+    assert not _is_local_endpoint_url("https://api.deepseek.com/v1")
+    assert not _is_local_endpoint_url("http://api-service:8000/v1")

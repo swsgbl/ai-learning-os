@@ -19,6 +19,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -46,6 +47,9 @@ fun StudyScreen(
     onOpenStudyMode: (String) -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
+    // 每次进入该标签都刷新（VM 随 backstack 复用不重跑 init；切 API 地址后
+    // 曾残留旧错误态——与考场页同款修复）
+    LaunchedEffect(Unit) { viewModel.refresh() }
     // M15-023：试卷 id → 该卷的考试历史（用于试卷卡「历史成绩+查看报告」）
     val history: Map<String, List<ExamHistoryItemDto>> = remember(state.examHistory) {
         state.examHistory
@@ -64,9 +68,9 @@ fun StudyScreen(
             modifier = Modifier.padding(top = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(8.dp),
         ) {
-            Text("学习 / 考场", style = MaterialTheme.typography.titleLarge)
+            Text("学习", style = MaterialTheme.typography.titleLarge)
             Text(
-                "试卷库",
+                "课程与试卷",
                 style = MaterialTheme.typography.labelMedium,
                 color = Subtle,
                 modifier = Modifier.padding(top = 6.dp),
