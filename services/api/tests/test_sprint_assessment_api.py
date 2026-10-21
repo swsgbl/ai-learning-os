@@ -254,3 +254,109 @@ def test_report_rejects_when_not_ready(sqlite_url) -> None:
         # 停在 baseline_assessment 未提交 → 报告 409（诚实：不虚构结果）
         report = client.get(f"/api/v1/learning/sprints/{sprint_id}/report")
         assert report.status_code == 409
+
+
+def test_follow_up_review_lifecycle(sqlite_url) -> None:
+    """M16-005 复习闭环：follow_up 建队列 → present → attempt 判分 →
+    completed + 下一轮 scheduled；复习作答落 delayed attempt。"""
+    with TestClient(create_app(sqlite_url)) as client:
+        _seed_pool(client, sqlite_url)
+        sprint_id = _make_sprint_ready_for_baseline(client)
+        # 走完全程到 posttest 提交
+        baseline = client.get(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment", params={"phase": "baseline"}
+        ).json()["items"]
+        client.post(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment/baseline/submit",
+            json={"responses": [{"item_id": i["item_id"], "response": "A"} for i in baseline]},
+        )
+        for phase in ("concept_map_review", "plan_confirmed", "learning",
+                      "targeted_practice", "transfer_check", "posttest"):
+            client.post(f"/api/v1/learning/sprints/{sprint_id}/advance", json={"to_phase": phase})
+        posttest = client.get(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment", params={"phase": "posttest"}
+        ).json()["items"]
+        client.post(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment/posttest/submit",
+            json={"responses": [{"item_id": i["item_id"], "response": "A"} for i in posttest]},
+        )
+        assert client.get(f"/api/v1/learning/sprints/{sprint_id}/report").status_code == 200
+
+        # report 阶段建复测队列
+        queue = client.post(f"/api/v1/learning/sprints/{sprint_id}/follow-up/schedule")
+        assert queue.status_code == 201, queue.text
+        reviews = queue.json()
+        assert len(reviews) == 2  # 蓝图 2 概念
+        assert all(r["status"] == "scheduled" for r in reviews)
+
+        # scheduled 直接 attempt 409（必须先 presented）
+        direct = client.post(
+            f"/api/v1/learning/review-queue/{reviews[0]['id']}/attempt",
+            json={"item_id": "q_c_select_4", "response": "A"},
+        )
+        assert direct.status_code == 409
+
+        presented = client.post(f"/api/v1/learning/review-queue/{reviews[0]['id']}/present")
+        assert presented.status_code == 200
+        assert presented.json()["status"] == "presented"
+
+        first_concept = reviews[0]["concept_id"]
+        other_concept = "c_join" if first_concept == "c_select" else "c_select"
+        # 概念不匹配的题 422
+        mismatch = client.post(
+            f"/api/v1/learning/review-queue/{reviews[0]['id']}/attempt",
+            json={"item_id": f"q_{other_concept}_0", "response": "A"},
+        )
+        assert mismatch.status_code == 422
+
+        # 正确复习作答 → completed + delayed attempt 落库 + 下一轮 scheduled
+        attempted = client.post(
+            f"/api/v1/learning/review-queue/{reviews[0]['id']}/attempt",
+            json={"item_id": f"q_{first_concept}_4", "response": "A", "confidence": 4},
+        )
+        assert attempted.status_code == 200, attempted.text
+        assert attempted.json()["status"] == "completed"
+        assert attempted.json()["interval_days"] > 1  # 高信心独立对 → 增长
+
+        attempts = client.get("/api/v1/learning/attempts").json()
+        review_attempts = [a for a in attempts if a["context"].endswith(":review")]
+        assert len(review_attempts) == 1
+        assert review_attempts[0]["delayed"] is True
+
+        # 未复习概念的 scheduled 仍在队列；已复习概念下一轮因间隔增长（>1 天）
+        # 移出 24h 窗口——这正是间隔复习语义（不是每天重复同概念）
+        queue_now = client.get("/api/v1/learning/review-queue").json()
+        queue_concepts = {r["concept_id"] for r in queue_now}
+        other = "c_join" if first_concept == "c_select" else "c_select"
+        assert other in queue_concepts  # 未复习概念仍到期可见
+        assert first_concept not in queue_concepts  # 复习过的按新间隔排期
+
+
+def test_follow_up_schedule_idempotent(sqlite_url) -> None:
+    """M16-005b：重复 schedule 返回既有活跃队列（不翻倍）。"""
+    with TestClient(create_app(sqlite_url)) as client:
+        _seed_pool(client, sqlite_url)
+        sprint_id = _make_sprint_ready_for_baseline(client)
+        baseline = client.get(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment", params={"phase": "baseline"}
+        ).json()["items"]
+        client.post(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment/baseline/submit",
+            json={"responses": [{"item_id": i["item_id"], "response": "A"} for i in baseline]},
+        )
+        for phase in ("concept_map_review", "plan_confirmed", "learning",
+                      "targeted_practice", "transfer_check", "posttest"):
+            client.post(f"/api/v1/learning/sprints/{sprint_id}/advance", json={"to_phase": phase})
+        posttest = client.get(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment", params={"phase": "posttest"}
+        ).json()["items"]
+        client.post(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment/posttest/submit",
+            json={"responses": [{"item_id": i["item_id"], "response": "A"} for i in posttest]},
+        )
+        first = client.post(f"/api/v1/learning/sprints/{sprint_id}/follow-up/schedule")
+        assert first.status_code == 201
+        second = client.post(f"/api/v1/learning/sprints/{sprint_id}/follow-up/schedule")
+        assert second.status_code == 201
+        assert {r["id"] for r in second.json()} == {r["id"] for r in first.json()}
+        assert len(second.json()) == 2  # 仍是 2 条，未翻倍

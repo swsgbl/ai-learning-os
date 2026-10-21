@@ -14,12 +14,23 @@ from dataclasses import dataclass
 
 #: 每概念前测/后测各取的默认题量
 ITEMS_PER_PHASE_PER_CONCEPT = 2
-#: 参与前测/后测的题型（客观可判分——与 domain/grading 客观族对齐；
-#: essay/写作走 rubric 复核不在蓝图 MVP）
-OBJECTIVE_TYPES = {
-    "mcq", "multiple_select", "true_false", "short_answer",
-    "single", "multiple", "choice",  # 历史命名兼容
-}
+#: 参考前测/后测的题型（客观可确定性判分）。
+#: M16-004b（安全审查修复）：以 domain/grading.normalize_type 为**单一
+#: 事实源**——先归一（choice→mcq、tf→true_false、short→short_answer 等
+#: alias）再比对规范集，消除蓝图白名单与判分器的 parser differential
+#: （此前 "single"/"multiple" 不被 grading 认识会落入 return False 兜底，
+#: 造成"不可判题型被记为答错"的虚假证据）。
+#: essay/写作走 rubric 复核不在蓝图 MVP。
+from app.domain.grading import normalize_type as _normalize_question_type
+
+OBJECTIVE_TYPES: frozenset[str] = frozenset(
+    {"mcq", "multiple_select", "true_false", "short_answer"}
+)
+
+
+def is_objective_type(question_type: str) -> bool:
+    """题型是否客观可判（以 grading.normalize_type 归一后判定）。"""
+    return _normalize_question_type(question_type) in OBJECTIVE_TYPES
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,7 +74,7 @@ def build_blueprint(
     """
     by_concept: dict[str, list[CandidateItem]] = {}
     for item in candidates:
-        if item.question_type not in OBJECTIVE_TYPES:
+        if not is_objective_type(item.question_type):
             continue
         by_concept.setdefault(item.concept_id, []).append(item)
 

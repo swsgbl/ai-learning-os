@@ -16,7 +16,9 @@ from app.domain.assessment_blueprint import (
 
 def _pool(concept: str, count: int, prefix: str = "q") -> list[CandidateItem]:
     return [
-        CandidateItem(item_id=f"{prefix}{i}", concept_id=concept, difficulty=1 + i % 5)
+        CandidateItem(
+            item_id=f"{prefix}{i}", concept_id=concept, difficulty=1 + i % 5, question_type="mcq"
+        )
         for i in range(count)
     ]
 
@@ -33,7 +35,10 @@ def test_pretest_and_posttest_never_overlap() -> None:
 
 def test_difficulty_balanced_between_phases() -> None:
     """奇偶交错分配：两阶段难度分布等值（MVP 等值策略）。"""
-    items = [CandidateItem(f"q{i}", "c", difficulty=d) for i, d in enumerate([1, 1, 3, 3, 5, 5])]
+    items = [
+        CandidateItem(f"q{i}", "c", difficulty=d, question_type="mcq")
+        for i, d in enumerate([1, 1, 3, 3, 5, 5])
+    ]
     bp = build_blueprint(items)
     plan = bp.plans[0]
     pre = {next(i.difficulty for i in items if i.item_id == q) for q in plan.pretest_item_ids}
@@ -54,12 +59,28 @@ def test_insufficient_pool_is_partial_not_fake_complete() -> None:
     assert set(plan.pretest_item_ids).isdisjoint(plan.posttest_item_ids)
 
 
-def test_essay_items_excluded() -> None:
-    """主观题（essay/写作）不入蓝图 MVP——客观题才可确定性判分。"""
-    pool = _pool("c1", 4) + [CandidateItem("e1", "c1", question_type="essay")]
+def test_essay_and_unknown_types_excluded() -> None:
+    """主观题与判分器不认识的题型均不入蓝图（parser differential 修复回归）。
+
+    M16-004b：此前 "single"/"multiple" 在蓝图白名单但 grading 不认识——
+    会落入 return False 兜底被记为答错（虚假证据）。现在白名单以
+    grading.normalize_type 为单一事实源，归一后不在客观集的一律排除。
+    """
+    pool = (
+        _pool("c1", 4)
+        + [CandidateItem("e1", "c1", question_type="essay")]
+        + [CandidateItem("u1", "c1", question_type="single")]
+        + [CandidateItem("u2", "c1", question_type="multiple")]
+    )
     bp = build_blueprint(pool)
     all_ids = set(blueprint_items(bp, "pretest")) | set(blueprint_items(bp, "posttest"))
     assert "e1" not in all_ids
+    assert "u1" not in all_ids  # grading 不认识的题不进蓝图
+    assert "u2" not in all_ids
+    # alias 归一后是客观题——正常收录
+    pool_alias = _pool("c1", 2, "p") + [CandidateItem("a1", "c1", question_type="choice")]
+    bp_alias = build_blueprint(pool_alias)
+    assert len(bp_alias.plans[0].pretest_item_ids) + len(bp_alias.plans[0].posttest_item_ids) >= 1
 
 
 def test_empty_pool_yields_empty_blueprint() -> None:

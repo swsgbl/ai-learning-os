@@ -1,3 +1,25 @@
+## M16-005 —— 间隔复习调度 + 判分题型解析差异修复（升级方案 Phase 6）
+
+- **复习调度器**（domain/review_schedule.py + 迁移 0036）：默认间隔模板
+  +1/+3/+7/+14/+30 天；表现调整（独立答对增长、高信心跳档 ×1.6、
+  提示下答对维持、失败回最短档）；ReviewScheduler 协议留 FSRS adapter
+  接入位（py-fsrs 依赖与 license 审查后）。
+- **复习状态机**：scheduled→presented→attempted→completed——「展示」
+  不等于「作答」，未判分作答不 completed（诚实边界）；completed 后
+  自动排下一轮 scheduled（滚动复习）。
+- **复习 API**：POST /sprints/{id}/follow-up/schedule（报告阶段对蓝图
+  概念建队列，幂等——重复调用返回既有活跃队列）；GET /review-queue
+  （到期/进行中）；present/attempt（attempt 服务端判分，落 delayed
+  attempt——掌握度 mastered/at_risk 自然联动）。
+- **M16-004b 安全修复（审查发现）**：题型白名单以 grading.normalize_type
+  为单一事实源（归一后比对客观集）——修复 parser differential（此前
+  "single"/"multiple" 入蓝图但判分器不认识 → return False 兜底 →
+  「不可判题型被记为答错」的虚假证据）；前后测/复习提交前防御校验
+  题型，不可判分 422 拒绝。
+- 验证：调度域层 8 测试 + 复习闭环 API（建队→present→attempt 判分→
+  completed+滚动排期；未复习概念可见/已复习按新间隔移出窗口）+ 幂等
+  回归；全量 6508 passed / ruff clean。
+
 ## M16-004 —— Sprint 编排：评估蓝图 + 等值前后测 + 报告（升级方案 Phase 4）
 
 - **评估蓝图**（domain/assessment_blueprint.py + 迁移 0035）：按概念从

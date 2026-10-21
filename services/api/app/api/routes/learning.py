@@ -30,6 +30,7 @@ from app.db.orm import (
     LearningAttemptRow,
     LearningContractRow,
     LearningEventRow,
+    LearningReviewRow,
     LearningSprintRow,
     PaperRow,
     QuestionRow,
@@ -45,6 +46,13 @@ from app.domain.practice_loop import (
     ConceptForInterleave,
     interleave_queue,
     next_step,
+)
+from app.domain.review_schedule import (
+    DEFAULT_INTERVALS_DAYS,
+    ReviewOutcome,
+    ReviewScheduleError,
+    next_interval_days,
+    review_status_transition,
 )
 from app.domain.sprint_state import (
     SPRINT_PHASES,
@@ -1148,8 +1156,17 @@ async def submit_sprint_assessment(
     ungraded = 0
     per_concept: dict[str, dict[str, float | int]] = {}
     async with request.app.state.sessionmaker() as session:
+        from app.domain.assessment_blueprint import is_objective_type
+
         for item in payload.responses:
             question, concept = by_item[item.item_id]
+            if not is_objective_type(question.question_type):
+                # 防御：题集被污染（不可确定性判分的题）——拒绝而非让
+                # grading 兜底 return False 污染证据（M16-004b 审查修复）
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"题目 {question.id} 题型不可确定性判分（蓝图应只收客观题）",
+                )
             correct = grade_answer(question.question_type, question.answer, item.response)
             if correct is None:
                 ungraded += 1
@@ -1274,3 +1291,251 @@ async def sprint_report(sprint_id: str, request: Request) -> ReportOut:
         mastery_snapshot=snapshot,
         incomplete=incomplete,
     )
+
+
+# ---------------------------------------------------------------- 间隔复习队列（Phase 6）
+
+
+class ReviewOut(BaseModel):
+    id: str
+    concept_id: str
+    sprint_id: str | None
+    status: str
+    due_at: datetime
+    interval_days: int | None
+    algorithm_version: str
+    overdue: bool = False
+
+
+class ReviewAttemptRequest(BaseModel):
+    """复习作答：item_id 取该概念的题（服务端判分——复习完成=真实作答）。"""
+
+    item_id: str = Field(min_length=1, max_length=64)
+    response: str = Field(default="", max_length=4000)
+    confidence: int | None = Field(default=None, ge=1, le=5)
+
+
+@router.post("/sprints/{sprint_id}/follow-up/schedule", response_model=list[ReviewOut], status_code=201)
+async def schedule_follow_up(sprint_id: str, request: Request) -> list[ReviewOut]:
+    """Sprint 进入 report 后：对蓝图全部概念创建初始复测队列（+1 天档）。"""
+    await require_user(request)
+    sprint = await _owned_sprint(request, sprint_id)
+    if sprint.phase not in {"report", "follow_up"}:
+        raise HTTPException(
+            status_code=409, detail=f"复测队列须在 report/follow_up 阶段创建：当前 {sprint.phase}"
+        )
+    async with request.app.state.sessionmaker() as session:
+        concepts = (
+            (
+                await session.execute(
+                    select(AssessmentBlueprintRow.concept_id).where(
+                        AssessmentBlueprintRow.contract_id == sprint.contract_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not concepts:
+            raise HTTPException(status_code=409, detail="蓝图未构建：无可复测概念")
+        # 幂等（M16-005b 审查修复）：该 Sprint 已有活跃复习记录 → 返回既有
+        # 队列，不重复创建（此前重复 schedule 会无限翻倍队列）
+        existing = (
+            (
+                await session.execute(
+                    select(LearningReviewRow)
+                    .where(LearningReviewRow.sprint_id == sprint.id)
+                    .where(LearningReviewRow.status != "completed")
+                    .order_by(LearningReviewRow.due_at.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if existing:
+            return [_review_out(row) for row in existing]
+        now = _now()
+        rows = []
+        for concept_id in concepts:
+            row = LearningReviewRow(
+                id=f"lrv_{uuid4().hex[:23]}",
+                owner_id=sprint.owner_id,
+                sprint_id=sprint.id,
+                contract_id=sprint.contract_id,
+                concept_id=concept_id,
+                status="scheduled",
+                due_at=now + timedelta(days=DEFAULT_INTERVALS_DAYS[0]),
+                interval_days=DEFAULT_INTERVALS_DAYS[0],
+                created_at=now,
+            )
+            session.add(row)
+            rows.append(row)
+        await session.commit()
+        for row in rows:
+            await session.refresh(row)
+    await _record_event(
+        request,
+        owner_id=sprint.owner_id,
+        contract_id=sprint.contract_id,
+        sprint_id=sprint.id,
+        event_type="review.scheduled",
+        payload={"concepts": list(concepts)},
+        idempotency_key=f"sprint:{sprint.id}:followup",
+    )
+    return [_review_out(row) for row in rows]
+
+
+@router.get("/review-queue", response_model=list[ReviewOut])
+async def my_review_queue(request: Request) -> list[ReviewOut]:
+    """到期/进行中的复习队列（due_at <= now+24h 或已 presented/attempted）。"""
+    owner = current_owner_id(request)
+    async with request.app.state.sessionmaker() as session:
+        query = select(LearningReviewRow).where(LearningReviewRow.status != "completed")
+        if owner is not None:
+            query = query.where(LearningReviewRow.owner_id == owner)
+        rows = (
+            (await session.execute(query.order_by(LearningReviewRow.due_at.asc()).limit(100)))
+            .scalars()
+            .all()
+        )
+    now = _now()
+    window_end = now + timedelta(hours=24)
+    visible: list[LearningReviewRow] = []
+    for row in rows:
+        due = row.due_at
+        if due.tzinfo is None:  # SQLite naive -> UTC
+            due = due.replace(tzinfo=timezone.utc)
+        if due <= window_end or row.status != "scheduled":
+            visible.append(row)
+    return [_review_out(row, now=now) for row in visible]
+
+
+@router.post("/review-queue/{review_id}/present", response_model=ReviewOut)
+async def present_review(review_id: str, request: Request) -> ReviewOut:
+    """scheduled -> presented（展示给学习者——不等于作答）。"""
+    await require_user(request)
+    row = await _owned_review(request, review_id)
+    try:
+        row_status = review_status_transition(row.status, "presented")
+    except ReviewScheduleError as cause:
+        raise HTTPException(status_code=409, detail=str(cause)) from cause
+    async with request.app.state.sessionmaker() as session:
+        db_row = await session.get(LearningReviewRow, row.id)
+        assert db_row is not None
+        db_row.status = row_status
+        await session.commit()
+        await session.refresh(db_row)
+    return _review_out(db_row)
+
+
+@router.post("/review-queue/{review_id}/attempt", response_model=ReviewOut)
+async def attempt_review(
+    review_id: str, payload: ReviewAttemptRequest, request: Request
+) -> ReviewOut:
+    """复习作答：presented -> attempted（服务端判分）-> completed + 排下一轮。
+
+    复习完成只来自真实作答（方案验收）；失败回最短档，概念掌握度由
+    delayed attempt 重算自然联动 at_risk。
+    """
+    await require_user(request)
+    row = await _owned_review(request, review_id)
+    try:
+        after_attempt = review_status_transition(row.status, "attempted")
+    except ReviewScheduleError as cause:
+        raise HTTPException(status_code=409, detail=str(cause)) from cause
+    async with request.app.state.sessionmaker() as session:
+        question = (
+            await session.execute(select(QuestionRow).where(QuestionRow.id == payload.item_id))
+        ).scalar_one_or_none()
+        if question is None:
+            raise HTTPException(status_code=404, detail="复习题目不存在")
+        concepts = question.knowledge if isinstance(question.knowledge, list) else []
+        if row.concept_id not in concepts:
+            raise HTTPException(status_code=422, detail="题目与复习概念不匹配")
+        from app.domain.assessment_blueprint import is_objective_type
+
+        if not is_objective_type(question.question_type):
+            raise HTTPException(status_code=422, detail="复习题题型不可确定性判分")
+        correct = grade_answer(question.question_type, question.answer, payload.response)
+        if correct is None:
+            raise HTTPException(status_code=422, detail="复习作答未判分（三态）——换客观题")
+        now = _now()
+        attempt = LearningAttemptRow(
+            id=f"lat_{uuid4().hex[:24]}",
+            owner_id=row.owner_id,
+            sprint_id=row.sprint_id,
+            contract_id=row.contract_id,
+            item_id=question.id,
+            concept_id=row.concept_id,
+            response=payload.response,
+            correct=correct,
+            confidence=payload.confidence,
+            independent=True,
+            delayed=True,  # 复习作答 = 延迟证据（掌握度 mastered/at_risk 联动）
+            error_tags=[],
+            context=f"{question.question_type}:review",
+            grading_method="answer_key",
+            grader_version="grading-v1",
+            created_at=now,
+        )
+        session.add(attempt)
+        await session.flush()
+        nxt = next_interval_days(
+            row.interval_days,
+            ReviewOutcome(correct=correct, confidence=payload.confidence, independent=True),
+        )
+        db_row = await session.get(LearningReviewRow, row.id)
+        assert db_row is not None
+        db_row.status = review_status_transition(after_attempt, "completed")
+        db_row.attempt_id = attempt.id
+        db_row.interval_days = nxt.due_in_days
+        db_row.due_at = now + timedelta(days=nxt.due_in_days)
+        await session.commit()
+        await session.refresh(db_row)
+        # completed 后创建下一轮 scheduled 记录（滚动复习）
+        if db_row.status == "completed":
+            session.add(
+                LearningReviewRow(
+                    id=f"lrv_{uuid4().hex[:23]}",
+                    owner_id=db_row.owner_id,
+                    sprint_id=db_row.sprint_id,
+                    contract_id=db_row.contract_id,
+                    concept_id=db_row.concept_id,
+                    status="scheduled",
+                    due_at=db_row.due_at,
+                    interval_days=db_row.interval_days,
+                    created_at=now,
+                )
+            )
+            await session.commit()
+    return _review_out(db_row)
+
+
+def _review_out(row: LearningReviewRow, *, now: datetime | None = None) -> ReviewOut:
+    current = now or _now()
+    due = row.due_at
+    if due.tzinfo is None:
+        due = due.replace(tzinfo=timezone.utc)
+    return ReviewOut(
+        id=row.id,
+        concept_id=row.concept_id,
+        sprint_id=row.sprint_id,
+        status=row.status,
+        due_at=row.due_at,
+        interval_days=row.interval_days,
+        algorithm_version=row.algorithm_version,
+        overdue=current > due,
+    )
+
+
+async def _owned_review(request: Request, review_id: str) -> LearningReviewRow:
+    owner = current_owner_id(request)
+    async with request.app.state.sessionmaker() as session:
+        row = (
+            await session.execute(
+                select(LearningReviewRow).where(LearningReviewRow.id == review_id)
+            )
+        ).scalar_one_or_none()
+    if row is None or (owner is not None and row.owner_id != owner):
+        raise HTTPException(status_code=404, detail="复习记录不存在")
+    return row

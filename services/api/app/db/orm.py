@@ -790,3 +790,27 @@ class AssessmentBlueprintRow(Base):
     complete: Mapped[bool] = mapped_column(Boolean, server_default=sa_false())
     note: Mapped[str] = mapped_column(Text, default="", server_default="")
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class LearningReviewRow(Base):
+    """M16-005 间隔复习队列：每概念一条活跃记录（scheduled→…→completed）。
+
+    复习完成只能来自真实作答（attempt_id 关联判分作答）；间隔由
+    domain/review_schedule 计算（FSRS adapter 接入前的 MVP 调度器）。
+    """
+
+    __tablename__ = "learning_reviews"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    sprint_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    contract_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    concept_id: Mapped[str] = mapped_column(String(64), index=True)
+    status: Mapped[str] = mapped_column(String(16), default="scheduled", server_default="scheduled")
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    interval_days: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    attempt_id: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    algorithm_version: Mapped[str] = mapped_column(
+        String(32), default="intervals-mvp-1", server_default="intervals-mvp-1"
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
