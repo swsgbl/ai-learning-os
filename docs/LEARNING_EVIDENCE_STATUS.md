@@ -26,3 +26,7 @@ job；本机 SQLite 契约测试覆盖迁移 up/down 语义。
 | 练习决策 API（next-step/interleave-plan） | M16-003 | pass（SQLite 契约） | `test_learning_attempts_api.py::test_practice_decision_endpoints` |
 | 蓝图域层（等值不重叠/难度配平/不足如实 partial） | M16-004 | pass（2026-10-22，7 测试） | `services/api/tests/test_assessment_blueprint.py` |
 | 前后测编排 API（答案隔离/阶段前置/三态判分落证据/重复提交 409/报告增益） | M16-004 | pass（SQLite 文件库契约，5 测试全链） | `services/api/tests/test_sprint_assessment_api.py` |
+| 复习调度域层（间隔模板/表现调整/诚实状态机） | M16-005 | pass（2026-10-22，8 测试） | `services/api/tests/test_review_schedule.py` |
+| 复习闭环 API（建队幂等/present/attempt 判分/滚动排期） | M16-005 | pass（SQLite 文件库契约） | `test_sprint_assessment_api.py::test_follow_up_review_lifecycle` |
+| 判分题型解析差异修复（normalize_type 单一事实源回归） | M16-004b | pass（essay/unknown/alias 三态收录测试） | `test_assessment_blueprint.py::test_essay_and_unknown_types_excluded` |
+| FSRS 真实算法接入（py-fsrs 依赖与 license 审查） | — | not_executed（MVP 调度器已留 adapter 协议） | `domain/review_schedule.py` 注释 |
