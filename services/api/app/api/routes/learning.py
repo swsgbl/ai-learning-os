@@ -25,7 +25,13 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
 from app.api.routes.auth import current_owner_id, require_user
-from app.db.orm import LearningContractRow, LearningEventRow, LearningSprintRow
+from app.db.orm import (
+    LearningAttemptRow,
+    LearningContractRow,
+    LearningEventRow,
+    LearningSprintRow,
+)
+from app.domain.mastery import AttemptEvidence, derive_mastery
 from app.domain.sprint_state import (
     SPRINT_PHASES,
     IllegalSprintTransition,
@@ -214,7 +220,7 @@ async def _owned_sprint(request: Request, sprint_id: str) -> LearningSprintRow:
 async def _record_event(
     request: Request,
     *,
-    owner_id: str,
+    owner_id: str | None,
     event_type: str,
     payload: dict,
     sprint_id: str | None = None,
@@ -222,13 +228,22 @@ async def _record_event(
     idempotency_key: str | None = None,
     source: str = "api",
 ) -> LearningEventRow | None:
-    """落一条审计事件；带幂等键且已存在 → 返回 None（不重复）。"""
+    """落一条审计事件；带幂等键且**同租户**已存在 → 返回既有行（不重复）。
+
+    M16-001b（安全审查修复）：幂等作用域 = 租户命名空间
+    ``{owner_id or 'anon'}#{用户键}``——跨用户同键互不可见也互不压制
+    （IDOR 与键预占两条审查项的唯一解）；idempotency_key 保留用户
+    原值仅作展示。
+    """
+    scope_key = (
+        f"{owner_id or 'anon'}#{idempotency_key}" if idempotency_key is not None else None
+    )
     async with request.app.state.sessionmaker() as session:
-        if idempotency_key is not None:
+        if scope_key is not None:
             existing = (
                 await session.execute(
                     select(LearningEventRow).where(
-                        LearningEventRow.idempotency_key == idempotency_key
+                        LearningEventRow.idem_scope_key == scope_key
                     )
                 )
             ).scalar_one_or_none()
@@ -243,6 +258,7 @@ async def _record_event(
             event_type=event_type,
             payload=payload,
             idempotency_key=idempotency_key,
+            idem_scope_key=scope_key,
             source=source,
             privacy_class="normal",
             occurred_at=now,
@@ -532,3 +548,191 @@ async def list_sprint_events(sprint_id: str, request: Request) -> list[EventOut]
         )
         for row in rows
     ]
+
+
+# ---------------------------------------------------------------- 作答证据与掌握度（Phase 2）
+
+
+class AttemptCreateRequest(BaseModel):
+    """作答证据（M16-002）：三态判分 + 信心/耗时/提示/独立/延迟/迁移。"""
+
+    item_id: str = Field(min_length=1, max_length=64)
+    concept_id: str = Field(min_length=1, max_length=64)
+    response: str = Field(default="", max_length=8000)
+    score: float | None = Field(default=None, ge=0, le=100)
+    correct: bool | None = None
+    confidence: int | None = Field(default=None, ge=1, le=5)
+    response_time_ms: int | None = Field(default=None, ge=0)
+    hints_used: int = Field(default=0, ge=0)
+    independent: bool = True
+    delayed: bool = False
+    transfer: bool = False
+    error_tags: list[str] = Field(default_factory=list)
+    context: str = Field(default="practice", max_length=64)
+    grading_method: str = Field(default="manual", max_length=32)
+    grader_version: str | None = Field(default=None, max_length=64)
+    sprint_id: str | None = None
+    contract_id: str | None = None
+
+
+class AttemptOut(BaseModel):
+    id: str
+    item_id: str
+    concept_id: str
+    response: str
+    score: float | None
+    correct: bool | None
+    confidence: int | None
+    response_time_ms: int | None
+    hints_used: int
+    independent: bool
+    delayed: bool
+    transfer: bool
+    error_tags: list[str]
+    context: str
+    grading_method: str
+    grader_version: str | None
+    created_at: datetime
+
+
+class MasteryOut(BaseModel):
+    concept_id: str
+    state: str
+    evidence_count: int
+    independent_correct: int
+    distinct_contexts: int
+    delayed_or_transfer_correct: int
+    high_confidence_errors: int
+    estimator_version: str
+
+
+@router.post("/attempts", response_model=AttemptOut, status_code=201)
+async def record_attempt(payload: AttemptCreateRequest, request: Request) -> AttemptOut:
+    """记录一次作答证据（判分由服务端给出；correct 三态——未判分传 null）。"""
+    await require_user(request)
+    owner = current_owner_id(request)
+    now = _now()
+    async with request.app.state.sessionmaker() as session:
+        row = LearningAttemptRow(
+            id=f"lat_{uuid4().hex[:24]}",
+            owner_id=owner,
+            sprint_id=payload.sprint_id,
+            contract_id=payload.contract_id,
+            item_id=payload.item_id,
+            concept_id=payload.concept_id,
+            response=payload.response,
+            score=payload.score,
+            correct=payload.correct,
+            confidence=payload.confidence,
+            response_time_ms=payload.response_time_ms,
+            hints_used=payload.hints_used,
+            independent=payload.independent,
+            delayed=payload.delayed,
+            transfer=payload.transfer,
+            error_tags=payload.error_tags,
+            context=payload.context,
+            grading_method=payload.grading_method,
+            grader_version=payload.grader_version,
+            created_at=now,
+        )
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+    return _attempt_out(row)
+
+
+@router.get("/attempts", response_model=list[AttemptOut])
+async def list_attempts(request: Request, concept_id: str | None = None) -> list[AttemptOut]:
+    owner = current_owner_id(request)
+    async with request.app.state.sessionmaker() as session:
+        query = (
+            select(LearningAttemptRow)
+            .order_by(LearningAttemptRow.created_at.asc())
+            .limit(500)
+        )
+        if owner is not None:
+            query = query.where(LearningAttemptRow.owner_id == owner)
+        if concept_id is not None:
+            query = query.where(LearningAttemptRow.concept_id == concept_id)
+        rows = (await session.execute(query)).scalars().all()
+    return [_attempt_out(row) for row in rows]
+
+
+@router.get("/mastery", response_model=list[MasteryOut])
+async def mastery_overview(request: Request) -> list[MasteryOut]:
+    """全部概念掌握概览（从原始 attempts 实时重算——派生视图不落表）。"""
+    owner = current_owner_id(request)
+    async with request.app.state.sessionmaker() as session:
+        query = select(LearningAttemptRow).order_by(LearningAttemptRow.created_at.asc())
+        if owner is not None:
+            query = query.where(LearningAttemptRow.owner_id == owner)
+        rows = (await session.execute(query)).scalars().all()
+    grouped: dict[str, list[LearningAttemptRow]] = {}
+    for row in rows:
+        grouped.setdefault(row.concept_id, []).append(row)
+    return [_mastery_out(concept_id, evidence) for concept_id, evidence in grouped.items()]
+
+
+@router.get("/mastery/{concept_id}", response_model=MasteryOut)
+async def mastery_for_concept(concept_id: str, request: Request) -> MasteryOut:
+    owner = current_owner_id(request)
+    async with request.app.state.sessionmaker() as session:
+        query = (
+            select(LearningAttemptRow)
+            .where(LearningAttemptRow.concept_id == concept_id)
+            .order_by(LearningAttemptRow.created_at.asc())
+        )
+        if owner is not None:
+            query = query.where(LearningAttemptRow.owner_id == owner)
+        rows = (await session.execute(query)).scalars().all()
+    return _mastery_out(concept_id, list(rows))
+
+
+def _attempt_out(row: LearningAttemptRow) -> AttemptOut:
+    return AttemptOut(
+        id=row.id,
+        item_id=row.item_id,
+        concept_id=row.concept_id,
+        response=row.response,
+        score=row.score,
+        correct=row.correct,
+        confidence=row.confidence,
+        response_time_ms=row.response_time_ms,
+        hints_used=row.hints_used,
+        independent=row.independent,
+        delayed=row.delayed,
+        transfer=row.transfer,
+        error_tags=row.error_tags,
+        context=row.context,
+        grading_method=row.grading_method,
+        grader_version=row.grader_version,
+        created_at=row.created_at,
+    )
+
+
+def _to_evidence(row: LearningAttemptRow) -> AttemptEvidence:
+    return AttemptEvidence(
+        attempt_id=row.id,
+        concept_id=row.concept_id,
+        correct=row.correct,
+        confidence=row.confidence,
+        hints_used=row.hints_used,
+        independent=row.independent,
+        delayed=row.delayed,
+        transfer=row.transfer,
+        context=row.context,
+    )
+
+
+def _mastery_out(concept_id: str, rows: list[LearningAttemptRow]) -> MasteryOut:
+    outcome = derive_mastery([_to_evidence(row) for row in rows])
+    return MasteryOut(
+        concept_id=concept_id,
+        state=outcome.state,
+        evidence_count=outcome.evidence_count,
+        independent_correct=outcome.independent_correct,
+        distinct_contexts=outcome.distinct_contexts,
+        delayed_or_transfer_correct=outcome.delayed_or_transfer_correct,
+        high_confidence_errors=outcome.high_confidence_errors,
+        estimator_version=outcome.estimator_version,
+    )

@@ -6,6 +6,7 @@
 """
 from __future__ import annotations
 
+import pytest
 from fastapi.testclient import TestClient
 
 from app.main import create_app
@@ -214,3 +215,98 @@ def test_owner_isolation_not_found_for_others() -> None:
         assert got.status_code == 200
         missing = client.get("/api/v1/learning/contracts/lc_nonexistent")
         assert missing.status_code == 404
+
+
+def test_event_idempotency_is_tenant_scoped_no_idor_no_suppression(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """M16-001b 安全审查修复回归：同幂等键跨用户各自落库互不干扰。
+
+    - IDOR：用户 B 用与 A 相同的键提交，必须拿到 B 自己的事件（而非 A 的）；
+    - 预占压制：B 先提交不能让 A 后提交的事件被吞（各自一条）。
+    """
+    from app.api.routes.auth import get_settings
+
+    monkeypatch.setenv("AUTH_SECRET", "m16-001b-idem-scope-secret-0123456789abcdef")
+    get_settings.cache_clear()
+    try:
+        with TestClient(create_app(SQLITE_URL)) as client:
+            tokens = {}
+            for username in ("alice", "bob"):
+                client.post(
+                    "/api/v1/auth/register",
+                    json={"username": username, "password": "password-123"},
+                )
+                login = client.post(
+                    "/api/v1/auth/login",
+                    json={"username": username, "password": "password-123"},
+                )
+                tokens[username] = login.json()["access_token"]
+
+            def _mk_contract(token: str) -> str:
+                created = client.post(
+                    "/api/v1/learning/contracts",
+                    json=_contract_payload(),
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                assert created.status_code == 201, created.text
+                contract_id = created.json()["id"]
+                confirmed = client.post(
+                    f"/api/v1/learning/contracts/{contract_id}/confirm",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                assert confirmed.status_code == 200
+                return contract_id
+
+            def _mk_sprint(token: str, contract_id: str) -> str:
+                created = client.post(
+                    f"/api/v1/learning/contracts/{contract_id}/sprints",
+                    headers={"Authorization": f"Bearer {token}"},
+                )
+                assert created.status_code == 201, created.text
+                return created.json()["id"]
+
+            alice_contract = _mk_contract(tokens["alice"])
+            bob_contract = _mk_contract(tokens["bob"])
+            alice_sprint = _mk_sprint(tokens["alice"], alice_contract)
+            bob_sprint = _mk_sprint(tokens["bob"], bob_contract)
+
+            shared_key = "attempt-shared-key-1"
+            alice_event = client.post(
+                f"/api/v1/learning/sprints/{alice_sprint}/events",
+                json={
+                    "event_type": "attempt.recorded",
+                    "payload": {"who": "alice"},
+                    "idempotency_key": shared_key,
+                },
+                headers={"Authorization": f"Bearer {tokens['alice']}"},
+            )
+            bob_event = client.post(
+                f"/api/v1/learning/sprints/{bob_sprint}/events",
+                json={
+                    "event_type": "attempt.recorded",
+                    "payload": {"who": "bob"},
+                    "idempotency_key": shared_key,
+                },
+                headers={"Authorization": f"Bearer {tokens['bob']}"},
+            )
+            assert alice_event.status_code == bob_event.status_code == 201
+            # B 拿到的是 B 的事件（不是 A 的）——IDOR 修复
+            assert bob_event.json()["id"] != alice_event.json()["id"]
+            assert bob_event.json()["payload"] == {"who": "bob"}
+            assert bob_event.json()["sprint_id"] == bob_sprint
+
+            # 各自事件流里同键事件恰一条——无压制
+            alice_events = client.get(
+                f"/api/v1/learning/sprints/{alice_sprint}/events",
+                headers={"Authorization": f"Bearer {tokens['alice']}"},
+            ).json()
+            bob_events = client.get(
+                f"/api/v1/learning/sprints/{bob_sprint}/events",
+                headers={"Authorization": f"Bearer {tokens['bob']}"},
+            ).json()
+            assert [e for e in alice_events if e["idempotency_key"] == shared_key].__len__() == 1
+            assert [e for e in bob_events if e["idempotency_key"] == shared_key].__len__() == 1
+    finally:
+        monkeypatch.delenv("AUTH_SECRET", raising=False)
+        get_settings.cache_clear()

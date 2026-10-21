@@ -74,12 +74,17 @@ def upgrade() -> None:
         sa.Column("event_type", sa.String(64), nullable=False),
         sa.Column("payload", sa.JSON(), nullable=False),
         sa.Column("idempotency_key", sa.String(128), nullable=True),
+        # M16-001b：幂等唯一作用域键 = "{owner_id}#{用户键}"——全局唯一约束
+        # 挪到这里；idempotency_key 保留用户原值仅作展示。修复安全审查：
+        # 跨租户同键 IDOR（B 用 A 的键拿到 A 的事件）与键预占压制
+        # （B 先占键吞掉 A 的事件）。owner 可空（本地模式）用 anon 前缀。
+        sa.Column("idem_scope_key", sa.String(160), nullable=True),
         sa.Column("source", sa.String(16), nullable=False, server_default="api"),
         sa.Column("trace_id", sa.String(64), nullable=True),
         sa.Column("privacy_class", sa.String(16), nullable=False, server_default="normal"),
         sa.Column("occurred_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.UniqueConstraint("idempotency_key", name="uq_learning_events_idem"),
+        sa.UniqueConstraint("idem_scope_key", name="uq_learning_events_idem"),
     )
 
 

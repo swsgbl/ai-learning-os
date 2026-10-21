@@ -721,7 +721,7 @@ class LearningEventRow(Base):
 
     __tablename__ = "learning_events"
     __table_args__ = (
-        UniqueConstraint("idempotency_key", name="uq_learning_events_idem"),
+        UniqueConstraint("idem_scope_key", name="uq_learning_events_idem"),
     )
 
     id: Mapped[str] = mapped_column(String(32), primary_key=True)
@@ -731,8 +731,42 @@ class LearningEventRow(Base):
     event_type: Mapped[str] = mapped_column(String(64))
     payload: Mapped[dict[str, Any]] = mapped_column(JSON)
     idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # M16-001b：租户命名空间幂等键（"{owner}#{用户键}"）——唯一约束在此
+    idem_scope_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
     source: Mapped[str] = mapped_column(String(16), default="api", server_default="api")
     trace_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
     privacy_class: Mapped[str] = mapped_column(String(16), default="normal", server_default="normal")
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class LearningAttemptRow(Base):
+    """M16-002 作答证据（升级方案 Phase 2）：每次作答的完整学习证据。
+
+    三态判分（correct 可空=未判分）；信心/耗时/提示/独立/延迟/迁移 +
+    错误类型标签 + 作答上下文。ConceptMastery 不落表——由
+    domain/mastery.derive_mastery 从本表原始证据实时重算。
+    """
+
+    __tablename__ = "learning_attempts"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    sprint_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    contract_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    item_id: Mapped[str] = mapped_column(String(64))
+    concept_id: Mapped[str] = mapped_column(String(64), index=True)
+    response: Mapped[str] = mapped_column(Text, default="", server_default="")
+    score: Mapped[float | None] = mapped_column(Float, nullable=True)
+    correct: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    confidence: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    response_time_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    hints_used: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    independent: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+    delayed: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    transfer: Mapped[bool] = mapped_column(Boolean, default=False, server_default="false")
+    error_tags: Mapped[list[str]] = mapped_column(JSON)
+    context: Mapped[str] = mapped_column(String(64), default="practice", server_default="practice")
+    grading_method: Mapped[str] = mapped_column(String(32), default="manual", server_default="manual")
+    grader_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

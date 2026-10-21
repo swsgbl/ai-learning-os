@@ -18,3 +18,7 @@ job；本机 SQLite 契约测试覆盖迁移 up/down 语义。
 | 全量回归无破坏 | M16-001 | pass（6451 passed, 35 skipped；ruff clean） | 本机 2026-10-22 执行记录 |
 | PG 隔离库迁移 up/down | M16-001 | not_executed（本机未设 AIOS_PG_TEST_URL 会话） | CI migration job |
 | 生产部署 M16-001 | — | not_executed（按方案：RC 不自动部署） | — |
+| 掌握度规则域层（状态链/时间序降级/高信心错误/确定性幂等） | M16-002 | pass（2026-10-22，11 测试） | `services/api/tests/test_mastery_rules.py` |
+| 作答证据+掌握度 API（三态/全状态链/概览重算） | M16-002 | pass（SQLite 契约，6 测试） | `services/api/tests/test_learning_attempts_api.py` |
+| 幂等键租户隔离（IDOR/预占压制修复回归） | M16-001b | pass（双用户同键隔离测试） | `test_learning_contract_api.py::test_event_idempotency_is_tenant_scoped_no_idor_no_suppression` |
+| 掌握度阈值黄金集校准 | — | not_executed（Phase 7 黄金集建立后） | 常量在 `domain/mastery.py` 显式标注 |
