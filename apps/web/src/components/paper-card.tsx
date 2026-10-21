@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Headphones, Timer } from "lucide-react";
+import { BookOpen, Headphones, Timer } from "lucide-react";
 import type { PaperSummary } from "@/lib/types";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -32,6 +32,14 @@ export function PaperCard({ paper, compact = false }: { paper: PaperSummary; com
         <Badge className="font-normal">{paper.duration_minutes} 分钟</Badge>
       </div>
       <div className="mt-auto flex flex-wrap gap-2">
+        {paper.mine && (
+          <Button asChild variant="outline" className="min-w-[calc(50%-0.25rem)] flex-1">
+            <Link href={`/study/${paper.id}`}>
+              <BookOpen aria-hidden="true" />
+              学习模式
+            </Link>
+          </Button>
+        )}
         <Button asChild className="min-w-[calc(50%-0.25rem)] flex-1">
           <Link href={`/voice/${paper.id}`}>
             <Headphones aria-hidden="true" />

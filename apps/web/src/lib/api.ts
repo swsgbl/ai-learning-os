@@ -9,6 +9,7 @@ import type {
   PaperSummary,
   StudentStates,
   Submission,
+  StudyView,
   UserProfile,
   VariantDraft,
   VoiceProvidersView,
@@ -155,6 +156,8 @@ function draftEndpoints<T>(base: string) {
 
 export const api = {
   papers: () => request<PaperSummary[]>("/api/v1/papers"),
+  paperStudy: (paperId: string) =>
+    request<StudyView>(`/api/v1/papers/${encodeURIComponent(paperId)}/study`),
   me: () => request<UserProfile>("/api/v1/auth/me"),
   // M15-018/019 个人 LLM 多厂商密钥库（与 App 同口径）
   llmProfiles: () =>

@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.CreationExtras
+import com.ailearningos.app.ui.study.StudyModeViewModel
 import com.ailearningos.app.ui.progress.ProgressViewModel
 import com.ailearningos.app.ui.create.CreateCourseViewModel
 import com.ailearningos.app.ui.exam.ExamEntry
@@ -44,6 +45,10 @@ class AiosViewModelFactory(
 
             modelClass.isAssignableFrom(HomeViewModel::class.java) -> HomeViewModel(
                 system = container.systemGateway,
+            ) as T
+
+            modelClass.isAssignableFrom(StudyModeViewModel::class.java) -> StudyModeViewModel(
+                exams = container.examGateway,
             ) as T
 
             modelClass.isAssignableFrom(ProgressViewModel::class.java) -> ProgressViewModel(

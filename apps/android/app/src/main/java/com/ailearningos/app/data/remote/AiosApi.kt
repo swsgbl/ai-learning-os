@@ -54,6 +54,9 @@ interface AiosApi {
     @DELETE("api/v1/me/ai-keys/llm/profiles/{id}")
     suspend fun deleteLlmProfile(@Path("id") id: String): ProfileDeleteResponse
 
+    @GET("api/v1/papers/{paperId}/study")
+    suspend fun paperStudy(@Path("paperId") paperId: String): StudyViewDto
+
     @GET("api/v1/exams/history")
     suspend fun examHistory(): ExamHistoryOutDto
 

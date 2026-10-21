@@ -555,6 +555,8 @@ class CourseGenerationDraftRow(Base):
     plan: Mapped[dict] = mapped_column(JSON, default=dict)
     chapter_count: Mapped[int] = mapped_column()
     generation_note: Mapped[str] = mapped_column(String(512))
+    # M15-024：materialize 产出的练习卷（学习视图反查课程 plan 的锚点）
+    materialized_paper_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     review_note: Mapped[str | None] = mapped_column(String(512), nullable=True)
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

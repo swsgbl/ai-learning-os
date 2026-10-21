@@ -209,3 +209,32 @@ data class StudentStatesDto(
     val concept_count: Int,
     val states: List<ConceptStateDto> = emptyList(),
 )
+
+
+/** M15-024 学习视图（/papers/{id}/study）——先学习再考试 */
+@Serializable
+data class StudyQuestionDto(
+    val question_id: String,
+    val stem: String,
+    val question_type: String,
+    val options: Map<String, String>? = null,
+)
+
+@Serializable
+data class StudyChapterDto(
+    val chapter_no: Int,
+    val title: String,
+    val difficulty: Int = 3,
+    val objectives: String = "",
+    val assessment_stem: String = "",
+    val questions: List<StudyQuestionDto> = emptyList(),
+)
+
+@Serializable
+data class StudyViewDto(
+    val paper_id: String,
+    val paper_title: String,
+    val goal: String = "",
+    val chapter_count: Int,
+    val chapters: List<StudyChapterDto> = emptyList(),
+)
