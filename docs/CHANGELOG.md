@@ -1,3 +1,15 @@
+## M16-010b/c/d —— 本地 LLM 链路三修复（生产实测驱动，PR #438）
+
+- **部署超时传递**：出题/课程生成走 LLM_TIMEOUT_SECONDS（本地 Ollama
+  冷启动 >30s 实测超时；BYOK 云端零漂移——None 回退 30s）。
+- **thinking 模型 content 回退**：Ollama qwen3.5 在 /v1 下 content 空、
+  正文进 reasoning_content——网关空 content 回退之。
+- **Ollama native 模式（终解）**：/v1 实测 content/reasoning 双空（思考
+  吃满 max_tokens；消息级 /no_think 不被模板消费）→ native /api/chat
+  + think:false 0.1s 出正文；仅 llm_provider=ollama 启用。
+- **生产实测**：ndtool.cn live 出题 201/16s（校验丢弃如实）；蓝图
+  complete=true → 前测答案隔离下发 → 服务端判分 → 自动推进全链通过。
+
 ## M16-009 —— SQL 黄金集与离线评测门禁（升级方案 Phase 7）
 
 - **试点学科黄金集**（eval/golden_sql_foundation.json）：SQL 基础 8 概念
