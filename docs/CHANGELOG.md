@@ -1,3 +1,17 @@
+## M16-009 —— SQL 黄金集与离线评测门禁（升级方案 Phase 7）
+
+- **试点学科黄金集**（eval/golden_sql_foundation.json）：SQL 基础 8 概念
+  × 4 题 = 32 道人工标注 mcq（答案/难度/概念映射人工核验）——覆盖
+  SELECT/WHERE/排序限行/内外连接/GROUP BY/HAVING/聚合函数。
+- **离线评测脚本**（scripts/run_golden_eval.py，CI 可重复——纯本地无
+  网络/LLM/DB）：蓝图等值性（全概念 complete、前后测不重叠、难度
+  均值差 ≤1）；判分一致性（32 题黄金答案判对+错选判错=64 断言）；
+  掌握度黄金场景（学成=mastered、复测失败=at_risk 两场景）。
+- **pytest 门禁**（test_golden_eval.py 直接复用脚本 main）：任何蓝图/
+  判分/掌握度规则回归在 CI 暴露。
+- 方案对齐：LLM-as-judge 不作唯一评价者（黄金集人工标注）；阈值校准
+  与扩科（延迟/迁移题扩充）记 EVIDENCE 后续项。
+
 ## M16-008 —— 来源证据骨架 + LLM 调用线程池化（升级方案 Phase 5）
 
 - **来源证据表**（迁移 0037 learning_source_refs）：合同概念的检索片段

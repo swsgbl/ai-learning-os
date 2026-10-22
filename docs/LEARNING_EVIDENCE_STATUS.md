@@ -37,3 +37,5 @@ job；本机 SQLite 契约测试覆盖迁移 up/down 语义。
 | LLM 出题 live 供应商验证 | — | not_executed（契约层 stub；运维 smoke 待显式执行） | 生产 /generate-items 手动验证 |
 | 来源证据 API（stub provider：入库/非法 url 过滤/无源 503） | M16-008 | pass（2026-10-22，4 测试） | `services/api/tests/test_source_refs_api.py` |
 | LLM 调用线程池化（事件循环不阻塞） | M16-008b | pass（回归全绿；代码级 asyncio.to_thread 两处） | `learning.py`/`course_workflow.py` |
+| SQL 黄金集离线评测（蓝图等值/判分一致/掌握度场景） | M16-009 | pass（2026-10-22，脚本 exit 0 + pytest 门禁） | `services/api/scripts/run_golden_eval.py`、`eval/golden_sql_foundation.json` |
+| 黄金集扩充（延迟/迁移题、第二学科）与阈值校准 | — | not_executed（试点集已立；扩科属持续迭代） | 方案 Phase 7 持续项 |
