@@ -119,7 +119,16 @@ def generate_objective_items(
     endpoint, api_key, model = config
     if not (endpoint and api_key and model):
         raise LlmItemGenerationUnavailable("未配置 LLM（个人密钥或服务端网关）——无法生成客观题")
-    gateway = LlmGateway(endpoint=endpoint, api_key=api_key, model=model)
+    # M16-010b：出题走部署超时（LLM_TIMEOUT_SECONDS，本地慢拓扑冷启动
+    # 可 >30s——此前默认 30s 网关超时在本地 Ollama 上真实超时）
+    from app.core.config import get_settings
+
+    gateway = LlmGateway(
+        endpoint=endpoint,
+        api_key=api_key,
+        model=model,
+        timeout_seconds=get_settings().llm_timeout_seconds or 30.0,
+    )
     listing = "\n".join(f"- {name}" for name in concepts)
     messages = (
         ChatMessage(role="system", content=_SYSTEM_PROMPT),
