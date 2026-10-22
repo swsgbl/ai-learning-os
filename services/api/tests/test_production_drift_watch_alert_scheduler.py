@@ -81,7 +81,7 @@ import os
 import re
 import sys
 import xml.etree.ElementTree as ET
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import pytest
@@ -240,7 +240,7 @@ def _minutes(spec: str) -> int:
 
 
 def _boundary(spec: str) -> datetime:
-    return datetime.strptime(spec, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
+    return datetime.strptime(spec, "%Y-%m-%dT%H:%M:%S").replace(tzinfo=UTC)
 
 
 # ---------------------------------------------------------------- Task XML

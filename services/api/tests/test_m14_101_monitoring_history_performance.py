@@ -41,7 +41,7 @@ import importlib.util
 import json
 import random
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -72,7 +72,7 @@ ENDPOINTS = ("web-root", "web-login", "api-health", "funasr-health", "cosyvoice-
 PROJECT = "aios-m14-101-scale-rehearsal"
 
 #: 合成时间戳基点（固定常量——零墙钟）；步长 37s 与 60 互质，分钟/秒位分布均匀
-_SCALE_BASE = datetime(2026, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+_SCALE_BASE = datetime(2026, 1, 1, 0, 0, 0, tzinfo=UTC)
 _SCALE_STEP_SECONDS = 37
 
 #: 操作计数上界（与候选数 N 无关的常数；祖先链深度按 4 层构造 + 余量）

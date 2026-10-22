@@ -33,7 +33,7 @@ import json
 import socket
 import subprocess as subprocess_module
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -424,7 +424,7 @@ def test_zero_samples_refused(tmp_path) -> None:
 
 
 def test_too_many_samples_refused(tmp_path) -> None:
-    base = datetime(2026, 9, 11, 0, 0, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 9, 11, 0, 0, 0, tzinfo=UTC)
     rows = [_row((base + timedelta(seconds=i)).strftime("%Y-%m-%dT%H:%M:%SZ"))
             for i in range(5001)]
     history = _write_history(tmp_path, rows)
@@ -549,7 +549,7 @@ def test_combined_filters(tmp_path, capsys) -> None:
 
 
 def _seven_rows() -> list[dict[str, object]]:
-    base = datetime(2026, 9, 11, 11, 0, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 9, 11, 11, 0, 0, tzinfo=UTC)
     return [_row((base + timedelta(minutes=5 * i)).strftime("%Y-%m-%dT%H:%M:%SZ"),
                  log_errors={"api": i}) for i in range(7)]
 

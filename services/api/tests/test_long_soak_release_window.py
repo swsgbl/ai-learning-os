@@ -46,7 +46,7 @@ import re
 import socket
 import subprocess as subprocess_module
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -64,7 +64,7 @@ MARK_TOKEN = "sk-ZXmarker987654321"
 PROJECT = "aios-m14-03-production-rehearsal"
 FMT = "%Y-%m-%dT%H:%M:%SZ"
 #: 锚点 = M14-79 门产锚时刻（合成）；earliest = ANCHOR + 24h
-ANCHOR = datetime(2026, 9, 21, 15, 0, 1, tzinfo=timezone.utc)
+ANCHOR = datetime(2026, 9, 21, 15, 0, 1, tzinfo=UTC)
 
 GATE_ANCHOR_JSON = "soak-window-anchor.json"
 RUNNER_JSON = "long-soak-window-runner.json"

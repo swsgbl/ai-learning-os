@@ -171,7 +171,8 @@ def test_client_forged_time_fields_ignored() -> None:
         assert r.status_code == 200, r.text
         after = client.get(f"/api/v1/exams/{exam_id}").json()
         # M9-06: 按语义断言（解析 datetime 比年份），不做脆弱的字符串包含判断
-        server_end = datetime.fromisoformat(after["server_end_at"].replace("Z", "+00:00"))
+        # Python 3.11+ fromisoformat 原生支持 Z 后缀（新 ruff FURB162）
+        server_end = datetime.fromisoformat(after["server_end_at"])
         assert server_end.year != 2099, "伪造 end_at 不得改变服务端考试结束时间"
         assert after["server_remaining_seconds"] > 0
         assert after["answers"][q1] == "B"

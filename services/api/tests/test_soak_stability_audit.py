@@ -34,7 +34,7 @@ import json
 import socket
 import subprocess as subprocess_module
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -48,7 +48,7 @@ MARK_TOKEN = "sk-ZXmarker987654321"
 
 PROJECT = "aios-m14-03-production-rehearsal"
 FMT = "%Y-%m-%dT%H:%M:%SZ"
-ANCHOR = datetime(2026, 9, 20, 2, 15, 2, tzinfo=timezone.utc)
+ANCHOR = datetime(2026, 9, 20, 2, 15, 2, tzinfo=UTC)
 
 JSON_REPORT = "soak-audit-report.json"
 MD_REPORT = "soak-audit-report.md"
@@ -469,7 +469,7 @@ def test_row_limit_exceeded_zero_output(tmp_path) -> None:
     fixed = []
     for i, row in enumerate(rows):
         fixed.append({**row, "collected_at":
-                      _iso(datetime(2026, 1, 1, tzinfo=timezone.utc)
+                      _iso(datetime(2026, 1, 1, tzinfo=UTC)
                            + timedelta(minutes=i))})
     _write_history(source, fixed)
     assert _run_cli(source / "history.jsonl", output) == sa.EXIT_REFUSED

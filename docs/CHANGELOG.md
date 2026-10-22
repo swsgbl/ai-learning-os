@@ -12,6 +12,21 @@
 - 方案对齐：LLM-as-judge 不作唯一评价者（黄金集人工标注）；阈值校准
   与扩科（延迟/迁移题扩充）记 EVIDENCE 后续项。
 
+
+### M16-010 —— 语音学习事件闭环（升级方案 Phase 8，PR 内追加）
+
+- 语音 live 会话终结（DELETE）落 LearningEvent（source=voice、
+  event_type=voice.session_completed）——学习证据流可追溯语音学习；
+  **隐私边界：只存统计摘要**（session_id/fsm 终态/事件数），不存
+  原始音频与全文转写。
+- GET /api/v1/learning/events：顶层学习事件流（类型/来源过滤——语音
+  等无 Sprint 事件的回看面）。
+- 分层验收状态（如实）：连接/ASR/TTS 实测 pass（M15 部署证据
+  0.9s roundtrip）；判分→学习事件闭环 = 本次 pass（契约）；弱网/
+  NAT/设备切换/打断重连 = not_executed（运维显式验收）。
+- ruff 0.16.10 CI 适配（UP017/import 排序/EXE001 执行位——Windows
+  git 不保留 +x 需 update-index --chmod）。
+
 ## M16-008 —— 来源证据骨架 + LLM 调用线程池化（升级方案 Phase 5）
 
 - **来源证据表**（迁移 0037 learning_source_refs）：合同概念的检索片段

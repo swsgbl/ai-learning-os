@@ -22,13 +22,13 @@ from __future__ import annotations
 import importlib.util
 import json
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "tools" / "ops" / "audit_archive_scheduler.py"
 
-NOW = datetime(2026, 9, 18, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 18, 12, 0, 0, tzinfo=UTC)
 HASHES = ("a" * 64, "b" * 64, "c" * 64)
 FORBIDDEN_TOKENS = ("requests", "boto3", "subprocess", "os.environ")
 
@@ -81,10 +81,10 @@ class TestValidateState:
         assert result["ok"] is True
         assert result["problems"] == []
         assert result["value"]["tasks"]["anchor"].last_success_at == datetime(
-            2026, 9, 11, 12, 0, tzinfo=timezone.utc
+            2026, 9, 11, 12, 0, tzinfo=UTC
         )
         assert result["value"]["tasks"]["worm_archive"].last_success_at == datetime(
-            2026, 9, 11, 4, 0, tzinfo=timezone.utc
+            2026, 9, 11, 4, 0, tzinfo=UTC
         )
 
     def test_rejects_non_mapping(self):

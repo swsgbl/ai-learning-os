@@ -36,7 +36,7 @@ import json
 import socket
 import subprocess as subprocess_module
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -413,7 +413,7 @@ def test_zero_samples_refused(tmp_path) -> None:
 
 
 def test_too_many_samples_refused(tmp_path) -> None:
-    base = datetime(2026, 9, 11, 0, 0, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 9, 11, 0, 0, 0, tzinfo=UTC)
     rows = [_row((base + timedelta(seconds=i)).strftime("%Y-%m-%dT%H:%M:%SZ"))
             for i in range(5001)]
     history = _write_history(tmp_path, rows)
@@ -485,7 +485,7 @@ def test_json_format_structure(tmp_path, capsys) -> None:
 
 def test_nearest_rank_quantile_values(tmp_path, capsys) -> None:
     """nearest-rank 口径：rank = ceil(fraction·n)，升序取第 rank 个。"""
-    base = datetime(2026, 9, 11, 11, 0, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 9, 11, 11, 0, 0, tzinfo=UTC)
     rows = [_row(_iso(base, i), latency_ms={"api-health": float(100 + i)},
                  log_errors={"api": i})
             for i in range(20)]  # 延迟 100..119；日志错误 0..19
@@ -508,7 +508,7 @@ def test_nearest_rank_quantile_values(tmp_path, capsys) -> None:
 
 def test_suggestion_rule_and_applicable(tmp_path, capsys) -> None:
     """建议规则 warn=p95/critical=p99；窗口内适用时 applicable + 双评估在场。"""
-    base = datetime(2026, 9, 11, 11, 0, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 9, 11, 11, 0, 0, tzinfo=UTC)
     rows = [_row(_iso(base, i), latency_ms={"api-health": float(100 + i)})
             for i in range(20)]  # p95=118 < p99=119，且双双在配置界内
     history = _write_history(tmp_path, rows)
@@ -536,7 +536,7 @@ def test_suggestion_rule_and_applicable(tmp_path, capsys) -> None:
 
 def test_suggestion_degenerate_window_not_applicable(tmp_path, capsys) -> None:
     """全同值窗口：p95 == p99 → degenerate-window，建议评估不在场。"""
-    base = datetime(2026, 9, 11, 11, 0, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 9, 11, 11, 0, 0, tzinfo=UTC)
     rows = [_row(_iso(base, i), latency_ms={"api-health": 42.0})
             for i in range(5)]
     history = _write_history(tmp_path, rows)
@@ -556,7 +556,7 @@ def test_suggestion_degenerate_window_not_applicable(tmp_path, capsys) -> None:
 def test_suggestion_below_minimum_not_applicable(tmp_path, capsys) -> None:
     """真实生产形态：低延迟窗口 p95 < production_monitor 配置下界 →
     below-minimum（建议值如实保留，绝不抬升/修正）。"""
-    base = datetime(2026, 9, 11, 11, 0, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 9, 11, 11, 0, 0, tzinfo=UTC)
     rows = [_row(_iso(base, i), latency_ms={"api-health": float(7.0 + i)})
             for i in range(20)]  # p95=25.0 < 50.0
     history = _write_history(tmp_path, rows)
@@ -572,7 +572,7 @@ def test_suggestion_below_minimum_not_applicable(tmp_path, capsys) -> None:
 
 def test_suggestion_above_maximum_not_applicable(tmp_path, capsys) -> None:
     """极端窗口 p95 在界内而 p99 > 配置上界 → above-maximum。"""
-    base = datetime(2026, 9, 11, 11, 0, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 9, 11, 11, 0, 0, tzinfo=UTC)
     rows = [_row(_iso(base, i), latency_ms={"api-health": float(100 + i)})
             for i in range(19)]  # 100..118（低 19 个）
     rows.append(_row(_iso(base, 19), latency_ms={"api-health": 700000.0}))
@@ -654,7 +654,7 @@ def test_log_error_degenerate_zero_window(tmp_path, capsys) -> None:
 def test_sample_window_keeps_newest_and_validates_globally(tmp_path, capsys) -> None:
     """窗口取最新 N 条（截断显式）；全文件行级校验先行——窗口外交替 malformed
     行仍整体拒绝（绝不静默截断掉坏行）。"""
-    base = datetime(2026, 9, 11, 12, 0, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 9, 11, 12, 0, 0, tzinfo=UTC)
     rows = [_row(_iso(base, i), latency_ms={"api-health": float(10 + i)})
             for i in range(10)]
     history = _write_history(tmp_path, rows)

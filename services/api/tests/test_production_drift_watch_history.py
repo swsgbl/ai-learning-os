@@ -29,7 +29,7 @@ import ast
 import importlib.util
 import json
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -40,7 +40,7 @@ SCRIPT = REPO_ROOT / "tools" / "ops" / "production_drift_watch_history.py"
 JSON_REPORT = "drift-watch-history.json"
 MD_REPORT = "drift-watch-history.md"
 
-ANCHOR = datetime(2026, 9, 25, 4, 30, 1, tzinfo=timezone.utc)
+ANCHOR = datetime(2026, 9, 25, 4, 30, 1, tzinfo=UTC)
 API_DIGEST = "sha256:" + "a" * 64
 WEB_DIGEST = "sha256:" + "b" * 64
 OTHER_DIGEST = "sha256:" + "c" * 64

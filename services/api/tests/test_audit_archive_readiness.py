@@ -31,7 +31,7 @@ import importlib.util
 import json
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -40,7 +40,7 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT = REPO_ROOT / "tools" / "ops" / "audit_archive_readiness.py"
 SCHED_SCRIPT = REPO_ROOT / "tools" / "ops" / "audit_archive_scheduler.py"
 
-NOW = datetime(2026, 9, 18, 12, 0, 0, tzinfo=timezone.utc)
+NOW = datetime(2026, 9, 18, 12, 0, 0, tzinfo=UTC)
 NOW_ISO = NOW.isoformat()
 HASHES = ("a" * 64, "b" * 64, "c" * 64)
 FORBIDDEN_TOKENS = ("requests", "boto3", "subprocess", "os.environ")
