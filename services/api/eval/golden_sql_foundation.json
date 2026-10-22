@@ -1,7 +1,7 @@
 {
   "schema": "aios-golden-set/1",
   "subject": "SQL 基础（数据分析方向）",
-  "note": "M16-009 试点学科黄金集（升级方案 Phase 7）：人工标注的客观题+概念映射+难度，用于蓝图等值性与掌握度规则的离线评测。答案经人工核验。",
+  "note": "M16-009 试点学科黄金集（升级方案 Phase 7）；M17-004 扩充迁移题与延迟变体。items=前后测蓝图评测（等值分配）；transfer_items=多概念综合应用（掌握度迁移证据，不进蓝图）；delayed_variants=同概念换情境重述（记忆保留测试）。答案人工核验。",
   "concepts": [
     "sql:select-basics",
     "sql:where-filter",
@@ -13,37 +13,547 @@
     "sql:aggregate-functions"
   ],
   "items": [
-    {"id": "g01", "concept": "sql:select-basics", "difficulty": 1, "stem": "从表 orders 取所有列，正确的语句是？", "options": ["SELECT * FROM orders", "GET * FROM orders", "SELECT ALL orders", "FETCH orders"], "answer_index": 0},
-    {"id": "g02", "concept": "sql:select-basics", "difficulty": 1, "stem": "只取 orders 表的 id 与 amount 两列，正确的是？", "options": ["SELECT id, amount FROM orders", "SELECT id AND amount FROM orders", "TAKE id, amount OF orders", "SELECT orders.id amount"], "answer_index": 0},
-    {"id": "g03", "concept": "sql:select-basics", "difficulty": 2, "stem": "SELECT 与列别名的正确写法是？", "options": ["SELECT amount AS 总额 FROM orders", "SELECT amount RENAME 总额 FROM orders", "SELECT 总额 = amount FROM orders", "ALIAS amount 总额 FROM orders"], "answer_index": 0},
-    {"id": "g04", "concept": "sql:select-basics", "difficulty": 2, "stem": "SELECT 语句中子句的规范顺序是？", "options": ["SELECT → FROM → WHERE → ORDER BY", "FROM → SELECT → WHERE → ORDER BY", "SELECT → WHERE → FROM → ORDER BY", "WHERE → SELECT → FROM → ORDER BY"], "answer_index": 0},
-    {"id": "g05", "concept": "sql:where-filter", "difficulty": 1, "stem": "筛选 amount 大于 100 的行，条件应写？", "options": ["WHERE amount > 100", "WHERE amount >= 100", "HAVING amount > 100", "FILTER amount > 100"], "answer_index": 0},
-    {"id": "g06", "concept": "sql:where-filter", "difficulty": 2, "stem": "匹配姓名以「张」开头，正确的 LIKE 模式是？", "options": ["name LIKE '张%'", "name LIKE '张*'", "name = '张%'", "name MATCHES '张_'"], "answer_index": 0},
-    {"id": "g07", "concept": "sql:where-filter", "difficulty": 2, "stem": "取 amount 在 50 到 100 之间（含边界）的写法是？", "options": ["amount BETWEEN 50 AND 100", "amount IN (50, 100)", "50 <= amount > 100", "amount RANGE 50, 100"], "answer_index": 0},
-    {"id": "g08", "concept": "sql:where-filter", "difficulty": 3, "stem": "筛选某列为空的行，正确的是？", "options": ["WHERE paid_at IS NULL", "WHERE paid_at = NULL", "WHERE paid_at == NULL", "WHERE NULL(paid_at)"], "answer_index": 0},
-    {"id": "g09", "concept": "sql:order-limit", "difficulty": 1, "stem": "按金额从高到低排序，正确的是？", "options": ["ORDER BY amount DESC", "ORDER BY amount ASC", "SORT amount DESC", "ORDER amount DOWN"], "answer_index": 0},
-    {"id": "g10", "concept": "sql:order-limit", "difficulty": 2, "stem": "取金额最高的前 3 行（多数数据库），正确组合是？", "options": ["ORDER BY amount DESC LIMIT 3", "LIMIT 3 ORDER BY amount DESC", "TOP 3 BY amount", "ORDER BY amount LIMIT TOP 3"], "answer_index": 0},
-    {"id": "g11", "concept": "sql:order-limit", "difficulty": 2, "stem": "多列排序 ORDER BY region, amount DESC 的含义是？", "options": ["先按 region 升序，region 相同再按 amount 降序", "先按 amount 降序再按 region 排", "两列都降序", "随机排序"], "answer_index": 0},
-    {"id": "g12", "concept": "sql:order-limit", "difficulty": 3, "stem": "排序时 NULL 值的位置（PostgreSQL 默认 ASC）？", "options": ["NULL 视为最大值排在最后", "NULL 视为最小值排在最前", "NULL 行被丢弃", "NULL 导致报错"], "answer_index": 0},
-    {"id": "g13", "concept": "sql:inner-join", "difficulty": 1, "stem": "INNER JOIN 的结果是？", "options": ["两表连接键都匹配的行", "左表全部行", "两表全部行", "右表全部行"], "answer_index": 0},
-    {"id": "g14", "concept": "sql:inner-join", "difficulty": 2, "stem": "orders JOIN customers 的标准连接条件写法是？", "options": ["ON orders.customer_id = customers.id", "WHERE orders = customers", "USING ALL KEYS", "MATCH orders TO customers"], "answer_index": 0},
-    {"id": "g15", "concept": "sql:inner-join", "difficulty": 2, "stem": "订单 100 行，客户 50 行，全部订单都能匹配客户——INNER JOIN 后行数最可能是？", "options": ["100", "50", "150", "5000"], "answer_index": 0},
-    {"id": "g16", "concept": "sql:inner-join", "difficulty": 3, "stem": "一对多关系下 INNER JOIN 后行数可能？", "options": ["多于左表行数", "恒等于左表行数", "恒等于两表行数之和", "恒为 1"], "answer_index": 0},
-    {"id": "g17", "concept": "sql:left-join", "difficulty": 1, "stem": "LEFT JOIN 保留的是？", "options": ["左表全部行（无匹配补 NULL）", "右表全部行", "仅匹配行", "两表行数之和"], "answer_index": 0},
-    {"id": "g18", "concept": "sql:left-join", "difficulty": 2, "stem": "LEFT JOIN 后右表未匹配的列值是？", "options": ["NULL", "0", "空字符串", "报错终止"], "answer_index": 0},
-    {"id": "g19", "concept": "sql:left-join", "difficulty": 2, "stem": "找「没有下过订单的客户」，经典写法是？", "options": ["LEFT JOIN orders ... WHERE orders.id IS NULL", "INNER JOIN orders WHERE orders.id IS NULL", "RIGHT JOIN customers ON TRUE", "EXISTS SELECT FROM orders"], "answer_index": 0},
-    {"id": "g20", "concept": "sql:left-join", "difficulty": 3, "stem": "客户 50（40 有单），订单 100——LEFT JOIN customers→orders 后总行数？", "options": ["100", "140", "50", "150"], "answer_index": 0},
-    {"id": "g21", "concept": "sql:group-by", "difficulty": 1, "stem": "GROUP BY 的作用是？", "options": ["按列值分组再聚合", "按行号排序", "过滤分组", "连接两表"], "answer_index": 0},
-    {"id": "g22", "concept": "sql:group-by", "difficulty": 2, "stem": "SELECT region, COUNT(*) FROM orders GROUP BY region 输出？", "options": ["每个 region 一行及其订单数", "全部订单各一行", "一行总订单数", "报错"], "answer_index": 0},
-    {"id": "g23", "concept": "sql:group-by", "difficulty": 2, "stem": "SELECT 后出现非聚合列时，该列必须？", "options": ["出现在 GROUP BY 中", "是主键", "加 DISTINCT", "无要求"], "answer_index": 0},
-    {"id": "g24", "concept": "sql:group-by", "difficulty": 3, "stem": "WHERE 与 GROUP BY 的执行顺序是？", "options": ["先 WHERE 过滤行，再 GROUP BY 分组", "先 GROUP BY 再 WHERE", "同时执行", "由优化器随机决定"], "answer_index": 0},
-    {"id": "g25", "concept": "sql:having", "difficulty": 1, "stem": "对聚合结果设置条件应使用？", "options": ["HAVING", "WHERE", "FILTER BY", "HAVING WHERE"], "answer_index": 0},
-    {"id": "g26", "concept": "sql:having", "difficulty": 2, "stem": "取订单数 > 10 的地区，正确的是？", "options": ["GROUP BY region HAVING COUNT(*) > 10", "GROUP BY region WHERE COUNT(*) > 10", "HAVING COUNT(*) > 10 GROUP BY region", "WHERE region COUNT > 10"], "answer_index": 0},
-    {"id": "g27", "concept": "sql:having", "difficulty": 2, "stem": "HAVING 与 WHERE 的本质区别是？", "options": ["WHERE 过滤行、HAVING 过滤分组", "HAVING 更快", "WHERE 只能用于数字", "没有区别"], "answer_index": 0},
-    {"id": "g28", "concept": "sql:having", "difficulty": 3, "stem": "既要过滤单行又要过滤分组，正确顺序是？", "options": ["WHERE 单行条件 ... GROUP BY ... HAVING 聚合条件", "HAVING 先于 WHERE", "两个都写 WHERE", "两个都写 HAVING"], "answer_index": 0},
-    {"id": "g29", "concept": "sql:aggregate-functions", "difficulty": 1, "stem": "COUNT(*) 与 COUNT(col) 的区别是？", "options": ["COUNT(*) 计所有行，COUNT(col) 跳过 col 为 NULL 的行", "没有区别", "COUNT(*) 更慢但更准", "COUNT(col) 计所有行"], "answer_index": 0},
-    {"id": "g30", "concept": "sql:aggregate-functions", "difficulty": 2, "stem": "SUM(amount) 遇到 amount 有 NULL 时？", "options": ["忽略 NULL 行继续求和", "结果为 NULL", "报错", "按 0 计算"], "answer_index": 0},
-    {"id": "g31", "concept": "sql:aggregate-functions", "difficulty": 2, "stem": "AVG(amount) 计算的是？", "options": ["非 NULL amount 的平均值（分母不含 NULL 行）", "全部行数的平均", "总和", "中位数"], "answer_index": 0},
-    {"id": "g32", "concept": "sql:aggregate-functions", "difficulty": 3, "stem": "SELECT region, MAX(amount) FROM orders GROUP BY region 中 MAX 的作用域是？", "options": ["每个 region 分组内", "全表", "每个订单", "每个客户"], "answer_index": 0}
+    {
+      "id": "g01",
+      "concept": "sql:select-basics",
+      "difficulty": 1,
+      "stem": "从表 orders 取所有列，正确的语句是？",
+      "options": [
+        "SELECT * FROM orders",
+        "GET * FROM orders",
+        "SELECT ALL orders",
+        "FETCH orders"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g02",
+      "concept": "sql:select-basics",
+      "difficulty": 1,
+      "stem": "只取 orders 表的 id 与 amount 两列，正确的是？",
+      "options": [
+        "SELECT id, amount FROM orders",
+        "SELECT id AND amount FROM orders",
+        "TAKE id, amount OF orders",
+        "SELECT orders.id amount"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g03",
+      "concept": "sql:select-basics",
+      "difficulty": 2,
+      "stem": "SELECT 与列别名的正确写法是？",
+      "options": [
+        "SELECT amount AS 总额 FROM orders",
+        "SELECT amount RENAME 总额 FROM orders",
+        "SELECT 总额 = amount FROM orders",
+        "ALIAS amount 总额 FROM orders"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g04",
+      "concept": "sql:select-basics",
+      "difficulty": 2,
+      "stem": "SELECT 语句中子句的规范顺序是？",
+      "options": [
+        "SELECT → FROM → WHERE → ORDER BY",
+        "FROM → SELECT → WHERE → ORDER BY",
+        "SELECT → WHERE → FROM → ORDER BY",
+        "WHERE → SELECT → FROM → ORDER BY"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g05",
+      "concept": "sql:where-filter",
+      "difficulty": 1,
+      "stem": "筛选 amount 大于 100 的行，条件应写？",
+      "options": [
+        "WHERE amount > 100",
+        "WHERE amount >= 100",
+        "HAVING amount > 100",
+        "FILTER amount > 100"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g06",
+      "concept": "sql:where-filter",
+      "difficulty": 2,
+      "stem": "匹配姓名以「张」开头，正确的 LIKE 模式是？",
+      "options": [
+        "name LIKE '张%'",
+        "name LIKE '张*'",
+        "name = '张%'",
+        "name MATCHES '张_'"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g07",
+      "concept": "sql:where-filter",
+      "difficulty": 2,
+      "stem": "取 amount 在 50 到 100 之间（含边界）的写法是？",
+      "options": [
+        "amount BETWEEN 50 AND 100",
+        "amount IN (50, 100)",
+        "50 <= amount > 100",
+        "amount RANGE 50, 100"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g08",
+      "concept": "sql:where-filter",
+      "difficulty": 3,
+      "stem": "筛选某列为空的行，正确的是？",
+      "options": [
+        "WHERE paid_at IS NULL",
+        "WHERE paid_at = NULL",
+        "WHERE paid_at == NULL",
+        "WHERE NULL(paid_at)"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g09",
+      "concept": "sql:order-limit",
+      "difficulty": 1,
+      "stem": "按金额从高到低排序，正确的是？",
+      "options": [
+        "ORDER BY amount DESC",
+        "ORDER BY amount ASC",
+        "SORT amount DESC",
+        "ORDER amount DOWN"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g10",
+      "concept": "sql:order-limit",
+      "difficulty": 2,
+      "stem": "取金额最高的前 3 行（多数数据库），正确组合是？",
+      "options": [
+        "ORDER BY amount DESC LIMIT 3",
+        "LIMIT 3 ORDER BY amount DESC",
+        "TOP 3 BY amount",
+        "ORDER BY amount LIMIT TOP 3"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g11",
+      "concept": "sql:order-limit",
+      "difficulty": 2,
+      "stem": "多列排序 ORDER BY region, amount DESC 的含义是？",
+      "options": [
+        "先按 region 升序，region 相同再按 amount 降序",
+        "先按 amount 降序再按 region 排",
+        "两列都降序",
+        "随机排序"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g12",
+      "concept": "sql:order-limit",
+      "difficulty": 3,
+      "stem": "排序时 NULL 值的位置（PostgreSQL 默认 ASC）？",
+      "options": [
+        "NULL 视为最大值排在最后",
+        "NULL 视为最小值排在最前",
+        "NULL 行被丢弃",
+        "NULL 导致报错"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g13",
+      "concept": "sql:inner-join",
+      "difficulty": 1,
+      "stem": "INNER JOIN 的结果是？",
+      "options": [
+        "两表连接键都匹配的行",
+        "左表全部行",
+        "两表全部行",
+        "右表全部行"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g14",
+      "concept": "sql:inner-join",
+      "difficulty": 2,
+      "stem": "orders JOIN customers 的标准连接条件写法是？",
+      "options": [
+        "ON orders.customer_id = customers.id",
+        "WHERE orders = customers",
+        "USING ALL KEYS",
+        "MATCH orders TO customers"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g15",
+      "concept": "sql:inner-join",
+      "difficulty": 2,
+      "stem": "订单 100 行，客户 50 行，全部订单都能匹配客户——INNER JOIN 后行数最可能是？",
+      "options": [
+        "100",
+        "50",
+        "150",
+        "5000"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g16",
+      "concept": "sql:inner-join",
+      "difficulty": 3,
+      "stem": "一对多关系下 INNER JOIN 后行数可能？",
+      "options": [
+        "多于左表行数",
+        "恒等于左表行数",
+        "恒等于两表行数之和",
+        "恒为 1"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g17",
+      "concept": "sql:left-join",
+      "difficulty": 1,
+      "stem": "LEFT JOIN 保留的是？",
+      "options": [
+        "左表全部行（无匹配补 NULL）",
+        "右表全部行",
+        "仅匹配行",
+        "两表行数之和"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g18",
+      "concept": "sql:left-join",
+      "difficulty": 2,
+      "stem": "LEFT JOIN 后右表未匹配的列值是？",
+      "options": [
+        "NULL",
+        "0",
+        "空字符串",
+        "报错终止"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g19",
+      "concept": "sql:left-join",
+      "difficulty": 2,
+      "stem": "找「没有下过订单的客户」，经典写法是？",
+      "options": [
+        "LEFT JOIN orders ... WHERE orders.id IS NULL",
+        "INNER JOIN orders WHERE orders.id IS NULL",
+        "RIGHT JOIN customers ON TRUE",
+        "EXISTS SELECT FROM orders"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g20",
+      "concept": "sql:left-join",
+      "difficulty": 3,
+      "stem": "客户 50（40 有单），订单 100——LEFT JOIN customers→orders 后总行数？",
+      "options": [
+        "100",
+        "140",
+        "50",
+        "150"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g21",
+      "concept": "sql:group-by",
+      "difficulty": 1,
+      "stem": "GROUP BY 的作用是？",
+      "options": [
+        "按列值分组再聚合",
+        "按行号排序",
+        "过滤分组",
+        "连接两表"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g22",
+      "concept": "sql:group-by",
+      "difficulty": 2,
+      "stem": "SELECT region, COUNT(*) FROM orders GROUP BY region 输出？",
+      "options": [
+        "每个 region 一行及其订单数",
+        "全部订单各一行",
+        "一行总订单数",
+        "报错"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g23",
+      "concept": "sql:group-by",
+      "difficulty": 2,
+      "stem": "SELECT 后出现非聚合列时，该列必须？",
+      "options": [
+        "出现在 GROUP BY 中",
+        "是主键",
+        "加 DISTINCT",
+        "无要求"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g24",
+      "concept": "sql:group-by",
+      "difficulty": 3,
+      "stem": "WHERE 与 GROUP BY 的执行顺序是？",
+      "options": [
+        "先 WHERE 过滤行，再 GROUP BY 分组",
+        "先 GROUP BY 再 WHERE",
+        "同时执行",
+        "由优化器随机决定"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g25",
+      "concept": "sql:having",
+      "difficulty": 1,
+      "stem": "对聚合结果设置条件应使用？",
+      "options": [
+        "HAVING",
+        "WHERE",
+        "FILTER BY",
+        "HAVING WHERE"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g26",
+      "concept": "sql:having",
+      "difficulty": 2,
+      "stem": "取订单数 > 10 的地区，正确的是？",
+      "options": [
+        "GROUP BY region HAVING COUNT(*) > 10",
+        "GROUP BY region WHERE COUNT(*) > 10",
+        "HAVING COUNT(*) > 10 GROUP BY region",
+        "WHERE region COUNT > 10"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g27",
+      "concept": "sql:having",
+      "difficulty": 2,
+      "stem": "HAVING 与 WHERE 的本质区别是？",
+      "options": [
+        "WHERE 过滤行、HAVING 过滤分组",
+        "HAVING 更快",
+        "WHERE 只能用于数字",
+        "没有区别"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g28",
+      "concept": "sql:having",
+      "difficulty": 3,
+      "stem": "既要过滤单行又要过滤分组，正确顺序是？",
+      "options": [
+        "WHERE 单行条件 ... GROUP BY ... HAVING 聚合条件",
+        "HAVING 先于 WHERE",
+        "两个都写 WHERE",
+        "两个都写 HAVING"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g29",
+      "concept": "sql:aggregate-functions",
+      "difficulty": 1,
+      "stem": "COUNT(*) 与 COUNT(col) 的区别是？",
+      "options": [
+        "COUNT(*) 计所有行，COUNT(col) 跳过 col 为 NULL 的行",
+        "没有区别",
+        "COUNT(*) 更慢但更准",
+        "COUNT(col) 计所有行"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g30",
+      "concept": "sql:aggregate-functions",
+      "difficulty": 2,
+      "stem": "SUM(amount) 遇到 amount 有 NULL 时？",
+      "options": [
+        "忽略 NULL 行继续求和",
+        "结果为 NULL",
+        "报错",
+        "按 0 计算"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g31",
+      "concept": "sql:aggregate-functions",
+      "difficulty": 2,
+      "stem": "AVG(amount) 计算的是？",
+      "options": [
+        "非 NULL amount 的平均值（分母不含 NULL 行）",
+        "全部行数的平均",
+        "总和",
+        "中位数"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "g32",
+      "concept": "sql:aggregate-functions",
+      "difficulty": 3,
+      "stem": "SELECT region, MAX(amount) FROM orders GROUP BY region 中 MAX 的作用域是？",
+      "options": [
+        "每个 region 分组内",
+        "全表",
+        "每个订单",
+        "每个客户"
+      ],
+      "answer_index": 0
+    }
+  ],
+  "transfer_items": [
+    {
+      "id": "t01",
+      "concepts": [
+        "sql:inner-join",
+        "sql:group-by"
+      ],
+      "difficulty": 3,
+      "stem": "统计每个客户下的订单数（含客户名），正确骨架是？",
+      "options": [
+        "SELECT c.name, COUNT(o.id) FROM customers c JOIN orders o ON c.id = o.customer_id GROUP BY c.name",
+        "SELECT c.name, COUNT(o.id) FROM customers c GROUP BY o.customer_id",
+        "SELECT COUNT(*) FROM orders o JOIN customers c ON c.id = o.customer_id HAVING c.name",
+        "SELECT c.name, COUNT(o.id) FROM customers c JOIN orders o ON c.id = o.customer_id HAVING COUNT(*) > 1"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "t02",
+      "concepts": [
+        "sql:left-join",
+        "sql:group-by"
+      ],
+      "difficulty": 3,
+      "stem": "列出所有客户及其订单数（从未下单的客户显示 0），正确骨架是？",
+      "options": [
+        "SELECT c.name, COUNT(o.id) FROM customers c LEFT JOIN orders o ON c.id = o.customer_id GROUP BY c.name",
+        "SELECT c.name, COUNT(o.id) FROM customers c INNER JOIN orders o ON c.id = o.customer_id GROUP BY c.name",
+        "SELECT c.name, COUNT(*) FROM customers c GROUP BY c.name WHERE o.id IS NULL",
+        "SELECT c.name, 0 FROM customers c WHERE NOT EXISTS (SELECT 1 FROM orders)"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "t03",
+      "concepts": [
+        "sql:group-by",
+        "sql:having",
+        "sql:aggregate-functions"
+      ],
+      "difficulty": 3,
+      "stem": "只显示订单数超过 10 的地区及其平均订单金额，正确组合是？",
+      "options": [
+        "SELECT region, AVG(amount) FROM orders GROUP BY region HAVING COUNT(*) > 10",
+        "SELECT region, AVG(amount) FROM orders HAVING COUNT(*) > 10 GROUP BY region",
+        "SELECT region, AVG(amount) FROM orders WHERE COUNT(*) > 10 GROUP BY region",
+        "SELECT region, AVG(amount) FROM orders GROUP BY region HAVING AVG(amount) > 10"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "t04",
+      "concepts": [
+        "sql:inner-join",
+        "sql:having",
+        "sql:aggregate-functions"
+      ],
+      "difficulty": 3,
+      "stem": "找出消费总额超过 10000 的客户名，正确骨架是？",
+      "options": [
+        "SELECT c.name FROM customers c JOIN orders o ON c.id = o.customer_id GROUP BY c.name HAVING SUM(o.amount) > 10000",
+        "SELECT c.name FROM customers c JOIN orders o ON c.id = o.customer_id WHERE SUM(o.amount) > 10000",
+        "SELECT c.name FROM customers c GROUP BY c.name HAVING amount > 10000",
+        "SELECT c.name FROM orders o GROUP BY name HAVING MAX(amount) > 10000"
+      ],
+      "answer_index": 0
+    }
+  ],
+  "delayed_variants": [
+    {
+      "id": "d01",
+      "source": "g01",
+      "concept": "sql:select-basics",
+      "difficulty": 1,
+      "stem": "从员工表 staff 读取全部字段，正确的写法是？",
+      "options": [
+        "SELECT * FROM staff",
+        "GET * FROM staff",
+        "SELECT ALL staff",
+        "FETCH staff"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "d05",
+      "source": "g05",
+      "concept": "sql:where-filter",
+      "difficulty": 1,
+      "stem": "筛选 salary 大于 5000 的行，条件应写？",
+      "options": [
+        "WHERE salary > 5000",
+        "WHERE salary >= 5000",
+        "HAVING salary > 5000",
+        "FILTER salary > 5000"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "d13",
+      "source": "g13",
+      "concept": "sql:inner-join",
+      "difficulty": 1,
+      "stem": "两张表只有连接键相等的行才会出现在结果里，这是哪种连接？",
+      "options": [
+        "INNER JOIN",
+        "LEFT JOIN",
+        "FULL OUTER JOIN",
+        "CROSS JOIN"
+      ],
+      "answer_index": 0
+    },
+    {
+      "id": "d25",
+      "source": "g25",
+      "concept": "sql:having",
+      "difficulty": 1,
+      "stem": "想只保留订单数超过 5 的城市分组，应把条件写在哪个子句？",
+      "options": [
+        "HAVING",
+        "WHERE",
+        "LIMIT",
+        "ORDER BY"
+      ],
+      "answer_index": 0
+    }
   ]
 }

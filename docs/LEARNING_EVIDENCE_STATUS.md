@@ -38,7 +38,7 @@ job；本机 SQLite 契约测试覆盖迁移 up/down 语义。
 | 来源证据 API（stub provider：入库/非法 url 过滤/无源 503） | M16-008 | pass（2026-10-22，4 测试） | `services/api/tests/test_source_refs_api.py` |
 | LLM 调用线程池化（事件循环不阻塞） | M16-008b | pass（回归全绿；代码级 asyncio.to_thread 两处） | `learning.py`/`course_workflow.py` |
 | SQL 黄金集离线评测（蓝图等值/判分一致/掌握度场景） | M16-009 | pass（2026-10-22，脚本 exit 0 + pytest 门禁） | `services/api/scripts/run_golden_eval.py`、`eval/golden_sql_foundation.json` |
-| 黄金集扩充（延迟/迁移题、第二学科）与阈值校准 | — | not_executed（试点集已立；扩科属持续迭代） | 方案 Phase 7 持续项 |
+| 黄金集扩充：迁移题 + 延迟变体 + 掌握度阈值校准 | M17-004 | pass（2026-10-22：transfer_items 4 道（JOIN+GROUP BY+HAVING 综合）+ delayed_variants 4 道（同概念换情境重述）全部判分一致；阈值校准 4 边界场景（恰好达标 provisional/差一条不 provisional/同题型重复不 provisional/迁移对 mastered）全过；离线评测 exit 0） | `scripts/run_golden_eval.py`（第 4 项校准）+ `test_golden_eval.py` CI 门禁 |
 | 语音会话→学习事件闭环（close 落库统计摘要；隐私不存音频/全文） | M16-010 | pass（契约层；隐私边界断言） | `voice_live.py` close 路径、`test_learning_contract_api.py::test_top_level_learning_events_stream` |
 | 语音弱网/NAT/设备切换/打断重连分层验收 | — | not_executed（需运维显式执行——方案 Prompt 8 边界） | 待验收清单 |
 | Web 学习冲刺浏览器 E2E（生产真实 Chromium 全链） | M16-011 | pass（2026-10-22，ndtool.cn/aios：登录→建合同→确认→推进×5→后测 UI 作答 4 题+信心→提交 100 分→自动 report→报告增益 +100→复测队列 scheduled due +1d） | `artifacts/qa/e2e_01..13_*.png`（截图序列）；复测队列 API 复核 |
