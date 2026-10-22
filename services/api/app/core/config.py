@@ -66,6 +66,8 @@ class Settings(BaseSettings):
     tts_local_api_key: str | None = None
     tts_local_timeout_seconds: float = 120.0  # 首次合成含加载后推理
     llm_provider: str | None = None
+    # M17-003 复习调度算法：fsrs（py-fsrs 6.x，MIT）| intervals-mvp（模板档）
+    review_algorithm: str = "fsrs"
     # M10-01 LLM 槽位：OpenAI 兼容端点；key 只放部署 secret/.env，不入库不入码
     llm_endpoint: str | None = None
     llm_api_key: str | None = None

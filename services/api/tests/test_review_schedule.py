@@ -77,3 +77,50 @@ def test_review_status_machine_honest_boundaries() -> None:
     assert review_status_transition("completed", "presented") == "presented"
     with pytest.raises(ReviewScheduleError):
         review_status_transition("weird", "presented")
+
+
+# ---------------------------------------------------------------- M17-003 FSRS 调度器
+
+
+def test_fsrs_rating_mapping() -> None:
+    from app.domain.review_schedule import _rating_from_outcome
+
+    assert _rating_from_outcome(ReviewOutcome(correct=False)) == 1  # Again
+    assert _rating_from_outcome(ReviewOutcome(correct=True, confidence=2)) == 2  # Hard
+    assert _rating_from_outcome(ReviewOutcome(correct=True, confidence=3)) == 3  # Good
+    assert _rating_from_outcome(ReviewOutcome(correct=True, confidence=5)) == 4  # Easy
+    assert _rating_from_outcome(ReviewOutcome(correct=None)) == 1
+
+
+def test_fsrs_memory_state_evolves_across_reviews() -> None:
+    from app.domain.review_schedule import (
+        FSRS_ALGORITHM_VERSION,
+        next_review_fsrs,
+    )
+
+    first = next_review_fsrs(None, ReviewOutcome(correct=True, confidence=3))
+    assert first.algorithm_version == FSRS_ALGORITHM_VERSION
+    assert first.memory_state is not None and first.due_in_days >= 1
+    # 高信心二轮：stability 演化（间隔增长）——记忆状态跨轮追踪是 FSRS 核心
+    second = next_review_fsrs(first.memory_state, ReviewOutcome(correct=True, confidence=5))
+    assert second.due_in_days > first.due_in_days
+    assert second.memory_state is not None
+    assert second.memory_state != first.memory_state
+
+
+def test_fsrs_failure_resets_interval_but_keeps_state() -> None:
+    from app.domain.review_schedule import next_review_fsrs
+
+    first = next_review_fsrs(None, ReviewOutcome(correct=True, confidence=4))
+    failed = next_review_fsrs(first.memory_state, ReviewOutcome(correct=False))
+    assert failed.due_in_days == 1  # 答错回最短（Again）
+    assert failed.memory_state is not None  # 状态仍在演化（difficulty 上升）
+
+
+def test_fsrs_ungraded_schedules_nothing() -> None:
+    from app.domain.review_schedule import next_review_fsrs
+
+    result = next_review_fsrs(None, ReviewOutcome(correct=None))
+    assert result.due_in_days == 0
+    assert result.memory_state is None
+    assert "未判分" in result.note

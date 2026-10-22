@@ -256,9 +256,25 @@ def test_report_rejects_when_not_ready(sqlite_url) -> None:
         assert report.status_code == 409
 
 
-def test_follow_up_review_lifecycle(sqlite_url) -> None:
-    """M16-005 复习闭环：follow_up 建队列 → present → attempt 判分 →
-    completed + 下一轮 scheduled；复习作答落 delayed attempt。"""
+def test_follow_up_review_lifecycle(sqlite_url, monkeypatch) -> None:
+    """M16-005 复习闭环（模板调度器）：follow_up 建队列 → present → attempt
+    判分 → completed + 下一轮 scheduled；复习作答落 delayed attempt。
+
+    M17-003 起部署缺省调度器为 fsrs（首复习间隔语义不同）——本测试
+    显式锁 intervals-mvp 保留模板档语义回归；FSRS 见专属测试。
+    """
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("REVIEW_ALGORITHM", "intervals-mvp")
+    get_settings.cache_clear()
+    try:
+        _run_lifecycle(sqlite_url)
+    finally:
+        monkeypatch.delenv("REVIEW_ALGORITHM", raising=False)
+        get_settings.cache_clear()
+
+
+def _run_lifecycle(sqlite_url: str) -> None:
     with TestClient(create_app(sqlite_url)) as client:
         _seed_pool(client, sqlite_url)
         sprint_id = _make_sprint_ready_for_baseline(client)
@@ -610,3 +626,69 @@ def test_review_queue_item_serves_isolated_question(sqlite_url) -> None:
         )
         assert attempted.status_code == 200, attempted.text
         assert attempted.json()["status"] == "completed"
+
+
+def test_review_attempt_uses_fsrs_scheduler(sqlite_url, monkeypatch) -> None:
+    """M17-003：缺省 fsrs 调度器——algorithm_version 记录 + memory_state 持久。"""
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("REVIEW_ALGORITHM", "fsrs")
+    get_settings.cache_clear()
+    try:
+        with TestClient(create_app(sqlite_url)) as client:
+            _seed_pool(client, sqlite_url)
+            sprint_id = _make_sprint_ready_for_baseline(client)
+            baseline = client.get(
+                f"/api/v1/learning/sprints/{sprint_id}/assessment", params={"phase": "baseline"}
+            ).json()["items"]
+            client.post(
+                f"/api/v1/learning/sprints/{sprint_id}/assessment/baseline/submit",
+                json={"responses": [{"item_id": i["item_id"], "response": "A"} for i in baseline]},
+            )
+            for phase in ("concept_map_review", "plan_confirmed", "learning",
+                          "targeted_practice", "transfer_check", "posttest"):
+                client.post(f"/api/v1/learning/sprints/{sprint_id}/advance", json={"to_phase": phase})
+            posttest = client.get(
+                f"/api/v1/learning/sprints/{sprint_id}/assessment", params={"phase": "posttest"}
+            ).json()["items"]
+            client.post(
+                f"/api/v1/learning/sprints/{sprint_id}/assessment/posttest/submit",
+                json={"responses": [{"item_id": i["item_id"], "response": "A"} for i in posttest]},
+            )
+            reviews = client.post(f"/api/v1/learning/sprints/{sprint_id}/follow-up/schedule").json()
+            review_id = reviews[0]["id"]
+            client.post(f"/api/v1/learning/review-queue/{review_id}/present")
+            item = client.get(f"/api/v1/learning/review-queue/{review_id}/item").json()
+
+            attempted = client.post(
+                f"/api/v1/learning/review-queue/{review_id}/attempt",
+                json={"item_id": item["item_id"], "response": item["options"][0]["key"], "confidence": 4},
+            )
+            assert attempted.status_code == 200, attempted.text
+            # algorithm_version 随行记录（fsrs）——复习数据可重算、算法可溯
+            assert attempted.json()["status"] == "completed"
+            # 直接查库验证 memory_state 持久（ReviewOut 不含内部状态）
+            from sqlalchemy import select
+            from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+            from app.db.orm import LearningReviewRow
+
+            engine = create_async_engine(sqlite_url)
+
+            async def _fetch() -> LearningReviewRow:
+                async with async_sessionmaker(engine)() as session:
+                    return (
+                        await session.execute(
+                            select(LearningReviewRow).where(LearningReviewRow.id == review_id)
+                        )
+                    ).scalar_one()
+
+            import asyncio
+
+            row = asyncio.run(_fetch())
+            asyncio.run(engine.dispose())
+            assert row.algorithm_version == "fsrs-py-6.3"
+            assert isinstance(row.memory_state, dict) and "stability" in row.memory_state
+    finally:
+        monkeypatch.delenv("REVIEW_ALGORITHM", raising=False)
+        get_settings.cache_clear()

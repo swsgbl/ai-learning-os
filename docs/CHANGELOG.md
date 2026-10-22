@@ -1,3 +1,22 @@
+## M17-003 —— FSRS 真实算法接入（升级方案 Phase 6 收口）
+
+- **py-fsrs 6.3.2 license 审查通过**（MIT，Open Spaced Repetition
+  2022；纯 Python 无 C 扩展，Requires-Python>=3.10 兼容 3.12）。
+- **FSRS 调度器为缺省**（settings.review_algorithm，env
+  REVIEW_ALGORITHM 可回退 intervals-mvp 模板档）：记忆状态
+  （stability/difficulty，Card.to_dict）跨轮持久在
+  learning_reviews.memory_state（迁移 0038）并随滚动排期传递——
+  状态追踪是 FSRS 的核心价值（非单次间隔查表）。
+- rating 映射：答错=Again；答对按信心 Hard/Good/Easy。未判分不
+  排期（诚实边界不变）。
+- algorithm_version 随行记录（fsrs-py-6.3 / intervals-mvp-1）——
+  方案验收「复习数据可重算与导出，算法版本清楚」。
+- 生产 live：复习作答返回 algorithm_version=fsrs-py-6.3；答错回
+  最短档 1 天 + 滚动排期新 scheduled。迁移 0038 已落生产 PG。
+- 测试：域层 4（rating 映射/状态演化跨轮/失败重置/未判分）+ 集成
+  （fsrs 落库断言）；既有生命周期测试显式锁模板调度器（语义回归
+  保留）。
+
 ## M17-002 —— 延迟复测作答 UI 闭环（Beta 放行条件 6 收口）
 
 - **复习出题端点**（GET /review-queue/{id}/item）：owner+公共题池中
