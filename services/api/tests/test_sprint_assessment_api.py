@@ -775,3 +775,71 @@ def test_transfer_check_answer_flow(sqlite_url) -> None:
         mastery = client.get("/api/v1/learning/mastery").json()
         states = {m["concept_id"]: m["state"] for m in mastery}
         assert states.get("c_select") == "mastered", states
+
+
+def test_targeted_practice_answer_loop(sqlite_url) -> None:
+    """M17-006 定向练习闭环：会话决策（最弱优先/域层策略）→ 逐题作答 →
+    答错不推进（重试）→ 概念 5 步通过 → 全概念完成原子推进 transfer_check。"""
+    with TestClient(create_app(sqlite_url)) as client:
+        _seed_pool(client, sqlite_url)
+        sprint_id = _make_sprint_ready_for_baseline(client)
+        baseline = client.get(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment", params={"phase": "baseline"}
+        ).json()["items"]
+        client.post(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment/baseline/submit",
+            json={"responses": [{"item_id": i["item_id"], "response": "B"} for i in baseline]},
+        )
+        for phase in ("concept_map_review", "plan_confirmed", "learning",
+                      "targeted_practice"):
+            client.post(f"/api/v1/learning/sprints/{sprint_id}/advance", json={"to_phase": phase})
+
+        # 首会话：first_attempt + 策略来自域层 + 答案隔离
+        session = client.get(f"/api/v1/learning/sprints/{sprint_id}/practice/session")
+        assert session.status_code == 200, session.text
+        body = session.json()
+        assert body["step"] == "first_attempt"
+        assert body["strategy"] == "retrieval_first"
+        assert body["passed_steps"] == 0 and body["target_steps"] == 5
+        assert "answer" not in session.text
+
+        # 答错 → 不推进（同步骤重试）
+        wrong = client.post(
+            f"/api/v1/learning/sprints/{sprint_id}/practice/answer",
+            json={"item_id": body["item"]["item_id"], "response": "Z", "confidence": 3},
+        )
+        assert wrong.status_code == 200, wrong.text
+        assert wrong.json()["step_passed"] is False
+        assert wrong.json()["passed_steps"] == 0
+        assert wrong.json()["practice_complete"] is False
+
+        # 逐题作答直到全部完成（两概念 x 5 步；seed 池剩余题可重复用于练习）
+        complete = False
+        for _ in range(40):
+            s = client.get(f"/api/v1/learning/sprints/{sprint_id}/practice/session")
+            assert s.status_code == 200, s.text
+            item = s.json()["item"]
+            # seed 池黄金答案全 A
+            a = client.post(
+                f"/api/v1/learning/sprints/{sprint_id}/practice/answer",
+                json={"item_id": item["item_id"], "response": "A", "confidence": 4},
+            )
+            assert a.status_code == 200, a.text
+            out = a.json()
+            assert out["correct"] is True
+            assert out["explanation"]  # 判分后解析可见
+            if out["practice_complete"]:
+                complete = True
+                assert out["sprint_phase"] == "transfer_check"
+                break
+        assert complete, "40 轮内未完成定向练习（预期 2 概念 x 5 步 ≈ 11 作答）"
+
+        # 阶段已原子推进（经合同冲刺列表核实）
+        cs = client.get("/api/v1/learning/contracts").json()
+        found = None
+        for c in cs:
+            rows = client.get(f"/api/v1/learning/contracts/{c['id']}/sprints").json()
+            for row in rows:
+                if row["id"] == sprint_id:
+                    found = row
+        assert found is not None and found["phase"] == "transfer_check"

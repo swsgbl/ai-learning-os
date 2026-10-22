@@ -1287,6 +1287,386 @@ async def submit_sprint_assessment(
     )
 
 
+# ---------------------------------------------------------------- 定向练习作答（M17-006）
+
+
+#: 作答序 → 微循环作答型步骤（骨架裁剪：非作答步骤由判分反馈承载——
+#: 答错后 Web 展示题解即 minimal_explanation/contrast_case 的内容面）
+_PRACTICE_STEP_SEQUENCE: tuple[str, ...] = (
+    "first_attempt",
+    "recall_practice",
+    "faded_practice",
+    "independent_practice",
+    "exit_ticket",
+)
+#: 完成全部步骤的作答通过次数（exit_ticket 是最后一关）
+_PRACTICE_PASS_TARGET = len(_PRACTICE_STEP_SEQUENCE)
+
+
+class PracticeSessionOut(BaseModel):
+    """定向练习当前会话（概念最弱优先 + 域层决策 + 一道题）。"""
+
+    concept_id: str
+    step: str  # 当前作答型步骤（LOOP_STEPS 之一）
+    strategy: str
+    rationale: str
+    item: AssessmentItemOut
+    #: 该概念已通过步骤数 / 目标
+    passed_steps: int
+    target_steps: int
+    #: 剩余待练概念（含当前）
+    remaining_concepts: list[str]
+
+
+class PracticeAnswerRequest(BaseModel):
+    item_id: str = Field(min_length=1, max_length=64)
+    response: str = Field(default="", max_length=4000)
+    confidence: int | None = Field(default=None, ge=1, le=5)
+
+
+class PracticeAnswerOut(BaseModel):
+    concept_id: str
+    correct: bool | None  # 三态
+    #: 判分后可见（答案隔离不变式：作答前不下发）
+    explanation: str
+    step_passed: bool
+    passed_steps: int
+    target_steps: int
+    next_step: str
+    strategy: str
+    rationale: str
+    #: 全部概念 exit_ticket 通过 → 已推进 transfer_check
+    practice_complete: bool
+    sprint_phase: str
+
+
+def _practice_concept_progress(
+    rows: list[LearningAttemptRow],
+) -> tuple[int, list[bool]]:
+    """该概念 practice attempts →（连续通过步骤数，逐题对错序）。
+
+    答对推进步骤；答错当前步骤重试（不推进——域层「同步骤重试」）。
+    """
+    results = [row.correct is True for row in rows if row.correct is not None]
+    passed = 0
+    for ok in results:
+        if ok:
+            passed += 1
+            if passed >= _PRACTICE_PASS_TARGET:
+                break
+        # 答错不推进（重试）——passed 不变
+    return passed, results
+
+
+async def _practice_item_for_concept(
+    request: Request, sprint: LearningSprintRow, concept_id: str
+) -> QuestionRow:
+    """该概念一道客观题（排除蓝图前后测与迁移题已用题；优先未做过）。"""
+    owner = current_owner_id(request)
+    async with request.app.state.sessionmaker() as session:
+        plans = (
+            (
+                await session.execute(
+                    select(AssessmentBlueprintRow).where(
+                        AssessmentBlueprintRow.contract_id == sprint.contract_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        used: set[str] = set()
+        for plan in plans:
+            used.update(plan.pretest_item_ids)
+            used.update(plan.posttest_item_ids)
+        paper_query = select(PaperRow)
+        if owner is not None:
+            paper_query = paper_query.where(
+                (PaperRow.owner_id == owner) | (PaperRow.owner_id.is_(None))
+            )
+        paper_ids = [
+            paper.id for paper in (await session.execute(paper_query)).scalars().all()
+        ]
+        questions = (
+            (
+                await session.execute(
+                    select(QuestionRow).where(QuestionRow.paper_id.in_(paper_ids))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        candidates = [
+            q
+            for q in questions
+            if concept_id in (q.knowledge if isinstance(q.knowledge, list) else [])
+            and is_objective_type(q.question_type)
+            and q.id not in used
+        ]
+        if not candidates:
+            raise HTTPException(
+                status_code=409,
+                detail=f"概念 {concept_id} 在题池无前后测以外的客观题——先生成更多题目",
+            )
+        recent = set(
+            (
+                await session.execute(
+                    select(LearningAttemptRow.item_id)
+                    .where(
+                        (LearningAttemptRow.concept_id == concept_id)
+                        & (LearningAttemptRow.owner_id == sprint.owner_id)
+                    )
+                    .order_by(LearningAttemptRow.created_at.desc())
+                    .limit(20)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        fresh = [q for q in candidates if q.id not in recent]
+        return random.choice(fresh or candidates)
+
+
+@router.get("/sprints/{sprint_id}/practice/session", response_model=PracticeSessionOut)
+async def get_practice_session(sprint_id: str, request: Request) -> PracticeSessionOut:
+    """定向练习会话：最弱概念优先（通过步骤最少）+ 域层下一步决策 + 一道题。
+
+    策略单一事实源在 domain/practice_loop（next_step）；本端点把
+    「作答序→步骤序」投影成 completed_steps 交域层裁决。
+    """
+    await require_user(request)
+    sprint = await _owned_sprint(request, sprint_id)
+    if sprint.phase != "targeted_practice":
+        raise HTTPException(status_code=409, detail=f"不在定向练习阶段：当前 {sprint.phase}")
+
+    async with request.app.state.sessionmaker() as session:
+        plans = (
+            (
+                await session.execute(
+                    select(AssessmentBlueprintRow).where(
+                        AssessmentBlueprintRow.contract_id == sprint.contract_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not plans:
+            raise HTTPException(status_code=409, detail="蓝图未构建")
+        concept_ids = [plan.concept_id for plan in plans]
+        attempts = (
+            (
+                await session.execute(
+                    select(LearningAttemptRow)
+                    .where(
+                        (LearningAttemptRow.sprint_id == sprint.id)
+                        & (LearningAttemptRow.context.like("%:practice"))
+                    )
+                    .order_by(LearningAttemptRow.created_at.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+    by_concept: dict[str, list[LearningAttemptRow]] = {}
+    for row in attempts:
+        by_concept.setdefault(row.concept_id, []).append(row)
+    progress = {cid: _practice_concept_progress(by_concept.get(cid, []))[0] for cid in concept_ids}
+    remaining = [cid for cid in concept_ids if progress[cid] < _PRACTICE_PASS_TARGET]
+    if not remaining:
+        # 全部完成却仍在阶段（异常路径）——推进并告知
+        raise HTTPException(status_code=409, detail="定向练习已全部完成——请推进阶段")
+    # 最弱优先（通过步骤最少）；并列取蓝图序
+    target = min(remaining, key=lambda cid: progress[cid])
+    passed = progress[target]
+    step = _PRACTICE_STEP_SEQUENCE[min(passed, _PRACTICE_PASS_TARGET - 1)]
+    completed_steps = list(_PRACTICE_STEP_SEQUENCE[:passed])
+    last_rows = by_concept.get(target, [])
+    last = last_rows[-1] if last_rows else None
+    decision = next_step(
+        completed_steps,
+        (
+            AttemptSummary(
+                correct=last.correct,
+                confidence=last.confidence,
+                hints_used=0,
+                error_tags=tuple(last.error_tags or ()),
+            )
+            if last is not None
+            else None
+        ),
+    )
+    question = await _practice_item_for_concept(request, sprint, target)
+    return PracticeSessionOut(
+        concept_id=target,
+        step=step,
+        strategy=decision.strategy,
+        rationale=decision.rationale,
+        item=AssessmentItemOut(
+            item_id=question.id,
+            concept_id=target,
+            question_type=question.question_type,
+            stem=question.stem,
+            options=question.options if isinstance(question.options, list) else None,
+            score=question.score,
+        ),
+        passed_steps=passed,
+        target_steps=_PRACTICE_PASS_TARGET,
+        remaining_concepts=remaining,
+    )
+
+
+@router.post("/sprints/{sprint_id}/practice/answer", response_model=PracticeAnswerOut)
+async def submit_practice_answer(
+    sprint_id: str, payload: PracticeAnswerRequest, request: Request
+) -> PracticeAnswerOut:
+    """定向练习作答：判分落 practice attempt + 事件 → 返回解析（判分后
+    可见）与下一步决策；全部概念 exit_ticket 通过 → 原子推进 transfer_check。
+    """
+    await require_user(request)
+    sprint = await _owned_sprint(request, sprint_id)
+    if sprint.phase != "targeted_practice":
+        raise HTTPException(status_code=409, detail=f"不在定向练习阶段：当前 {sprint.phase}")
+
+    async with request.app.state.sessionmaker() as session:
+        question = (
+            await session.execute(select(QuestionRow).where(QuestionRow.id == payload.item_id))
+        ).scalar_one_or_none()
+        if question is None:
+            raise HTTPException(status_code=404, detail="题目不存在")
+        concept_id: str | None = None
+        for tag in question.knowledge if isinstance(question.knowledge, list) else []:
+            if isinstance(tag, str):
+                concept_id = tag
+                break
+        if concept_id is None:
+            raise HTTPException(status_code=422, detail="题目无概念标签")
+        if not is_objective_type(question.question_type):
+            raise HTTPException(status_code=422, detail="练习题题型不可确定性判分")
+
+        correct = grade_answer(question.question_type, question.answer, payload.response)
+        now = _now()
+        session.add(
+            LearningAttemptRow(
+                id=f"lat_{uuid4().hex[:24]}",
+                owner_id=sprint.owner_id,
+                sprint_id=sprint.id,
+                contract_id=sprint.contract_id,
+                item_id=question.id,
+                concept_id=concept_id,
+                response=payload.response,
+                correct=correct,
+                confidence=payload.confidence,
+                independent=True,
+                error_tags=[],
+                context=f"{question.question_type}:practice",
+                grading_method="answer_key",
+                grader_version="grading-v1",
+                created_at=now,
+            )
+        )
+        # 概念进度（含本次）
+        prior = (
+            (
+                await session.execute(
+                    select(LearningAttemptRow)
+                    .where(
+                        (LearningAttemptRow.sprint_id == sprint.id)
+                        & (LearningAttemptRow.concept_id == concept_id)
+                        & (LearningAttemptRow.context.like("%:practice"))
+                    )
+                    .order_by(LearningAttemptRow.created_at.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        passed, _ = _practice_concept_progress(list(prior))
+        # 全概念进度 → 是否完成
+        concept_ids_rows = (
+            (
+                await session.execute(
+                    select(AssessmentBlueprintRow.concept_id).where(
+                        AssessmentBlueprintRow.contract_id == sprint.contract_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        all_attempts = (
+            (
+                await session.execute(
+                    select(LearningAttemptRow)
+                    .where(
+                        (LearningAttemptRow.sprint_id == sprint.id)
+                        & (LearningAttemptRow.context.like("%:practice"))
+                    )
+                    .order_by(LearningAttemptRow.created_at.asc())
+                )
+            )
+            .scalars()
+            .all()
+        )
+        grouped: dict[str, list[LearningAttemptRow]] = {}
+        for row in all_attempts:
+            grouped.setdefault(row.concept_id, []).append(row)
+        practice_complete = all(
+            _practice_concept_progress(grouped.get(cid, []))[0] >= _PRACTICE_PASS_TARGET
+            for cid in concept_ids_rows
+        )
+        advance_phase = "transfer_check"
+        if practice_complete:
+            from sqlalchemy import update
+
+            result = await session.execute(
+                update(LearningSprintRow)
+                .where(
+                    LearningSprintRow.id == sprint.id,
+                    LearningSprintRow.phase == "targeted_practice",
+                )
+                .values(phase=advance_phase, updated_at=now)
+            )
+            if result.rowcount != 1:
+                await session.rollback()
+                raise HTTPException(status_code=409, detail="提交冲突：状态已变化")
+        await session.commit()
+
+    step_passed = correct is True
+    completed_steps = list(_PRACTICE_STEP_SEQUENCE[:passed])
+    decision = next_step(
+        completed_steps,
+        AttemptSummary(correct=correct, confidence=payload.confidence, hints_used=0, error_tags=()),
+    )
+    await _record_event(
+        request,
+        owner_id=sprint.owner_id,
+        contract_id=sprint.contract_id,
+        sprint_id=sprint.id,
+        event_type="practice.answered",
+        payload={
+            "concept_id": concept_id,
+            "item_id": question.id,
+            "correct": correct,
+            "step_passed": step_passed,
+        },
+        idempotency_key=None,
+    )
+    return PracticeAnswerOut(
+        concept_id=concept_id,
+        correct=correct,
+        explanation=question.explanation or "",
+        step_passed=step_passed,
+        passed_steps=passed,
+        target_steps=_PRACTICE_PASS_TARGET,
+        next_step=decision.next_step,
+        strategy=decision.strategy,
+        rationale=decision.rationale,
+        practice_complete=practice_complete,
+        sprint_phase=advance_phase if practice_complete else sprint.phase,
+    )
+
+
 # ---------------------------------------------------------------- 迁移检验作答（M17-005）
 
 
@@ -2047,9 +2427,11 @@ async def generate_items_for_contract(
                 ) from cause
             concept_ids = {concept.concept_id for concept in derived}
             derived_names = {concept.concept_id: concept.display_name for concept in derived}
-        # 显示名（供 LLM 出题语境）：推导名优先，否则 concept_id 冒号后段
+        # 显示名（供 LLM 出题语境）：推导名优先；否则用完整 concept_id
+        # （M17-006b 生产实测修复：裸冒号后段（如 having）会被 LLM 当
+        # 成英语词出语法题——完整 id（sql:having）至少携带学科语境）
         concepts = {
-            derived_names.get(cid, cid.split(":", 1)[-1]): cid
+            derived_names.get(cid, cid): cid
             for cid in sorted(concept_ids)
         }
 
