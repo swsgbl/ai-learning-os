@@ -463,3 +463,105 @@ def _run_generate_items_flow(sqlite_url: str) -> None:
         papers = client.get("/api/v1/papers")
         assert papers.status_code == 200, papers.text
         assert any(p["id"] == paper_id for p in papers.json())
+
+
+def test_cold_start_generate_derives_concepts(sqlite_url, monkeypatch) -> None:
+    """M17-001 冷启动：全新概念合同（无蓝图/题池无此概念）→ generate-items
+    空概念触发 LLM 推导（第一次调用）→ 出题（第二次调用）→ 蓝图 → 前测。
+
+    此前语义：空概念且无蓝图 → 422 死锁（全新概念无源头）。
+    """
+    import json as jsonlib
+
+    calls: list[str] = []
+
+    class _SeqStubGateway:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def chat(self, messages: object, temperature: float = 0.0, max_tokens: int = 1024) -> str:
+            calls.append("chat")
+            if len(calls) == 1:
+                # 第一次：概念推导
+                return jsonlib.dumps(
+                    {
+                        "concepts": [
+                            {"id": "k8s:rollout", "name": "滚动更新"},
+                            {"id": "k8s:probe", "name": "健康探针"},
+                        ]
+                    },
+                    ensure_ascii=False,
+                )
+            # 第二次起：出题（concept 按出题协议回显示名——concepts 映射的 key）
+            items = []
+            for name in ("滚动更新", "健康探针"):
+                for index in range(4):
+                    items.append(
+                        {
+                            "concept": name,
+                            "stem": f"{name} 第 {index} 题",
+                            "options": ["甲", "乙", "丙", "丁"],
+                            "answer_index": index % 4,
+                            "difficulty": 2,
+                            "why": "解析",
+                        }
+                    )
+            return jsonlib.dumps({"items": items}, ensure_ascii=False)
+
+    import app.domain.concept_derivation as cd
+    import app.domain.item_generator as ig
+
+    monkeypatch.setattr(cd, "LlmGateway", _SeqStubGateway)
+    monkeypatch.setattr(ig, "LlmGateway", _SeqStubGateway)
+
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("LLM_ENDPOINT", "http://stub.local/v1")
+    monkeypatch.setenv("LLM_API_KEY", "sk-stub-0123456789")
+    monkeypatch.setenv("LLM_MODEL", "stub-model")
+    get_settings.cache_clear()
+    try:
+        with TestClient(create_app(sqlite_url)) as client:
+            _seed_pool(client, sqlite_url)  # 题池只有 c_select/c_join——k8s:* 是全新概念
+            created = client.post("/api/v1/learning/contracts", json=_contract_payload())
+            contract_id = created.json()["id"]
+            client.post(f"/api/v1/learning/contracts/{contract_id}/confirm")
+
+            # 冷启动：空概念 → LLM 推导（call #1）→ 出题（call #2）
+            gen = client.post(
+                f"/api/v1/learning/contracts/{contract_id}/generate-items",
+                json={"per_concept": 4},
+            )
+            assert gen.status_code == 201, gen.text
+            body = gen.json()
+            assert body["generated"] == 8
+            assert len(calls) == 2
+            derived_concepts = {item["concept_id"] for item in body["items"]}
+            assert derived_concepts == {"k8s:rollout", "k8s:probe"}
+
+            # 蓝图可构建（推导概念随题入库，聚合可见）
+            bp = client.post(
+                f"/api/v1/learning/contracts/{contract_id}/blueprint/build",
+                json={"concepts": ["k8s:rollout", "k8s:probe"]},
+            )
+            assert bp.status_code == 201
+            assert bp.json()["complete"] is True
+
+            # 前测有题（答案隔离）
+            sprint = client.post(f"/api/v1/learning/contracts/{contract_id}/sprints").json()
+            for phase in ("contract_confirmed", "baseline_assessment"):
+                client.post(
+                    f"/api/v1/learning/sprints/{sprint['id']}/advance", json={"to_phase": phase}
+                )
+            assessment = client.get(
+                f"/api/v1/learning/sprints/{sprint['id']}/assessment",
+                params={"phase": "baseline"},
+            )
+            assert assessment.status_code == 200
+            assert len(assessment.json()["items"]) == 4
+            assert "answer" not in assessment.text
+    finally:
+        monkeypatch.delenv("LLM_ENDPOINT", raising=False)
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        monkeypatch.delenv("LLM_MODEL", raising=False)
+        get_settings.cache_clear()
