@@ -123,11 +123,13 @@ def generate_objective_items(
     # 可 >30s——此前默认 30s 网关超时在本地 Ollama 上真实超时）
     from app.core.config import get_settings
 
+    settings = get_settings()
     gateway = LlmGateway(
         endpoint=endpoint,
         api_key=api_key,
         model=model,
-        timeout_seconds=get_settings().llm_timeout_seconds or 30.0,
+        timeout_seconds=settings.llm_timeout_seconds or 30.0,
+        ollama_native=settings.llm_provider == "ollama",
     )
     listing = "\n".join(f"- {name}" for name in concepts)
     messages = (
