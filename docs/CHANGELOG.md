@@ -1,3 +1,23 @@
+## M16-011 —— Web 学习冲刺浏览器 E2E + 生产 Web 镜像回归修复
+
+- **生产 Web 镜像回归修复（关键）**：m16-production-v2 构建漏传
+  `AIOS_PUBLIC_API_BASE_URL`，bundle 烘死 `http://127.0.0.1:8000`——
+  登录态页面全部退化（登录卡「请稍候…」、工作台「前往登录」、学习页
+  「加载失败」）。以 `=/aios` + `NEXT_PUBLIC_BASE_PATH=/aios` 重建
+  m16-production-v4 并切生产（Git Bash 构建须 `MSYS_NO_PATHCONV=1`
+  防 /aios 被 MSYS 转成 Windows 路径）；浏览器复核请求全部走
+  `/aios/api/v1/*` 同源。
+- **浏览器 E2E（生产真实 Chromium，ndtool.cn/aios）**：登录 → 新建
+  学习合同 → 确认 → 冲刺推进×5（概念地图→…→后测）→ 后测 UI 作答
+  4 题（选项+信心滑选）→ 提交服务端判分 100 分 → 自动进 report →
+  报告面板（前测 0 → 后测 100，增益 +100；掌握度练习中/证据 4/
+  独立对 2）→ 间隔复测队列 scheduled（+1 天档）——AGENTS.md 浏览器
+  验收流全链通过，证据截图 artifacts/qa/e2e_01..13。
+- **缺口如实记录（LEARNING_EVIDENCE_STATUS）**：全新概念 Web 冷启动
+  ——generate-items 缺省取蓝图概念、蓝图缺省聚合题池，全新概念无
+  源头（UI 生成先于蓝图会 422，有错误提示非静默）；留目标→概念
+  推导设计。
+
 ## M16-010b/c/d —— 本地 LLM 链路三修复（生产实测驱动，PR #438）
 
 - **部署超时传递**：出题/课程生成走 LLM_TIMEOUT_SECONDS（本地 Ollama
