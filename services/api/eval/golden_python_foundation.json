@@ -1,0 +1,61 @@
+{
+  "schema": "aios-golden-set/1",
+  "subject": "Python 基础（数据分析方向）",
+  "note": "M17-007 第二学科黄金集（升级方案 Phase 7「第二学科」）：验证试点学科（SQL）的评测结构可复制到异构学科。结构与 SQL 集对齐：items=前后测蓝图评测；transfer_items=多概念综合；delayed_variants=同概念换情境重述。答案人工核验。",
+  "concepts": [
+    "py:variables-types",
+    "py:control-flow",
+    "py:functions",
+    "py:list-operations",
+    "py:dict-operations",
+    "py:comprehensions",
+    "py:exceptions",
+    "py:modules-imports"
+  ],
+  "items": [
+    {"id": "p01", "concept": "py:variables-types", "difficulty": 1, "stem": "x = 3.14 之后，x 的类型是？", "options": ["float", "int", "str", "decimal"], "answer_index": 0},
+    {"id": "p02", "concept": "py:variables-types", "difficulty": 1, "stem": "type(\"42\") 的结果是？", "options": ["str", "int", "float", "bool"], "answer_index": 0},
+    {"id": "p03", "concept": "py:variables-types", "difficulty": 2, "stem": "10 / 4 与 10 // 4 的结果分别是？", "options": ["2.5 与 2", "2 与 2", "2.5 与 2.5", "2 与 2.5"], "answer_index": 0},
+    {"id": "p04", "concept": "py:variables-types", "difficulty": 2, "stem": "布尔上下文中，下列哪个值被当作 False？", "options": ["空字符串 \"\"", "字符串 \"0\"", "空格字符串 \" \"", "列表 [0]"], "answer_index": 0},
+    {"id": "p05", "concept": "py:control-flow", "difficulty": 1, "stem": "range(3) 会依次产生哪些数？", "options": ["0, 1, 2", "1, 2, 3", "0, 1, 2, 3", "1, 2"], "answer_index": 0},
+    {"id": "p06", "concept": "py:control-flow", "difficulty": 2, "stem": "for ... else 中，else 分支何时执行？", "options": ["循环正常结束（未被 break 打断）", "循环被 break 打断", "每次迭代后", "循环体抛异常时"], "answer_index": 0},
+    {"id": "p07", "concept": "py:control-flow", "difficulty": 2, "stem": "x = 0；while x < 3: x += 1 循环结束后 x 的值是？", "options": ["3", "2", "4", "0"], "answer_index": 0},
+    {"id": "p08", "concept": "py:control-flow", "difficulty": 3, "stem": "关于 continue 与 break 的区别，正确的是？", "options": ["continue 跳过本次迭代进入下一次，break 直接终止循环", "continue 终止循环，break 跳过本次迭代", "两者都可以用在函数外", "两者在 while 中不可用"], "answer_index": 0},
+    {"id": "p09", "concept": "py:functions", "difficulty": 1, "stem": "def add(a, b=2): return a + b，则 add(1) 的结果是？", "options": ["3", "1", "2", "报错"], "answer_index": 0},
+    {"id": "p10", "concept": "py:functions", "difficulty": 2, "stem": "def f(x): x = x + 1 之后，函数外的原变量 x 会变吗？", "options": ["不变（int 不可变，传的是值拷贝语义）", "会变成 x+1", "取决于是否 global", "报错"], "answer_index": 0},
+    {"id": "p11", "concept": "py:functions", "difficulty": 2, "stem": "函数没有 return 语句时，调用表达式的值是？", "options": ["None", "0", "空字符串", "报错"], "answer_index": 0},
+    {"id": "p12", "concept": "py:functions", "difficulty": 3, "stem": "关于可变默认参数 def f(items=[])，多次调用 append 的现象描述正确的是？", "options": ["默认列表跨调用共享——累计追加", "每次调用新建空列表", "第二次调用报错", "append 不生效"], "answer_index": 0},
+    {"id": "p13", "concept": "py:list-operations", "difficulty": 1, "stem": "nums = [10, 20, 30]，nums[1] 是？", "options": ["20", "10", "30", "报错"], "answer_index": 0},
+    {"id": "p14", "concept": "py:list-operations", "difficulty": 1, "stem": "向列表末尾添加单个元素用？", "options": ["append", "add", "push", "insert_last"], "answer_index": 0},
+    {"id": "p15", "concept": "py:list-operations", "difficulty": 2, "stem": "[1, 2, 3] + [4] 的结果是？", "options": ["[1, 2, 3, 4]", "[[1,2,3],[4]]", "10", "报错"], "answer_index": 0},
+    {"id": "p16", "concept": "py:list-operations", "difficulty": 3, "stem": "nums = [1,2,3,4,5]，nums[1:4] 是？", "options": ["[2, 3, 4]", "[1, 2, 3]", "[2, 3, 4, 5]", "[1, 2, 3, 4]"], "answer_index": 0},
+    {"id": "p17", "concept": "py:dict-operations", "difficulty": 1, "stem": "d = {\"a\": 1}，取键 \"a\" 的值写法是？", "options": ["d[\"a\"]", "d(\"a\")", "d.a", "d->a"], "answer_index": 0},
+    {"id": "p18", "concept": "py:dict-operations", "difficulty": 2, "stem": "d.get(\"x\", 0) 当键不存在时的返回值是？", "options": ["0", "None", "抛 KeyError", "False"], "answer_index": 0},
+    {"id": "p19", "concept": "py:dict-operations", "difficulty": 2, "stem": "遍历字典默认迭代的是？", "options": ["键", "值", "键值对元组", "无序随机项"], "answer_index": 0},
+    {"id": "p20", "concept": "py:dict-operations", "difficulty": 3, "stem": "d = {\"a\": 1}，访问 d[\"b\"] 会？", "options": ["抛 KeyError", "返回 None", "返回 0", "自动创建键"], "answer_index": 0},
+    {"id": "p21", "concept": "py:comprehensions", "difficulty": 1, "stem": "[x*2 for x in range(3)] 的结果是？", "options": ["[0, 2, 4]", "[2, 4, 6]", "[0, 1, 2]", "[1, 2, 3]"], "answer_index": 0},
+    {"id": "p22", "concept": "py:comprehensions", "difficulty": 2, "stem": "[x for x in range(10) if x % 2 == 0] 的结果是？", "options": ["[0, 2, 4, 6, 8]", "[0, 1, 2, 3, 4]", "[2, 4, 6, 8, 10]", "[1, 3, 5, 7, 9]"], "answer_index": 0},
+    {"id": "p23", "concept": "py:comprehensions", "difficulty": 2, "stem": "列表推导式与等价 for 循环相比，正确的是？", "options": ["语义等价但更简洁（构建列表场景）", "推导式功能是循环的超集", "推导式不能带条件", "推导式只能产出数字"], "answer_index": 0},
+    {"id": "p24", "concept": "py:comprehensions", "difficulty": 3, "stem": "{x: len(x) for x in [\"ab\", \"cde\"]} 的结果是？", "options": ["{'ab': 2, 'cde': 3}", "{2: 'ab', 3: 'cde'}", "['ab', 'cde']", "[2, 3]"], "answer_index": 0},
+    {"id": "p25", "concept": "py:exceptions", "difficulty": 1, "stem": "捕获异常的基本结构是？", "options": ["try ... except", "catch ... finally", "rescue ... ensure", "do ... handle"], "answer_index": 0},
+    {"id": "p26", "concept": "py:exceptions", "difficulty": 2, "stem": "try 块没有抛异常时，else 分支会执行吗？", "options": ["会（无异常才执行）", "不会", "每次都执行", "只在 finally 前执行一次"], "answer_index": 0},
+    {"id": "p27", "concept": "py:exceptions", "difficulty": 2, "stem": "except Exception as e 中 e 是？", "options": ["捕获到的异常对象", "异常类本身", "错误码", "堆栈字符串"], "answer_index": 0},
+    {"id": "p28", "concept": "py:exceptions", "difficulty": 3, "stem": "关于 finally，正确的是？", "options": ["无论是否异常都执行（含 return/break 前）", "只在异常时执行", "只在无异常时执行", "可以被跳过（异常未捕获时）"], "answer_index": 0},
+    {"id": "p29", "concept": "py:modules-imports", "difficulty": 1, "stem": "导入标准库数学模块的正确写法是？", "options": ["import math", "include math", "using math", "require math"], "answer_index": 0},
+    {"id": "p30", "concept": "py:modules-imports", "difficulty": 2, "stem": "from math import sqrt 之后，调用写法是？", "options": ["sqrt(2)", "math.sqrt(2)", "math()->sqrt(2)", "import.sqrt(2)"], "answer_index": 0},
+    {"id": "p31", "concept": "py:modules-imports", "difficulty": 2, "stem": "if __name__ == \"__main__\": 的作用是？", "options": ["区分脚本直接运行与被导入", "声明主函数", "定义程序入口线程", "版本检查"], "answer_index": 0},
+    {"id": "p32", "concept": "py:modules-imports", "difficulty": 3, "stem": "import numpy as np 中 as np 的作用是？", "options": ["给模块起别名（缩短调用名）", "重命名模块文件", "导入子模块 np", "创建模块副本"], "answer_index": 0}
+  ],
+  "transfer_items": [
+    {"id": "pt01", "concepts": ["py:dict-operations", "py:comprehensions"], "difficulty": 3, "stem": "统计列表 words 中每个词出现次数并存入字典，最简洁的一行写法是？", "options": ["counts = {w: words.count(w) for w in set(words)}", "counts = {for w in words: w: 1}", "counts = [w: words.count(w) for w in words]", "counts = dict(words.count(w) for w)"], "answer_index": 0},
+    {"id": "pt02", "concepts": ["py:functions", "py:exceptions"], "difficulty": 3, "stem": "写一个安全除法函数，除零时返回 None——正确骨架是？", "options": ["def safe_div(a, b):\n    try: return a / b\n    except ZeroDivisionError: return None", "def safe_div(a, b):\n    if b = 0: return None\n    return a / b", "def safe_div(a, b):\n    catch ZeroDivisionError: return None\n    return a / b", "def safe_div(a, b):\n    try a / b except return None"], "answer_index": 0},
+    {"id": "pt03", "concepts": ["py:list-operations", "py:control-flow", "py:comprehensions"], "difficulty": 3, "stem": "取列表 nums 中所有正数的平方，正确的是？", "options": ["[n*n for n in nums if n > 0]", "[n*n for n in nums while n > 0]", "[if n > 0 then n*n for n in nums]", "[n > 0: n*n for n in nums]"], "answer_index": 0},
+    {"id": "pt04", "concepts": ["py:modules-imports", "py:dict-operations"], "difficulty": 3, "stem": "导入 csv 标准库并逐行读成字典，正确骨架是？", "options": ["import csv\nwith open(f) as fp:\n    rows = list(csv.DictReader(fp))", "import csv\nwith open(f) as fp:\n    rows = csv.read_dict(fp)", "from csv import dict\nrows = dict(open(f))", "include csv\nrows = csv.DictReader.read(f)"], "answer_index": 0}
+  ],
+  "delayed_variants": [
+    {"id": "pd01", "source": "p01", "concept": "py:variables-types", "difficulty": 1, "stem": "price = 99.9 之后，type(price) 是？", "options": ["float", "int", "str", "complex"], "answer_index": 0},
+    {"id": "pd13", "source": "p13", "concept": "py:list-operations", "difficulty": 1, "stem": "letters = [\"a\", \"b\", \"c\"]，letters[0] 是？", "options": ["\"a\"", "\"b\"", "\"c\"", "报错"], "answer_index": 0},
+    {"id": "pd25", "source": "p25", "concept": "py:exceptions", "difficulty": 1, "stem": "想让可能出错的代码在失败时走备选逻辑，应放进哪个块？", "options": ["try 块", "except 块", "finally 块", "else 块"], "answer_index": 0},
+    {"id": "pd29", "source": "p29", "concept": "py:modules-imports", "difficulty": 1, "stem": "程序里要用 os 模块的功能，先要写？", "options": ["import os", "include os", "using os", "load os"], "answer_index": 0}
+  ]
+}

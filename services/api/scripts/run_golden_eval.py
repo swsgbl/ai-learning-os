@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""M16-009 黄金集离线评测（升级方案 Phase 7）；M17-004 扩充迁移/延迟/校准。
+"""M16-009 黄金集离线评测（升级方案 Phase 7）；M17-004 扩充迁移/延迟/校准；
+M17-007 双学科（SQL 试点 + Python 第二学科——验证评测结构可复制）。
 
-用 SQL 基础黄金集（eval/golden_sql_foundation.json，人工标注）离线评测：
+每学科评测（黄金集人工标注，纯离线）：
 1. 蓝图等值性：每概念 4 题 → pretest/posttest 各 2 题不重叠且难度配平
    （差 ≤1）；全概念 complete；
 2. 判分一致性：items + transfer_items + delayed_variants 全部黄金答案
    判对（错选判错）；
+
+学科无关的域规则评测（每学科同规则，跑一遍即可）：
 3. 掌握度规则黄金场景：前测错→练习多上下文对→延迟对=mastered；
    复测失败=at_risk；
-4. M17-004 掌握度阈值校准：provisional 恰好达标/差一条/同题型重复
+4. 掌握度阈值校准：provisional 恰好达标/差一条/同题型重复
    （不 provisional）/迁移对=mastered 四个边界场景。
 
 输出：pass/failed 报告；exit 0 = 全过（CI 可重复——纯离线，无网络）。
@@ -25,16 +28,18 @@ from app.domain.assessment_blueprint import CandidateItem, build_blueprint
 from app.domain.grading import grade_answer
 from app.domain.mastery import AttemptEvidence, derive_mastery
 
-GOLDEN_PATH = Path(__file__).resolve().parents[1] / "eval" / "golden_sql_foundation.json"
+#: M17-007 双学科黄金集（SQL 试点 + Python 第二学科）
+GOLDEN_PATHS: tuple[Path, ...] = (
+    Path(__file__).resolve().parents[1] / "eval" / "golden_sql_foundation.json",
+    Path(__file__).resolve().parents[1] / "eval" / "golden_python_foundation.json",
+)
 KEYS = ("A", "B", "C", "D")
 
 
-def main() -> int:
-    golden = json.loads(GOLDEN_PATH.read_text(encoding="utf-8"))
+def _eval_blueprint_equivalence(golden: dict, subject: str) -> list[str]:
+    """学科评测 1：蓝图等值性（每概念前后测不重叠 + 难度配平 + 全覆盖）。"""
     items = golden["items"]
     failures: list[str] = []
-
-    # 1. 蓝图等值性
     candidates = [
         CandidateItem(
             item_id=entry["id"],
@@ -46,31 +51,47 @@ def main() -> int:
     ]
     blueprint = build_blueprint(candidates)
     if not blueprint.complete:
-        failures.append(f"蓝图 incomplete：{blueprint.gaps}")
+        failures.append(f"[{subject}] 蓝图 incomplete：{blueprint.gaps}")
     for plan in blueprint.plans:
         overlap = set(plan.pretest_item_ids) & set(plan.posttest_item_ids)
         if overlap:
-            failures.append(f"{plan.concept_id} 前后测重叠：{overlap}")
+            failures.append(f"[{subject}] {plan.concept_id} 前后测重叠：{overlap}")
         by_id = {e["id"]: e for e in items}
         pre_avg = sum(by_id[i]["difficulty"] for i in plan.pretest_item_ids) / max(1, len(plan.pretest_item_ids))
         post_avg = sum(by_id[i]["difficulty"] for i in plan.posttest_item_ids) / max(1, len(plan.posttest_item_ids))
         if abs(pre_avg - post_avg) > 1.01:
             failures.append(
-                f"{plan.concept_id} 难度失衡：前测均值 {pre_avg:.1f} vs 后测 {post_avg:.1f}"
+                f"[{subject}] {plan.concept_id} 难度失衡：前测均值 {pre_avg:.1f} vs 后测 {post_avg:.1f}"
             )
+    concepts = set(golden["concepts"])
+    covered = {plan.concept_id for plan in blueprint.plans}
+    if concepts != covered:
+        failures.append(f"[{subject}] 概念覆盖不全：缺 {concepts - covered}")
+    return failures
 
-    # 2. 判分一致性（黄金答案判对 + 每个错选判错；含迁移题与延迟变体）
-    graded_pools = [("items", items), ("transfer_items", golden.get("transfer_items", [])), ("delayed_variants", golden.get("delayed_variants", []))]
-    graded_items = [(pool, entry) for pool, entries in graded_pools for entry in entries]
-    for pool, entry in graded_items:
-        correct_letter = KEYS[entry["answer_index"]]
-        if grade_answer("mcq", correct_letter, correct_letter) is not True:
-            failures.append(f"[{pool}] {entry['id']} 黄金答案未判对")
-        wrong_letter = KEYS[(entry["answer_index"] + 1) % 4]
-        if grade_answer("mcq", correct_letter, wrong_letter) is not False:
-            failures.append(f"[{pool}] {entry['id']} 错选未判错")
 
-    # 3. 掌握度黄金场景
+def _eval_grading_consistency(golden: dict, subject: str) -> list[str]:
+    """学科评测 2：三题池（items/transfer/delayed）黄金答案判对 + 错选判错。"""
+    failures: list[str] = []
+    pools = [
+        ("items", golden["items"]),
+        ("transfer", golden.get("transfer_items", [])),
+        ("delayed", golden.get("delayed_variants", [])),
+    ]
+    for pool, entries in pools:
+        for entry in entries:
+            correct_letter = KEYS[entry["answer_index"]]
+            if grade_answer("mcq", correct_letter, correct_letter) is not True:
+                failures.append(f"[{subject}/{pool}] {entry['id']} 黄金答案未判对")
+            wrong_letter = KEYS[(entry["answer_index"] + 1) % 4]
+            if grade_answer("mcq", correct_letter, wrong_letter) is not False:
+                failures.append(f"[{subject}/{pool}] {entry['id']} 错选未判错")
+    return failures
+
+
+def _eval_mastery_rules() -> list[str]:
+    """域规则评测 3+4（学科无关，跑一遍）：黄金场景与阈值校准。"""
+    failures: list[str] = []
     mastered_flow = derive_mastery(
         [
             AttemptEvidence("b1", "c", correct=False, context="mcq:baseline"),
@@ -94,7 +115,6 @@ def main() -> int:
     if at_risk_flow.state != "at_risk":
         failures.append(f"黄金场景二（复测失败）应为 at_risk，实际 {at_risk_flow.state}")
 
-    # 4. M17-004 掌握度阈值校准（边界场景）
     exact_provisional = derive_mastery([
         AttemptEvidence("b1", "c", correct=False, context="mcq:baseline"),
         AttemptEvidence("p1", "c", correct=True, context="mcq:practice"),
@@ -132,13 +152,25 @@ def main() -> int:
         failures.append(
             f"校准场景四（迁移对补齐）应 mastered，实际 {transfer_mastered.state}"
         )
+    return failures
 
-    concepts = set(golden["concepts"])
-    covered = {plan.concept_id for plan in blueprint.plans}
-    if concepts != covered:
-        failures.append(f"概念覆盖不全：缺 {concepts - covered}")
 
-    print(f"黄金集：{len(items)} 题 / {len(concepts)} 概念")
+def main() -> int:
+    failures: list[str] = []
+    total_items = 0
+    total_concepts = 0
+    for golden_path in GOLDEN_PATHS:
+        golden = json.loads(golden_path.read_text(encoding="utf-8"))
+        subject = golden.get("subject", golden_path.stem)
+        failures.extend(_eval_blueprint_equivalence(golden, subject))
+        failures.extend(_eval_grading_consistency(golden, subject))
+        total_items += len(golden["items"]) + len(golden.get("transfer_items", [])) + len(golden.get("delayed_variants", []))
+        total_concepts += len(golden["concepts"])
+        print(f"  学科 [{subject}]：{len(golden['items'])} 基础题 / {len(golden['concepts'])} 概念 "
+              f"+ 迁移 {len(golden.get('transfer_items', []))} + 延迟变体 {len(golden.get('delayed_variants', []))}")
+    failures.extend(_eval_mastery_rules())
+
+    print(f"黄金集（{len(GOLDEN_PATHS)} 学科）：共 {total_items} 题 / {total_concepts} 概念")
     print(f"蓝图等值性：{'pass' if not [f for f in failures if '蓝图' in f or '重叠' in f or '失衡' in f or '覆盖' in f] else 'failed'}")
     print(f"判分一致性：{'pass' if not [f for f in failures if '判' in f] else 'failed'}")
     print(f"掌握度黄金场景：{'pass' if not [f for f in failures if '场景' in f] else 'failed'}")

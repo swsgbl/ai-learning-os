@@ -1,0 +1,27 @@
+{
+  "schema": "aios-voice-latency/1",
+  "base": "https://ndtool.cn/aios/api/v1",
+  "measured_at": "2026-10-22T19:26:18+0800",
+  "scope_note": "单链路度量（本地引擎经 API 全链）；弱网/NAT/设备切换不在范围（运维显式分层验收）",
+  "tts_roundtrip": {
+    "samples": 5,
+    "mean_ms": 3349,
+    "p50_ms": 3171,
+    "p95_ms": 3897,
+    "min_ms": 3112,
+    "max_ms": 3897
+  },
+  "asr_roundtrip": {
+    "samples": 5,
+    "mean_ms": 1081,
+    "p50_ms": 1087,
+    "p95_ms": 1309,
+    "min_ms": 924,
+    "max_ms": 1309
+  },
+  "asr_similarity": {
+    "samples": 5,
+    "mean": 0.737,
+    "min": 0.737
+  }
+}
