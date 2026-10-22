@@ -360,3 +360,101 @@ def test_follow_up_schedule_idempotent(sqlite_url) -> None:
         assert second.status_code == 201
         assert {r["id"] for r in second.json()} == {r["id"] for r in first.json()}
         assert len(second.json()) == 2  # 仍是 2 条，未翻倍
+
+
+def test_generate_items_then_blueprint_usable(sqlite_url, monkeypatch) -> None:
+    """M16-007 内容层闭环：生成客观题入题池卷 → 蓝图可构建 → 前测有题。
+
+    LLM 打桩（不依赖真实网关——live 供应商验证属运维 smoke）。
+    """
+    import json as jsonlib
+
+    import app.domain.item_generator as ig
+
+    class _StubGateway:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def chat(self, messages: object, temperature: float = 0.0) -> str:
+            items = []
+            for concept in ("c_select", "c_join"):
+                for index in range(4):  # 每概念 4 题（蓝图需 4）
+                    items.append(
+                        {
+                            "concept": concept,
+                            "stem": f"{concept} 第 {index} 题题干",
+                            "options": ["甲", "乙", "丙", "丁"],
+                            "answer_index": index % 4,
+                            "difficulty": 2,
+                            "why": "解析",
+                        }
+                    )
+            return jsonlib.dumps({"items": items}, ensure_ascii=False)
+
+    monkeypatch.setattr(ig, "LlmGateway", _StubGateway)
+    # 全局 LLM 槽位配置（网关已打桩——这里只是让配置检查通过）
+    from app.core.config import get_settings
+
+    monkeypatch.setenv("LLM_ENDPOINT", "http://stub.local/v1")
+    monkeypatch.setenv("LLM_API_KEY", "sk-stub-0123456789")
+    monkeypatch.setenv("LLM_MODEL", "stub-model")
+    get_settings.cache_clear()
+    try:
+        _run_generate_items_flow(sqlite_url)
+    finally:
+        monkeypatch.delenv("LLM_ENDPOINT", raising=False)
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        monkeypatch.delenv("LLM_MODEL", raising=False)
+        get_settings.cache_clear()
+
+
+def _run_generate_items_flow(sqlite_url: str) -> None:
+    with TestClient(create_app(sqlite_url)) as client:
+        _seed_pool(client, sqlite_url)
+        created = client.post("/api/v1/learning/contracts", json=_contract_payload())
+        contract_id = created.json()["id"]
+        client.post(f"/api/v1/learning/contracts/{contract_id}/confirm")
+
+        # 未确认前 409 已由确认前置；未传概念且无蓝图 → 422
+        gen = client.post(f"/api/v1/learning/contracts/{contract_id}/generate-items", json={})
+        assert gen.status_code == 422
+
+        # 指定概念生成
+        gen = client.post(
+            f"/api/v1/learning/contracts/{contract_id}/generate-items",
+            json={"concepts": ["c_select", "c_join"], "per_concept": 4},
+        )
+        assert gen.status_code == 201, gen.text
+        body = gen.json()
+        assert body["generated"] == 8
+        assert len(body["items"]) == 8
+        paper_id = body["paper_id"]
+
+        # 重复调用追加（同卷）
+        again = client.post(
+            f"/api/v1/learning/contracts/{contract_id}/generate-items",
+            json={"concepts": ["c_select"], "per_concept": 2},
+        )
+        assert again.status_code == 201
+        assert again.json()["paper_id"] == paper_id
+
+        # 蓝图现在可构建（生成题入池）
+        bp = client.post(
+            f"/api/v1/learning/contracts/{contract_id}/blueprint/build",
+            json={"concepts": ["c_select", "c_join"]},
+        )
+        assert bp.status_code == 201
+        assert bp.json()["complete"] is True
+
+        # Sprint 前测有生成题（答案隔离）
+        sprint = client.post(f"/api/v1/learning/contracts/{contract_id}/sprints").json()
+        for phase in ("contract_confirmed", "baseline_assessment"):
+            client.post(
+                f"/api/v1/learning/sprints/{sprint['id']}/advance", json={"to_phase": phase}
+            )
+        assessment = client.get(
+            f"/api/v1/learning/sprints/{sprint['id']}/assessment", params={"phase": "baseline"}
+        )
+        assert assessment.status_code == 200
+        assert len(assessment.json()["items"]) == 4
+        assert "answer" not in assessment.text

@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy import select
 
 from app.api.routes.auth import current_owner_id, require_user
+from app.core.config import get_settings
 from app.db.orm import (
     AssessmentBlueprintRow,
     LearningAttemptRow,
@@ -40,6 +41,10 @@ from app.domain.assessment_blueprint import (
     build_blueprint,
 )
 from app.domain.grading import grade_answer
+from app.domain.item_generator import (
+    LlmItemGenerationUnavailable,
+    generate_objective_items,
+)
 from app.domain.mastery import AttemptEvidence, derive_mastery
 from app.domain.practice_loop import (
     AttemptSummary,
@@ -1579,3 +1584,162 @@ async def _owned_review(request: Request, review_id: str) -> LearningReviewRow:
     if row is None or (owner is not None and row.owner_id != owner):
         raise HTTPException(status_code=404, detail="复习记录不存在")
     return row
+
+
+# ---------------------------------------------------------------- 客观题生成（M16-007：打通蓝图内容层）
+
+
+class GenerateItemsRequest(BaseModel):
+    """按概念生成客观题入合同题池卷（LLM 来源：BYOK active > 全局）。"""
+
+    concepts: list[str] = Field(default_factory=list, max_length=50)  # concept_id 列表
+    per_concept: int = Field(default=2, ge=1, le=6)
+
+
+class GeneratedItemOut(BaseModel):
+    item_id: str
+    concept_id: str
+    stem: str
+    difficulty: int
+
+
+class GenerateItemsOut(BaseModel):
+    paper_id: str
+    generated: int
+    dropped: int
+    drop_reasons: list[str]
+    items: list[GeneratedItemOut]
+
+
+@router.post("/contracts/{contract_id}/generate-items", response_model=GenerateItemsOut, status_code=201)
+async def generate_items_for_contract(
+    contract_id: str, payload: GenerateItemsRequest, request: Request
+) -> GenerateItemsOut:
+    """为合同生成客观题（mcq 四选一，校验后入题池卷）——蓝图的题池来源。
+
+    题池卷「评估题池 · {合同标题}」每合同一卷，重复调用追加题目；
+    LLM 不可用/全部非法 → 503/422 如实（不虚构题目）。
+    """
+    await require_user(request)
+    contract = await _owned_contract(request, contract_id)
+    if contract.confirmed_at is None:
+        raise HTTPException(status_code=409, detail="合同未确认：先 /confirm")
+
+    # 概念集：请求指定，缺省取蓝图概念
+    async with request.app.state.sessionmaker() as session:
+        concept_ids = set(payload.concepts)
+        if not concept_ids:
+            rows = (
+                (
+                    await session.execute(
+                        select(AssessmentBlueprintRow.concept_id).where(
+                            AssessmentBlueprintRow.contract_id == contract.id
+                        )
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            concept_ids = set(rows)
+        if not concept_ids:
+            raise HTTPException(
+                status_code=422,
+                detail="无概念来源：传 concepts 或先构建蓝图",
+            )
+        # 显示名（供 LLM 出题语境）：concept_id 冒号前段 + 后段
+        concepts = {cid.split(":", 1)[-1]: cid for cid in sorted(concept_ids)}
+
+    # LLM 来源（BYOK active > 全局——与课程生成同款解析）
+    from app.api.routes.me_ai_keys import resolve_user_llm_config
+
+    s = get_settings()
+    endpoint, api_key, model = s.llm_endpoint, s.llm_api_key, s.llm_model
+    personal = await resolve_user_llm_config(request.app, current_owner_id(request))
+    if personal:
+        endpoint = personal["endpoint"] or endpoint
+        api_key = personal["api_key"]
+        model = personal["model"] or model
+
+    try:
+        report = generate_objective_items(concepts, payload.per_concept, (endpoint, api_key, model))
+    except LlmItemGenerationUnavailable as cause:
+        raise HTTPException(status_code=503, detail=str(cause)) from cause
+
+    async with request.app.state.sessionmaker() as session:
+        paper_title = f"评估题池 · {contract.title[:40]}"
+        paper = (
+            await session.execute(select(PaperRow).where(PaperRow.title == paper_title))
+        ).scalar_one_or_none()
+        if (
+            paper is None
+            or (contract.owner_id is not None and paper.owner_id != contract.owner_id)
+        ):
+            paper = PaperRow(
+                id=f"pap_{uuid4().hex[:24]}",
+                title=paper_title,
+                subtitle=f"合同 {contract.id} 的客观题池（LLM 生成，经校验）",
+                source="llm-generated",
+                subject=contract.domain or "general",
+                difficulty="medium",
+                duration_minutes=15,
+                tags=["assessment-pool"],
+                license="generated",
+                owner_id=contract.owner_id,
+            )
+            session.add(paper)
+            await session.flush()
+        max_order = (
+            await session.execute(
+                select(QuestionRow.sort_order)
+                .where(QuestionRow.paper_id == paper.id)
+                .order_by(QuestionRow.sort_order.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+        order = (max_order or 0) + 1
+        outs: list[GeneratedItemOut] = []
+        for item in report.items:
+            question_id = f"q_{uuid4().hex[:24]}"
+            session.add(
+                QuestionRow(
+                    id=question_id,
+                    paper_id=paper.id,
+                    question_type="mcq",
+                    stem=item.stem,
+                    options=item.options,
+                    answer=item.answer,  # 服务端权威——绝不下发
+                    explanation=item.explanation,
+                    knowledge=[item.concept_id],
+                    difficulty=item.difficulty,
+                    sort_order=order,
+                    score=1.0,
+                )
+            )
+            order += 1
+            outs.append(
+                GeneratedItemOut(
+                    item_id=question_id,
+                    concept_id=item.concept_id,
+                    stem=item.stem[:80],
+                    difficulty=item.difficulty,
+                )
+            )
+        await session.commit()
+    await _record_event(
+        request,
+        owner_id=contract.owner_id,
+        contract_id=contract.id,
+        event_type="items.generated",
+        payload={
+            "generated": len(report.items),
+            "dropped": report.dropped_count,
+            "concepts": sorted(concept_ids),
+        },
+    )
+    return GenerateItemsOut(
+        paper_id=paper.id,
+        generated=len(report.items),
+        dropped=report.dropped_count,
+        drop_reasons=report.drop_reasons[:10],
+        items=outs,
+    )
