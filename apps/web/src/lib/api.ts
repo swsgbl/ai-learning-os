@@ -221,6 +221,21 @@ export const api = {
         `/api/v1/learning/sprints/${encodeURIComponent(sprintId)}/assessment/${phase}/submit`,
         { method: "POST", body: JSON.stringify({ responses }) },
       ),
+    practiceSession: (sprintId: string) =>
+      request<{
+        concept_id: string; step: string; strategy: string; rationale: string;
+        item: { item_id: string; concept_id: string; question_type: string; stem: string; options: Array<{ key: string; text: string }> | null };
+        passed_steps: number; target_steps: number; remaining_concepts: string[];
+      }>(`/api/v1/learning/sprints/${encodeURIComponent(sprintId)}/practice/session`),
+    practiceAnswer: (sprintId: string, body: { item_id: string; response: string; confidence?: number }) =>
+      request<{
+        concept_id: string; correct: boolean | null; explanation: string;
+        step_passed: boolean; passed_steps: number; target_steps: number;
+        next_step: string; strategy: string; rationale: string;
+        practice_complete: boolean; sprint_phase: string;
+      }>(`/api/v1/learning/sprints/${encodeURIComponent(sprintId)}/practice/answer`, {
+        method: "POST", body: JSON.stringify(body),
+      }),
     transferItems: (sprintId: string) =>
       request<{ sprint_id: string; phase: string; items: AssessmentItem[] }>(
         `/api/v1/learning/sprints/${encodeURIComponent(sprintId)}/transfer/items`,

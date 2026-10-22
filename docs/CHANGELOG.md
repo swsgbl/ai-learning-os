@@ -1,3 +1,21 @@
+## M17-006 —— 定向练习作答闭环（微循环落地 targeted_practice）
+
+- **此前缺口**：targeted_practice 阶段是纯推进——微循环决策 API
+  （M16-003）存在但没有出题作答闭环。
+- **新端点**：GET /sprints/{id}/practice/session（最弱概念优先 +
+  域层 next_step 决策透出（策略+理由）+ 一道题，答案隔离）；
+  POST /sprints/{id}/practice/answer（判分落 practice attempt+事件，
+  返回解析（判分后可见）；答对推进步骤、答错同步骤重试；全部概念
+  5 步（first→recall→faded→independent→exit_ticket）通过 → 原子
+  推进 transfer_check）。
+- **策略单一事实源**：作答序→步骤序投影成 completed_steps 交
+  domain/practice_loop 裁决——API 层不做策略决定。
+- **M17-006b 生产实测修复**：无推导名概念的出题显示名从裸冒号后段
+  改为完整 concept_id——裸「having」被 LLM 当英语词出了语法题
+  （sql:having 完整 id 携带学科语境；推导路径的中文显示名不受影响）。
+- Web：PracticeRunner（单题流+策略说明+判分反馈带解析+下一题）。
+- 生产 E2E：答对推进/答错重试/概念轮转/解析反馈全链验证。
+
 ## M17-005 —— 迁移检验作答闭环（transfer_check 阶段落地）
 
 - **此前缺口**：transfer_check 阶段是纯推进（名存实空）——迁移证据

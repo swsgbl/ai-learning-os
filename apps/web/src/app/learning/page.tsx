@@ -251,6 +251,7 @@ function ContractCard({
   const [report, setReport] = useState<SprintReport | null>(null);
   const [busy, setBusy] = useState(false);
   const [assessing, setAssessing] = useState<"baseline" | "transfer" | "posttest" | null>(null);
+  const [practicing, setPracticing] = useState(false);
 
   const act = async (fn: () => Promise<unknown>, message: string) => {
     setBusy(true);
@@ -396,6 +397,11 @@ function ContractCard({
             开始前测
           </Button>
         )}
+        {sprint?.phase === "targeted_practice" && (
+          <Button size="sm" onClick={() => setPracticing(true)}>
+            开始定向练习
+          </Button>
+        )}
         {sprint?.phase === "transfer_check" && (
           <Button size="sm" onClick={() => setAssessing("transfer")}>
             开始迁移检验
@@ -433,6 +439,10 @@ function ContractCard({
         </div>
       )}
 
+      {practicing && sprint && sprint.phase === "targeted_practice" && (
+        <PracticeRunner sprintId={sprint.id} onDone={() => { setPracticing(false); onChanged(); }} onNotice={onNotice} />
+      )}
+
       {assessing && sprint && (
         <AssessmentRunner
           sprintId={sprint.id}
@@ -464,6 +474,120 @@ function ContractCard({
         </div>
       )}
     </Card>
+  );
+}
+
+function PracticeRunner({
+  sprintId,
+  onDone,
+  onNotice,
+}: {
+  sprintId: string;
+  onDone: () => void;
+  onNotice: (message: string) => void;
+}) {
+  // M17-006 定向练习：单题流（域层决策逐步）→ 判分反馈带解析 → 下一题
+  const [session, setSession] = useState<{
+    concept_id: string; step: string; strategy: string; rationale: string;
+    item: { item_id: string; question_type: string; stem: string; options: Array<{ key: string; text: string }> | null };
+    passed_steps: number; target_steps: number;
+  } | null>(null);
+  const [answer, setAnswer] = useState("");
+  const [confidence, setConfidence] = useState<number | null>(null);
+  const [feedback, setFeedback] = useState<{ correct: boolean | null; explanation: string; rationale: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  const loadNext = () => {
+    setAnswer("");
+    setConfidence(null);
+    setFeedback(null);
+    api.learning
+      .practiceSession(sprintId)
+      .then((s) => setSession(s))
+      .catch((cause) => {
+        onNotice(cause instanceof ApiError ? cause.message : "练习会话加载失败");
+        onDone();
+      });
+  };
+
+  useEffect(() => {
+    loadNext();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sprintId]);
+
+  const submit = async () => {
+    if (!session || !answer) return;
+    setBusy(true);
+    try {
+      const result = await api.learning.practiceAnswer(sprintId, {
+        item_id: session.item.item_id,
+        response: answer,
+        confidence: confidence ?? undefined,
+      });
+      setFeedback({ correct: result.correct, explanation: result.explanation, rationale: result.rationale });
+      if (result.practice_complete) {
+        onNotice(`定向练习完成（已推进「迁移检验」）`);
+        onDone();
+      }
+    } catch (cause) {
+      onNotice(cause instanceof ApiError ? cause.message : "提交失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  if (!session) return <p className="mt-3 text-xs text-muted">练习会话加载中…（答案服务端保管）</p>;
+
+  return (
+    <div className="mt-3 space-y-3 rounded border p-3">
+      <p className="text-xs font-medium">
+        定向练习 · {session.concept_id}（第 {session.passed_steps + 1}/{session.target_steps} 步 · {session.step}）
+      </p>
+      <p className="text-[11px] text-muted">策略：{session.strategy} —— {session.rationale}</p>
+      <div className="rounded bg-surface-2/50 p-3">
+        <p className="text-sm">{session.item.stem}</p>
+        <div className="mt-2 flex flex-wrap gap-2">
+          {(session.item.options ?? []).map((option) => (
+            <button
+              key={option.key}
+              type="button"
+              onClick={() => setAnswer(option.key)}
+              className={`rounded border px-3 py-1.5 text-sm ${answer === option.key ? "border-primary bg-primary/10" : ""}`}
+            >
+              {option.key}. {option.text}
+            </button>
+          ))}
+        </div>
+        <div className="mt-2 flex items-center gap-2 text-xs text-muted">
+          <span>信心：</span>
+          {[1, 2, 3, 4, 5].map((level) => (
+            <button
+              key={level}
+              type="button"
+              onClick={() => setConfidence(level)}
+              className={`rounded px-2 py-0.5 ${confidence === level ? "bg-primary/20" : ""}`}
+            >
+              {level}
+            </button>
+          ))}
+        </div>
+      </div>
+      {feedback ? (
+        <div className="rounded border p-2 text-xs">
+          <p className={feedback.correct ? "text-emerald-600" : "text-red-600"}>
+            {feedback.correct === true ? "答对（步骤推进）" : feedback.correct === null ? "未判分" : "答错（同步骤重试——看解析再试）"}
+          </p>
+          {feedback.explanation && <p className="mt-1 text-muted">解析：{feedback.explanation}</p>}
+          <Button size="sm" variant="outline" className="mt-2" onClick={loadNext}>
+            下一题
+          </Button>
+        </div>
+      ) : (
+        <Button size="sm" disabled={busy || !answer} onClick={submit}>
+          {busy ? "判分中…" : "提交（服务端判分）"}
+        </Button>
+      )}
+    </div>
   );
 }
 
