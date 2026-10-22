@@ -41,3 +41,6 @@ job；本机 SQLite 契约测试覆盖迁移 up/down 语义。
 | 黄金集扩充（延迟/迁移题、第二学科）与阈值校准 | — | not_executed（试点集已立；扩科属持续迭代） | 方案 Phase 7 持续项 |
 | 语音会话→学习事件闭环（close 落库统计摘要；隐私不存音频/全文） | M16-010 | pass（契约层；隐私边界断言） | `voice_live.py` close 路径、`test_learning_contract_api.py::test_top_level_learning_events_stream` |
 | 语音弱网/NAT/设备切换/打断重连分层验收 | — | not_executed（需运维显式执行——方案 Prompt 8 边界） | 待验收清单 |
+| Web 学习冲刺浏览器 E2E（生产真实 Chromium 全链） | M16-011 | pass（2026-10-22，ndtool.cn/aios：登录→建合同→确认→推进×5→后测 UI 作答 4 题+信心→提交 100 分→自动 report→报告增益 +100→复测队列 scheduled due +1d） | `artifacts/qa/e2e_01..13_*.png`（截图序列）；复测队列 API 复核 |
+| 生产 Web 镜像 API base 回归修复 | M16-011 | pass（m16-production-v2 构建漏 `AIOS_PUBLIC_API_BASE_URL`，bundle 烘死 127.0.0.1:8000——登录态页面全灭；v4 以 `=/aios` 重建后浏览器复核全链） | `infra/env.production-recovery`（tag v4）；本行即证据 |
+| 全新概念 Web 冷启动（合同→概念源头） | — | not_executed（缺口如实：generate-items 缺省取蓝图概念、蓝图缺省聚合题池——全新概念无源头，UI 生成按钮先于蓝图点击会 422（有错误提示非静默）；需目标→概念推导设计） | 设计缺口，非回归 |
