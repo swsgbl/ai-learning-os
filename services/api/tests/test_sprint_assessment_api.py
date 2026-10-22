@@ -375,7 +375,7 @@ def test_generate_items_then_blueprint_usable(sqlite_url, monkeypatch) -> None:
         def __init__(self, **kwargs: object) -> None:
             pass
 
-        def chat(self, messages: object, temperature: float = 0.0) -> str:
+        def chat(self, messages: object, temperature: float = 0.0, max_tokens: int = 1024) -> str:
             items = []
             for concept in ("c_select", "c_join"):
                 for index in range(4):  # 每概念 4 题（蓝图需 4）

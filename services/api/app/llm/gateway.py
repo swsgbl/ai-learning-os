@@ -229,6 +229,18 @@ class LlmGateway:
                     upstream = f"：{body['message'][:120]}"
             raise LlmUnavailable(f"LLM 端点 HTTP {status}{upstream}")
         try:
-            return str(body["choices"][0]["message"]["content"])
+            message = body["choices"][0]["message"]
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                return content
+            # M16-010c：thinking 模型（Ollama qwen3.5 实证）在 /v1 下
+            # content 为空、正文进 reasoning_content——空 content 回退取
+            # 之；纯 content 模型零行为漂移（有 content 恒走 content）
+            reasoning = message.get("reasoning_content")
+            if isinstance(reasoning, str) and reasoning.strip():
+                return reasoning
+            if isinstance(content, str):
+                return content  # 合法空串（保持原语义）
+            raise LlmUnavailable("LLM 响应缺少 choices[0].message.content")
         except (KeyError, IndexError, TypeError) as cause:
             raise LlmUnavailable("LLM 响应缺少 choices[0].message.content") from cause

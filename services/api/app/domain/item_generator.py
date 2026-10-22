@@ -138,7 +138,7 @@ def generate_objective_items(
         ),
     )
     try:
-        raw = gateway.chat(messages, temperature=0.3)
+        raw = gateway.chat(messages, temperature=0.3, max_tokens=4096)
     except LlmUnavailable as cause:
         raise LlmItemGenerationUnavailable(f"LLM 调用失败：{cause}") from cause
     parsed = _parse_json(raw)

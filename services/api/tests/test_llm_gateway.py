@@ -305,3 +305,44 @@ def test_is_local_endpoint_url_classifier() -> None:
     assert _is_local_endpoint_url("http://127.0.0.1:8000/v1")
     assert not _is_local_endpoint_url("https://api.deepseek.com/v1")
     assert not _is_local_endpoint_url("http://api-service:8000/v1")
+
+
+def test_chat_falls_back_to_reasoning_content_for_thinking_models() -> None:
+    """M16-010c：thinking 模型（Ollama qwen3.5 实证）content 空时回退
+    reasoning_content；有 content 恒走 content（零漂移）。"""
+
+    class _ReasoningTransport:
+        def post_json(self, url, *, headers, payload):
+            return 200, {
+                "choices": [
+                    {"message": {"content": "", "reasoning_content": "```json\n{\"items\": []}\n```"}}
+                ]
+            }
+
+    from app.llm.gateway import LlmGateway
+
+    gateway = LlmGateway(
+        endpoint="http://x",
+        api_key="k",
+        model="m",
+        transport=_ReasoningTransport(),
+    )
+    text = gateway.chat((ChatMessage(role="user", content="出题"),))
+    assert "items" in text
+
+
+def test_chat_prefers_content_when_both_present() -> None:
+    class _BothTransport:
+        def post_json(self, url, *, headers, payload):
+            return 200, {
+                "choices": [
+                    {"message": {"content": "正文", "reasoning_content": "思考"}}
+                ]
+            }
+
+    from app.llm.gateway import LlmGateway
+
+    gateway = LlmGateway(
+        endpoint="http://x", api_key="k", model="m", transport=_BothTransport()
+    )
+    assert gateway.chat((ChatMessage(role="user", content="q"),)) == "正文"
