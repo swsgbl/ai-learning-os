@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import random
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
@@ -42,6 +43,7 @@ from app.db.orm import (
 from app.domain.assessment_blueprint import (
     CandidateItem,
     build_blueprint,
+    is_objective_type,
 )
 from app.domain.concept_derivation import (
     ConceptDerivationUnavailable,
@@ -1357,6 +1359,9 @@ class ReviewOut(BaseModel):
     interval_days: int | None
     algorithm_version: str
     overdue: bool = False
+    # M17-002：attempt 后回传本次判分（提交后可见——不是答案泄露）；
+    # 其余端点缺省 None
+    last_correct: bool | None = None
 
 
 class ReviewAttemptRequest(BaseModel):
@@ -1480,6 +1485,83 @@ async def present_review(review_id: str, request: Request) -> ReviewOut:
     return _review_out(db_row)
 
 
+@router.get("/review-queue/{review_id}/item", response_model=AssessmentItemOut)
+async def review_queue_item(review_id: str, request: Request) -> AssessmentItemOut:
+    """取一道该概念的复习题（M17-002：复习作答闭环的出题环节）。
+
+    选题规则：owner+公共题池中该概念的客观题（可确定性判分）里，
+    优先**最近未做过**的（排除该概念最近 20 条 attempts 的 item），
+    随机取一；answer/explanation 绝不下发（答案隔离不变式）。无可用
+    题 → 409 如实（复习概念在题池无客观题——先为该概念生成题目）。
+    """
+    await require_user(request)
+    owner = current_owner_id(request)
+    row = await _owned_review(request, review_id)
+    async with request.app.state.sessionmaker() as session:
+        paper_query = select(PaperRow)
+        if owner is not None:
+            paper_query = paper_query.where(
+                (PaperRow.owner_id == owner) | (PaperRow.owner_id.is_(None))
+            )
+        paper_ids = [
+            paper.id
+            for paper in (await session.execute(paper_query)).scalars().all()
+        ]
+        questions = (
+            (
+                await session.execute(
+                    select(QuestionRow).where(QuestionRow.paper_id.in_(paper_ids))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        candidates = [
+            q
+            for q in questions
+            if row.concept_id in (q.knowledge if isinstance(q.knowledge, list) else [])
+            and is_objective_type(q.question_type)
+        ]
+        if not candidates:
+            raise HTTPException(
+                status_code=409,
+                detail=f"概念 {row.concept_id} 在题池无客观题——先为该概念生成题目",
+            )
+        recent_item_ids = set(
+            (
+                await session.execute(
+                    select(LearningAttemptRow.item_id)
+                    .where(
+                        (LearningAttemptRow.concept_id == row.concept_id)
+                        & (LearningAttemptRow.owner_id == row.owner_id)
+                    )
+                    .order_by(LearningAttemptRow.created_at.desc())
+                    .limit(20)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        fresh = [q for q in candidates if q.id not in recent_item_ids]
+        pool = fresh or candidates
+        question = random.choice(pool)
+        options: list[dict] | None = None
+        if isinstance(question.options, list):
+            options = [
+                {"key": opt["key"], "text": opt["text"]}
+                for opt in question.options
+                if isinstance(opt, dict) and "key" in opt
+            ]
+        return AssessmentItemOut(
+            item_id=question.id,
+            concept_id=row.concept_id,
+            question_type=question.question_type,
+            stem=question.stem,
+            options=options,
+            score=float(question.score or 1.0),
+        )
+
+
 @router.post("/review-queue/{review_id}/attempt", response_model=ReviewOut)
 async def attempt_review(
     review_id: str, payload: ReviewAttemptRequest, request: Request
@@ -1560,7 +1642,9 @@ async def attempt_review(
                 )
             )
             await session.commit()
-    return _review_out(db_row)
+    result = _review_out(db_row)
+    result.last_correct = correct
+    return result
 
 
 def _review_out(row: LearningReviewRow, *, now: datetime | None = None) -> ReviewOut:
