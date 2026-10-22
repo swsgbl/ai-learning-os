@@ -1,26 +1,29 @@
-"""M16-005 间隔复习调度（升级方案 Phase 6 / Prompt 5）。
+"""M16-005 间隔复习调度（升级方案 Phase 6 / Prompt 5）；M17-003 FSRS 接入。
 
-FSRS adapter 前的 MVP 调度器（方案明确：FSRS 只决定复习时机，不定义
-掌握；复习完成必须来自真实作答）：
+两个调度器（settings.review_algorithm 选择，algorithm_version 随行记录
+——复习数据可重算、算法版本清楚）：
 
-- 默认候选间隔 +1/+3/+7/+14/+30 天（方案 Phase 6 模板）；
-- 表现调整：独立答对且信心≥4 → 间隔跳档（间隔增长系数 1.6）；答错 →
-  回到最短档并标 at_risk 触发定向再教学（与掌握度 at_risk 联动）；
-- ReviewScheduler 协议留给 FSRS adapter 接入（py-fsrs 依赖与 license
-  审查后——见 LEARNING_EVIDENCE_STATUS not_executed 项）；
-- 状态机：scheduled → presented → attempted → completed；只有
-  attempted（真实作答判分）才可 completed——「看了」不算。
+- ``fsrs``（缺省，py-fsrs 6.x，MIT——license 审查 2026-10-22 通过）：
+  记忆状态（stability/difficulty）跨轮持久在 learning_reviews.
+  memory_state，逐次演化；正确性+信心映射 FSRS rating；
+- ``intervals-mvp``（M16-005 模板档 +1/3/7/14/30 + 表现调整）——保留
+  可回退；无 memory_state 语义。
+
+方案边界不变：FSRS 只决定复习时机，不定义掌握（掌握由 attempts 证据
+重算）；复习完成必须来自真实作答。状态机 scheduled → presented →
+attempted → completed；只有 attempted（真实作答判分）才可 completed。
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 #: 默认间隔档（天）——方案 Phase 6 模板；表现可跨档
 DEFAULT_INTERVALS_DAYS: tuple[int, ...] = (1, 3, 7, 14, 30)
 #: 独立答对且高信心 → 间隔增长系数（跳档增长）
 ADVANCE_FACTOR = 1.6
 ALGORITHM_VERSION = "intervals-mvp-1"
+FSRS_ALGORITHM_VERSION = "fsrs-py-6.3"
 
 REVIEW_STATUSES: tuple[str, ...] = ("scheduled", "presented", "attempted", "completed")
 
@@ -44,6 +47,8 @@ class NextReview:
     due_in_days: int
     algorithm_version: str = ALGORITHM_VERSION
     note: str = ""
+    #: FSRS 调度器的记忆状态（Card.to_dict）——跨轮持久；模板调度器 None
+    memory_state: dict | None = None
 
 
 def next_interval_days(
@@ -86,6 +91,64 @@ def next_interval_days(
         note="独立答对" + ("（高信心跳档）" if high_confidence else ""),
     )
 
+
+
+# ---------------------------------------------------------------- FSRS 调度器（M17-003）
+
+
+def _rating_from_outcome(outcome: ReviewOutcome) -> int:
+    """作答结果 → FSRS rating（1=Again 2=Hard 3=Good 4=Easy）。
+
+    答错=Again；答对按信心分档（低信心 Hard、中 Good、高信心 Easy）。
+    FSRS rating 是复习时机算法的输入，不是掌握度结论。
+    """
+    if outcome.correct is not True:
+        return 1  # Again
+    confidence = outcome.confidence or 3
+    if confidence <= 2:
+        return 2  # Hard
+    if confidence >= 5:
+        return 4  # Easy
+    return 3  # Good
+
+
+def next_review_fsrs(
+    memory_state: dict | None,
+    outcome: ReviewOutcome,
+    *,
+    last_review_at: datetime | None = None,
+    now: datetime | None = None,
+) -> NextReview:
+    """FSRS 调度：memory_state（Card.to_dict）逐次演化 + 下一轮间隔。
+
+    - 未判分 → 不演化不排期（诚实边界，与模板调度器一致）；
+    - memory_state 为空 = 新卡（首复习）；
+    - 返回的 memory_state 由调用方持久（learning_reviews.memory_state），
+      下一轮 from_dict 恢复——记忆状态跨轮追踪是 FSRS 的核心价值。
+    """
+    from fsrs import Card, Rating, Scheduler
+
+    if outcome.correct is None:
+        return NextReview(
+            concept_id="",
+            due_in_days=0,
+            note="未判分——不排期（completed 需真实判分作答）",
+        )
+    current = now or datetime.now(tz=timezone.utc)
+    card = Card.from_dict(memory_state) if memory_state else Card()
+    card, _log = Scheduler().review_card(
+        card,
+        Rating(_rating_from_outcome(outcome)),
+        review_datetime=last_review_at or current,
+    )
+    interval_days = max(1, round((card.due - current).total_seconds() / 86400))
+    return NextReview(
+        concept_id="",
+        due_in_days=interval_days,
+        algorithm_version=FSRS_ALGORITHM_VERSION,
+        note=f"fsrs（stability={card.stability or 0:.2f} difficulty={card.difficulty or 0:.2f}）",
+        memory_state=card.to_dict(),
+    )
 
 def initial_schedule(
     concept_ids: list[str], now: datetime, intervals: tuple[int, ...] = DEFAULT_INTERVALS_DAYS

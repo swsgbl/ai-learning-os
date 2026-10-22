@@ -29,7 +29,7 @@ job；本机 SQLite 契约测试覆盖迁移 up/down 语义。
 | 复习调度域层（间隔模板/表现调整/诚实状态机） | M16-005 | pass（2026-10-22，8 测试） | `services/api/tests/test_review_schedule.py` |
 | 复习闭环 API（建队幂等/present/attempt 判分/滚动排期） | M16-005 | pass（SQLite 文件库契约） | `test_sprint_assessment_api.py::test_follow_up_review_lifecycle` |
 | 判分题型解析差异修复（normalize_type 单一事实源回归） | M16-004b | pass（essay/unknown/alias 三态收录测试） | `test_assessment_blueprint.py::test_essay_and_unknown_types_excluded` |
-| FSRS 真实算法接入（py-fsrs 依赖与 license 审查） | — | not_executed（MVP 调度器已留 adapter 协议） | `domain/review_schedule.py` 注释 |
+| FSRS 真实算法接入（py-fsrs 6.3.2，MIT license 审查 2026-10-22 通过） | M17-003 | pass（缺省调度器切 fsrs：记忆状态 stability/difficulty 跨轮持久（memory_state 列 0038 + 滚动排期传递）；algorithm_version 随行记录可溯；生产 live：复习作答返回 fsrs-py-6.3，答错回最短档 1 天；模板调度器 intervals-mvp 保留可回退并有锁定回归） | `test_review_schedule.py`（FSRS 4 测试）+ `test_review_attempt_uses_fsrs_scheduler`（algorithm_version/memory_state 落库断言） |
 | Web 学习工作台（合同/蓝图/前后测作答/报告/掌握度/复习面板） | M16-006 | pass（typecheck/lint/build + 334 测试） | `apps/web/src/app/learning/page.tsx` |
 | 前后测提交原子化（并发双提交仅一方生效） | M16-006b | pass（重复提交 409 回归） | `test_sprint_assessment_api.py`（dup 提交路径） |
 | 客观题生成域层（schema/去重/数量上限校验；混合批丢弃计数） | M16-007 | pass（2026-10-22，14 测试，stub 网关） | `services/api/tests/test_item_generator.py` |

@@ -813,6 +813,9 @@ class LearningReviewRow(Base):
     algorithm_version: Mapped[str] = mapped_column(
         String(32), default="intervals-mvp-1", server_default="intervals-mvp-1"
     )
+    #: M17-003 FSRS 记忆状态（Card.to_dict——stability/difficulty 跨轮
+    #: 演化）；模板调度器（intervals-mvp）恒 NULL
+    memory_state: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 

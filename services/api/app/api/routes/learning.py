@@ -66,6 +66,7 @@ from app.domain.review_schedule import (
     ReviewOutcome,
     ReviewScheduleError,
     next_interval_days,
+    next_review_fsrs,
     review_status_transition,
 )
 from app.domain.sprint_state import (
@@ -1614,16 +1615,25 @@ async def attempt_review(
         )
         session.add(attempt)
         await session.flush()
-        nxt = next_interval_days(
-            row.interval_days,
-            ReviewOutcome(correct=correct, confidence=payload.confidence, independent=True),
-        )
+        # M17-003：调度器按部署选择（fsrs=记忆状态演化持久 | intervals-mvp
+        # =模板档）；algorithm_version 随行记录（复习数据可重算，算法可溯）
+        outcome = ReviewOutcome(correct=correct, confidence=payload.confidence, independent=True)
+        if get_settings().review_algorithm == "fsrs":
+            nxt = next_review_fsrs(
+                row.memory_state if isinstance(row.memory_state, dict) else None,
+                outcome,
+                last_review_at=now,
+            )
+        else:
+            nxt = next_interval_days(row.interval_days, outcome)
         db_row = await session.get(LearningReviewRow, row.id)
         assert db_row is not None
         db_row.status = review_status_transition(after_attempt, "completed")
         db_row.attempt_id = attempt.id
         db_row.interval_days = nxt.due_in_days
         db_row.due_at = now + timedelta(days=nxt.due_in_days)
+        db_row.algorithm_version = nxt.algorithm_version
+        db_row.memory_state = nxt.memory_state
         await session.commit()
         await session.refresh(db_row)
         # completed 后创建下一轮 scheduled 记录（滚动复习）
@@ -1638,6 +1648,8 @@ async def attempt_review(
                     status="scheduled",
                     due_at=db_row.due_at,
                     interval_days=db_row.interval_days,
+                    algorithm_version=db_row.algorithm_version,
+                    memory_state=db_row.memory_state,  # FSRS 记忆状态跨轮传递
                     created_at=now,
                 )
             )
