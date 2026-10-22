@@ -193,6 +193,13 @@ export const api = {
       request<LearningSprint[]>(`/api/v1/learning/contracts/${encodeURIComponent(contractId)}/sprints`),
     presentReview: (reviewId: string) =>
       request<ReviewQueueItem>(`/api/v1/learning/review-queue/${encodeURIComponent(reviewId)}/present`, { method: "POST" }),
+    reviewItem: (reviewId: string) =>
+      request<AssessmentItem>(`/api/v1/learning/review-queue/${encodeURIComponent(reviewId)}/item`),
+    attemptReview: (reviewId: string, body: { item_id: string; response: string; confidence?: number }) =>
+      request<ReviewQueueItem>(`/api/v1/learning/review-queue/${encodeURIComponent(reviewId)}/attempt`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      }),
     advanceSprint: (id: string, toPhase: string) =>
       request<LearningSprint>(`/api/v1/learning/sprints/${encodeURIComponent(id)}/advance`, {
         method: "POST",

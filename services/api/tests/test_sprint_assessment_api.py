@@ -565,3 +565,48 @@ def test_cold_start_generate_derives_concepts(sqlite_url, monkeypatch) -> None:
         monkeypatch.delenv("LLM_API_KEY", raising=False)
         monkeypatch.delenv("LLM_MODEL", raising=False)
         get_settings.cache_clear()
+
+
+def test_review_queue_item_serves_isolated_question(sqlite_url) -> None:
+    """M17-002 复习出题端点：present 后取题——概念匹配/客观题/答案隔离。"""
+    with TestClient(create_app(sqlite_url)) as client:
+        _seed_pool(client, sqlite_url)
+        sprint_id = _make_sprint_ready_for_baseline(client)
+        baseline = client.get(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment", params={"phase": "baseline"}
+        ).json()["items"]
+        client.post(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment/baseline/submit",
+            json={"responses": [{"item_id": i["item_id"], "response": "A"} for i in baseline]},
+        )
+        for phase in ("concept_map_review", "plan_confirmed", "learning",
+                      "targeted_practice", "transfer_check", "posttest"):
+            client.post(f"/api/v1/learning/sprints/{sprint_id}/advance", json={"to_phase": phase})
+        posttest = client.get(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment", params={"phase": "posttest"}
+        ).json()["items"]
+        client.post(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment/posttest/submit",
+            json={"responses": [{"item_id": i["item_id"], "response": "A"} for i in posttest]},
+        )
+        reviews = client.post(f"/api/v1/learning/sprints/{sprint_id}/follow-up/schedule").json()
+
+        review_id = reviews[0]["id"]
+        client.post(f"/api/v1/learning/review-queue/{review_id}/present")
+
+        item = client.get(f"/api/v1/learning/review-queue/{review_id}/item")
+        assert item.status_code == 200, item.text
+        body = item.json()
+        # 概念匹配 + 客观题 + 答案隔离（answer/explanation 绝不下发）
+        assert body["concept_id"] == reviews[0]["concept_id"]
+        assert body["options"] and len(body["options"]) >= 2
+        assert "answer" not in body and "explanation" not in body
+        assert "answer" not in item.text
+
+        # 该题可直接 attempt（概念匹配客观题）→ completed
+        attempted = client.post(
+            f"/api/v1/learning/review-queue/{review_id}/attempt",
+            json={"item_id": body["item_id"], "response": body["options"][0]["key"], "confidence": 3},
+        )
+        assert attempted.status_code == 200, attempted.text
+        assert attempted.json()["status"] == "completed"

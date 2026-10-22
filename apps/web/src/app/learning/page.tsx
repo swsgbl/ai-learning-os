@@ -7,6 +7,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, ApiError } from "@/lib/api";
 import type {
+  AssessmentItem,
   BlueprintInfo,
   LearningContract,
   LearningSprint,
@@ -587,36 +588,122 @@ function ReviewPanel({
   onChanged: () => void;
   onNotice: (message: string) => void;
 }) {
-  if (reviews === null || reviews.length === 0) return null;
+  // M17-002：复习作答会话（present → 取题 → 作答 → 服务端判分 → 滚动排期）
+  const [session, setSession] = useState<{
+    reviewId: string;
+    conceptId: string;
+    item: AssessmentItem;
+    answer: string;
+    confidence: number | null;
+  } | null>(null);
+  const [lastResult, setLastResult] = useState<{ conceptId: string; correct: boolean | null; intervalDays: number | null } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  if (reviews === null || (reviews.length === 0 && !session)) return null;
+
+  const startReview = async (reviewId: string, conceptId: string) => {
+    setBusy(true);
+    try {
+      await api.learning.presentReview(reviewId);
+      const item = await api.learning.reviewItem(reviewId);
+      setSession({ reviewId, conceptId, item, answer: "", confidence: null });
+      setLastResult(null);
+    } catch (cause) {
+      onNotice(cause instanceof ApiError ? cause.message : "取复习题失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const submitReview = async () => {
+    if (!session || !session.answer) return;
+    setBusy(true);
+    try {
+      const result = await api.learning.attemptReview(session.reviewId, {
+        item_id: session.item.item_id,
+        response: session.answer,
+        confidence: session.confidence ?? undefined,
+      });
+      setLastResult({
+        conceptId: session.conceptId,
+        correct: result.last_correct ?? null,
+        intervalDays: result.interval_days,
+      });
+      setSession(null);
+      onChanged();
+    } catch (cause) {
+      onNotice(cause instanceof ApiError ? cause.message : "提交失败");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Card className="p-4">
       <p className="text-sm font-medium">间隔复习队列（复习完成 = 真实作答判分）</p>
-      <ul className="mt-2 space-y-1 text-xs">
-        {reviews.map((r) => (
-          <li key={r.id} className="flex items-center gap-2">
-            <Badge tone={r.overdue ? "bad" : "mute"}>{r.overdue ? "已到期" : "待复习"}</Badge>
-            <span>{r.concept_id}</span>
-            <span className="text-muted">
-              {new Date(r.due_at).toLocaleString()} · 间隔 {r.interval_days ?? "—"} 天 · {r.status}
-            </span>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={async () => {
-                try {
-                  await api.learning.presentReview(r.id);
-                  onNotice("已展示复习（作答入口在练习页——完成=服务端判分作答）");
-                  onChanged();
-                } catch (cause) {
-                  onNotice(cause instanceof ApiError ? cause.message : "操作失败");
-                }
-              }}
-            >
-              标记已展示
-            </Button>
-          </li>
-        ))}
-      </ul>
+      {lastResult && (
+        <p className="mt-2 text-xs">
+          <Badge tone={lastResult.correct === true ? "good" : lastResult.correct === null ? "mute" : "bad"}>
+            {lastResult.correct === true ? "复习答对" : "复习答错"}
+          </Badge>{" "}
+          <span className="text-muted">
+            {lastResult.conceptId} · 下一轮间隔 {lastResult.intervalDays ?? "—"} 天（失败回最短档）
+          </span>
+        </p>
+      )}
+      {session ? (
+        <div className="mt-2 rounded border p-3">
+          <p className="text-sm">{session.item.stem}</p>
+          <p className="mt-1 text-[11px] text-muted">
+            复习 · 概念 {session.conceptId} · {session.item.question_type}
+          </p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {(session.item.options ?? []).map((option) => (
+              <button
+                key={option.key}
+                type="button"
+                onClick={() => setSession((prev) => (prev ? { ...prev, answer: option.key } : prev))}
+                className={`rounded border px-3 py-1.5 text-sm ${
+                  session.answer === option.key ? "border-primary bg-primary/10" : ""
+                }`}
+              >
+                {option.key}. {option.text}
+              </button>
+            ))}
+          </div>
+          <div className="mt-2 flex items-center gap-2 text-xs text-muted">
+            <span>作答信心：</span>
+            {[1, 2, 3, 4, 5].map((level) => (
+              <button
+                key={level}
+                type="button"
+                onClick={() => setSession((prev) => (prev ? { ...prev, confidence: level } : prev))}
+                className={`rounded px-2 py-0.5 ${session.confidence === level ? "bg-primary/20" : ""}`}
+              >
+                {level}
+              </button>
+            ))}
+          </div>
+          <Button size="sm" className="mt-2" disabled={busy || !session.answer} onClick={submitReview}>
+            {busy ? "判分中…" : "提交复习作答（服务端判分）"}
+          </Button>
+        </div>
+      ) : (
+        <ul className="mt-2 space-y-1 text-xs">
+          {reviews.map((r) => (
+            <li key={r.id} className="flex items-center gap-2">
+              <Badge tone={r.overdue ? "bad" : "mute"}>{r.overdue ? "已到期" : "待复习"}</Badge>
+              <span>{r.concept_id}</span>
+              <span className="text-muted">
+                {new Date(r.due_at).toLocaleString()} · 间隔 {r.interval_days ?? "—"} 天 · {r.status}
+              </span>
+              <Button size="sm" variant="outline" disabled={busy} onClick={() => startReview(r.id, r.concept_id)}>
+                开始复习
+              </Button>
+            </li>
+          ))}
+        </ul>
+      )}
     </Card>
   );
 }

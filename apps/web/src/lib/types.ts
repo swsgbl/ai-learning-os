@@ -641,4 +641,6 @@ export interface ReviewQueueItem {
   due_at: string;
   interval_days: number | null;
   overdue: boolean;
+  /** attempt 后回传本次判分（提交后可见）；其余端点缺省 */
+  last_correct?: boolean | null;
 }
