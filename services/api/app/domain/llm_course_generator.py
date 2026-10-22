@@ -40,13 +40,23 @@ class LlmCourseConfig:
     endpoint: str | None
     api_key: str | None
     model: str | None
+    # M16-010b：部署超时（LLM_TIMEOUT_SECONDS；None = 网关默认 30s）
+    timeout_seconds: float | None = None
 
 
 def generate_course_plan_with_llm(goal: str, config: LlmCourseConfig) -> dict:
     """goal → LLM → plan dict（与 DAG 版同形态；dag_version=0 标记动态）。"""
     if not (config.endpoint and config.api_key and config.model):
         raise LlmCourseUnavailable("未配置 LLM（个人密钥或服务端网关）——无法动态生成课程")
-    gateway = LlmGateway(endpoint=config.endpoint, api_key=config.api_key, model=config.model)
+    from app.core.config import get_settings
+
+    gateway = LlmGateway(
+        endpoint=config.endpoint,
+        api_key=config.api_key,
+        model=config.model,
+        timeout_seconds=config.timeout_seconds or 30.0,
+        ollama_native=get_settings().llm_provider == "ollama",
+    )
     messages = (
         ChatMessage(role="system", content=_SYSTEM_PROMPT),
         ChatMessage(role="user", content=f"学习目标：{goal}"),

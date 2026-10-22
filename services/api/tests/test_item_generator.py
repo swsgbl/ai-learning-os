@@ -82,7 +82,7 @@ def test_generation_via_stub_gateway(monkeypatch: pytest.MonkeyPatch) -> None:
         def __init__(self, **kwargs: object) -> None:
             pass
 
-        def chat(self, messages: object, temperature: float = 0.0) -> str:
+        def chat(self, messages: object, temperature: float = 0.0, max_tokens: int = 1024) -> str:
             return jsonlib.dumps(payload, ensure_ascii=False)
 
     monkeypatch.setattr(gw, "LlmGateway", _StubGateway)
@@ -103,7 +103,7 @@ def test_unparseable_output_raises(monkeypatch: pytest.MonkeyPatch) -> None:
         def __init__(self, **kwargs: object) -> None:
             pass
 
-        def chat(self, messages: object, temperature: float = 0.0) -> str:
+        def chat(self, messages: object, temperature: float = 0.0, max_tokens: int = 1024) -> str:
             return "不是 JSON"
 
     monkeypatch.setattr(ig, "LlmGateway", _BadGateway)
@@ -125,7 +125,7 @@ def test_all_invalid_items_raises(monkeypatch: pytest.MonkeyPatch) -> None:
         def __init__(self, **kwargs: object) -> None:
             pass
 
-        def chat(self, messages: object, temperature: float = 0.0) -> str:
+        def chat(self, messages: object, temperature: float = 0.0, max_tokens: int = 1024) -> str:
             return jsonlib.dumps({"items": [{"bogus": True}]}, ensure_ascii=False)
 
     monkeypatch.setattr(ig, "LlmGateway", _AllBadGateway)

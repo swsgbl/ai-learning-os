@@ -131,7 +131,11 @@ async def _generate_with_llm_fallback(request: Request, goal: str) -> dict:
     import asyncio
 
     return await asyncio.to_thread(
-        generate_course_plan_with_llm, goal, LlmCourseConfig(endpoint, api_key, model)
+        generate_course_plan_with_llm,
+        goal,
+        LlmCourseConfig(
+            endpoint, api_key, model, timeout_seconds=s.llm_timeout_seconds
+        ),
     )
 
 

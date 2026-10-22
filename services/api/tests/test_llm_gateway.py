@@ -305,3 +305,72 @@ def test_is_local_endpoint_url_classifier() -> None:
     assert _is_local_endpoint_url("http://127.0.0.1:8000/v1")
     assert not _is_local_endpoint_url("https://api.deepseek.com/v1")
     assert not _is_local_endpoint_url("http://api-service:8000/v1")
+
+
+def test_chat_falls_back_to_reasoning_content_for_thinking_models() -> None:
+    """M16-010c：thinking 模型（Ollama qwen3.5 实证）content 空时回退
+    reasoning_content；有 content 恒走 content（零漂移）。"""
+
+    class _ReasoningTransport:
+        def post_json(self, url, *, headers, payload):
+            return 200, {
+                "choices": [
+                    {"message": {"content": "", "reasoning_content": "```json\n{\"items\": []}\n```"}}
+                ]
+            }
+
+    from app.llm.gateway import LlmGateway
+
+    gateway = LlmGateway(
+        endpoint="http://x",
+        api_key="k",
+        model="m",
+        transport=_ReasoningTransport(),
+    )
+    text = gateway.chat((ChatMessage(role="user", content="出题"),))
+    assert "items" in text
+
+
+def test_chat_prefers_content_when_both_present() -> None:
+    class _BothTransport:
+        def post_json(self, url, *, headers, payload):
+            return 200, {
+                "choices": [
+                    {"message": {"content": "正文", "reasoning_content": "思考"}}
+                ]
+            }
+
+    from app.llm.gateway import LlmGateway
+
+    gateway = LlmGateway(
+        endpoint="http://x", api_key="k", model="m", transport=_BothTransport()
+    )
+    assert gateway.chat((ChatMessage(role="user", content="q"),)) == "正文"
+
+
+def test_chat_ollama_native_mode() -> None:
+    """M16-010d：ollama_native=True 走 /api/chat + think:false 并解包
+    message.content（/v1 thinking 双空实测的解法）。"""
+
+    class _NativeTransport:
+        def __init__(self) -> None:
+            self.url = ""
+
+        def post_json(self, url, *, headers, payload):
+            self.url = url
+            assert payload["think"] is False and payload["stream"] is False
+            return 200, {"message": {"content": "{\"items\": []}"}}
+
+    from app.llm.gateway import LlmGateway
+
+    transport = _NativeTransport()
+    gateway = LlmGateway(
+        endpoint="http://ollama:11435/v1",
+        api_key="k",
+        model="m",
+        transport=transport,
+        ollama_native=True,
+    )
+    text = gateway.chat((ChatMessage(role="user", content="出题"),))
+    assert text == '{"items": []}'
+    assert transport.url.endswith("/api/chat")  # /v1 剥离换 native 面

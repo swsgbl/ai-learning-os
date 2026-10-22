@@ -145,6 +145,11 @@ class LlmGateway:
         transport: Transport | None = None,
         num_ctx: int | None = None,
         timeout_seconds: float | None = None,
+        # M16-010d：Ollama native /api/chat 模式（think:false）——
+        # /v1 下 qwen3.5 thinking 模型 content/reasoning 双空（思考
+        # 吃满预算），native 关思考 0.1s 出正文（实测）；仅在显式
+        # 开启时走 native（OpenAI 兼容契约面零漂移）
+        ollama_native: bool = False,
     ) -> None:
         if not endpoint or not api_key or not model:
             raise ValueError("LLM gateway 需要 endpoint / api_key / model 全部配置")
@@ -166,6 +171,7 @@ class LlmGateway:
             raise ValueError(
                 f"LLM gateway timeout_seconds 必须是 >0 的数值: {timeout_seconds!r}"
             )
+        self._ollama_native = ollama_native
         self._endpoint = endpoint.rstrip("/")
         self._api_key = api_key
         self._model = model
@@ -213,6 +219,23 @@ class LlmGateway:
             "Authorization": f"Bearer {self._api_key}",
             "Content-Type": "application/json",
         }
+        if self._ollama_native:
+            # native /api/chat：think:false 关闭思考（payload 形态切换）
+            base = self._endpoint.rstrip("/").removesuffix("/v1")
+            native_payload = {
+                "model": self._model,
+                "messages": payload["messages"],
+                "stream": False,
+                "think": False,
+            }
+            status, body = self._transport.post_json(
+                f"{base}/api/chat", headers=headers, payload=native_payload
+            )
+            if status == 200 and isinstance(body, dict):
+                message = body.get("message")
+                if isinstance(message, dict) and isinstance(message.get("content"), str):
+                    return message["content"]
+            raise LlmUnavailable(f"LLM 端点 HTTP {status}（native）")
         status, body = self._transport.post_json(
             f"{self._endpoint}/chat/completions", headers=headers, payload=payload
         )
@@ -229,6 +252,18 @@ class LlmGateway:
                     upstream = f"：{body['message'][:120]}"
             raise LlmUnavailable(f"LLM 端点 HTTP {status}{upstream}")
         try:
-            return str(body["choices"][0]["message"]["content"])
+            message = body["choices"][0]["message"]
+            content = message.get("content")
+            if isinstance(content, str) and content.strip():
+                return content
+            # M16-010c：thinking 模型（Ollama qwen3.5 实证）在 /v1 下
+            # content 为空、正文进 reasoning_content——空 content 回退取
+            # 之；纯 content 模型零行为漂移（有 content 恒走 content）
+            reasoning = message.get("reasoning_content")
+            if isinstance(reasoning, str) and reasoning.strip():
+                return reasoning
+            if isinstance(content, str):
+                return content  # 合法空串（保持原语义）
+            raise LlmUnavailable("LLM 响应缺少 choices[0].message.content")
         except (KeyError, IndexError, TypeError) as cause:
             raise LlmUnavailable("LLM 响应缺少 choices[0].message.content") from cause
