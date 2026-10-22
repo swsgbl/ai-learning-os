@@ -12,6 +12,7 @@ import math
 from collections.abc import Callable, Iterable, Sequence
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import func, or_, select
@@ -90,6 +91,21 @@ def _exam_record(
     )
 
 
+def _angles_from_json(data: Any) -> Angles:
+    """题库 JSON -> Angles；缺键/空值容错为空占位（生成题无三角度
+    分析——如实留空，不虚构角度内容）。M16-012b 回归修复：客观题
+    生成器入库的题 angles 为空 dict，解包构造曾使 /papers 全 500。
+    """
+    if not isinstance(data, dict):
+        return Angles(concept="", method="", mistake="", variant="")
+    return Angles(
+        concept=str(data.get("concept", "")),
+        method=str(data.get("method", "")),
+        mistake=str(data.get("mistake", "")),
+        variant=str(data.get("variant", "")),
+    )
+
+
 def _paper_from_rows(row: PaperRow, question_rows) -> Paper:
     """行 -> Paper 域对象纯构造（list_papers 批量与 get_paper 单卷共用）。"""
     return Paper(
@@ -115,7 +131,7 @@ def _paper_from_rows(row: PaperRow, question_rows) -> Paper:
                 ),
                 answer=question.answer,
                 explanation=question.explanation,
-                angles=Angles(**question.angles),
+                angles=_angles_from_json(question.angles),
                 knowledge=tuple(question.knowledge),
                 score=question.score,
                 difficulty=question.difficulty,

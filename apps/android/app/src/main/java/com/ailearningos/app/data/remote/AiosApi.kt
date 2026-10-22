@@ -176,4 +176,34 @@ interface AiosApi {
 
     @GET("api/v1/audit")
     suspend fun audit(@Query("limit") limit: Int): List<AuditEntryResponse>
+
+    // ---------- M16-012 学习冲刺业务（Web 学习工作台的 App 面板） ----------
+
+    @GET("api/v1/learning/contracts")
+    suspend fun learningContracts(): List<LearningContractDto>
+
+    @POST("api/v1/learning/contracts/{contract_id}/confirm")
+    suspend fun confirmLearningContract(@Path("contract_id") contractId: String): LearningContractDto
+
+    @GET("api/v1/learning/contracts/{contract_id}/sprints")
+    suspend fun contractSprints(@Path("contract_id") contractId: String): List<LearningSprintDto>
+
+    @POST("api/v1/learning/sprints/{sprint_id}/advance")
+    suspend fun advanceSprint(
+        @Path("sprint_id") sprintId: String,
+        @Body body: AdvanceSprintRequestDto,
+    ): LearningSprintDto
+
+    @GET("api/v1/learning/sprints/{sprint_id}/assessment")
+    suspend fun sprintAssessment(
+        @Path("sprint_id") sprintId: String,
+        @Query("phase") phase: String,
+    ): AssessmentResponseDto
+
+    @POST("api/v1/learning/sprints/{sprint_id}/assessment/{phase}/submit")
+    suspend fun submitSprintAssessment(
+        @Path("sprint_id") sprintId: String,
+        @Path("phase") phase: String,
+        @Body body: AssessmentSubmitRequestDto,
+    ): AssessmentResultDto
 }
