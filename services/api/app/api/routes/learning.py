@@ -43,6 +43,10 @@ from app.domain.assessment_blueprint import (
     CandidateItem,
     build_blueprint,
 )
+from app.domain.concept_derivation import (
+    ConceptDerivationUnavailable,
+    derive_concepts_from_outcomes,
+)
 from app.domain.grading import grade_answer
 from app.domain.item_generator import (
     LlmItemGenerationUnavailable,
@@ -1628,7 +1632,20 @@ async def generate_items_for_contract(
     if contract.confirmed_at is None:
         raise HTTPException(status_code=409, detail="合同未确认：先 /confirm")
 
-    # 概念集：请求指定，缺省取蓝图概念
+    # LLM 来源（BYOK active > 全局——与课程生成同款解析；M17-001 起概念
+    # 推导与出题共用同一配置）
+    from app.api.routes.me_ai_keys import resolve_user_llm_config
+
+    s = get_settings()
+    endpoint, api_key, model = s.llm_endpoint, s.llm_api_key, s.llm_model
+    personal = await resolve_user_llm_config(request.app, current_owner_id(request))
+    if personal:
+        endpoint = personal["endpoint"] or endpoint
+        api_key = personal["api_key"]
+        model = personal["model"] or model
+
+    # 概念集三级缺省（M17-001 冷启动）：请求指定 → 蓝图概念 →
+    # 合同能力目标 LLM 推导（此前全新概念无源头——生成 422 死锁）
     async with request.app.state.sessionmaker() as session:
         concept_ids = set(payload.concepts)
         if not concept_ids:
@@ -1644,24 +1661,32 @@ async def generate_items_for_contract(
                 .all()
             )
             concept_ids = set(rows)
+        derived_names: dict[str, str] = {}
         if not concept_ids:
-            raise HTTPException(
-                status_code=422,
-                detail="无概念来源：传 concepts 或先构建蓝图",
-            )
-        # 显示名（供 LLM 出题语境）：concept_id 冒号前段 + 后段
-        concepts = {cid.split(":", 1)[-1]: cid for cid in sorted(concept_ids)}
-
-    # LLM 来源（BYOK active > 全局——与课程生成同款解析）
-    from app.api.routes.me_ai_keys import resolve_user_llm_config
-
-    s = get_settings()
-    endpoint, api_key, model = s.llm_endpoint, s.llm_api_key, s.llm_model
-    personal = await resolve_user_llm_config(request.app, current_owner_id(request))
-    if personal:
-        endpoint = personal["endpoint"] or endpoint
-        api_key = personal["api_key"]
-        model = personal["model"] or model
+            outcomes = [
+                item.get("statement", "")
+                for item in (contract.target_outcomes or [])
+                if isinstance(item, dict) and item.get("statement")
+            ]
+            try:
+                derived = await asyncio.to_thread(
+                    derive_concepts_from_outcomes,
+                    outcomes,
+                    (endpoint, api_key, model),
+                    timeout_seconds=s.llm_timeout_seconds or 30.0,
+                    ollama_native=s.llm_provider == "ollama",
+                )
+            except ConceptDerivationUnavailable as cause:
+                raise HTTPException(
+                    status_code=422, detail=f"概念推导失败：{cause}"
+                ) from cause
+            concept_ids = {concept.concept_id for concept in derived}
+            derived_names = {concept.concept_id: concept.display_name for concept in derived}
+        # 显示名（供 LLM 出题语境）：推导名优先，否则 concept_id 冒号后段
+        concepts = {
+            derived_names.get(cid, cid.split(":", 1)[-1]): cid
+            for cid in sorted(concept_ids)
+        }
 
     # M16-008：出题附来源证据（top-2 片段进 prompt——题目可追溯；
     # 无来源时如实不带引用，不虚构）
