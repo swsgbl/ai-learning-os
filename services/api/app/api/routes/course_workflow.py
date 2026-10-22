@@ -126,7 +126,13 @@ async def _generate_with_llm_fallback(request: Request, goal: str) -> dict:
         endpoint = personal["endpoint"] or endpoint
         api_key = personal["api_key"]
         model = personal["model"] or model
-    return generate_course_plan_with_llm(goal, LlmCourseConfig(endpoint, api_key, model))
+    # M16-008b：同步 LLM 调用在线程池执行（课程生成可达数十秒——
+    # 直调阻塞事件循环饿死整个 API，与出题端点同款修复）
+    import asyncio
+
+    return await asyncio.to_thread(
+        generate_course_plan_with_llm, goal, LlmCourseConfig(endpoint, api_key, model)
+    )
 
 
 async def _require_draft_readable(request: Request, draft_id: str) -> None:
