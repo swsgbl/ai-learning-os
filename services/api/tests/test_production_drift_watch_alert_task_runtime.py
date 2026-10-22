@@ -47,7 +47,7 @@ import os
 import subprocess
 import sys
 import threading
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -159,7 +159,7 @@ def write_report(directory: Path, *, stem: str, started: str,
 def _ended_after(started: str) -> str:
     """ended = started + 1s（保持严格 UTC 形态；ended>=started 自洽）。"""
     moment = datetime.strptime(started, "%Y-%m-%dT%H:%M:%SZ").replace(
-        tzinfo=timezone.utc)
+        tzinfo=UTC)
     return (moment + timedelta(seconds=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 

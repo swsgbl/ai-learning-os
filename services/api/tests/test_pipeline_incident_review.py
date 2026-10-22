@@ -27,7 +27,7 @@ import json
 import socket
 import subprocess as subprocess_module
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -40,7 +40,7 @@ MARK_TOKEN = "sk-ZXmarker987654321"
 
 PROJECT = "aios-m14-03-production-rehearsal"
 FMT = "%Y-%m-%dT%H:%M:%SZ"
-BASE = datetime(2026, 9, 21, 4, 0, 1, tzinfo=timezone.utc)
+BASE = datetime(2026, 9, 21, 4, 0, 1, tzinfo=UTC)
 
 JSON_REPORT = "pipeline-incident-review.json"
 MD_REPORT = "pipeline-incident-review.md"
@@ -166,33 +166,33 @@ def _incident_fixture(directory: Path, *, sample_backfilled: bool = True,
     reports_dir = directory / "pipeline"
     reports_dir.mkdir(parents=True)
     ok_run = _pipeline_report(
-        started=datetime(2026, 9, 21, 4, 15, 1, tzinfo=timezone.utc),
+        started=datetime(2026, 9, 21, 4, 15, 1, tzinfo=UTC),
         monitor=_monitor_stage("ok", exit_code=0,
                                artifact_stem="monitor-20260921-041501"),
         history=_stage("ok"), insights=_stage("ok"), overall="ok")
     gap_run = _pipeline_report(
-        started=datetime(2026, 9, 21, 4, 30, 2, tzinfo=timezone.utc),
+        started=datetime(2026, 9, 21, 4, 30, 2, tzinfo=UTC),
         monitor=_monitor_stage("failed", exit_code=2, artifact_stem=None),
         history=_stage("skipped", exit_code=None),
         insights=_stage("skipped", exit_code=None), overall="failed")
     timeout_run = _pipeline_report(
-        started=datetime(2026, 9, 21, 4, 45, 25, tzinfo=timezone.utc),
+        started=datetime(2026, 9, 21, 4, 45, 25, tzinfo=UTC),
         monitor=_monitor_stage("ok", exit_code=0,
                                artifact_stem="monitor-20260921-044813"),
         history=_stage("timeout", exit_code=None, timed_out=True),
         insights=_stage("skipped", exit_code=None), overall="failed")
     recovered_run = _pipeline_report(
-        started=datetime(2026, 9, 21, 5, 0, 1, tzinfo=timezone.utc),
+        started=datetime(2026, 9, 21, 5, 0, 1, tzinfo=UTC),
         monitor=_monitor_stage("ok", exit_code=0,
                                artifact_stem="monitor-20260921-050001"),
         history=_stage("ok"), insights=_stage("ok"), overall="ok")
     for report in (ok_run, gap_run, timeout_run, recovered_run):
         _write_report(reports_dir, report)
     rows = [
-        _history_row(datetime(2026, 9, 21, 4, 15, 1, tzinfo=timezone.utc)),
-        _history_row(datetime(2026, 9, 21, 4, 48, 13, tzinfo=timezone.utc),
+        _history_row(datetime(2026, 9, 21, 4, 15, 1, tzinfo=UTC)),
+        _history_row(datetime(2026, 9, 21, 4, 48, 13, tzinfo=UTC),
                      overall="warn"),
-        _history_row(datetime(2026, 9, 21, 5, 0, 1, tzinfo=timezone.utc),
+        _history_row(datetime(2026, 9, 21, 5, 0, 1, tzinfo=UTC),
                      overall="warn"),
     ]
     if not sample_backfilled:

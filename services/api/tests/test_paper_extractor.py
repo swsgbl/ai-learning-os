@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC
 
 from fastapi.testclient import TestClient
 
@@ -124,7 +125,7 @@ def _client():
 
 def _seed_paper_resource(client, rid: str) -> str:
     """直接灌库：parsed 资源 + 带 page 的 chunks（解耦 parser，页码可控）。"""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from app.domain.resource import ResourceRecord
     from app.repositories.resources import ResourceRepository
@@ -139,7 +140,7 @@ def _seed_paper_resource(client, rid: str) -> str:
             content_hash=f"hash-{rid}",
             storage_key=f"objects/{rid}",
             size_bytes=1234,
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=datetime.now(UTC),
         )
         await resources.create(record)
         await resources.set_parse_status(rid, "parsed", parser_name="txt")
@@ -231,7 +232,7 @@ def test_api_resource_not_found() -> None:
 
 def test_api_unparsed_409() -> None:
     """未解析资源 409 带原因（不虚报可抽取）。"""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from app.domain.resource import ResourceRecord
     from app.repositories.resources import ResourceRepository
@@ -245,7 +246,7 @@ def test_api_unparsed_409() -> None:
             content_hash="hash-unparsed",
             storage_key="objects/unparsed",
             size_bytes=9,
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=datetime.now(UTC),
         )
         await ResourceRepository(sm).create(record)
 

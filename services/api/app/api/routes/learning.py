@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Request
@@ -180,7 +180,7 @@ class EventOut(BaseModel):
 
 
 def _now() -> datetime:
-    return datetime.now(timezone.utc)
+    return datetime.now(UTC)
 
 
 def _contract_out(row: LearningContractRow) -> ContractOut:
@@ -206,7 +206,7 @@ def _sprint_out(row: LearningSprintRow) -> SprintOut:
     if row.ends_at is not None:
         ends = row.ends_at
         if ends.tzinfo is None:  # SQLite 读回 naive——一律按 UTC 解释
-            ends = ends.replace(tzinfo=timezone.utc)
+            ends = ends.replace(tzinfo=UTC)
         expired = _now() > ends
     return SprintOut(
         id=row.id,
@@ -1452,7 +1452,7 @@ async def my_review_queue(request: Request) -> list[ReviewOut]:
     for row in rows:
         due = row.due_at
         if due.tzinfo is None:  # SQLite naive -> UTC
-            due = due.replace(tzinfo=timezone.utc)
+            due = due.replace(tzinfo=UTC)
         if due <= window_end or row.status != "scheduled":
             visible.append(row)
     return [_review_out(row, now=now) for row in visible]
@@ -1563,7 +1563,7 @@ def _review_out(row: LearningReviewRow, *, now: datetime | None = None) -> Revie
     current = now or _now()
     due = row.due_at
     if due.tzinfo is None:
-        due = due.replace(tzinfo=timezone.utc)
+        due = due.replace(tzinfo=UTC)
     return ReviewOut(
         id=row.id,
         concept_id=row.concept_id,
@@ -1883,3 +1883,37 @@ def _source_ref_out(row: LearningSourceRefRow) -> SourceRefOut:
         license_hint=row.license_hint,
         fetched_at=row.fetched_at,
     )
+
+
+@router.get("/events", response_model=list[EventOut])
+async def list_learning_events(
+    request: Request, event_type: str | None = None, source: str | None = None
+) -> list[EventOut]:
+    """顶层学习事件流（跨 Sprint——语音会话等顶层事件的回看面）。"""
+    owner = current_owner_id(request)
+    async with request.app.state.sessionmaker() as session:
+        query = select(LearningEventRow).order_by(
+            LearningEventRow.occurred_at.desc()
+        ).limit(100)
+        if owner is not None:
+            query = query.where(LearningEventRow.owner_id == owner)
+        if event_type is not None:
+            query = query.where(LearningEventRow.event_type == event_type)
+        if source is not None:
+            query = query.where(LearningEventRow.source == source)
+        rows = (await session.execute(query)).scalars().all()
+    return [
+        EventOut(
+            id=row.id,
+            sprint_id=row.sprint_id,
+            contract_id=row.contract_id,
+            event_type=row.event_type,
+            payload=row.payload,
+            idempotency_key=row.idempotency_key,
+            source=row.source,
+            trace_id=row.trace_id,
+            privacy_class=row.privacy_class,
+            occurred_at=row.occurred_at,
+        )
+        for row in rows
+    ]

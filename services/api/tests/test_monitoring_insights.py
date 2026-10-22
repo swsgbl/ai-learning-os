@@ -42,6 +42,7 @@ import os
 import socket
 import subprocess as subprocess_module
 import sys
+from datetime import UTC
 from pathlib import Path
 
 import pytest
@@ -656,9 +657,9 @@ def test_zero_samples_refused(tmp_path) -> None:
 
 
 def test_too_many_samples_refused(tmp_path) -> None:
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    base = datetime(2026, 9, 11, 0, 0, 0, tzinfo=timezone.utc)
+    base = datetime(2026, 9, 11, 0, 0, 0, tzinfo=UTC)
     rows = [_row((base + timedelta(seconds=i)).strftime("%Y-%m-%dT%H:%M:%SZ"))
             for i in range(5001)]
     source = tmp_path / "src"

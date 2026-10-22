@@ -51,7 +51,7 @@ import json
 import socket
 import sys
 import threading
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -1897,10 +1897,10 @@ def test_whitelist_rejects_malformed_timestamps_shapes(argv: list[str]) -> None:
 def test_parse_docker_log_timestamp_variants() -> None:
     assert pm.parse_docker_log_timestamp(
         "2026-09-21T04:29:19.123456789Z ERROR deadlock detected"
-    ) == datetime(2026, 9, 21, 4, 29, 19, tzinfo=timezone.utc)
+    ) == datetime(2026, 9, 21, 4, 29, 19, tzinfo=UTC)
     assert pm.parse_docker_log_timestamp(
         "2026-09-21T04:29:19Z ERROR deadlock detected"
-    ) == datetime(2026, 9, 21, 4, 29, 19, tzinfo=timezone.utc)
+    ) == datetime(2026, 9, 21, 4, 29, 19, tzinfo=UTC)
     assert pm.parse_docker_log_timestamp("ERROR no prefix") is None
     assert pm.parse_docker_log_timestamp(  # 时区偏移形态不接受（docker 恒 Z）
         "2026-09-21T04:29:19+02:00 ERROR x") is None
@@ -1914,7 +1914,7 @@ def test_summarize_window_excludes_stale_errors_and_recovers() -> None:
     """supervisor 实证形态：6 条陈旧 postgres 错误（04:29:19）+ 边界时刻
     一条 + 更新一条 → 当前区间仅 2 条（含边界，闭区间），陈旧 6 条显式
     入档（stale_error_lines）绝不静默丢弃。"""
-    window_start = datetime(2026, 9, 21, 5, 15, 1, tzinfo=timezone.utc)
+    window_start = datetime(2026, 9, 21, 5, 15, 1, tzinfo=UTC)
     lines = (
         [f"2026-09-21T04:29:19.{i:09d}Z ERROR stale leak {MARK_TOKEN}" for i in range(6)]
         + ["2026-09-21T05:15:01Z ERROR boundary exact"]
@@ -1934,7 +1934,7 @@ def test_summarize_window_excludes_stale_errors_and_recovers() -> None:
 
 def test_summarize_fail_closed_when_recency_unparseable() -> None:
     """fail-closed：时间戳不可解析的错误行恒计入当前区间——绝不排除。"""
-    window_start = datetime(2026, 9, 21, 5, 15, 1, tzinfo=timezone.utc)
+    window_start = datetime(2026, 9, 21, 5, 15, 1, tzinfo=UTC)
     lines = [
         "2026-09-21T04:29:19Z ERROR stale parsed",
         "2026-09-21T04:29:20Z ERROR stale parsed too",
@@ -1971,7 +1971,7 @@ def test_collect_log_summary_argv_carries_timestamps_and_window() -> None:
     runner = FakeRunner(logs_lines={
         "api": ["2026-09-21T04:00:00Z ERROR stale", "2026-09-21T06:00:00Z ERROR fresh"],
     })
-    window_start = datetime(2026, 9, 21, 5, 15, 1, tzinfo=timezone.utc)
+    window_start = datetime(2026, 9, 21, 5, 15, 1, tzinfo=UTC)
     summary, failure = pm.collect_log_summary(runner, project=PROJECT, service="api",
                                               tail=100, window_start_dt=window_start)
     assert failure is None

@@ -13,7 +13,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
 import jwt as pyjwt
@@ -124,8 +124,8 @@ def decode_expiry(token: str) -> tuple[datetime | None, datetime | None]:
     exp = claims.get("exp")
     nbf = claims.get("nbf")
     return (
-        datetime.fromtimestamp(exp, tz=timezone.utc) if exp is not None else None,
-        datetime.fromtimestamp(nbf, tz=timezone.utc) if nbf is not None else None,
+        datetime.fromtimestamp(exp, tz=UTC) if exp is not None else None,
+        datetime.fromtimestamp(nbf, tz=UTC) if nbf is not None else None,
     )
 
 

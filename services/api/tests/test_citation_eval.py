@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC
 
 import pytest
 from fastapi.testclient import TestClient
@@ -103,7 +104,7 @@ def test_run_empty_rejected() -> None:
 
 def _seed_citation_corpus(client) -> str:
     """parsed 资源 + 可检索 chunk + 一条含资源挂接的课程草稿。"""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from app.domain.resource import ResourceRecord
     from app.parsing.chunking import Chunk
@@ -120,7 +121,7 @@ def _seed_citation_corpus(client) -> str:
         await resources.create(ResourceRecord(
             id=rid, media_type="text/plain", title="seed",
             content_hash=f"hash-{rid}", storage_key=f"objects/{rid}",
-            size_bytes=100, fetched_at=datetime.now(timezone.utc),
+            size_bytes=100, fetched_at=datetime.now(UTC),
         ))
         await resources.set_parse_status(rid, "parsed", parser_name="txt")
         await ChunkRepository(sm).replace_chunks(

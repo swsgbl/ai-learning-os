@@ -6,7 +6,7 @@ completed）；非法转换拒绝。
 """
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -20,7 +20,7 @@ from app.domain.review_schedule import (
 
 
 def test_initial_schedule_template() -> None:
-    now = datetime(2026, 10, 22, tzinfo=timezone.utc)
+    now = datetime(2026, 10, 22, tzinfo=UTC)
     queue = initial_schedule(["c1", "c2"], now)
     assert [c for c, _ in queue] == ["c1", "c2"]
     assert all(due == now + timedelta(days=1) for _, due in queue)

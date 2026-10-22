@@ -236,6 +236,29 @@ async def close_live_session(session_id: str, request: Request) -> dict:
         raise HTTPException(status_code=404, detail=_MESSAGE_SESSION_NOT_FOUND) from None
     await _stop_pump(request, canonical)  # 先停 pump 再关停（无搬运竞态）
     final_state = await pipeline.close_session(canonical)
+    # M16-010 语音学习事件闭环（升级方案 Phase 8）：会话终结落
+    # LearningEvent（source=voice）——学习证据流可追溯语音学习发生。
+    # 隐私边界：只存统计摘要（时长/事件数/终态），不存原始音频与
+    # 全文转写（默认不长期保留语音）。
+    try:
+        from app.api.routes.auth import current_owner_id
+        from app.api.routes.learning import _record_event
+
+        event_count = int(final_state.get("event_count") or 0)
+        await _record_event(
+            request,
+            owner_id=current_owner_id(request),
+            event_type="voice.session_completed",
+            payload={
+                "session_id": canonical,
+                "fsm_state": final_state.get("fsm_state"),
+                "event_count": event_count,
+            },
+            idempotency_key=f"voice:{canonical}:completed",
+            source="voice",
+        )
+    except Exception:  # noqa: BLE001,S110 - 事件落库失败不阻断关停（语音主流程优先）
+        pass
     try:
         transcript = pipeline.final_transcript(canonical)
     except VoicePipelineError:  # pragma: no cover —— 句柄保留（审计面）

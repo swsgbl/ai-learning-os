@@ -325,3 +325,14 @@ def test_contract_sprints_listing() -> None:
         items = listed.json()
         assert len(items) == 2
         assert items[0]["id"] == second.json()["id"]  # 最新在前
+
+
+def test_top_level_learning_events_stream() -> None:
+    """M16-010 顶层事件流：类型/来源过滤的回看面（语音等无 Sprint 事件）。"""
+    with _client() as client:
+        voice_events = client.get("/api/v1/learning/events", params={"source": "voice"})
+        assert voice_events.status_code == 200
+        assert voice_events.json() == []  # 无语音事件——过滤面如实为空
+        all_events = client.get("/api/v1/learning/events")
+        assert all_events.status_code == 200
+        assert isinstance(all_events.json(), list)  # 端点契约（本地模式事件可见）

@@ -27,7 +27,7 @@ import json
 import socket
 import subprocess as subprocess_module
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -41,7 +41,7 @@ MARK_TOKEN = "sk-ZXmarker987654321"
 
 PROJECT = "aios-m14-03-production-rehearsal"
 FMT = "%Y-%m-%dT%H:%M:%SZ"
-ANCHOR = datetime(2026, 9, 21, 6, 0, 1, tzinfo=timezone.utc)
+ANCHOR = datetime(2026, 9, 21, 6, 0, 1, tzinfo=UTC)
 
 GATE_JSON = "soak-window-gate.json"
 GATE_MD = "soak-window-gate.md"

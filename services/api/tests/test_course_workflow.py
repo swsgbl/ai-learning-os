@@ -9,6 +9,7 @@ Outline -> Lessons -> Assessments -> Remediation（不虚报 + 确定性）。
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC
 
 from fastapi.testclient import TestClient
 
@@ -139,7 +140,7 @@ def _client():
 
 def _seed_chunks(client, rid: str, text: str) -> None:
     """直接灌库：parsed 资源 + 可搜索 chunks（解耦 parser）。"""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     from app.domain.resource import ResourceRecord
     from app.repositories.resources import ResourceRepository
@@ -154,7 +155,7 @@ def _seed_chunks(client, rid: str, text: str) -> None:
             content_hash=f"hash-{rid}",
             storage_key=f"objects/{rid}",
             size_bytes=100,
-            fetched_at=datetime.now(timezone.utc),
+            fetched_at=datetime.now(UTC),
         ))
         await resources.set_parse_status(rid, "parsed", parser_name="txt")
         chunks_repo = ChunkRepository(sm)
