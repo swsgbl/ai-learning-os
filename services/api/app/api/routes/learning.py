@@ -1747,6 +1747,9 @@ async def generate_items_for_contract(
                     difficulty=item.difficulty,
                     sort_order=order,
                     score=1.0,
+                    # M16-012b：三角度分析显式全键空串（生成题无错因角度
+                    # 数据；此前缺省 {} 使 /papers 的 Angles 解包 500）
+                    angles={"concept": "", "method": "", "mistake": "", "variant": ""},
                 )
             )
             order += 1

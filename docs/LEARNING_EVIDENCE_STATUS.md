@@ -44,3 +44,5 @@ job；本机 SQLite 契约测试覆盖迁移 up/down 语义。
 | Web 学习冲刺浏览器 E2E（生产真实 Chromium 全链） | M16-011 | pass（2026-10-22，ndtool.cn/aios：登录→建合同→确认→推进×5→后测 UI 作答 4 题+信心→提交 100 分→自动 report→报告增益 +100→复测队列 scheduled due +1d） | `artifacts/qa/e2e_01..13_*.png`（截图序列）；复测队列 API 复核 |
 | 生产 Web 镜像 API base 回归修复 | M16-011 | pass（m16-production-v2 构建漏 `AIOS_PUBLIC_API_BASE_URL`，bundle 烘死 127.0.0.1:8000——登录态页面全灭；v4 以 `=/aios` 重建后浏览器复核全链） | `infra/env.production-recovery`（tag v4）；本行即证据 |
 | 全新概念 Web 冷启动（合同→概念源头） | — | not_executed（缺口如实：generate-items 缺省取蓝图概念、蓝图缺省聚合题池——全新概念无源头，UI 生成按钮先于蓝图点击会 422（有错误提示非静默）；需目标→概念推导设计） | 设计缺口，非回归 |
+| App 学习冲刺面板（入口/合同/阶段链/推进交互，真机验收） | M16-012 | pass（2026-10-22，华为真机 EYFBB22923201473 连生产：学习 tab 入口卡 → 面板渲染两合同（48.0 小时/目标数/通过标准）→ 阶段链 → 推进到间隔复测（服务端 follow_up 确认）；作答流 8 ViewModel 单测覆盖） | `artifacts/qa/app_02_sprint_panel.png`；sprints API 复核 |
+| /papers 生成题 angles 解包 500 修复 | M16-012b | pass（红绿验证：回退读侧防御→测试 FAILED（TypeError 与生产栈一致）→恢复→pass；生产 Bearer 复核 500→200） | `test_sprint_assessment_api.py::test_generate_items_then_blueprint_usable`（尾部回归断言） |

@@ -45,6 +45,7 @@ fun StudyScreen(
     onStartVoicePaper: (String) -> Unit = {},
     onOpenReview: (String) -> Unit = {},
     onOpenStudyMode: (String) -> Unit = {},
+    onOpenLearningSprint: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     // 每次进入该标签都刷新（VM 随 backstack 复用不重跑 init；切 API 地址后
@@ -79,6 +80,17 @@ fun StudyScreen(
 
         state.resumeExamId?.let { resumeExamId ->
             ResumeBanner(onResume = { onResumeExam(resumeExamId) })
+        }
+
+        // M16-012 学习冲刺入口（App/Web 同步）：48 小时可验证闭环的移动面板
+        SectionCard(title = "学习冲刺") {
+            Text(
+                "合同确认 → 前测 → 学习练习 → 等值后测 → 报告 → 间隔复测。" +
+                    "掌握结论只来自独立作答证据。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(onClick = onOpenLearningSprint) { Text("进入学习冲刺") }
         }
 
         ContentStateView(

@@ -458,3 +458,8 @@ def _run_generate_items_flow(sqlite_url: str) -> None:
         assert assessment.status_code == 200
         assert len(assessment.json()["items"]) == 4
         assert "answer" not in assessment.text
+
+        # M16-012b 回归：生成题入池后 /papers 列表不因 angles 空 dict 解包 500
+        papers = client.get("/api/v1/papers")
+        assert papers.status_code == 200, papers.text
+        assert any(p["id"] == paper_id for p in papers.json())

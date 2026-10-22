@@ -9,6 +9,8 @@ import com.ailearningos.app.data.AuthRepository
 import com.ailearningos.app.data.ExamGateway
 import com.ailearningos.app.data.ExamRepository
 import com.ailearningos.app.data.GovernanceGateway
+import com.ailearningos.app.data.LearningGateway
+import com.ailearningos.app.data.LearningRepository
 import com.ailearningos.app.data.GovernanceRepository
 import com.ailearningos.app.data.SearchGateway
 import com.ailearningos.app.data.SearchRepository
@@ -77,6 +79,9 @@ class AppContainer(context: Context) {
 
     /** 治理链路：版本/快照/审计全部服务端权威，客户端只投影（M12-05） */
     val governanceGateway: GovernanceGateway = GovernanceRepository(apiProvider)
+
+    /** 学习冲刺链路（M16-012）：合同/阶段/前后测全部服务端权威，客户端只投影 */
+    val learningGateway: LearningGateway = LearningRepository(apiProvider)
 
     /** 录音采集：16kHz/单声道 PCM16 WAV（授权由 UI 层先请求，拒绝则文本作答降级） */
     val audioCaptureEngine: AudioCaptureEngine = AndroidWavCaptureEngine()

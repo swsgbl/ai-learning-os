@@ -36,6 +36,8 @@ import com.ailearningos.app.ui.governance.GovernanceScreen
 import com.ailearningos.app.ui.governance.GovernanceViewModel
 import com.ailearningos.app.ui.home.HomeScreen
 import com.ailearningos.app.ui.icons.AiosIcons
+import com.ailearningos.app.ui.learning.LearningSprintScreen
+import com.ailearningos.app.ui.learning.LearningSprintViewModel
 import com.ailearningos.app.ui.login.LoginScreen
 import com.ailearningos.app.ui.review.ReviewScreen
 import com.ailearningos.app.ui.search.SearchScreen
@@ -81,6 +83,7 @@ const val REVIEW_ROUTE = "review/{examId}"
 const val STUDY_MODE_ROUTE = "study-mode/{paperId}"
 const val GOVERNANCE_ROUTE = "governance"
 const val CREATE_COURSE_ROUTE = "create-course"
+const val LEARNING_SPRINT_ROUTE = "learning-sprint"
 const val VOICE_PAPER_ROUTE = "voice-paper/{paperId}"
 const val VOICE_SESSION_ROUTE = "voice-session/{sessionId}"
 
@@ -155,11 +158,16 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
                 StudyScreen(
                     viewModel = studyViewModel,
                     onStartPaper = { paperId -> navController.navigateExamPaper(paperId) },
+                    onOpenLearningSprint = { navController.navigate(LEARNING_SPRINT_ROUTE) { launchSingleTop = true } },
                     onResumeExam = { examId -> navController.navigateExamResume(examId) },
                     onOpenReview = { examId -> navController.navigate("review/$examId") },
                     onStartVoicePaper = { paperId -> navController.navigateVoicePaper(paperId) },
                     onOpenStudyMode = { paperId -> navController.navigate("study-mode/$paperId") },
                 )
+            }
+            composable(LEARNING_SPRINT_ROUTE) {
+                val learningVm: LearningSprintViewModel = viewModel(factory = viewModelFactory)
+                LearningSprintScreen(viewModel = learningVm)
             }
             composable(AiosDestination.ExamCenter.route) {
                 val examCenterViewModel: StudyViewModel = viewModel(factory = viewModelFactory)
