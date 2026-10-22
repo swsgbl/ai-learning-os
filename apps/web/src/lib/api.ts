@@ -221,6 +221,15 @@ export const api = {
         `/api/v1/learning/sprints/${encodeURIComponent(sprintId)}/assessment/${phase}/submit`,
         { method: "POST", body: JSON.stringify({ responses }) },
       ),
+    transferItems: (sprintId: string) =>
+      request<{ sprint_id: string; phase: string; items: AssessmentItem[] }>(
+        `/api/v1/learning/sprints/${encodeURIComponent(sprintId)}/transfer/items`,
+      ),
+    submitTransfer: (sprintId: string, responses: Array<{ item_id: string; response: string; confidence?: number }>) =>
+      request<AssessmentResult & { sprint_phase: string; per_concept: Record<string, { correct: number; total: number }> }>(
+        `/api/v1/learning/sprints/${encodeURIComponent(sprintId)}/transfer/submit`,
+        { method: "POST", body: JSON.stringify({ responses }) },
+      ),
     report: (sprintId: string) =>
       request<SprintReport>(`/api/v1/learning/sprints/${encodeURIComponent(sprintId)}/report`),
     mastery: () => request<MasteryOverviewItem[]>("/api/v1/learning/mastery"),
