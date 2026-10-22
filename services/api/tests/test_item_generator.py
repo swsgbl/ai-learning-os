@@ -11,9 +11,9 @@ import pytest
 from app.domain.item_generator import (
     GeneratedItem,
     LlmItemGenerationUnavailable,
-    generate_objective_items,
     _parse_json,
     _validate_item,
+    generate_objective_items,
 )
 
 CONFIG = ("http://llm.local/v1", "sk-test-1234567890", "test-model")
