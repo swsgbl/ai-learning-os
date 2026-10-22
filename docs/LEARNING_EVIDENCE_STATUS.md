@@ -35,3 +35,5 @@ job；本机 SQLite 契约测试覆盖迁移 up/down 语义。
 | 客观题生成域层（schema/去重/数量上限校验；混合批丢弃计数） | M16-007 | pass（2026-10-22，14 测试，stub 网关） | `services/api/tests/test_item_generator.py` |
 | 生成→蓝图→前测 内容层闭环（答案隔离） | M16-007 | pass（契约测试：生成 8 题→complete=true→前测 4 题无答案泄露） | `test_sprint_assessment_api.py::test_generate_items_then_blueprint_usable` |
 | LLM 出题 live 供应商验证 | — | not_executed（契约层 stub；运维 smoke 待显式执行） | 生产 /generate-items 手动验证 |
+| 来源证据 API（stub provider：入库/非法 url 过滤/无源 503） | M16-008 | pass（2026-10-22，4 测试） | `services/api/tests/test_source_refs_api.py` |
+| LLM 调用线程池化（事件循环不阻塞） | M16-008b | pass（回归全绿；代码级 asyncio.to_thread 两处） | `learning.py`/`course_workflow.py` |

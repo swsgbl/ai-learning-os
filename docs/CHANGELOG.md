@@ -1,3 +1,21 @@
+## M16-008 —— 来源证据骨架 + LLM 调用线程池化（升级方案 Phase 5）
+
+- **来源证据表**（迁移 0037 learning_source_refs）：合同概念的检索片段
+  （url/title/snippet/content_hash/license_hint/fetched_at）——许可不明
+  如实标 unknown，不虚构开放许可。
+- **检索 API**：POST /contracts/{id}/source-refs/search（经既有 search
+  registry——local-searxng/cloud-web 多源容错，SSRF/许可边界沿用
+  provider 既有防线；非法 url/空片段过滤；无可用源 503 如实）+ GET
+  列表（概念过滤）。
+- **出题附来源**：generate-items 调 LLM 前查概念来源，top 片段进
+  prompt（题目可追溯）；无来源时如实不带引用。
+- **M16-008b 安全修复（审查：event-loop starvation）**：LlmGateway.chat
+  是同步 httpx——出题与课程生成两处统一 asyncio.to_thread 线程池执行
+  （数十秒的 LLM 调用直调会阻塞事件循环饿死整个 API；课程生成为既有
+  同款缺陷一并修复）。
+- 验证：来源 API 4 测试（stub provider：入库/非法过滤/503 两路）；
+  全量 6528 passed / ruff clean。
+
 ## M16-007 —— LLM 客观题生成器（打通蓝图内容层闭环）
 
 - **域层 item_generator**：概念集 → LLM 四选一 mcq（BYOK active > 全局

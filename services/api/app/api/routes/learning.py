@@ -17,6 +17,8 @@
 """
 from __future__ import annotations
 
+import asyncio
+import hashlib
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -32,6 +34,7 @@ from app.db.orm import (
     LearningContractRow,
     LearningEventRow,
     LearningReviewRow,
+    LearningSourceRefRow,
     LearningSprintRow,
     PaperRow,
     QuestionRow,
@@ -1660,8 +1663,39 @@ async def generate_items_for_contract(
         api_key = personal["api_key"]
         model = personal["model"] or model
 
+    # M16-008：出题附来源证据（top-2 片段进 prompt——题目可追溯；
+    # 无来源时如实不带引用，不虚构）
+    async with request.app.state.sessionmaker() as session:
+        source_rows = (
+            (
+                await session.execute(
+                    select(LearningSourceRefRow)
+                    .where(LearningSourceRefRow.contract_id == contract.id)
+                    .order_by(LearningSourceRefRow.fetched_at.desc())
+                    .limit(len(concepts) * 2)
+                )
+            )
+            .scalars()
+            .all()
+        )
+    context_block = ""
+    if source_rows:
+        lines = [
+            f"- {row.concept_id}：{row.title or row.url}（{row.snippet[:150]}）"
+            for row in source_rows[: len(concepts) * 2]
+        ]
+        context_block = "\n来源片段（出题可参考，标注事实依据）：\n" + "\n".join(lines)
+
     try:
-        report = generate_objective_items(concepts, payload.per_concept, (endpoint, api_key, model))
+        # M16-008b（安全审查修复）：LlmGateway.chat 是同步 httpx——在线程池
+        # 执行，绝不阻塞事件循环（出题可达数十秒，直调会饿死整个 API）
+        report = await asyncio.to_thread(
+            generate_objective_items,
+            concepts,
+            payload.per_concept,
+            (endpoint, api_key, model),
+            source_context=context_block,
+        )
     except LlmItemGenerationUnavailable as cause:
         raise HTTPException(status_code=503, detail=str(cause)) from cause
 
@@ -1742,4 +1776,110 @@ async def generate_items_for_contract(
         dropped=report.dropped_count,
         drop_reasons=report.drop_reasons[:10],
         items=outs,
+    )
+
+
+# ---------------------------------------------------------------- 来源证据（Phase 5）
+
+
+class SourceRefOut(BaseModel):
+    id: str
+    concept_id: str
+    provider: str
+    url: str
+    title: str
+    snippet: str
+    license_hint: str
+    fetched_at: datetime
+
+
+class SourceSearchRequest(BaseModel):
+    """按概念检索来源片段（经既有 search registry；结果入证据表）。"""
+
+    concept_id: str = Field(min_length=1, max_length=64)
+    query: str | None = Field(default=None, max_length=200)
+    limit: int = Field(default=3, ge=1, le=5)
+
+
+@router.post(
+    "/contracts/{contract_id}/source-refs/search", response_model=list[SourceRefOut], status_code=201
+)
+async def search_source_refs(
+    contract_id: str, payload: SourceSearchRequest, request: Request
+) -> list[SourceRefOut]:
+    """检索概念的来源片段入库（SearXNG/cloud-web 经 registry；SSRF/许可
+    边界沿用 provider 既有防线）。无可用 provider 503 如实。"""
+    await require_user(request)
+    contract = await _owned_contract(request, contract_id)
+    registry = request.app.state.search_registry
+    if not registry:
+        raise HTTPException(status_code=503, detail="搜索不可用（无已启用 provider）")
+    query = payload.query or payload.concept_id.replace(":", " ")
+    collected: list[dict] = []
+    for entry in registry:
+        if not entry.enabled or entry.provider is None:
+            continue
+        try:
+            found = await entry.provider.search(query, payload.limit, owner=current_owner_id(request))
+        except Exception:  # noqa: BLE001,S112 - provider 失败跳过（多源容错，与 search 路由同款语义）
+            continue
+        collected.extend(found)
+    if not collected:
+        raise HTTPException(status_code=503, detail="检索无结果（provider 不可用或空结果）")
+    now = _now()
+    rows: list[LearningSourceRefRow] = []
+    async with request.app.state.sessionmaker() as session:
+        for item in collected[: payload.limit]:
+            url = str(item.get("url") or "")
+            snippet = str(item.get("snippet") or "")
+            if not url.startswith(("http://", "https://")) or not snippet.strip():
+                continue
+            row = LearningSourceRefRow(
+                id=f"lsr_{uuid4().hex[:23]}",
+                owner_id=contract.owner_id,
+                contract_id=contract.id,
+                concept_id=payload.concept_id,
+                provider=str(item.get("provider") or entry.name),
+                url=url[:1024],
+                title=str(item.get("title") or "")[:512],
+                snippet=snippet[:4000],
+                content_hash=hashlib.sha256(snippet.encode("utf-8")).hexdigest(),
+                fetched_at=now,
+            )
+            session.add(row)
+            rows.append(row)
+        await session.commit()
+        for row in rows:
+            await session.refresh(row)
+    return [_source_ref_out(row) for row in rows]
+
+
+@router.get("/contracts/{contract_id}/source-refs", response_model=list[SourceRefOut])
+async def list_source_refs(
+    contract_id: str, request: Request, concept_id: str | None = None
+) -> list[SourceRefOut]:
+    await _owned_contract(request, contract_id)
+    async with request.app.state.sessionmaker() as session:
+        query = (
+            select(LearningSourceRefRow)
+            .where(LearningSourceRefRow.contract_id == contract_id)
+            .order_by(LearningSourceRefRow.fetched_at.desc())
+            .limit(100)
+        )
+        if concept_id is not None:
+            query = query.where(LearningSourceRefRow.concept_id == concept_id)
+        rows = (await session.execute(query)).scalars().all()
+    return [_source_ref_out(row) for row in rows]
+
+
+def _source_ref_out(row: LearningSourceRefRow) -> SourceRefOut:
+    return SourceRefOut(
+        id=row.id,
+        concept_id=row.concept_id,
+        provider=row.provider,
+        url=row.url,
+        title=row.title,
+        snippet=row.snippet,
+        license_hint=row.license_hint,
+        fetched_at=row.fetched_at,
     )

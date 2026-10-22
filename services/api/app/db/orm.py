@@ -814,3 +814,26 @@ class LearningReviewRow(Base):
         String(32), default="intervals-mvp-1", server_default="intervals-mvp-1"
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+
+class LearningSourceRefRow(Base):
+    """M16-008 来源证据（升级方案 Phase 5）：合同概念的检索片段。
+
+    url/title/snippet/content_hash（可追溯）；license_hint 默认 unknown
+    （许可不明时如实标注——不虚构开放许可）。
+    """
+
+    __tablename__ = "learning_source_refs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    contract_id: Mapped[str] = mapped_column(String(32), index=True)
+    concept_id: Mapped[str] = mapped_column(String(64), index=True)
+    provider: Mapped[str] = mapped_column(String(32))
+    url: Mapped[str] = mapped_column(String(1024))
+    title: Mapped[str] = mapped_column(String(512), default="", server_default="")
+    snippet: Mapped[str] = mapped_column(Text)
+    content_hash: Mapped[str] = mapped_column(String(64))
+    license_hint: Mapped[str] = mapped_column(String(64), default="unknown", server_default="unknown")
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

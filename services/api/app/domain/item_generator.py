@@ -106,6 +106,8 @@ def generate_objective_items(
     concepts: dict[str, str],
     per_concept: int,
     config: tuple[str | None, str | None, str | None],
+    *,
+    source_context: str = "",
 ) -> GenerationReport:
     """concepts: {概念显示名: concept_id}；config=(endpoint, api_key, model)。
 
@@ -123,7 +125,7 @@ def generate_objective_items(
         ChatMessage(role="system", content=_SYSTEM_PROMPT),
         ChatMessage(
             role="user",
-            content=f"概念清单：\n{listing}\n每个概念出 {per_concept} 道题。",
+            content=f"概念清单：\n{listing}\n每个概念出 {per_concept} 道题。{source_context}",
         ),
     )
     try:
