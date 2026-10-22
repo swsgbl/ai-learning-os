@@ -692,3 +692,86 @@ def test_review_attempt_uses_fsrs_scheduler(sqlite_url, monkeypatch) -> None:
     finally:
         monkeypatch.delenv("REVIEW_ALGORITHM", raising=False)
         get_settings.cache_clear()
+
+
+def test_transfer_check_answer_flow(sqlite_url) -> None:
+    """M17-005 迁移检验作答：拉题（排除前后测题）→ 提交落 transfer 证据
+    → 原子推进 posttest → 重复提交 409 → 掌握度迁移对联动。"""
+    with TestClient(create_app(sqlite_url)) as client:
+        _seed_pool(client, sqlite_url)  # 2 概念 x 5 题（前后测各用 2，剩 1 题/概念）
+        sprint_id = _make_sprint_ready_for_baseline(client)
+        baseline = client.get(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment", params={"phase": "baseline"}
+        ).json()["items"]
+        baseline_ids = {i["item_id"] for i in baseline}
+        client.post(
+            f"/api/v1/learning/sprints/{sprint_id}/assessment/baseline/submit",
+            json={"responses": [{"item_id": i["item_id"], "response": "A"} for i in baseline]},
+        )
+        for phase in ("concept_map_review", "plan_confirmed", "learning",
+                      "targeted_practice", "transfer_check"):
+            client.post(f"/api/v1/learning/sprints/{sprint_id}/advance", json={"to_phase": phase})
+
+        # 阶段前置：非 transfer_check 拉题 409（posttest 阶段还没到——用另一个
+        # 快速校验：sprint 在 transfer_check，直接拉题应 200）
+        items = client.get(f"/api/v1/learning/sprints/{sprint_id}/transfer/items")
+        assert items.status_code == 200, items.text
+        body = items.json()
+        assert len(body["items"]) == 2  # 蓝图 2 概念各 1 题
+        # 与前后测不重叠（迁移题不污染等值测评证据）
+        assert not ({i["item_id"] for i in body["items"]} & baseline_ids)
+        assert "answer" not in items.text  # 答案隔离
+
+        # 提交：全部答对（seed 池黄金答案 A）
+        submitted = client.post(
+            f"/api/v1/learning/sprints/{sprint_id}/transfer/submit",
+            json={"responses": [{"item_id": i["item_id"], "response": "A", "confidence": 4} for i in body["items"]]},
+        )
+        assert submitted.status_code == 200, submitted.text
+        result = submitted.json()
+        assert result["score"] == 100.0
+        assert result["sprint_phase"] == "posttest"  # 原子推进
+
+        # 重复提交 409（已推进）
+        again = client.post(
+            f"/api/v1/learning/sprints/{sprint_id}/transfer/submit",
+            json={"responses": [{"item_id": body["items"][0]["item_id"], "response": "A"}]},
+        )
+        assert again.status_code == 409
+
+        # transfer=True 证据落库（掌握度 mastered 的迁移对来源）
+        from sqlalchemy import select
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        from app.db.orm import LearningAttemptRow
+
+        engine = create_async_engine(sqlite_url)
+
+        async def _fetch() -> list[LearningAttemptRow]:
+            async with async_sessionmaker(engine)() as session:
+                return (
+                    (
+                        await session.execute(
+                            select(LearningAttemptRow).where(
+                                LearningAttemptRow.context == "mcq:transfer"
+                            )
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+
+        import asyncio
+
+        rows = asyncio.run(_fetch())
+        asyncio.run(engine.dispose())
+        assert len(rows) == 2
+        assert all(r.transfer is True and r.correct is True for r in rows)
+
+        # 掌握度：前测（seed 池 A 全对）+ 迁移对 → 概念应 mastered
+        # （前测 A 对=2 上下文不足？seed 前 2 题对+迁移 1 对：独立对 3 条
+        # 但上下文={mcq:baseline, mcq:transfer}=2 → provisional 条件满足
+        # 且有迁移对 → mastered）
+        mastery = client.get("/api/v1/learning/mastery").json()
+        states = {m["concept_id"]: m["state"] for m in mastery}
+        assert states.get("c_select") == "mastered", states

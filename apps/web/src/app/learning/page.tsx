@@ -250,7 +250,7 @@ function ContractCard({
   const [blueprint, setBlueprint] = useState<BlueprintInfo | null>(null);
   const [report, setReport] = useState<SprintReport | null>(null);
   const [busy, setBusy] = useState(false);
-  const [assessing, setAssessing] = useState<"baseline" | "posttest" | null>(null);
+  const [assessing, setAssessing] = useState<"baseline" | "transfer" | "posttest" | null>(null);
 
   const act = async (fn: () => Promise<unknown>, message: string) => {
     setBusy(true);
@@ -396,6 +396,11 @@ function ContractCard({
             开始前测
           </Button>
         )}
+        {sprint?.phase === "transfer_check" && (
+          <Button size="sm" onClick={() => setAssessing("transfer")}>
+            开始迁移检验
+          </Button>
+        )}
         {sprint?.phase === "posttest" && (
           <Button size="sm" onClick={() => setAssessing("posttest")}>
             开始后测
@@ -434,7 +439,7 @@ function ContractCard({
           phase={assessing}
           onDone={(score) => {
             setAssessing(null);
-            onNotice(`${assessing === "baseline" ? "前测" : "后测"}已提交：${score} 分`);
+            onNotice(`${assessing === "baseline" ? "前测" : assessing === "transfer" ? "迁移检验" : "后测"}已提交：${score} 分`);
             onChanged();
           }}
         />
@@ -468,7 +473,7 @@ function AssessmentRunner({
   onDone,
 }: {
   sprintId: string;
-  phase: "baseline" | "posttest";
+  phase: "baseline" | "transfer" | "posttest";
   onDone: (score: number) => void;
 }) {
   const [items, setItems] = useState<Awaited<ReturnType<typeof api.learning.getAssessment>>["items"] | null>(null);
@@ -478,9 +483,12 @@ function AssessmentRunner({
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
-    api.learning
-      .getAssessment(sprintId, phase)
-      .then((r) => setItems(r.items))
+    // M17-005：transfer 阶段走迁移检验端点（练习性质选题，非蓝图等值分配）
+    (phase === "transfer"
+      ? api.learning.transferItems(sprintId).then((r) => r.items)
+      : api.learning.getAssessment(sprintId, phase).then((r) => r.items)
+    )
+      .then((items) => setItems(items))
       .catch((cause) => setError(cause instanceof ApiError ? cause.message : "题集加载失败"));
   }, [sprintId, phase]);
 
@@ -499,7 +507,10 @@ function AssessmentRunner({
     }
     setBusy(true);
     try {
-      const result = await api.learning.submitAssessment(sprintId, phase, responses);
+      const result =
+        phase === "transfer"
+          ? await api.learning.submitTransfer(sprintId, responses)
+          : await api.learning.submitAssessment(sprintId, phase, responses);
       onDone(result.score);
     } catch (cause) {
       setError(cause instanceof ApiError ? cause.message : "提交失败");
@@ -510,7 +521,9 @@ function AssessmentRunner({
 
   return (
     <div className="mt-3 space-y-3 rounded border p-3">
-      <p className="text-xs font-medium">{phase === "baseline" ? "前测" : "后测"}（独立作答，先提交后见判分）</p>
+      <p className="text-xs font-medium">
+        {phase === "baseline" ? "前测" : phase === "transfer" ? "迁移检验（未见情境应用题）" : "后测"}（独立作答，先提交后见判分）
+      </p>
       {items.map((item) => (
         <div key={item.item_id} className="rounded bg-surface-2/50 p-3">
           <p className="text-sm">{item.stem}</p>

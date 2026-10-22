@@ -1287,6 +1287,275 @@ async def submit_sprint_assessment(
     )
 
 
+# ---------------------------------------------------------------- 迁移检验作答（M17-005）
+
+
+async def _sprint_transfer_items(
+    request: Request, sprint: LearningSprintRow
+) -> list[tuple[QuestionRow, str]]:
+    """迁移检验选题：蓝图每概念一道客观题（练习性质——非等值测评）。
+
+    排除蓝图前后测已用题（与等值测评不重叠——迁移题不得污染前后测
+    证据）；优先该概念最近未做过的（与复习选题同策略）。
+    """
+    owner = current_owner_id(request)
+    async with request.app.state.sessionmaker() as session:
+        plans = (
+            (
+                await session.execute(
+                    select(AssessmentBlueprintRow).where(
+                        AssessmentBlueprintRow.contract_id == sprint.contract_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not plans:
+            raise HTTPException(status_code=409, detail="蓝图未构建：先 /blueprint/build")
+        blueprint_item_ids: set[str] = set()
+        for plan in plans:
+            blueprint_item_ids.update(plan.pretest_item_ids)
+            blueprint_item_ids.update(plan.posttest_item_ids)
+        paper_query = select(PaperRow)
+        if owner is not None:
+            paper_query = paper_query.where(
+                (PaperRow.owner_id == owner) | (PaperRow.owner_id.is_(None))
+            )
+        paper_ids = [
+            paper.id for paper in (await session.execute(paper_query)).scalars().all()
+        ]
+        questions = (
+            (
+                await session.execute(
+                    select(QuestionRow).where(QuestionRow.paper_id.in_(paper_ids))
+                )
+            )
+            .scalars()
+            .all()
+        )
+        pairs: list[tuple[QuestionRow, str]] = []
+        for plan in plans:
+            candidates = [
+                q
+                for q in questions
+                if plan.concept_id
+                in (q.knowledge if isinstance(q.knowledge, list) else [])
+                and is_objective_type(q.question_type)
+                and q.id not in blueprint_item_ids
+            ]
+            if not candidates:
+                continue  # 该概念无可用的非前后测题——如实缺（不虚构）
+            recent = set(
+                (
+                    await session.execute(
+                        select(LearningAttemptRow.item_id)
+                        .where(
+                            (LearningAttemptRow.concept_id == plan.concept_id)
+                            & (LearningAttemptRow.owner_id == sprint.owner_id)
+                        )
+                        .order_by(LearningAttemptRow.created_at.desc())
+                        .limit(20)
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            fresh = [q for q in candidates if q.id not in recent]
+            pairs.append((random.choice(fresh or candidates), plan.concept_id))
+        if not pairs:
+            raise HTTPException(
+                status_code=409,
+                detail="迁移检验无可用题（蓝图概念在题池无前后测以外的客观题）——先生成更多题目",
+            )
+        return pairs
+
+
+@router.get("/sprints/{sprint_id}/transfer/items", response_model=AssessmentOut)
+async def get_sprint_transfer_items(
+    sprint_id: str, request: Request
+) -> AssessmentOut:
+    """迁移检验题（公开面——答案隔离；transfer_check 阶段前置）。"""
+    await require_user(request)
+    sprint = await _owned_sprint(request, sprint_id)
+    if sprint.phase != "transfer_check":
+        raise HTTPException(
+            status_code=409, detail=f"迁移检验未在对应阶段：当前 {sprint.phase}"
+        )
+    pairs = await _sprint_transfer_items(request, sprint)
+    return AssessmentOut(
+        sprint_id=sprint.id,
+        phase="transfer",
+        items=[
+            AssessmentItemOut(
+                item_id=q.id,
+                concept_id=concept,
+                question_type=q.question_type,
+                stem=q.stem,
+                options=q.options if isinstance(q.options, list) else None,
+                score=q.score,
+            )
+            for q, concept in pairs
+        ],
+    )
+
+
+@router.post("/sprints/{sprint_id}/transfer/submit", response_model=AssessmentResultOut)
+async def submit_sprint_transfer(
+    sprint_id: str, payload: AssessmentSubmitRequest, request: Request
+) -> AssessmentResultOut:
+    """提交迁移检验：判分落 **transfer=True** 证据（掌握度 mastered 的
+    迁移对来源）→ 原子推进 posttest。
+
+    幂等：条件更新 WHERE phase==transfer_check（提交即推进——重提交 409）。
+    """
+    await require_user(request)
+    sprint = await _owned_sprint(request, sprint_id)
+    if sprint.phase != "transfer_check":
+        raise HTTPException(
+            status_code=409, detail=f"不在迁移检验阶段：当前 {sprint.phase}"
+        )
+    # M17-005b：提交按 item_id 校验合法性（题在题池 + 概念属蓝图 + 客观题 +
+    # 非蓝图前后测题），不重新选题——GET 与 submit 的随机选题（优先未做过）
+    # 两次结果可能不同，重选会导致提交的题「不在题集」422（生产实测）。
+    owner = current_owner_id(request)
+    now = _now()
+    async with request.app.state.sessionmaker() as session:
+        plans = (
+            (
+                await session.execute(
+                    select(AssessmentBlueprintRow).where(
+                        AssessmentBlueprintRow.contract_id == sprint.contract_id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if not plans:
+            raise HTTPException(status_code=409, detail="蓝图未构建")
+        blueprint_concepts = {plan.concept_id for plan in plans}
+        blueprint_item_ids: set[str] = set()
+        for plan in plans:
+            blueprint_item_ids.update(plan.pretest_item_ids)
+            blueprint_item_ids.update(plan.posttest_item_ids)
+        paper_query = select(PaperRow)
+        if owner is not None:
+            paper_query = paper_query.where(
+                (PaperRow.owner_id == owner) | (PaperRow.owner_id.is_(None))
+            )
+        paper_ids = [
+            paper.id for paper in (await session.execute(paper_query)).scalars().all()
+        ]
+        questions = (
+            (
+                await session.execute(
+                    select(QuestionRow).where(
+                        QuestionRow.id.in_([r.item_id for r in payload.responses])
+                        & QuestionRow.paper_id.in_(paper_ids)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        by_item: dict[str, tuple[QuestionRow, str]] = {}
+        for question in questions:
+            knowledge = question.knowledge if isinstance(question.knowledge, list) else []
+            matched = [cid for cid in blueprint_concepts if cid in knowledge]
+            if not matched:
+                continue
+            if question.id in blueprint_item_ids:
+                continue  # 前后测已用题不得作为迁移证据（污染等值测评）
+            by_item[question.id] = (question, matched[0])
+        unknown = [r.item_id for r in payload.responses if r.item_id not in by_item]
+        if unknown:
+            raise HTTPException(
+                status_code=422,
+                detail=f"题目不在迁移检验题集（须为蓝图概念的客观题且非前后测题）: {unknown[:3]}",
+            )
+
+    correct_count = 0
+    ungraded = 0
+    per_concept: dict[str, dict[str, float | int]] = {}
+    async with request.app.state.sessionmaker() as session:
+        for item in payload.responses:
+            question, concept = by_item[item.item_id]
+            if not is_objective_type(question.question_type):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"题目 {question.id} 题型不可确定性判分",
+                )
+            correct = grade_answer(question.question_type, question.answer, item.response)
+            if correct is None:
+                ungraded += 1
+            elif correct:
+                correct_count += 1
+            agg = per_concept.setdefault(concept, {"correct": 0, "total": 0})
+            agg["total"] = int(agg["total"]) + 1
+            if correct:
+                agg["correct"] = int(agg["correct"]) + 1
+            session.add(
+                LearningAttemptRow(
+                    id=f"lat_{uuid4().hex[:24]}",
+                    owner_id=sprint.owner_id,
+                    sprint_id=sprint.id,
+                    contract_id=sprint.contract_id,
+                    item_id=item.item_id,
+                    concept_id=concept,
+                    response=item.response,
+                    correct=correct,
+                    confidence=item.confidence,
+                    independent=True,
+                    transfer=True,  # 迁移证据（掌握度 mastered 条件之一）
+                    error_tags=[],
+                    context=f"{question.question_type}:transfer",
+                    grading_method="answer_key",
+                    grader_version="grading-v1",
+                    created_at=now,
+                )
+            )
+        total = len(payload.responses)
+        score = round(100.0 * correct_count / total, 1) if total else 0.0
+        from sqlalchemy import update
+
+        result = await session.execute(
+            update(LearningSprintRow)
+            .where(
+                LearningSprintRow.id == sprint.id,
+                LearningSprintRow.phase == "transfer_check",
+            )
+            .values(phase="posttest", updated_at=now)
+        )
+        if result.rowcount != 1:
+            await session.rollback()
+            raise HTTPException(
+                status_code=409,
+                detail="提交冲突：Sprint 状态已变化（已提交或已推进）——刷新后重试",
+            )
+        await session.commit()
+
+    await _record_event(
+        request,
+        owner_id=sprint.owner_id,
+        contract_id=sprint.contract_id,
+        sprint_id=sprint.id,
+        event_type="sprint.transfer_submitted",
+        payload={"score": score, "correct_count": correct_count, "question_count": total},
+        idempotency_key=f"sprint:{sprint.id}:transfer:submitted",
+    )
+    return AssessmentResultOut(
+        sprint_id=sprint.id,
+        phase="transfer",
+        score=score,
+        correct_count=correct_count,
+        question_count=total,
+        ungraded_count=ungraded,
+        per_concept=per_concept,
+        sprint_phase="posttest",
+    )
+
+
 #: 报告用完整阶段序（报告未完成项判定）
 _ALL_SPRINT_PHASES = (
     "created", "contract_confirmed", "baseline_assessment", "concept_map_review",

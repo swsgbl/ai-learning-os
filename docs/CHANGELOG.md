@@ -1,3 +1,20 @@
+## M17-005 —— 迁移检验作答闭环（transfer_check 阶段落地）
+
+- **此前缺口**：transfer_check 阶段是纯推进（名存实空）——迁移证据
+  只能来自复习 delayed 对，「学习→迁移检验」链路没有真实作答。
+- **新端点**：GET /sprints/{id}/transfer/items（蓝图每概念一道客观
+  题，**排除前后测已用题**（不污染等值测评）+ 优先最近未做过）；
+  POST /sprints/{id}/transfer/submit（判分落 **transfer=True** 证据
+  ——掌握度 mastered 的迁移对来源；条件更新原子推进 posttest）。
+- **M17-005b 生产实测修复**：提交校验改为按 item_id 合法性（题在
+  题池+概念属蓝图+客观题+非前后测题）而非重新选题——GET/submit
+  两次随机选题不同导致提交 422（契约测试 seed 池每概念仅 1 道剩余
+  题未暴露，生产大题池实测抓到）。
+- Web：迁移检验按钮 + AssessmentRunner 扩展（transfer 阶段走新
+  端点）。
+- 生产 E2E：未见情境应用题 2 道 → 作答 100 分 → 原子推进 →
+  sql:select-basics 迁移对触发 mastered。
+
 ## M17-004 —— 黄金集扩充：迁移题、延迟变体与阈值校准
 
 - **迁移题 4 道**（transfer_items）：JOIN + GROUP BY + HAVING 多概念
