@@ -75,9 +75,20 @@ def _job_out(row: IngestJobRow) -> ImportJobOut:
 def _download_parts(
     commit_sha: str, manifest: PartManifest, *, transport: httpx.BaseTransport | None = None
 ) -> list[bytes]:
-    """按数值序串行下载分片（raw URL 由服务端构造——不接受外部 URL）。"""
+    """按数值序串行下载分片（raw URL 由服务端构造——不接受外部 URL）。
+
+    出网代理：LIBRARY_OUTBOUND_PROXY 显式优先，回落 LLM_OUTBOUND_PROXY
+    （同一部署隧道——国内直连 raw.githubusercontent 实测不可达，live
+    2026-10-23：SSL connect error）。域固定 raw.githubusercontent.com
+    ——代理只用于该 allowlist 域，不作用于任意目标。
+    """
+    import os
+
+    proxy = os.environ.get("LIBRARY_OUTBOUND_PROXY") or os.environ.get("LLM_OUTBOUND_PROXY")
     chunks: list[bytes] = []
-    with httpx.Client(transport=transport, timeout=120.0, trust_env=True, follow_redirects=True) as client:
+    with httpx.Client(
+        transport=transport, timeout=120.0, trust_env=True, follow_redirects=True, proxy=proxy
+    ) as client:
         for _index, part_path in manifest.entries:
             url = f"{_RAW_BASE}/{commit_sha}/{part_path}"
             resp = client.get(url)
