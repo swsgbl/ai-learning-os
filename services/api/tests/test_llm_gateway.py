@@ -374,3 +374,25 @@ def test_chat_ollama_native_mode() -> None:
     text = gateway.chat((ChatMessage(role="user", content="出题"),))
     assert text == '{"items": []}'
     assert transport.url.endswith("/api/chat")  # /v1 剥离换 native 面
+
+
+def test_native_payload_carries_num_predict(monkeypatch) -> None:
+    """M18-006b 回归：native 分支 max_tokens → options.num_predict（此前被忽略，
+    Ollama 默认截断长 JSON——live 概念提取 4177 字符处截断解析失败）。"""
+    captured: dict = {}
+
+    class _Transport:
+        def post_json(self, url, *, headers, payload):
+            captured.update(payload)
+            return 200, {"message": {"content": "{\"ok\": 1}"}}
+
+    gateway = LlmGateway(
+        endpoint="http://ollama.local:11435/v1",
+        api_key="k",
+        model="m",
+        transport=_Transport(),
+        ollama_native=True,
+    )
+    out = gateway.chat((ChatMessage(role="user", content="hi"),), max_tokens=3000)
+    assert out == '{"ok": 1}'
+    assert captured["options"] == {"num_predict": 3000}

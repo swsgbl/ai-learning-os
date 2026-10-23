@@ -1,3 +1,24 @@
+## M18-006 —— 概念候选与 DAG 桥（审计 Phase 4 后半 / Prompt 5 收口）
+
+- **候选域层**（domain/concept_candidates.py）：概念 id 与既有
+  ConceptNodeIn 同形态（^[a-z0-9_:-]+$——跨体系一致）；五类关系
+  枚举（prerequisite_of/part_of/similar_to/often_confused_with/
+  applies_to）；置信夹取；**幽灵端点拒绝**（边端点必须在概念集——
+  防模型虚构概念连线）。
+- **两表**（0042）：concept_candidates / concept_edge_candidates
+  （自然键唯一；两态 candidate→confirmed/rejected——**重提取不覆盖
+  已决**（确认不被静默丢失））。
+- **端点**：POST concepts（LLM 从章节树+chunks 提取，prompt 限流
+  6000 字；逐条校验丢弃如实计数）/GET 列表（按置信序）/confirm/
+  reject/**dag-payload 桥**（确认候选→既有 M3-02 DAG admin 发布
+  格式——候选永不直接进正式图）。
+- **M18-006b 生产抓根因**：native /api/chat 分支忽略 max_tokens →
+  Ollama 默认截断长 JSON（live 概念提取 4177 字符处截断）——
+  options.num_predict 官方契约映射（与 M14-71 的 /v1 options 教训
+  不同路径，/api/chat options 是官方支持）。
+- **生产 live**：离散数学 → 15 概念/9 边 0 丢弃（质量：集合论/
+  归纳法/命题逻辑/算法复杂度+合理先修边）→ 确认 3 → DAG 桥载荷。
+
 ## M18-005 —— 课程结构候选（审计 Phase 4 / Prompt 5）
 
 - **章节树候选域层**（domain/course_structure.py）：PDF outline →

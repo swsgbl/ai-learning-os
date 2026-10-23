@@ -328,3 +328,93 @@ def test_structure_requires_outline(monkeypatch: pytest.MonkeyPatch, tmp_path) -
             assert "outline" in denied.json()["detail"]
         finally:
             env.cleanup(monkeypatch)
+
+
+# ---------------------------------------------------------------- M18-006 概念候选闭环
+
+
+def test_concept_extraction_confirm_reject(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """提取（stub LLM）→ 列表（含边）→ confirm/reject → 重提取不覆盖已决。"""
+    import app.api.routes.library as library_route
+    from app.core.config import get_settings
+
+    env = _Env(tmp_path, monkeypatch=monkeypatch, tree=[("a/书.pdf", "b1", 1)], parts=[_make_textbook_pdf()])
+    resource_id = _seed_and_get_resource(env, "书")
+
+    class _StubGateway:
+        def __init__(self, **kwargs):
+            pass
+
+        def chat(self, messages, temperature=0.0, max_tokens=1024):
+            import json as jsonlib
+
+            return jsonlib.dumps(
+                {
+                    "concepts": [
+                        {"id": "math:set-intersection", "canonical_name": "集合的交集",
+                         "subject": "数学", "description": "同时属于两个集合的元素", "difficulty": 2,
+                         "confidence": 0.9, "page": 1},
+                        {"id": "math:set-union", "canonical_name": "集合的并集",
+                         "subject": "数学", "description": "至少属于一个集合的元素", "difficulty": 2,
+                         "confidence": 0.85, "page": 1},
+                    ],
+                    "edges": [
+                        {"from": "math:set-intersection", "to": "math:set-union",
+                         "relation": "prerequisite_of", "confidence": 0.7},
+                    ],
+                },
+            )
+
+    monkeypatch.setenv("LLM_ENDPOINT", "http://stub.local/v1")
+    monkeypatch.setenv("LLM_API_KEY", "sk-stub-0123456789")
+    monkeypatch.setenv("LLM_MODEL", "stub-model")
+    get_settings.cache_clear()
+    monkeypatch.setattr(library_route, "LlmGateway", _StubGateway)
+    try:
+        with env.open_authed(monkeypatch) as (client, tokens):
+            header = {"Authorization": f"Bearer {tokens['alice']}"}
+            try:
+                job = client.post(
+                    "/api/v1/library/imports",
+                    json={"resource_id": resource_id, "permission_statement": True},
+                    headers=header,
+                ).json()
+                client.post(f"/api/v1/library/imports/{job['id']}/parse", headers=header)
+                extracted = client.post(f"/api/v1/library/imports/{job['id']}/concepts", headers=header)
+                assert extracted.status_code == 201, extracted.text
+                result = extracted.json()
+                assert result["concept_count"] == 2 and result["edge_count"] == 1
+
+                listed = client.get(f"/api/v1/library/imports/{job['id']}/concepts", headers=header)
+                assert listed.status_code == 200
+                concepts = listed.json()["concepts"]
+                edges = listed.json()["edges"]
+                assert len(concepts) == 2 and all(c["status"] == "candidate" for c in concepts)
+                assert edges[0]["relation"] == "prerequisite_of"
+
+                # confirm 一个 / reject 另一个
+                confirmed = client.post(
+                    f"/api/v1/library/imports/{job['id']}/concepts/{concepts[0]['id']}/confirm",
+                    headers=header,
+                )
+                assert confirmed.json()["status"] == "confirmed"
+                rejected = client.post(
+                    f"/api/v1/library/imports/{job['id']}/concepts/{concepts[1]['id']}/reject",
+                    headers=header,
+                )
+                assert rejected.json()["status"] == "rejected"
+
+                # 重提取：已决候选不被覆盖（仍 2 条、状态保持）
+                again = client.post(f"/api/v1/library/imports/{job['id']}/concepts", headers=header)
+                assert again.status_code == 201
+                relisted = client.get(f"/api/v1/library/imports/{job['id']}/concepts", headers=header)
+                statuses = {c["concept_id"]: c["status"] for c in relisted.json()["concepts"]}
+                assert statuses["math:set-intersection"] == "confirmed"
+                assert statuses["math:set-union"] == "rejected"
+            finally:
+                env.cleanup(monkeypatch)
+    finally:
+        monkeypatch.delenv("LLM_ENDPOINT", raising=False)
+        monkeypatch.delenv("LLM_API_KEY", raising=False)
+        monkeypatch.delenv("LLM_MODEL", raising=False)
+        get_settings.cache_clear()

@@ -32,6 +32,7 @@ from app.domain.ingest import (
     assemble_pdf,
     enforce_size_limit,
 )
+from app.llm.gateway import ChatMessage, LlmGateway, LlmUnavailable
 from app.parsing.chunking import chunk_blocks
 from app.storage.objectstore import MemoryObjectStore
 
@@ -517,3 +518,400 @@ async def confirm_course_unit(job_id: str, unit_id: str, request: Request) -> Co
         await session.commit()
         await session.refresh(row)
         return _unit_out(row)
+
+
+# ---------------------------------------------------------------- 概念候选（M18-006）
+
+
+class ConceptCandidateOut(BaseModel):
+    id: str
+    concept_id: str
+    canonical_name: str
+    subject: str
+    description: str
+    difficulty: int
+    confidence: float
+    status: str
+    page: int | None
+
+
+class EdgeCandidateOut(BaseModel):
+    id: str
+    from_concept: str
+    to_concept: str
+    relation: str
+    confidence: float
+    status: str
+
+
+class ConceptExtractionOut(BaseModel):
+    job_id: str
+    concept_count: int
+    edge_count: int
+    dropped: int
+
+
+_CONCEPT_SYSTEM_PROMPT = (
+    "你是课程设计师。根据教材章节树与章节文本样本，提取这本书教授的核心知识概念。"
+    "概念是可测试的知识单元（如：一元二次方程、集合的交集）。"
+    '输出 JSON：{"concepts": [{"id": "学科:主题", "canonical_name": "中文名", "subject": "学科", '
+    '"description": "一句话定义", "difficulty": 1, "confidence": 0.8, "page": 12}], '
+    '"edges": [{"from": "概念id", "to": "概念id", "relation": "prerequisite_of", "confidence": 0.7}]}。'
+    "id 规则：全小写，学科与主题用冒号分隔，多词连字符（math:quadratic-equation）。"
+    "relation 只能是 prerequisite_of/part_of/similar_to/often_confused_with/applies_to；"
+    "prerequisite_of 表示 from 是 to 的先修概念。最多 15 个概念。只输出 JSON。"
+)
+
+
+@router.post("/imports/{job_id}/concepts", response_model=ConceptExtractionOut, status_code=201)
+async def extract_concept_candidates(job_id: str, request: Request) -> ConceptExtractionOut:
+    """LLM 从已解析教材提取概念/边候选（人工确认后经既有 DAG 管道进正式图）。
+
+    幂等：重提取不覆盖已 confirmed/rejected 的候选（确认不被静默丢失）。
+    """
+    await require_user(request)
+    owner = current_owner_id(request)
+    job = await _owned_ready_job(request, job_id, owner)
+    from app.db.orm import (
+        ConceptCandidateRow,
+        ConceptEdgeCandidateRow,
+        CourseUnitRow,
+        ResourceRow,
+    )
+
+    async with request.app.state.sessionmaker() as session:
+        record = (
+            await session.execute(
+                select(ResourceRow).where(
+                    (ResourceRow.content_hash == job.sha256) & (ResourceRow.owner_id == owner)
+                )
+            )
+        ).scalar_one_or_none()
+        if record is None or record.parse_status != "parsed":
+            raise HTTPException(status_code=409, detail="先解析（parsed 状态）再提取概念")
+        units = (
+            await session.execute(
+                select(CourseUnitRow)
+                .where(CourseUnitRow.resource_id == record.id)
+                .order_by(CourseUnitRow.sequence)
+                .limit(40)
+            )
+        ).scalars().all()
+        chunks_repo = getattr(request.app.state, "chunks", None)
+        chunks = await chunks_repo.list_chunks(record.id) if chunks_repo else []
+        resource_id = record.id
+    if not chunks:
+        raise HTTPException(status_code=409, detail="无解析文本（chunks 空）——概念提取需要文本型解析产出")
+
+    section_lines = [
+        f"- {u.title}（第{int((u.anchor or {}).get('page', 0))}页）" for u in units
+    ] or ["（无章节树——按文本顺序）"]
+    sample_chars = 0
+    samples: list[str] = []
+    for chunk in chunks[:40]:
+        text = str(chunk.get("text", ""))[:400]
+        if sample_chars + len(text) > 6000:
+            break
+        samples.append(text)
+        sample_chars += len(text)
+    prompt = "章节目录：\n" + "\n".join(section_lines) + "\n\n文本样本：\n" + "\n".join(samples)
+
+    from app.api.routes.me_ai_keys import resolve_user_llm_config
+    from app.core.config import get_settings
+
+    settings = get_settings()
+    endpoint, api_key, model = settings.llm_endpoint, settings.llm_api_key, settings.llm_model
+    personal = await resolve_user_llm_config(request.app, owner)
+    if personal:
+        endpoint = personal["endpoint"] or endpoint
+        api_key = personal["api_key"]
+        model = personal["model"] or model
+    if not (endpoint and api_key and model):
+        raise HTTPException(status_code=422, detail="未配置 LLM——无法提取概念候选")
+    gateway = LlmGateway(
+        endpoint=endpoint, api_key=api_key, model=model,
+        timeout_seconds=settings.llm_timeout_seconds or 30.0,
+        ollama_native=settings.llm_provider == "ollama",
+    )
+    messages = (
+        ChatMessage(role="system", content=_CONCEPT_SYSTEM_PROMPT),
+        ChatMessage(role="user", content=prompt),
+    )
+    try:
+        raw = await asyncio.to_thread(gateway.chat, messages, temperature=0.2, max_tokens=3000)
+    except LlmUnavailable as cause:
+        raise HTTPException(status_code=503, detail=f"LLM 调用失败：{cause}") from cause
+
+    from app.domain.concept_candidates import (
+        ConceptCandidateError,
+        validate_concept_candidate,
+        validate_edge_candidate,
+    )
+    from app.domain.concept_derivation import _parse_json
+
+    parsed = _parse_json(raw)
+    if not isinstance(parsed, dict):
+        raise HTTPException(status_code=502, detail="LLM 输出不可解析（可重试）")
+    dropped = 0
+    valid_concepts = []
+    for entry in parsed.get("concepts", [])[:30]:
+        try:
+            valid_concepts.append(validate_concept_candidate(entry))
+        except ConceptCandidateError:
+            dropped += 1
+    known = {c.concept_id for c in valid_concepts}
+    valid_edges = []
+    for entry in parsed.get("edges", [])[:40]:
+        try:
+            valid_edges.append(validate_edge_candidate(entry, known))
+        except ConceptCandidateError:
+            dropped += 1
+    if not valid_concepts:
+        raise HTTPException(status_code=502, detail=f"概念候选全部未通过校验（丢弃 {dropped}）")
+
+    now = _now()
+    async with request.app.state.sessionmaker() as session:
+        existing = {
+            row.concept_id: row
+            for row in (
+                await session.execute(
+                    select(ConceptCandidateRow).where(ConceptCandidateRow.resource_id == resource_id)
+                )
+            ).scalars()
+        }
+        for cand in valid_concepts:
+            prior = existing.get(cand.concept_id)
+            if prior is not None:
+                if prior.status == "candidate":  # 确认/拒绝不被覆盖
+                    prior.canonical_name = cand.canonical_name
+                    prior.subject = cand.subject
+                    prior.description = cand.description
+                    prior.difficulty = cand.difficulty
+                    prior.confidence = cand.confidence
+                    prior.provenance = dict(cand.provenance)
+                    prior.updated_at = now
+                continue
+            session.add(
+                ConceptCandidateRow(
+                    id=f"cc_{uuid.uuid4().hex[:22]}",
+                    resource_id=resource_id,
+                    owner_id=owner,
+                    concept_id=cand.concept_id,
+                    canonical_name=cand.canonical_name,
+                    subject=cand.subject,
+                    description=cand.description,
+                    difficulty=cand.difficulty,
+                    confidence=cand.confidence,
+                    provenance=dict(cand.provenance),
+                    status="candidate",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        existing_edges = {
+            (row.from_concept, row.to_concept, row.relation): row
+            for row in (
+                await session.execute(
+                    select(ConceptEdgeCandidateRow).where(ConceptEdgeCandidateRow.resource_id == resource_id)
+                )
+            ).scalars()
+        }
+        for edge in valid_edges:
+            key = (edge.from_concept, edge.to_concept, edge.relation)
+            if key in existing_edges:
+                continue
+            session.add(
+                ConceptEdgeCandidateRow(
+                    id=f"ce_{uuid.uuid4().hex[:22]}",
+                    resource_id=resource_id,
+                    owner_id=owner,
+                    from_concept=edge.from_concept,
+                    to_concept=edge.to_concept,
+                    relation=edge.relation,
+                    confidence=edge.confidence,
+                    provenance=dict(edge.provenance),
+                    status="candidate",
+                    created_at=now,
+                    updated_at=now,
+                )
+            )
+        await session.commit()
+    return ConceptExtractionOut(
+        job_id=job_id,
+        concept_count=len(valid_concepts),
+        edge_count=len(valid_edges),
+        dropped=dropped,
+    )
+
+
+@router.get("/imports/{job_id}/concepts")
+async def list_concept_candidates(job_id: str, request: Request) -> dict:
+    await require_user(request)
+    owner = current_owner_id(request)
+    job = await _owned_ready_job(request, job_id, owner)
+    from app.db.orm import ConceptCandidateRow, ConceptEdgeCandidateRow, ResourceRow
+
+    async with request.app.state.sessionmaker() as session:
+        record = (
+            await session.execute(
+                select(ResourceRow).where(
+                    (ResourceRow.content_hash == job.sha256) & (ResourceRow.owner_id == owner)
+                )
+            )
+        ).scalar_one_or_none()
+        if record is None:
+            raise HTTPException(status_code=404, detail="候选未提取——先 POST concepts")
+        concepts = (
+            await session.execute(
+                select(ConceptCandidateRow)
+                .where(ConceptCandidateRow.resource_id == record.id)
+                .order_by(ConceptCandidateRow.confidence.desc())
+            )
+        ).scalars().all()
+        edges = (
+            await session.execute(
+                select(ConceptEdgeCandidateRow).where(ConceptEdgeCandidateRow.resource_id == record.id)
+            )
+        ).scalars().all()
+        return {
+            "concepts": [
+                ConceptCandidateOut(
+                    id=row.id, concept_id=row.concept_id, canonical_name=row.canonical_name,
+                    subject=row.subject, description=row.description, difficulty=row.difficulty,
+                    confidence=row.confidence, status=row.status,
+                    page=(row.provenance or {}).get("page"),
+                ).model_dump()
+                for row in concepts
+            ],
+            "edges": [
+                EdgeCandidateOut(
+                    id=row.id, from_concept=row.from_concept, to_concept=row.to_concept,
+                    relation=row.relation, confidence=row.confidence, status=row.status,
+                ).model_dump()
+                for row in edges
+            ],
+        }
+
+
+async def _set_candidate_status(request: Request, job_id: str, table, row_id: str, owner, status: str):
+    job = await _owned_ready_job(request, job_id, owner)
+    from app.db.orm import ResourceRow
+
+    async with request.app.state.sessionmaker() as session:
+        record = (
+            await session.execute(
+                select(ResourceRow).where(
+                    (ResourceRow.content_hash == job.sha256) & (ResourceRow.owner_id == owner)
+                )
+            )
+        ).scalar_one_or_none()
+        if record is None:
+            raise HTTPException(status_code=404, detail="候选未提取")
+        row = await session.get(table, row_id)
+        if row is None or row.resource_id != record.id:
+            raise HTTPException(status_code=404, detail="候选不存在")
+        row.status = status
+        row.updated_at = _now()
+        await session.commit()
+        await session.refresh(row)
+        return row
+
+
+@router.post("/imports/{job_id}/concepts/{candidate_id}/confirm")
+async def confirm_concept_candidate(job_id: str, candidate_id: str, request: Request) -> dict:
+    await require_user(request)
+    from app.db.orm import ConceptCandidateRow
+
+    row = await _set_candidate_status(
+        request, job_id, ConceptCandidateRow, candidate_id, current_owner_id(request), "confirmed"
+    )
+    return {"id": row.id, "concept_id": row.concept_id, "status": row.status}
+
+
+@router.post("/imports/{job_id}/concepts/{candidate_id}/reject")
+async def reject_concept_candidate(job_id: str, candidate_id: str, request: Request) -> dict:
+    await require_user(request)
+    from app.db.orm import ConceptCandidateRow
+
+    row = await _set_candidate_status(
+        request, job_id, ConceptCandidateRow, candidate_id, current_owner_id(request), "rejected"
+    )
+    return {"id": row.id, "concept_id": row.concept_id, "status": row.status}
+
+
+@router.get("/imports/{job_id}/concepts/dag-payload")
+async def confirmed_candidates_as_dag_payload(job_id: str, request: Request) -> dict:
+    """确认候选 → 既有 DAG 发布端点（admin 全量快照）的入参格式桥。
+
+    返回 {nodes, edges, note}——可直接喂 POST /api/v1/concept-dag/publish；
+    边只含 prerequisite_of（正式 DAG 本期唯一消费的类型——其余类型
+    候选留待 DAG 模型扩展，如实不混入）。
+    """
+    await require_user(request)
+    owner = current_owner_id(request)
+    job = await _owned_ready_job(request, job_id, owner)
+    from app.db.orm import ConceptCandidateRow, ConceptEdgeCandidateRow, ResourceRow
+
+    async with request.app.state.sessionmaker() as session:
+        record = (
+            
+                await session.execute(
+                    select(ResourceRow).where(
+                        (ResourceRow.content_hash == job.sha256) & (ResourceRow.owner_id == owner)
+                    )
+                )
+            
+        ).scalar_one_or_none()
+        if record is None:
+            raise HTTPException(status_code=404, detail="候选未提取")
+        confirmed = (
+            
+                await session.execute(
+                    select(ConceptCandidateRow).where(
+                        (ConceptCandidateRow.resource_id == record.id)
+                        & (ConceptCandidateRow.status == "confirmed")
+                    )
+                )
+            
+        ).scalars().all()
+        confirmed_edges = (
+            
+                await session.execute(
+                    select(ConceptEdgeCandidateRow).where(
+                        (ConceptEdgeCandidateRow.resource_id == record.id)
+                        & (ConceptEdgeCandidateRow.status == "confirmed")
+                    )
+                )
+            
+        ).scalars().all()
+        if not confirmed:
+            raise HTTPException(status_code=409, detail="无已确认候选——先 confirm 再构造 DAG 入参")
+    confirmed_ids = {row.concept_id for row in confirmed}
+    nodes = [
+        {
+            "id": row.concept_id,
+            "canonical_name": row.canonical_name,
+            "aliases": [],
+            "subject": row.subject,
+            "description": row.description,
+            "difficulty": row.difficulty,
+            "parent_id": None,
+            "evidence_ids": [],
+        }
+        for row in confirmed
+    ]
+    edges = [
+        {
+            "prerequisite_id": row.from_concept,
+            "concept_id": row.to_concept,
+        }
+        for row in confirmed_edges
+        if row.relation == "prerequisite_of"
+        and row.from_concept in confirmed_ids
+        and row.to_concept in confirmed_ids
+    ]
+    return {
+        "nodes": nodes,
+        "edges": edges,
+        "note": f"从教材候选确认生成（{len(nodes)} 概念 / {len(edges)} 先修边）",
+    }
