@@ -1,3 +1,19 @@
+## M19-001 —— OCR 后备：扫描教材文本化（审计 Prompt 4 收口）
+
+- **RapidOCR**（onnxruntime 版 PaddleOCR 模型，Apache-2.0）——轻量
+  CPU 推理（无 paddle 依赖），中文黄金样本逐字识别（判别式句）；
+  镜像加装 opencv 运行库（libxcb/libGL/libglib——slim 缺库坑）。
+- **OCR adapter**（parsing/ocr.py）：仅低文本页（扫描形态）识别；
+  页均置信 <0.80 标 low_ocr_confidence（人工复核信号——审计红线：
+  低置信不自动驱动题目生成）；页数上限防长书风暴；单页失败跳过
+  （返回数缺页即信号）。
+- **parse 端点 OCR 路径**：needs_ocr 书低文本页 OCR 补文本（页锚点
+  保留）→ 重判解析态 → OCR 统计入 metrics（done/requested/低置信
+  页清单/均置信）；`ocr_max_pages` 分批参数（62 页全量超网关 60s
+  窗——分批重跑语义，未完成页保持 needs_ocr 如实）。
+- **生产 live**：体育七年级扫描书 12 页 OCR 置信 0.987、chunks
+  3→14、真实教材中文逐句入库（运动安全须知原文）。
+
 ## M18-007 —— 题目发布门（审计 Phase 5 / Prompt 6 红线）
 
 - **练习/考试分离落地**（审计 04 §4.3）：生成题入池即 candidate——

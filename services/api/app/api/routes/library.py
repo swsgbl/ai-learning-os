@@ -21,7 +21,7 @@ import uuid
 from datetime import UTC, datetime
 
 import httpx
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 
@@ -34,6 +34,7 @@ from app.domain.ingest import (
 )
 from app.llm.gateway import ChatMessage, LlmGateway, LlmUnavailable
 from app.parsing.chunking import chunk_blocks
+from app.parsing.ocr import DEFAULT_MAX_OCR_PAGES
 from app.storage.objectstore import MemoryObjectStore
 
 router = APIRouter(prefix="/api/v1/library", tags=["library"])
@@ -256,10 +257,15 @@ class ParseResultOut(BaseModel):
     low_text_pages: int
     #: PDF outline（章节树候选——Prompt 5 course_unit 输入；空 = 无书签）
     toc: list[dict] = []
+    #: M19-001 OCR 补文本统计（无 OCR 路径缺省 0）
+    ocr_pages_done: int = 0
+    ocr_mean_confidence: float = 0.0
 
 
 @router.post("/imports/{job_id}/parse", response_model=ParseResultOut)
-async def parse_import(job_id: str, request: Request) -> ParseResultOut:
+async def parse_import(
+    job_id: str, request: Request, ocr_max_pages: int = Query(default=DEFAULT_MAX_OCR_PAGES, ge=1, le=50)
+) -> ParseResultOut:
     """解析私有导入的教材（文本型 PDF 首选 PyMuPDF；重跑=整资源幂等替换）。
 
     扫描页（低文本）如实计入 low_text_pages——占比过半标 needs_ocr
@@ -331,9 +337,46 @@ async def parse_import(job_id: str, request: Request) -> ParseResultOut:
     )
     low_text = int(parsed.metrics.get("low_text_pages", 0))
     needs_ocr = low_text * 2 > max(1, parsed.page_count)
+    ocr_metrics: dict = {}
+    if needs_ocr:
+        # M19-001：低文本页 OCR 补文本（扫描书文本化）——页均置信低于
+        # 阈值标 low_ocr_confidence（人工复核信号——不自动驱动题目生成）
+        from app.parsing.ocr import OCR_CONFIDENCE_THRESHOLD, OcrUnavailable, ocr_pages
+
+        low_pages = [b.page for b in parsed.blocks if b.type == "page_marker"]
+        try:
+            ocr_results = await asyncio.to_thread(
+                ocr_pages, data, low_pages, max_pages=ocr_max_pages
+            )
+        except OcrUnavailable as cause:
+            raise HTTPException(status_code=503, detail=f"OCR 不可用：{cause}") from cause
+        low_conf_pages = [r.page for r in ocr_results if r.mean_confidence < OCR_CONFIDENCE_THRESHOLD]
+        ocr_metrics = {
+            "ocr_pages_done": len(ocr_results),
+            "ocr_pages_requested": len(low_pages),
+            "ocr_low_confidence_pages": low_conf_pages,
+            "ocr_mean_confidence": round(
+                sum(r.mean_confidence for r in ocr_results) / max(1, len(ocr_results)), 3
+            ),
+        }
+        # OCR 文本补进 blocks（页锚点保留）——重判解析态
+        ocr_texts = sum(len(r.text) for r in ocr_results)
+        effective_low = low_text - sum(1 for r in ocr_results if len(r.text) >= 24)
+        needs_ocr = effective_low * 2 > max(1, parsed.page_count)
+        parsed.blocks.extend(
+            __import__("app.parsing.base", fromlist=["ParsedBlock"]).ParsedBlock(
+                type="paragraph", text=r.text, page=r.page
+            )
+            for r in ocr_results
+            if r.text
+        )
+        chunks = chunk_blocks(parsed.blocks)
+        _ = ocr_texts
     status = "needs_ocr" if needs_ocr else "parsed"
+    final_metrics = dict(parsed.metrics)
+    final_metrics.update(ocr_metrics)
     await resources.set_parse_status(
-        record.id, status, parser_name=parsed.parser_name, metrics=dict(parsed.metrics)
+        record.id, status, parser_name=parsed.parser_name, metrics=final_metrics
     )
     return ParseResultOut(
         job_id=job_id,
@@ -343,6 +386,8 @@ async def parse_import(job_id: str, request: Request) -> ParseResultOut:
         chunk_count=len(chunks),
         low_text_pages=low_text,
         toc=list(parsed.metrics.get("toc", [])),
+        ocr_pages_done=ocr_metrics.get("ocr_pages_done", 0),
+        ocr_mean_confidence=ocr_metrics.get("ocr_mean_confidence", 0.0),
     )
 
 
