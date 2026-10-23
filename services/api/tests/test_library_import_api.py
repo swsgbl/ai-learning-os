@@ -175,3 +175,84 @@ def test_import_download_failure_reports_502(monkeypatch: pytest.MonkeyPatch, tm
             assert failed.status_code == 502
         finally:
             env.cleanup(monkeypatch)
+
+
+# ---------------------------------------------------------------- M18-004 解析闭环
+
+
+def _make_textbook_pdf() -> bytes:
+    """两页带文本 + outline 的教材形态 PDF（fitz 生成）。"""
+    import pymupdf
+
+    doc = pymupdf.open()
+    for index in range(1, 3):
+        page = doc.new_page()
+        page.insert_text((72, 96), f"第{index}章 内容。" + "正文段落，含数学符号 -1/2 与 x²。" * 30)
+    doc.set_toc([[1, "第一章 集合", 1], [1, "第二章 函数", 2]])
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+def test_parse_after_import_lands_page_anchored_chunks(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """导入 → 解析：chunks 落库（页锚点）+ toc 透出 + resources parse_status=parsed。"""
+    env = _Env(tmp_path, monkeypatch=monkeypatch, tree=[("a/书.pdf", "b1", 1)], parts=[_make_textbook_pdf()])
+    resource_id = _seed_and_get_resource(env, "书")
+    with env.open_authed(monkeypatch) as (client, tokens):
+        header = {"Authorization": f"Bearer {tokens['alice']}"}
+        try:
+            job = client.post(
+                "/api/v1/library/imports",
+                json={"resource_id": resource_id, "permission_statement": True},
+                headers=header,
+            ).json()
+            assert job["status"] == "ready"
+            parsed = client.post(f"/api/v1/library/imports/{job['id']}/parse", headers=header)
+            assert parsed.status_code == 200, parsed.text
+            result = parsed.json()
+            assert result["status"] == "parsed"
+            assert result["parser_name"] == "pymupdf"
+            assert result["page_count"] == 2
+            assert result["chunk_count"] >= 1
+            assert result["low_text_pages"] == 0
+            assert result["toc"][0]["title"] == "第一章 集合"
+            # 重跑幂等（整资源替换——不残留旧块）
+            again = client.post(f"/api/v1/library/imports/{job['id']}/parse", headers=header)
+            assert again.status_code == 200 and again.json()["chunk_count"] == result["chunk_count"]
+            # 跨用户隔离：bob 解析 alice 的 job 404
+            denied = client.post(
+                f"/api/v1/library/imports/{job['id']}/parse",
+                headers={"Authorization": f"Bearer {tokens['bob']}"},
+            )
+            assert denied.status_code == 404
+        finally:
+            env.cleanup(monkeypatch)
+
+
+def test_parse_scanned_pdf_flags_needs_ocr(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """全扫描形态（无文本层）：needs_ocr 如实（不虚构文本）。"""
+    import pymupdf
+
+    doc = pymupdf.open()
+    for _ in range(3):
+        doc.new_page()  # 空页
+    data = doc.tobytes()
+    doc.close()
+
+    env = _Env(tmp_path, monkeypatch=monkeypatch, tree=[("a/扫描书.pdf", "b1", 1)], parts=[data])
+    resource_id = _seed_and_get_resource(env, "扫描书")
+    with env.open_authed(monkeypatch) as (client, tokens):
+        header = {"Authorization": f"Bearer {tokens['alice']}"}
+        try:
+            job = client.post(
+                "/api/v1/library/imports",
+                json={"resource_id": resource_id, "permission_statement": True},
+                headers=header,
+            ).json()
+            parsed = client.post(f"/api/v1/library/imports/{job['id']}/parse", headers=header)
+            assert parsed.status_code == 200
+            result = parsed.json()
+            assert result["status"] == "needs_ocr"
+            assert result["low_text_pages"] == 3
+        finally:
+            env.cleanup(monkeypatch)

@@ -6,6 +6,7 @@ from collections.abc import Callable
 from app.parsing.base import Parser, ParserError, ParserUnavailable
 from app.parsing.docling import DoclingParser
 from app.parsing.jsonparser import JsonDatasetParser
+from app.parsing.pymupdf_parser import PyMuPdfParser
 
 
 class ParserRegistry:
@@ -59,5 +60,7 @@ def make_default_registry() -> ParserRegistry:
     """真实部署默认注册表：docling（依赖未装自动降级）+ json-dataset。"""
     registry = ParserRegistry()
     registry.register("docling", DoclingParser)
+    # M18-004：文本型 PDF 首选（轻量；outline 透出章节树候选）
+    registry.register("pymupdf", PyMuPdfParser)
     registry.register_instance(JsonDatasetParser())
     return registry
