@@ -12,6 +12,7 @@ import { Flip, gsap, useMotion } from "@/lib/gsap";
 import { MOTION } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { PaperCard } from "@/components/paper-card";
+import { CatalogSection } from "@/components/library/catalog-section";
 import { ErrorState, EmptyState } from "@/components/states";
 import { Input } from "@/components/ui/input";
 
@@ -120,7 +121,12 @@ export function LibraryView() {
       <div data-animate="block">
         <p className="text-xs text-muted">模式三</p>
         <h1 className="mt-1 font-display text-3xl">学习库</h1>
-        <p className="mt-2 max-w-xl text-sm text-muted">当前是服务端来源目录；真实多源检索、License Gate 和 Evidence 将在 M1 接入。</p>
+        <p className="mt-2 max-w-xl text-sm text-muted">可练试卷与教材目录检索。</p>
+      </div>
+
+      {/* M18-002 找教材：ChinaTextbook 目录（Mode A 元数据外链） */}
+      <div data-animate="block">
+        <CatalogSection />
       </div>
 
       <div data-animate="block" className="space-y-3">

@@ -1,3 +1,12 @@
+## M18-002 —— Web 找教材入口（学习库页目录检索）
+
+- 学习库页新增「找教材（ChinaTextbook 目录）」区块（审计 UX 三入口
+  之一「找课程/教材」的 Web 面）：默认「数学」预览 + 主动搜索；
+  每条展示 学段·学科·年级·册别·分片数 + 许可徽标（metadata_only
+  如实标注「未验证许可——仅外链」）+ 来源外链（GitHub raw，pin
+  commit URL）。
+- Mode A 边界在 UI 文案明示：许可未逐册核验不镜像原文。
+
 ## M18-001 —— 课程资源目录（审计升级包 Phase 1 / Prompt 1）
 
 - **catalog 域层**（domain/catalog.py）：git tree 路径归一化（学段

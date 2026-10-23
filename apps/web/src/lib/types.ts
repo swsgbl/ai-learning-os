@@ -644,3 +644,23 @@ export interface ReviewQueueItem {
   /** attempt 后回传本次判分（提交后可见）；其余端点缺省 */
   last_correct?: boolean | null;
 }
+
+export interface CatalogResource {
+  id: string;
+  provider: string;
+  source_path: string;
+  source_url: string;
+  title: string;
+  education_stage: string;
+  subject: string;
+  grade: string;
+  semester: string;
+  volume: string;
+  edition_hint: string;
+  mime_type: string;
+  parts_count: number;
+  source_commit_sha: string;
+  permission_status: string;
+  license_spdx: string;
+  attribution_text: string;
+}
