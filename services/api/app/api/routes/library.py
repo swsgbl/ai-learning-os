@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -86,14 +87,20 @@ def _download_parts(
 
     proxy = os.environ.get("LIBRARY_OUTBOUND_PROXY") or os.environ.get("LLM_OUTBOUND_PROXY")
     chunks: list[bytes] = []
+    accumulated = 0
     with httpx.Client(
         transport=transport, timeout=120.0, trust_env=True, follow_redirects=True, proxy=proxy
     ) as client:
-        for _index, part_path in manifest.entries:
+        for index, part_path in manifest.entries:
             url = f"{_RAW_BASE}/{commit_sha}/{part_path}"
             resp = client.get(url)
             resp.raise_for_status()
+            accumulated += len(resp.content)
+            # 逐片累积限流（先下后限=可先耗尽内存——安全审查修复）：
+            # 超限立即中止，不等全部片落内存
+            enforce_size_limit(accumulated)
             chunks.append(resp.content)
+            _ = index
     return chunks
 
 
@@ -146,10 +153,12 @@ async def create_import(payload: ImportRequest, request: Request) -> ImportJobOu
         await _fail_job(request, job_id, "incomplete_parts", str(cause))
         raise HTTPException(status_code=409, detail=str(cause)) from cause
     try:
-        parts = _download_parts(resource.source_commit_sha, manifest)
+        # 下载/拼接为同步阻塞 IO——线程池执行（事件循环不阻塞：
+        # 与 LLM 调用同款 asyncio.to_thread 模式）
+        parts = await asyncio.to_thread(_download_parts, resource.source_commit_sha, manifest)
         total = sum(len(p) for p in parts)
         enforce_size_limit(total)
-        assembled, digest = assemble_pdf(parts)
+        assembled, digest = await asyncio.to_thread(assemble_pdf, parts)
     except (ValueError, httpx.HTTPError) as cause:
         detail = str(cause) or type(cause).__name__
         status = "incomplete_parts" if "片" in detail else "failed"

@@ -84,9 +84,12 @@ RUNNER_PATH = REPO_ROOT / "tools" / "ops" / "rc_smoke_rehearsal.py"
 #: 六槽位（应用更新检查：部署 env 三项齐全才透出，缺任一=端点 404
 #: 如实）；rc-smoke compose api env 键集同步零增零删契约保持；见
 #: docs/evidence/m15-006-release-channel/。
+#: M18-003 第五次显式更新 docker-compose.yml pin——api env 新增空默认
+#: LIBRARY_OUTBOUND_PROXY 透传（私有导入下载出网代理；rc-smoke compose
+#: api env 键集同步零增零删契约保持）。
 PRODUCTION_FILE_PINS = {
     "infra/docker-compose.yml":
-        "83c5e4f7e7bb665c40e53f06dc262a910c2ddc753ab0102e9aff8b337d1a66d4",
+        "f7a794e50b5868df3d8fa21fac66b461bd5314630258ecb740bcd2e40eeda674",
     "infra/build_release_candidate.sh":
         "3efa02586c8a93a1d4b26f1fc981fd1233a87ae94be797cd3f939e9b464778b2",
     "infra/smoke_docker.sh":
