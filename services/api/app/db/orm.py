@@ -790,6 +790,36 @@ class ContentBlobRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+# ---------------------------------------------------------------- M18-005 课程结构（审计升级包 Phase 4）
+
+
+class CourseUnitRow(Base):
+    """章节树单元（候选→确认两态——出版 outline 候选，人工确认后正式）。
+
+    挂 resources（解析产物），锚点保留 toc 页码；同一 resource 重提取
+    = 整树替换（sequence 重建）。
+    """
+
+    __tablename__ = "course_units"
+    __table_args__ = (
+        UniqueConstraint("resource_id", "sequence", name="uq_course_unit_resource_seq"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    resource_id: Mapped[str] = mapped_column(String(64), ForeignKey("resources.id"), index=True)
+    parent_id: Mapped[str | None] = mapped_column(String(32), ForeignKey("course_units.id"), nullable=True)
+    sequence: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(255))
+    #: volume / chapter / section（按 toc 相对层级——确认时可人工校正）
+    unit_type: Mapped[str] = mapped_column(String(16), default="chapter")
+    level: Mapped[int] = mapped_column(Integer, default=1)
+    #: candidate（生成态）/ confirmed（人工确认）
+    status: Mapped[str] = mapped_column(String(16), default="candidate")
+    #: 页锚点与原始 toc level（{page, toc_level}）
+    anchor: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class LearningContractRow(Base):
     """M16-001 学习合同：可观察能力目标 + 范围/排除项 + 先验 + 通过标准。
 

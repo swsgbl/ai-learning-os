@@ -343,3 +343,177 @@ async def parse_import(job_id: str, request: Request) -> ParseResultOut:
         low_text_pages=low_text,
         toc=list(parsed.metrics.get("toc", [])),
     )
+
+
+# ---------------------------------------------------------------- 课程结构（M18-005）
+
+
+class CourseUnitOut(BaseModel):
+    id: str
+    sequence: int
+    title: str
+    unit_type: str
+    level: int
+    status: str
+    page: int
+    parent_id: str | None
+
+
+class StructureOut(BaseModel):
+    job_id: str
+    resource_id: str
+    unit_count: int
+    confirmed_count: int
+    units: list[CourseUnitOut]
+
+
+def _unit_out(row) -> CourseUnitOut:
+    return CourseUnitOut(
+        id=row.id,
+        sequence=row.sequence,
+        title=row.title,
+        unit_type=row.unit_type,
+        level=row.level,
+        status=row.status,
+        page=int((row.anchor or {}).get("page", 0)),
+        parent_id=row.parent_id,
+    )
+
+
+async def _owned_ready_job(request: Request, job_id: str, owner):
+    from app.db.orm import IngestJobRow as _Job
+
+    async with request.app.state.sessionmaker() as session:
+        job = await session.get(_Job, job_id)
+        if job is None or job.owner_id != owner:
+            raise HTTPException(status_code=404, detail="导入任务不存在")
+        if job.status != "ready":
+            raise HTTPException(status_code=409, detail=f"导入未就绪（{job.status}）")
+        return job
+
+
+@router.post("/imports/{job_id}/structure", response_model=StructureOut, status_code=201)
+async def build_course_structure(job_id: str, request: Request) -> StructureOut:
+    """从已解析教材的 outline 生成章节树候选（重跑=整树替换幂等）。
+
+    候选全部 status=candidate——人工确认（confirm 端点）后才成为正式
+    结构（审计 Prompt 5：候选不经校验不进入正式路径）。
+    """
+    await require_user(request)
+    owner = current_owner_id(request)
+    job = await _owned_ready_job(request, job_id, owner)
+    from app.db.orm import CourseUnitRow, ResourceRow
+    from app.domain.course_structure import CourseStructureError, toc_to_candidates
+
+    async with request.app.state.sessionmaker() as session:
+        record = (
+            await session.execute(
+                select(ResourceRow).where(
+                    (ResourceRow.content_hash == job.sha256)
+                    & (ResourceRow.owner_id == owner)
+                )
+            )
+        ).scalar_one_or_none()
+        if record is None or record.parse_status not in {"parsed", "needs_ocr"}:
+            raise HTTPException(status_code=409, detail="先解析（/parse）再提取结构")
+        toc = list((record.parse_metrics or {}).get("toc", []))
+        resource_id = record.id
+    if not toc:
+        raise HTTPException(status_code=409, detail="该教材无 outline（扫描书或无书签）——结构提取需要文本型解析产出")
+    try:
+        candidates = toc_to_candidates(toc)
+    except CourseStructureError as cause:
+        raise HTTPException(status_code=422, detail=str(cause)) from cause
+
+    now = _now()
+    async with request.app.state.sessionmaker() as session:
+        # 整树替换（重提取幂等——旧 confirmed 状态如实丢失，重提取=重建候选）
+        olds = (
+            await session.execute(select(CourseUnitRow).where(CourseUnitRow.resource_id == resource_id))
+        ).scalars().all()
+        for row in olds:
+            await session.delete(row)
+        await session.flush()
+        id_by_seq: dict[int, str] = {}
+        rows = []
+        for cand in candidates:
+            unit_id = f"cu_{uuid.uuid4().hex[:22]}"
+            id_by_seq[cand.sequence] = unit_id
+            rows.append(
+                CourseUnitRow(
+                    id=unit_id,
+                    resource_id=resource_id,
+                    parent_id=id_by_seq.get(cand.parent_sequence) if cand.parent_sequence else None,
+                    sequence=cand.sequence,
+                    title=cand.title[:255],
+                    unit_type=cand.unit_type,
+                    level=cand.level,
+                    status="candidate",
+                    anchor=dict(cand.anchor),
+                    created_at=now,
+                )
+            )
+        for row in rows:
+            session.add(row)
+        await session.commit()
+        for row in rows:
+            await session.refresh(row)
+    return StructureOut(
+        job_id=job_id,
+        resource_id=resource_id,
+        unit_count=len(rows),
+        confirmed_count=0,
+        units=[_unit_out(row) for row in rows],
+    )
+
+
+@router.get("/imports/{job_id}/structure", response_model=StructureOut)
+async def get_course_structure(job_id: str, request: Request) -> StructureOut:
+    await require_user(request)
+    owner = current_owner_id(request)
+    job = await _owned_ready_job(request, job_id, owner)
+    from app.db.orm import CourseUnitRow, ResourceRow
+
+    async with request.app.state.sessionmaker() as session:
+        record = (
+            await session.execute(
+                select(ResourceRow).where(
+                    (ResourceRow.content_hash == job.sha256)
+                    & (ResourceRow.owner_id == owner)
+                )
+            )
+        ).scalar_one_or_none()
+        if record is None:
+            raise HTTPException(status_code=404, detail="结构未提取——先 POST structure")
+        rows = (
+            await session.execute(
+                select(CourseUnitRow)
+                .where(CourseUnitRow.resource_id == record.id)
+                .order_by(CourseUnitRow.sequence)
+            )
+        ).scalars().all()
+        return StructureOut(
+            job_id=job_id,
+            resource_id=record.id,
+            unit_count=len(rows),
+            confirmed_count=sum(1 for r in rows if r.status == "confirmed"),
+            units=[_unit_out(r) for r in rows],
+        )
+
+
+@router.post("/imports/{job_id}/structure/{unit_id}/confirm", response_model=CourseUnitOut)
+async def confirm_course_unit(job_id: str, unit_id: str, request: Request) -> CourseUnitOut:
+    """人工确认候选单元（candidate→confirmed——校验路径）。"""
+    await require_user(request)
+    owner = current_owner_id(request)
+    await _owned_ready_job(request, job_id, owner)
+    from app.db.orm import CourseUnitRow
+
+    async with request.app.state.sessionmaker() as session:
+        row = await session.get(CourseUnitRow, unit_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="单元不存在")
+        row.status = "confirmed"
+        await session.commit()
+        await session.refresh(row)
+        return _unit_out(row)
