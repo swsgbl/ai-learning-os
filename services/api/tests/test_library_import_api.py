@@ -256,3 +256,75 @@ def test_parse_scanned_pdf_flags_needs_ocr(monkeypatch: pytest.MonkeyPatch, tmp_
             assert result["low_text_pages"] == 3
         finally:
             env.cleanup(monkeypatch)
+
+
+# ---------------------------------------------------------------- M18-005 结构提取闭环
+
+
+def test_structure_from_parsed_outline(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """解析 → 结构提取（候选树+parent 嵌套）→ 确认 → 重提取幂等。"""
+    env = _Env(tmp_path, monkeypatch=monkeypatch, tree=[("a/书.pdf", "b1", 1)], parts=[_make_textbook_pdf()])
+    resource_id = _seed_and_get_resource(env, "书")
+    with env.open_authed(monkeypatch) as (client, tokens):
+        header = {"Authorization": f"Bearer {tokens['alice']}"}
+        try:
+            job = client.post(
+                "/api/v1/library/imports",
+                json={"resource_id": resource_id, "permission_statement": True},
+                headers=header,
+            ).json()
+            client.post(f"/api/v1/library/imports/{job['id']}/parse", headers=header)
+            structure = client.post(f"/api/v1/library/imports/{job['id']}/structure", headers=header)
+            assert structure.status_code == 201, structure.text
+            tree = structure.json()
+            assert tree["unit_count"] == 2  # 两章 outline
+            assert tree["confirmed_count"] == 0
+            assert all(u["status"] == "candidate" for u in tree["units"])
+            assert tree["units"][0]["title"] == "第一章 集合"
+            assert tree["units"][0]["page"] == 1
+
+            # 确认第一个单元
+            confirmed = client.post(
+                f"/api/v1/library/imports/{job['id']}/structure/{tree['units'][0]['id']}/confirm",
+                headers=header,
+            )
+            assert confirmed.status_code == 200 and confirmed.json()["status"] == "confirmed"
+
+            # 重提取 = 整树替换（confirmed 重置为候选——重提取即重建）
+            rebuilt = client.post(f"/api/v1/library/imports/{job['id']}/structure", headers=header)
+            assert rebuilt.status_code == 201
+            assert rebuilt.json()["confirmed_count"] == 0
+
+            # GET 查询
+            got = client.get(f"/api/v1/library/imports/{job['id']}/structure", headers=header)
+            assert got.status_code == 200 and got.json()["unit_count"] == 2
+        finally:
+            env.cleanup(monkeypatch)
+
+
+def test_structure_requires_outline(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """无 outline（扫描书）：409 如实。"""
+    import pymupdf
+
+    doc = pymupdf.open()
+    for _ in range(2):
+        doc.new_page()
+    data = doc.tobytes()
+    doc.close()
+
+    env = _Env(tmp_path, monkeypatch=monkeypatch, tree=[("a/扫描.pdf", "b1", 1)], parts=[data])
+    resource_id = _seed_and_get_resource(env, "扫描")
+    with env.open_authed(monkeypatch) as (client, tokens):
+        header = {"Authorization": f"Bearer {tokens['alice']}"}
+        try:
+            job = client.post(
+                "/api/v1/library/imports",
+                json={"resource_id": resource_id, "permission_statement": True},
+                headers=header,
+            ).json()
+            client.post(f"/api/v1/library/imports/{job['id']}/parse", headers=header)
+            denied = client.post(f"/api/v1/library/imports/{job['id']}/structure", headers=header)
+            assert denied.status_code == 409
+            assert "outline" in denied.json()["detail"]
+        finally:
+            env.cleanup(monkeypatch)

@@ -1,3 +1,16 @@
+## M18-005 —— 课程结构候选（审计 Phase 4 / Prompt 5）
+
+- **章节树候选域层**（domain/course_structure.py）：PDF outline →
+  嵌套单元树（**不依赖 LLM**——出版书签是排版数据，权威性高于模型
+  猜测）；level 跳深收敛（1→3 折为 +1——出版 outline 常见跳跃不虚构
+  中间层）；回浅按原层；非法条目拒绝。
+- **course_units 表**（0041）：(resource, sequence) 唯一——重提取整树
+  替换；页锚点与原始 toc level 保留；**两态**（candidate/confirmed
+  ——候选不经人工确认不进正式路径，审计 Prompt 5 硬边界）。
+- **端点**：POST structure（重跑幂等）/GET structure /POST
+  structure/{id}/confirm；无 outline（扫描书）409 如实。
+- **生产 live**：英文离散数学 → 115 单元（27 章+88 节真实章节树）。
+
 ## M18-004 —— 教材解析与页面锚点（审计 Phase 3 / Prompt 4 文本型 MVP）
 
 - **PyMuPDF parser**（pymupdf>=1.24 依赖，延迟导入同 docling 模式）：
