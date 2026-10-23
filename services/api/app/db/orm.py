@@ -871,6 +871,36 @@ class ConceptEdgeCandidateRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+# ---------------------------------------------------------------- M18-007 题目生命周期（审计 Prompt 6）
+
+
+class QuestionLifecycleRow(Base):
+    """题目发布门（审计 04 §4.3 练习/考试分离 + Prompt 6 红线）。
+
+    - 生成题入池即 candidate——练习（practice/review/transfer）可用；
+    - 等值前后测蓝图只收 published——人工 publish 后才进正式考试；
+    - **无 lifecycle 行的历史题按 published 语义**（legacy 兼容——
+      公共 seed 卷与既有蓝图不破坏；门只对新生成题生效）。
+    """
+
+    __tablename__ = "question_lifecycle"
+    __table_args__ = (
+        UniqueConstraint("question_id", name="uq_question_lifecycle_question"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    question_id: Mapped[str] = mapped_column(String(64), index=True)
+    #: candidate / published / retired
+    status: Mapped[str] = mapped_column(String(16), default="candidate")
+    #: 验证方式记录（answer_key=客观题键校验；manual=人工复核）
+    verify_method: Mapped[str] = mapped_column(String(32), default="")
+    reviewed_by: Mapped[str] = mapped_column(String(64), default="")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    note: Mapped[str] = mapped_column(String(255), default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class LearningContractRow(Base):
     """M16-001 学习合同：可观察能力目标 + 范围/排除项 + 先验 + 通过标准。
 

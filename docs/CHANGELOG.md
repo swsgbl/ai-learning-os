@@ -1,3 +1,17 @@
+## M18-007 —— 题目发布门（审计 Phase 5 / Prompt 6 红线）
+
+- **练习/考试分离落地**（审计 04 §4.3）：生成题入池即 candidate——
+  练习（practice/review/transfer）立即可用；**等值前后测蓝图只收
+  published**——人工发布后才进正式考试（Prompt 6 红线：未通过验证
+  的题目不能进入正式考试）。
+- **question_lifecycle 表**（0043）：candidate→published→retired；
+  **无行 = legacy published 语义**（公共 seed 卷与既有蓝图零破坏——
+  门只对新生成题生效，生产连续性保持）。
+- **publish/retire 端点**（owner 卷校验；retired 终态不可复活——
+  重制生成新题）；**撤题全路径**：蓝图 build + 练习/复习/迁移三处
+  选题统一排除 retired（Prompt 6 §8 撤题机制）。
+- 冷启动链更新：生成 → 逐题 publish → 蓝图（发布门语义进入测试链）。
+
 ## M18-006 —— 概念候选与 DAG 桥（审计 Phase 4 后半 / Prompt 5 收口）
 
 - **候选域层**（domain/concept_candidates.py）：概念 id 与既有
