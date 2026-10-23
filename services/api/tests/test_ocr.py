@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import pymupdf
-from rapidocr_onnxruntime import RapidOCR  # noqa: F401（环境可用性前置）
+from rapidocr_onnxruntime import RapidOCR  # noqa: F401
 
 from app.parsing.ocr import OCR_CONFIDENCE_THRESHOLD, ocr_pages
 
