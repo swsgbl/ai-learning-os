@@ -1,15 +1,24 @@
 import type {
+  AssessmentItem,
+  AssessmentResult,
   AuditEntry,
+  BlueprintInfo,
+  CatalogResource,
   DailyPlan,
   ExamReport,
   ExamSession,
   GenerationDraft,
   ImportDraft,
+  LearningContract,
+  LearningSprint,
+  MasteryOverviewItem,
   PaperDraft,
   PaperSummary,
+  ReviewQueueItem,
+  SprintReport,
   StudentStates,
-  Submission,
   StudyView,
+  Submission,
   UserProfile,
   VariantDraft,
   VoiceProvidersView,
@@ -24,14 +33,6 @@ import type {
   VoiceSessionResume,
   VoiceSessions,
   VoiceTokenResponse,
-  AssessmentItem,
-  AssessmentResult,
-  BlueprintInfo,
-  LearningContract,
-  LearningSprint,
-  MasteryOverviewItem,
-  ReviewQueueItem,
-  SprintReport,
 } from "./types";
 import { normalizeBasePath } from "./base-path";
 
@@ -251,6 +252,14 @@ export const api = {
     reviewQueue: () => request<ReviewQueueItem[]>("/api/v1/learning/review-queue"),
     scheduleFollowUp: (sprintId: string) =>
       request<ReviewQueueItem[]>(`/api/v1/learning/sprints/${encodeURIComponent(sprintId)}/follow-up/schedule`, { method: "POST" }),
+  },
+
+  catalogSearch: (params: { q?: string; stage?: string; subject?: string; grade?: string; limit?: number }) => {
+    const search = new URLSearchParams();
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== "") search.set(key, String(value));
+    }
+    return request<CatalogResource[]>(`/api/v1/catalog/search?${search.toString()}`);
   },
 
   papers: () => request<PaperSummary[]>("/api/v1/papers"),
