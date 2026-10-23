@@ -1,3 +1,18 @@
+## M18-004 —— 教材解析与页面锚点（审计 Phase 3 / Prompt 4 文本型 MVP）
+
+- **PyMuPDF parser**（pymupdf>=1.24 依赖，延迟导入同 docling 模式）：
+  文本层逐页抽取（ParsedBlock.page 页锚点）；PDF outline（get_toc）
+  透出 metrics['toc']——**章节树候选的结构化来源**（Prompt 5 输入，
+  不依赖 LLM）；数学符号不静默归一。
+- **低文本页如实**：< 24 字符页计 low_text_pages（扫描候选——上层
+  过半即标 needs_ocr，**不虚构文本**；OCR/PaddleOCR 评估属后续基建）。
+- **导入→解析闭环**：导入 ready 即登记 resources 体系（内容寻址去重/
+  parse_status 生命周期/chunks-evidence 挂载点——复用 M1 全套基建）；
+  POST /library/imports/{id}/parse（重跑=整资源幂等替换；解析线程池
+  执行；历史 job 兜底补登）；chunks 落库带页锚点+parser 版本+许可快照。
+- **生产 live**：英文离散数学（1071 页文本型）→ parsed/1071 chunks/
+  115 条 toc；扫描书（体育/概率论）→ needs_ocr 如实。
+
 ## M18-003 —— 用户私有导入与 PDF 分片组装（审计 Phase 2 / Prompt 3）
 
 - **ingest 域层**（domain/ingest.py）：分片序号连续性（1..N 无缺无重，
