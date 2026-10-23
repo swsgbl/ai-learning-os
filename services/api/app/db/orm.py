@@ -659,6 +659,92 @@ class UserRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+# ---------------------------------------------------------------- M18-001 课程目录（审计升级包 Phase 1）
+
+
+class ResourceProviderRow(Base):
+    """目录来源方（Mode A：仅元数据与外链——不下载 blob）。"""
+
+    __tablename__ = "resource_providers"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    name: Mapped[str] = mapped_column(String(64), unique=True)
+    base_url: Mapped[str] = mapped_column(String(255))
+    provider_type: Mapped[str] = mapped_column(String(32), default="git_tree")
+    sync_adapter: Mapped[str] = mapped_column(String(32), default="github_tree")
+    #: 审计 02 §3：未知许可默认 metadata_only（不默认共享原文）
+    policy_default: Mapped[str] = mapped_column(String(32), default="metadata_only")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ResourceRecordRow(Base):
+    """目录条目（tree blob 归一化元数据；source_path 保真不变形）。"""
+
+    __tablename__ = "resource_records"
+    __table_args__ = (
+        UniqueConstraint("provider_id", "source_path", name="uq_resource_provider_path"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    provider_id: Mapped[str] = mapped_column(String(32), ForeignKey("resource_providers.id"), index=True)
+    source_path: Mapped[str] = mapped_column(String(512))
+    #: 外链（raw/blob URL——Mode A 打开来源，不镜像内容）
+    source_url: Mapped[str] = mapped_column(String(1024), default="")
+    title: Mapped[str] = mapped_column(String(255))
+    title_normalized: Mapped[str] = mapped_column(String(255), default="")
+    education_stage: Mapped[str] = mapped_column(String(32), default="")
+    subject: Mapped[str] = mapped_column(String(64), default="")
+    grade: Mapped[str] = mapped_column(String(32), default="")
+    semester: Mapped[str] = mapped_column(String(32), default="")
+    volume: Mapped[str] = mapped_column(String(32), default="")
+    edition_hint: Mapped[str] = mapped_column(String(64), default="")
+    mime_type: Mapped[str] = mapped_column(String(64), default="")
+    #: 快照锚点（审计 02 §4.1：pin commit，不跟随浮动分支）
+    source_commit_sha: Mapped[str] = mapped_column(String(40), default="")
+    #: 分片清单 JSON（[{part_index, source_path}]；空 = 完整单文件）
+    parts_json: Mapped[list] = mapped_column(JSON, default=list)
+    metadata_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class CatalogSyncRunRow(Base):
+    """目录同步运行（幂等差量计数——审计 02 §4.1 §5）。"""
+
+    __tablename__ = "catalog_sync_runs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    provider_id: Mapped[str] = mapped_column(String(32), ForeignKey("resource_providers.id"), index=True)
+    commit_sha: Mapped[str] = mapped_column(String(40))
+    #: running / succeeded / failed
+    status: Mapped[str] = mapped_column(String(16), default="running")
+    counters_json: Mapped[dict] = mapped_column(JSON, default=dict)
+    error: Mapped[str] = mapped_column(Text, default="")
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ContentPermissionRow(Base):
+    """资源许可状态（审计 02 §3：六态——禁止布尔 is_open）。"""
+
+    __tablename__ = "content_permissions"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    resource_id: Mapped[str] = mapped_column(String(32), ForeignKey("resource_records.id"), unique=True, index=True)
+    #: unknown / metadata_only / user_private / approved_shared / review_required / blocked
+    status: Mapped[str] = mapped_column(String(32), default="metadata_only")
+    license_spdx: Mapped[str] = mapped_column(String(64), default="")
+    license_uri: Mapped[str] = mapped_column(String(255), default="")
+    attribution_text: Mapped[str] = mapped_column(Text, default="")
+    review_evidence_uri: Mapped[str] = mapped_column(String(255), default="")
+    reviewed_by: Mapped[str] = mapped_column(String(64), default="")
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    notes: Mapped[str] = mapped_column(Text, default="")
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class LearningContractRow(Base):
     """M16-001 学习合同：可观察能力目标 + 范围/排除项 + 先验 + 通过标准。
 

@@ -1,3 +1,22 @@
+## M18-001 —— 课程资源目录（审计升级包 Phase 1 / Prompt 1）
+
+- **catalog 域层**（domain/catalog.py）：git tree 路径归一化（学段
+  别名规整/学科最长匹配不猜/年级册别启发/分片 .pdf.N 数值序归组——
+  同名普通文件与分片组合并）；同步必须 pin commit（拒绝浮动分支）。
+- **四表**（迁移 0039）：resource_providers（policy_default=
+  metadata_only——审计 02 §3 未知许可不默认共享原文）/
+  resource_records（(provider, source_path) 唯一，source_path 保真）/
+  catalog_sync_runs（七态差量计数）/content_permissions（六态许可）。
+- **API**：POST /catalog/sync-runs（require_admin；GitHub tree 抓取
+  域 allowlist 固定；默认分支动态解析——live 实测 ChinaTextbook 是
+  master）；GET /catalog/search（q/学段/学科/年级过滤）；
+  GET /catalog/resources/{id}。
+- **两阶段 flush**（生产实测修复）：records 落库后再挂 permissions——
+  单阶段混插因 autoflush 时序触发 FK violation（2087 条真实同步抓出）。
+- **生产 live**：commit 5a80345 → 2371 blob → 2087 条目；幂等重跑
+  全 unchanged；搜索「同济」命中线代/高数；初中+数学过滤出人教版
+  七年级上/下册。
+
 ## v0.4.0 —— 学习效果引擎（M16 + M17 全量）
 
 **48 小时可验证学习闭环全链上线（升级方案 Phase 0-8 + Beta 放行 7/7）**：
