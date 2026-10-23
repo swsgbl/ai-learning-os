@@ -555,7 +555,13 @@ def test_cold_start_generate_derives_concepts(sqlite_url, monkeypatch) -> None:
             derived_concepts = {item["concept_id"] for item in body["items"]}
             assert derived_concepts == {"k8s:rollout", "k8s:probe"}
 
-            # 蓝图可构建（推导概念随题入库，聚合可见）
+            # M18-007 发布门：生成题 candidate 不进蓝图——先人工 publish
+            for item in body["items"]:
+                pub = client.post(f"/api/v1/learning/questions/{item['item_id']}/publish")
+                assert pub.status_code == 200, pub.text
+                assert pub.json()["status"] == "published"
+
+            # 蓝图可构建（发布后推导概念随题入库，聚合可见）
             bp = client.post(
                 f"/api/v1/learning/contracts/{contract_id}/blueprint/build",
                 json={"concepts": ["k8s:rollout", "k8s:probe"]},
@@ -843,3 +849,98 @@ def test_targeted_practice_answer_loop(sqlite_url) -> None:
                 if row["id"] == sprint_id:
                     found = row
         assert found is not None and found["phase"] == "transfer_check"
+
+
+def test_question_publish_gate_blocks_blueprint_until_published(tmp_path) -> None:
+    """M18-007 发布门：candidate 不进蓝图（练习可用）；publish 后可见；
+    retired 后练习也排除（撤题全路径）。"""
+    import json as jsonlib
+
+    import app.domain.item_generator as ig
+
+    class _StubGateway:
+        def __init__(self, **kwargs: object) -> None:
+            pass
+
+        def chat(self, messages: object, temperature: float = 0.0, max_tokens: int = 1024) -> str:
+            items = []
+            for concept in ("c_select", "c_join"):
+                for index in range(4):
+                    items.append(
+                        {
+                            "concept": concept,
+                            "stem": f"{concept} 第 {index} 题",
+                            "options": ["甲", "乙", "丙", "丁"],
+                            "answer_index": index % 4,
+                            "difficulty": 2,
+                            "why": "解析",
+                        }
+                    )
+            return jsonlib.dumps({"items": items}, ensure_ascii=False)
+
+    from app.core import config
+
+    config.get_settings.cache_clear()
+    import os
+
+    os.environ["LLM_ENDPOINT"] = "http://stub.local/v1"
+    os.environ["LLM_API_KEY"] = "sk-stub-0123456789"
+    os.environ["LLM_MODEL"] = "stub-model"
+    ig.LlmGateway = _StubGateway
+    try:
+        with TestClient(create_app(f"sqlite+aiosqlite:///{tmp_path / 'gate.db'}")) as client:
+            _seed_pool(client, f"sqlite+aiosqlite:///{tmp_path / 'gate.db'}")
+            created = client.post("/api/v1/learning/contracts", json=_contract_payload())
+            contract_id = created.json()["id"]
+            client.post(f"/api/v1/learning/contracts/{contract_id}/confirm")
+            gen = client.post(
+                f"/api/v1/learning/contracts/{contract_id}/generate-items",
+                json={"concepts": ["c_select", "c_join"], "per_concept": 4},
+            )
+            assert gen.status_code == 201
+            item_ids = [i["item_id"] for i in gen.json()["items"]]
+
+            # 门 1：candidate 题不进蓝图（c_select/c_join 题池只剩 seed legacy 题
+            # ——seed 5 题 legacy published 可用；生成题 4 candidate 被排除）
+            bp = client.post(
+                f"/api/v1/learning/contracts/{contract_id}/blueprint/build",
+                json={"concepts": ["c_select", "c_join"]},
+            )
+            assert bp.status_code == 201
+            used = set()
+            for plan in bp.json()["plans"]:
+                used.update(plan["pretest_item_ids"] + plan["posttest_item_ids"])
+            assert not any(i in used for i in item_ids), "candidate 生成题不得进蓝图"
+
+            # 门 2：publish 后进蓝图
+            for item_id in item_ids[:4]:
+                pub = client.post(f"/api/v1/learning/questions/{item_id}/publish")
+                assert pub.status_code == 200
+            bp2 = client.post(
+                f"/api/v1/learning/contracts/{contract_id}/blueprint/build",
+                json={"concepts": ["c_select"]},
+            )
+            used2 = set()
+            for plan in bp2.json()["plans"]:
+                used2.update(plan["pretest_item_ids"] + plan["posttest_item_ids"])
+            published = set(item_ids[:4])
+            # c_select 生成题（前 4 是 c_select）发布后可入蓝图
+            assert published & used2, "publish 后生成题应进蓝图"
+
+            # 门 3：retired 后练习排除——定向练习 session 对该概念 409/少题
+            retire = client.post(f"/api/v1/learning/questions/{item_ids[0]}/retire")
+            assert retire.status_code == 200
+            # 再次 build：retired 题从蓝图消失
+            bp3 = client.post(
+                f"/api/v1/learning/contracts/{contract_id}/blueprint/build",
+                json={"concepts": ["c_select"]},
+            )
+            used3 = set()
+            for plan in bp3.json()["plans"]:
+                used3.update(plan["pretest_item_ids"] + plan["posttest_item_ids"])
+            assert item_ids[0] not in used3, "retired 题不得留在蓝图"
+    finally:
+        os.environ.pop("LLM_ENDPOINT", None)
+        os.environ.pop("LLM_API_KEY", None)
+        os.environ.pop("LLM_MODEL", None)
+        config.get_settings.cache_clear()

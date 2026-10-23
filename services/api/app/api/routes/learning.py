@@ -190,6 +190,29 @@ def _now() -> datetime:
     return datetime.now(UTC)
 
 
+async def _retired_question_ids(request: Request, question_ids: list[str]) -> set[str]:
+    """M18-007：retired 题全路径排除（蓝图在 build 处已过滤；此处供练习/
+    复习/迁移选题——撤题后任何场景不再取用，Prompt 6 §8 撤题机制）。"""
+    from app.db.orm import QuestionLifecycleRow
+
+    if not question_ids:
+        return set()
+    async with request.app.state.sessionmaker() as session:
+        rows = (
+            
+                await session.execute(
+                    select(QuestionLifecycleRow).where(
+                        QuestionLifecycleRow.question_id.in_(question_ids)
+                        & (QuestionLifecycleRow.status == "retired")
+                    )
+                )
+            
+        ).scalars().all()
+        return {row.question_id for row in rows}
+
+    return datetime.now(UTC)
+
+
 def _contract_out(row: LearningContractRow) -> ContractOut:
     return ContractOut(
         id=row.id,
@@ -997,8 +1020,25 @@ async def build_contract_blueprint(
             .all()
         )
         concept_filter = set(payload.concepts) if payload.concepts else None
+        # M18-007 发布门：蓝图只收 published 题——显式 lifecycle 行且非
+        # published 的排除（candidate/retired 不进等值前后测）；无行 =
+        # legacy published 语义（历史题与既有蓝图零破坏）
+        from app.db.orm import QuestionLifecycleRow
+
+        lifecycle_status = {
+            row.question_id: row.status
+            for row in (
+                await session.execute(
+                    select(QuestionLifecycleRow).where(
+                        QuestionLifecycleRow.question_id.in_([q.id for q in questions])
+                    )
+                )
+            ).scalars()
+        }
         candidates: list[CandidateItem] = []
         for q in questions:
+            if lifecycle_status.get(q.id, "published") != "published":
+                continue
             for concept_id in q.knowledge if isinstance(q.knowledge, list) else []:
                 if not isinstance(concept_id, str):
                     continue
@@ -1403,6 +1443,8 @@ async def _practice_item_for_concept(
             and is_objective_type(q.question_type)
             and q.id not in used
         ]
+        retired = await _retired_question_ids(request, [q.id for q in candidates])
+        candidates = [q for q in candidates if q.id not in retired]
         if not candidates:
             raise HTTPException(
                 status_code=409,
@@ -1724,6 +1766,8 @@ async def _sprint_transfer_items(
                 and is_objective_type(q.question_type)
                 and q.id not in blueprint_item_ids
             ]
+            retired = await _retired_question_ids(request, [q.id for q in candidates])
+            candidates = [q for q in candidates if q.id not in retired]
             if not candidates:
                 continue  # 该概念无可用的非前后测题——如实缺（不虚构）
             recent = set(
@@ -2135,6 +2179,7 @@ async def present_review(review_id: str, request: Request) -> ReviewOut:
     return _review_out(db_row)
 
 
+
 @router.get("/review-queue/{review_id}/item", response_model=AssessmentItemOut)
 async def review_queue_item(review_id: str, request: Request) -> AssessmentItemOut:
     """取一道该概念的复习题（M17-002：复习作答闭环的出题环节）。
@@ -2172,6 +2217,8 @@ async def review_queue_item(review_id: str, request: Request) -> AssessmentItemO
             if row.concept_id in (q.knowledge if isinstance(q.knowledge, list) else [])
             and is_objective_type(q.question_type)
         ]
+        retired = await _retired_question_ids(request, [q.id for q in candidates])
+        candidates = [q for q in candidates if q.id not in retired]
         if not candidates:
             raise HTTPException(
                 status_code=409,
@@ -2524,6 +2571,20 @@ async def generate_items_for_contract(
                     angles={"concept": "", "method": "", "mistake": "", "variant": ""},
                 )
             )
+            # M18-007 发布门：生成题入池即 candidate——练习可用，等值前后测
+            # 蓝图只收 published（人工发布后才进正式考试；Prompt 6 红线）
+            from app.db.orm import QuestionLifecycleRow
+
+            session.add(
+                QuestionLifecycleRow(
+                    id=f"ql_{uuid4().hex[:22]}",
+                    question_id=question_id,
+                    status="candidate",
+                    verify_method="answer_key",
+                    created_at=_now(),
+                    updated_at=_now(),
+                )
+            )
             order += 1
             outs.append(
                 GeneratedItemOut(
@@ -2692,3 +2753,109 @@ async def list_learning_events(
         )
         for row in rows
     ]
+
+
+# ---------------------------------------------------------------- 题目发布门（M18-007）
+
+
+class QuestionGateOut(BaseModel):
+    question_id: str
+    status: str
+    verify_method: str
+    reviewed_by: str
+
+
+@router.post("/questions/{question_id}/publish", response_model=QuestionGateOut)
+async def publish_question(question_id: str, request: Request) -> QuestionGateOut:
+    """人工发布（candidate→published）——等值前后测蓝图从此可见该题。
+
+    审计 Prompt 6 红线：未通过验证（未发布）的题目不进正式考试；练习
+    （practice/review/transfer）不受限——练习模式允许生成题直用。
+    """
+    await require_user(request)
+    owner = current_owner_id(request)
+    async with request.app.state.sessionmaker() as session:
+        question = (
+            await session.execute(select(QuestionRow).where(QuestionRow.id == question_id))
+        ).scalar_one_or_none()
+        if question is None:
+            raise HTTPException(status_code=404, detail="题目不存在")
+        paper = await session.get(PaperRow, question.paper_id)
+        if paper is None or (owner is not None and paper.owner_id != owner):
+            raise HTTPException(status_code=403, detail="只能发布自己题池卷里的题目")
+        from app.db.orm import QuestionLifecycleRow
+
+        row = (
+            await session.execute(
+                select(QuestionLifecycleRow).where(QuestionLifecycleRow.question_id == question_id)
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            # legacy 题（无门记录）首次操作直接建 published 行
+            row = QuestionLifecycleRow(
+                id=f"ql_{uuid4().hex[:22]}",
+                question_id=question_id,
+                status="candidate",
+                verify_method="answer_key",
+                created_at=_now(),
+                updated_at=_now(),
+            )
+            session.add(row)
+        if row.status == "retired":
+            raise HTTPException(status_code=409, detail="题目已 retired——不能发布（重制请生成新题）")
+        row.status = "published"
+        row.reviewed_by = owner or "anonymous"
+        row.reviewed_at = _now()
+        row.updated_at = _now()
+        await session.commit()
+        await session.refresh(row)
+        return QuestionGateOut(
+            question_id=row.question_id,
+            status=row.status,
+            verify_method=row.verify_method,
+            reviewed_by=row.reviewed_by,
+        )
+
+
+@router.post("/questions/{question_id}/retire", response_model=QuestionGateOut)
+async def retire_question(question_id: str, request: Request) -> QuestionGateOut:
+    """退役（→retired）：蓝图与练习均不再取用（撤题机制——Prompt 6 §8）。"""
+    await require_user(request)
+    owner = current_owner_id(request)
+    async with request.app.state.sessionmaker() as session:
+        question = (
+            await session.execute(select(QuestionRow).where(QuestionRow.id == question_id))
+        ).scalar_one_or_none()
+        if question is None:
+            raise HTTPException(status_code=404, detail="题目不存在")
+        paper = await session.get(PaperRow, question.paper_id)
+        if paper is None or (owner is not None and paper.owner_id != owner):
+            raise HTTPException(status_code=403, detail="只能操作自己题池卷里的题目")
+        from app.db.orm import QuestionLifecycleRow
+
+        row = (
+            await session.execute(
+                select(QuestionLifecycleRow).where(QuestionLifecycleRow.question_id == question_id)
+            )
+        ).scalar_one_or_none()
+        if row is None:
+            row = QuestionLifecycleRow(
+                id=f"ql_{uuid4().hex[:22]}",
+                question_id=question_id,
+                status="candidate",
+                created_at=_now(),
+                updated_at=_now(),
+            )
+            session.add(row)
+        row.status = "retired"
+        row.reviewed_by = owner or "anonymous"
+        row.reviewed_at = _now()
+        row.updated_at = _now()
+        await session.commit()
+        await session.refresh(row)
+        return QuestionGateOut(
+            question_id=row.question_id,
+            status=row.status,
+            verify_method=row.verify_method,
+            reviewed_by=row.reviewed_by,
+        )
