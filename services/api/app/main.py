@@ -10,6 +10,7 @@ from starlette.responses import JSONResponse
 from app.api.error_handlers import register_exception_handlers
 from app.api.routes.ai_providers import router as ai_providers_router
 from app.api.routes.auth import require_user
+from app.api.routes.catalog import router as catalog_router
 from app.api.routes.citation_eval import router as citation_eval_router
 from app.api.routes.concepts import router as concepts_router
 from app.api.routes.course_workflow import router as course_workflow_router
@@ -307,6 +308,7 @@ def create_app(
     app.include_router(variant_generator_router)
     app.include_router(eval_router)
     app.include_router(voice_eval_router)
+    app.include_router(catalog_router)
     app.include_router(citation_eval_router)
     app.include_router(courses_router)
     app.include_router(student_router)
