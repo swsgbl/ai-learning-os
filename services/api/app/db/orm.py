@@ -745,6 +745,51 @@ class ContentPermissionRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+# ---------------------------------------------------------------- M18-003 私有导入（审计升级包 Phase 2）
+
+
+class IngestJobRow(Base):
+    """导入任务（状态机见 domain/ingest——终态不复活，重试=新任务）。
+
+    (owner_id, resource_id) 唯一——同用户同资源重复导入幂等返回既有。
+    """
+
+    __tablename__ = "ingest_jobs"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "resource_id", name="uq_ingest_owner_resource"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(32), index=True)
+    resource_id: Mapped[str] = mapped_column(String(32), ForeignKey("resource_records.id"))
+    status: Mapped[str] = mapped_column(String(24), default="queued")
+    parts_total: Mapped[int] = mapped_column(Integer, default=0)
+    parts_fetched: Mapped[int] = mapped_column(Integer, default=0)
+    sha256: Mapped[str] = mapped_column(String(64), default="")
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    assembled_object_key: Mapped[str] = mapped_column(String(255), default="")
+    error: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ContentBlobRow(Base):
+    """私有内容对象（user_private——授权逐请求校验，不依赖 key 结构）。"""
+
+    __tablename__ = "content_blobs"
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    owner_id: Mapped[str] = mapped_column(String(32), index=True)
+    resource_id: Mapped[str] = mapped_column(String(32), ForeignKey("resource_records.id"))
+    job_id: Mapped[str] = mapped_column(String(32), ForeignKey("ingest_jobs.id"))
+    owner_scope: Mapped[str] = mapped_column(String(24), default="user_private")
+    object_key: Mapped[str] = mapped_column(String(255))
+    sha256: Mapped[str] = mapped_column(String(64))
+    size_bytes: Mapped[int] = mapped_column(BigInteger, default=0)
+    mime_type: Mapped[str] = mapped_column(String(64), default="application/pdf")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class LearningContractRow(Base):
     """M16-001 学习合同：可观察能力目标 + 范围/排除项 + 先验 + 通过标准。
 

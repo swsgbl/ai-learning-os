@@ -1,3 +1,16 @@
+## M18-003 —— 用户私有导入与 PDF 分片组装（审计 Phase 2 / Prompt 3）
+
+- **ingest 域层**（domain/ingest.py）：分片序号连续性（1..N 无缺无重，
+  缺片/重复片拒绝）；SHA-256 逐片+整体双算；二进制拼接后 %PDF- 魔数
+  校验（不可读=失败——不虚构）；大小上限；状态机 queued→downloading
+  →assembled→ready + incomplete_parts/failed 终态（重试=新任务）。
+- **两表**（0040）：ingest_jobs（(owner, resource) 唯一——幂等）+
+  content_blobs（user_private——授权逐请求，不依赖 key 结构）。
+- **API**：POST /library/imports（permission_statement 必填——Mode B
+  权利声明；下载 URL 只由服务端从目录条目构造——SSRF 面收敛；分片
+  数值序串行下载）；GET /library/imports/{id}（owner 隔离 404）。
+- **绝不执行来源仓库的 EXE**；下载失败 502 如实。
+
 ## M18-002 —— Web 找教材入口（学习库页目录检索）
 
 - 学习库页新增「找教材（ChinaTextbook 目录）」区块（审计 UX 三入口
