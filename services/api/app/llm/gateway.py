@@ -227,6 +227,12 @@ class LlmGateway:
                 "messages": payload["messages"],
                 "stream": False,
                 "think": False,
+                # M18-006b：max_tokens 映射 num_predict——native 分支此前忽略
+                # 预算，Ollama 默认截断长 JSON 输出（live 实测 4177 字符处
+                # 戛然而止→概念提取解析失败）。/api/chat 的 options 是官方
+                # 契约（与 /v1 对非规范字段不可靠消费不同——M14-71 教训
+                # 限定于 /v1 路径）。
+                "options": {"num_predict": max_tokens},
             }
             status, body = self._transport.post_json(
                 f"{base}/api/chat", headers=headers, payload=native_payload

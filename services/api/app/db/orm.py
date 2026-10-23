@@ -820,6 +820,57 @@ class CourseUnitRow(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
+# ---------------------------------------------------------------- M18-006 概念候选（审计升级包 Phase 4 后半）
+
+
+class ConceptCandidateRow(Base):
+    """概念节点候选（LLM 提取——确认后经既有 DAG 发布管道进正式图）。"""
+
+    __tablename__ = "concept_candidates"
+    __table_args__ = (
+        UniqueConstraint("resource_id", "concept_id", name="uq_concept_cand_resource_concept"),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    resource_id: Mapped[str] = mapped_column(String(64), ForeignKey("resources.id"), index=True)
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    concept_id: Mapped[str] = mapped_column(String(64))
+    canonical_name: Mapped[str] = mapped_column(String(256))
+    subject: Mapped[str] = mapped_column(String(64), default="")
+    description: Mapped[str] = mapped_column(String(2048), default="")
+    difficulty: Mapped[int] = mapped_column(Integer, default=3)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    provenance: Mapped[dict] = mapped_column(JSON, default=dict)
+    #: candidate / confirmed / rejected
+    status: Mapped[str] = mapped_column(String(16), default="candidate")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
+class ConceptEdgeCandidateRow(Base):
+    """概念边候选（typed relation——正式 DAG 本期只消费 prerequisite_of）。"""
+
+    __tablename__ = "concept_edge_candidates"
+    __table_args__ = (
+        UniqueConstraint(
+            "resource_id", "from_concept", "to_concept", "relation",
+            name="uq_concept_edge_cand_natural",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(32), primary_key=True)
+    resource_id: Mapped[str] = mapped_column(String(64), ForeignKey("resources.id"), index=True)
+    owner_id: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)
+    from_concept: Mapped[str] = mapped_column(String(64))
+    to_concept: Mapped[str] = mapped_column(String(64))
+    relation: Mapped[str] = mapped_column(String(32))
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    provenance: Mapped[dict] = mapped_column(JSON, default=dict)
+    status: Mapped[str] = mapped_column(String(16), default="candidate")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+
 class LearningContractRow(Base):
     """M16-001 学习合同：可观察能力目标 + 范围/排除项 + 先验 + 通过标准。
 
