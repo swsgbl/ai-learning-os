@@ -6,6 +6,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.createSavedStateHandle
 import androidx.lifecycle.viewmodel.CreationExtras
 import com.ailearningos.app.ui.learning.LearningSprintViewModel
+import com.ailearningos.app.ui.learning.TextbookViewModel
 import com.ailearningos.app.ui.study.StudyModeViewModel
 import com.ailearningos.app.ui.progress.ProgressViewModel
 import com.ailearningos.app.ui.create.CreateCourseViewModel
@@ -75,6 +76,10 @@ class AiosViewModelFactory(
 
             modelClass.isAssignableFrom(LearningSprintViewModel::class.java) -> LearningSprintViewModel(
                 learning = container.learningGateway,
+            ) as T
+
+            modelClass.isAssignableFrom(TextbookViewModel::class.java) -> TextbookViewModel(
+                textbook = container.textbookGateway,
             ) as T
 
             modelClass.isAssignableFrom(ExamViewModel::class.java) -> ExamViewModel(

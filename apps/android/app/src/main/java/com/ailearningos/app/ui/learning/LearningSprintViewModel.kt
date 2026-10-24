@@ -72,6 +72,19 @@ data class AssessmentSession(
 data class LearningSprintState(
     val loading: Boolean = true,
     val contracts: List<ContractWithSprint> = emptyList(),
+    // M20-002：迁移检验会话（App/Web 同步）
+    val transferSession: com.ailearningos.app.data.remote.TransferSessionDto? = null,
+    val transferAnswers: Map<String, String> = emptyMap(),
+    val transferResult: com.ailearningos.app.data.remote.TransferResultDto? = null,
+    // 定向练习（单题流）
+    val practiceStep: com.ailearningos.app.data.remote.PracticeStepDto? = null,
+    val practiceAnswer: String = "",
+    val practiceFeedback: com.ailearningos.app.data.remote.PracticeAnswerDto? = null,
+    // 复习
+    val reviewQueue: List<com.ailearningos.app.data.remote.ReviewQueueItemDto> = emptyList(),
+    val reviewSession: Pair<String, com.ailearningos.app.data.remote.AssessmentItemDto>? = null,
+    val reviewAnswer: String = "",
+    val reviewFeedback: Pair<Boolean?, String>? = null,
     /** 进行中的作答会话；null = 未在作答 */
     val session: AssessmentSession? = null,
     /** 最近一次提交结果（分数只在提交后存在——答案隔离不变式） */
@@ -192,6 +205,73 @@ class LearningSprintViewModel(
             lastResult = result,
             notice = "已提交：服务端判分 ${result.score}分（${result.correctCount}/${result.questionCount}）",
         )
+        refreshSilently()
+    }
+
+    // ---------- M20-002 迁移检验 ----------
+    fun startTransfer(sprintId: String) = launchBusy {
+        _state.value = _state.value.copy(transferResult = null)
+        val session = learning.transferItems(sprintId)
+        _state.value = _state.value.copy(transferSession = session, transferAnswers = emptyMap())
+    }
+
+    fun selectTransferAnswer(itemId: String, key: String) {
+        _state.value = _state.value.copy(
+            transferAnswers = _state.value.transferAnswers + (itemId to key),
+        )
+    }
+
+    fun submitTransfer(sprintId: String) = launchBusy {
+        val session = _state.value.transferSession ?: return@launchBusy
+        val responses = session.items.map {
+            com.ailearningos.app.data.remote.TransferSubmitDto(
+                itemId = it.itemId,
+                response = _state.value.transferAnswers[it.itemId] ?: "",
+            )
+        }
+        val result = learning.submitTransfer(sprintId, responses)
+        _state.value = _state.value.copy(transferSession = null, transferResult = result)
+        refreshSilently()
+    }
+
+    // ---------- 定向练习 ----------
+    fun startPracticeStep(sprintId: String) = launchBusy {
+        _state.value = _state.value.copy(practiceFeedback = null, practiceAnswer = "")
+        val step = learning.practiceSession(sprintId)
+        _state.value = _state.value.copy(practiceStep = step)
+    }
+
+    fun setPracticeAnswer(key: String) {
+        _state.value = _state.value.copy(practiceAnswer = key)
+    }
+
+    fun submitPracticeAnswer(sprintId: String) = launchBusy {
+        val step = _state.value.practiceStep ?: return@launchBusy
+        if (_state.value.practiceAnswer.isBlank()) return@launchBusy
+        val result = learning.practiceAnswer(sprintId, step.item.itemId, _state.value.practiceAnswer, null)
+        _state.value = _state.value.copy(practiceFeedback = result)
+        if (!result.practiceComplete) {
+            // 下一步在用户点「下一题」时拉取
+        }
+        refreshSilently()
+    }
+
+    // ---------- 复习 ----------
+    fun startReview(reviewId: String) = launchBusy {
+        val item = learning.reviewItem(reviewId)
+        _state.value = _state.value.copy(reviewSession = reviewId to item, reviewFeedback = null, reviewAnswer = "")
+    }
+
+    fun setReviewAnswer(key: String) {
+        _state.value = _state.value.copy(reviewAnswer = key)
+    }
+
+    fun submitReviewAnswer() = launchBusy {
+        val (reviewId, item) = _state.value.reviewSession ?: return@launchBusy
+        if (_state.value.reviewAnswer.isBlank()) return@launchBusy
+        learning.attemptReview(reviewId, item.itemId, _state.value.reviewAnswer, null)
+        // 判分结果从队列刷新推断（attempt 返回行不含对错展示——简版以队列状态呈现）
+        _state.value = _state.value.copy(reviewSession = null)
         refreshSilently()
     }
 

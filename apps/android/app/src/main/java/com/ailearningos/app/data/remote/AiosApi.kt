@@ -200,6 +200,67 @@ interface AiosApi {
         @Query("phase") phase: String,
     ): AssessmentResponseDto
 
+    // ---------- M20-002 迁移检验 / 定向练习 / 复习作答 ----------
+
+    @GET("api/v1/learning/sprints/{sprint_id}/transfer/items")
+    suspend fun transferItems(@Path("sprint_id") sprintId: String): TransferSessionDto
+
+    @POST("api/v1/learning/sprints/{sprint_id}/transfer/submit")
+    suspend fun submitTransfer(
+        @Path("sprint_id") sprintId: String,
+        @Body body: TransferSubmitRequestDto,
+    ): TransferResultDto
+
+    @GET("api/v1/learning/sprints/{sprint_id}/practice/session")
+    suspend fun practiceSession(@Path("sprint_id") sprintId: String): PracticeStepDto
+
+    @POST("api/v1/learning/sprints/{sprint_id}/practice/answer")
+    suspend fun practiceAnswer(
+        @Path("sprint_id") sprintId: String,
+        @Body body: PracticeAnswerRequestDto,
+    ): PracticeAnswerDto
+
+    @GET("api/v1/learning/review-queue")
+    suspend fun reviewQueue(): List<ReviewQueueItemDto>
+
+    @GET("api/v1/learning/review-queue/{review_id}/item")
+    suspend fun reviewItem(@Path("review_id") reviewId: String): AssessmentItemDto
+
+    @POST("api/v1/learning/review-queue/{review_id}/attempt")
+    suspend fun attemptReview(
+        @Path("review_id") reviewId: String,
+        @Body body: ReviewAttemptRequestDto,
+    ): ReviewQueueItemDto
+
+    // ---------- M20-001 教材工作流 ----------
+
+    @GET("api/v1/catalog/search")
+    suspend fun catalogSearch(
+        @Query("q") query: String,
+        @Query("limit") limit: Int = 30,
+    ): List<CatalogResourceDto>
+
+    @GET("api/v1/library/imports")
+    suspend fun myImports(): List<ImportJobDto>
+
+    @POST("api/v1/library/imports")
+    suspend fun createImport(@Body body: ImportRequestDto): ImportJobDto
+
+    @POST("api/v1/library/imports/{job_id}/parse")
+    suspend fun parseImport(@Path("job_id") jobId: String): ParseResultDto
+
+    @POST("api/v1/library/imports/{job_id}/parse")
+    suspend fun parseImportOcr(
+        @Path("job_id") jobId: String,
+        @Query("ocr_max_pages") ocrMaxPages: Int,
+    ): ParseResultDto
+
+    @POST("api/v1/library/imports/{job_id}/concepts")
+    suspend fun extractConcepts(@Path("job_id") jobId: String): ConceptExtractionDto
+
+    @POST("api/v1/library/imports/{job_id}/create-sprint")
+    suspend fun createSprintFromTextbook(@Path("job_id") jobId: String): TextbookSprintDto
+
     @POST("api/v1/learning/sprints/{sprint_id}/assessment/{phase}/submit")
     suspend fun submitSprintAssessment(
         @Path("sprint_id") sprintId: String,
