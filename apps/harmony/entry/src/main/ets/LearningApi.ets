@@ -265,3 +265,110 @@ export async function createSprintFromTextbook(baseUrl: string, jobId: string): 
   return requestJson<TextbookSprint>(baseUrl, http.RequestMethod.POST,
     `/api/v1/library/imports/${encodeURIComponent(jobId)}/create-sprint`, {});
 }
+// ───────────────────────── hm-parity v2:迁移检验/定向练习/间隔复习 ─────────────────────────
+
+/** 迁移检验拉题响应(每概念一题,排除前后测已用题) */
+export interface TransferItemsResponse {
+  sprint_id: string;
+  phase: string;
+  items: Array<AssessmentItem>;
+}
+
+/** 定向练习单题会话(最弱概念优先) */
+export interface PracticeSession {
+  concept_id: string;
+  /** first_attempt|recall_practice|faded_practice|independent_practice|exit_ticket */
+  step: string;
+  strategy: string;
+  rationale: string;
+  item: AssessmentItem;
+  passed_steps: number;
+  target_steps: number;
+  remaining_concepts: Array<string>;
+}
+
+/** 定向练习单题作答响应(判分后含 explanation) */
+export interface PracticeAnswerResult {
+  concept_id: string;
+  /** 三态:null = 待判分 */
+  correct: boolean | null;
+  explanation: string;
+  /** = correct===true;答错不推进(同步骤重试) */
+  step_passed: boolean;
+  passed_steps: number;
+  target_steps: number;
+  next_step: string;
+  strategy: string;
+  rationale: string;
+  /** 全部蓝图概念 passed_steps≥target 时 true,服务端推进到 transfer_check */
+  practice_complete: boolean;
+  sprint_phase: string;
+}
+
+/** 间隔复习队列行 */
+export interface ReviewQueueEntry {
+  id: string;
+  concept_id: string;
+  sprint_id: string | null;
+  /** scheduled|presented|attempted|completed */
+  status: string;
+  due_at: string;
+  interval_days: number | null;
+  algorithm_version: string;
+  overdue: boolean;
+}
+
+/** 间隔复习作答响应 = 队列行 + last_correct(本次判分) */
+export interface ReviewAttemptResult extends ReviewQueueEntry {
+  last_correct: boolean | null;
+}
+
+/** GET /api/v1/learning/sprints/{id}/transfer/items — 迁移检验拉题 */
+export async function getTransferItems(baseUrl: string, sprintId: string): Promise<ApiResult<TransferItemsResponse>> {
+  return requestJson<TransferItemsResponse>(baseUrl, http.RequestMethod.GET,
+    `/api/v1/learning/sprints/${encodeURIComponent(sprintId)}/transfer/items`, null);
+}
+
+/** POST /api/v1/learning/sprints/{id}/transfer/submit — 迁移检验提交(响应含 sprint_phase=posttest) */
+export async function submitTransfer(baseUrl: string, sprintId: string, responses: Array<AssessmentSubmitItem>): Promise<ApiResult<AssessmentResult>> {
+  const rows: Array<Object> = [];
+  for (let i: number = 0; i < responses.length; i++) {
+    const r: AssessmentSubmitItem = responses[i];
+    rows.push({ 'item_id': r.item_id, 'response': r.response, 'confidence': r.confidence } as Record<string, Object>);
+  }
+  return requestJson<AssessmentResult>(baseUrl, http.RequestMethod.POST,
+    `/api/v1/learning/sprints/${encodeURIComponent(sprintId)}/transfer/submit`,
+    { 'responses': rows } as Record<string, Object>);
+}
+
+/** GET /api/v1/learning/sprints/{id}/practice/session — 定向练习单题会话 */
+export async function getPracticeSession(baseUrl: string, sprintId: string): Promise<ApiResult<PracticeSession>> {
+  return requestJson<PracticeSession>(baseUrl, http.RequestMethod.GET,
+    `/api/v1/learning/sprints/${encodeURIComponent(sprintId)}/practice/session`, null);
+}
+
+/** POST /api/v1/learning/sprints/{id}/practice/answer — 定向练习作答 */
+export async function submitPracticeAnswer(baseUrl: string, sprintId: string, itemId: string, response: string, confidence: number): Promise<ApiResult<PracticeAnswerResult>> {
+  return requestJson<PracticeAnswerResult>(baseUrl, http.RequestMethod.POST,
+    `/api/v1/learning/sprints/${encodeURIComponent(sprintId)}/practice/answer`,
+    { 'item_id': itemId, 'response': response, 'confidence': confidence } as Record<string, Object>);
+}
+
+/** GET /api/v1/learning/review-queue — 间隔复习队列(到期+非 completed,按 due_at 升序) */
+export async function getReviewQueue(baseUrl: string): Promise<ApiResult<Array<ReviewQueueEntry>>> {
+  return requestJson<Array<ReviewQueueEntry>>(baseUrl, http.RequestMethod.GET,
+    '/api/v1/learning/review-queue', null);
+}
+
+/** GET /api/v1/learning/review-queue/{id}/item — 复习单题(裸 AssessmentItem) */
+export async function getReviewItem(baseUrl: string, reviewId: string): Promise<ApiResult<AssessmentItem>> {
+  return requestJson<AssessmentItem>(baseUrl, http.RequestMethod.GET,
+    `/api/v1/learning/review-queue/${encodeURIComponent(reviewId)}/item`, null);
+}
+
+/** POST /api/v1/learning/review-queue/{id}/attempt — 复习作答(响应含 last_correct 与下轮 interval_days) */
+export async function submitReviewAttempt(baseUrl: string, reviewId: string, itemId: string, response: string, confidence: number): Promise<ApiResult<ReviewAttemptResult>> {
+  return requestJson<ReviewAttemptResult>(baseUrl, http.RequestMethod.POST,
+    `/api/v1/learning/review-queue/${encodeURIComponent(reviewId)}/attempt`,
+    { 'item_id': itemId, 'response': response, 'confidence': confidence } as Record<string, Object>);
+}
