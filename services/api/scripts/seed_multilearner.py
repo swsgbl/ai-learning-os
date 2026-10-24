@@ -55,8 +55,11 @@ def run(base: str) -> int:
         except urllib.error.HTTPError:
             pass  # 已注册
         token = _req(base, "POST", "/auth/login", body={"username": username, "password": SIM_PASSWORD})["access_token"]
-        get = lambda p: _req(base, "GET", p, token)
-        post = lambda p, b=None: _req(base, "POST", p, token, b or {})
+        def get(path: str, _tk: str = token):
+            return _req(base, "GET", path, _tk)
+
+        def post(path: str, body: dict | None = None, _tk: str = token):
+            return _req(base, "POST", path, _tk, body or {})
 
         # 找现成的有蓝图冲刺（qa 已建的教材冲刺合同有完整蓝图）——直接建自己的
         contract = post("/learning/contracts", {
@@ -86,8 +89,9 @@ def run(base: str) -> int:
         assessment = get(f"/learning/sprints/{sid}/assessment?phase=baseline")
         responses = []
         for item in assessment["items"]:
-            correct = rng.random() < profile["accuracy"]
-            # 无答案下发——按选项随机（模拟学习者乱选概率即 accuracy 驱动的探索）
+            # 无答案下发——按选项随机（模拟学习者画像的 accuracy 只影响
+            # 停留轮次与探索深度；选项随机模拟真实作答分布）
+            _ = profile["accuracy"]
             key = item["options"][rng.randrange(len(item["options"]))]["key"]
             responses.append({"item_id": item["item_id"], "response": key, "confidence": profile["confidence"]})
         result = post(f"/learning/sprints/{sid}/assessment/baseline/submit", {"responses": responses})
