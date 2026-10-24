@@ -12,6 +12,7 @@ import { Flip, gsap, useMotion } from "@/lib/gsap";
 import { MOTION } from "@/lib/motion";
 import { cn } from "@/lib/utils";
 import { PaperCard } from "@/components/paper-card";
+import { Bookshelf } from "@/components/library/bookshelf";
 import { CatalogSection } from "@/components/library/catalog-section";
 import { ErrorState, EmptyState } from "@/components/states";
 import { Input } from "@/components/ui/input";
@@ -127,6 +128,11 @@ export function LibraryView() {
       {/* M18-002 找教材：ChinaTextbook 目录（Mode A 元数据外链） */}
       <div data-animate="block">
         <CatalogSection />
+      </div>
+
+      {/* M19-004 我的教材工作台：导入→解析→概念→一键冲刺 */}
+      <div data-animate="block">
+        <Bookshelf />
       </div>
 
       <div data-animate="block" className="space-y-3">
