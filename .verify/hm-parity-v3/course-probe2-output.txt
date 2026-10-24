@@ -1,0 +1,6 @@
+login: PASS
+POST {goal}: status=201 耗时=0.6s
+  id=cgd_eb74a63074da4b0d954f3d63f732f3e0 status=pending_review chapter_count=4
+  note=生成 4 章；以下概念暂无命中的平台资源: SELECT 基础查询、聚合与分组、表连接 JOIN、分析报表实战（资源缺失不虚构，习题为生成模板非真题）
+  plan.outline 4 章: #1SELECT 基础查询 / #2聚合与分组 / #3表连接 JOIN / #4分析报表实战
+materialize: status=201 paper_id=pap_0a5b3590b23e40ce9315d1d095d85f88 q_count=4 title=定制课程 · SQL 表连接 JOIN 从零学会

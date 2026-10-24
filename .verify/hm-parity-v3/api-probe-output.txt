@@ -1,0 +1,12 @@
+PASS  login  status=200
+PASS  GET /me/ai-keys  status=200 keys=[llm] profiles=[]
+FAIL  PUT /me/ai-keys/llm  status=200 resp={"slot":"llm","configured":true,"last4":"g7h8","updated_at":null,"effect":"hot","endpoint":null,"model":null}
+PASS  POST llm/models(假key,预期40x)  status=502 detail="接口地址不可达"
+PASS  POST llm/profiles  status=201 id=ulp_d739e46e93e54313893fdeaa label=v3探针 last4=g7h8
+FAIL  POST profiles/activate  status=200
+PASS  DELETE profiles/{id}  status=200
+PASS  DELETE /me/ai-keys/llm  status=200
+FAIL  POST generation-drafts  status=422 id=undefined status=undefined
+FAIL  GET /voice/providers  status=200 resp={"voice_mode":"local","asr":{"requested":null,"provider":"local-funasr","fallback":false},"tts":{"requested":null,"provider":"local-cosyvoice","fallba
+
+== 6/10 PASS ==

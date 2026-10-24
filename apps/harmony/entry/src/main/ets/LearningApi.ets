@@ -360,6 +360,13 @@ export async function getReviewQueue(baseUrl: string): Promise<ApiResult<Array<R
     '/api/v1/learning/review-queue', null);
 }
 
+/** POST /api/v1/learning/review-queue/{id}/present — 展示转换(scheduled→presented;作答前必调) */
+export async function presentReview(baseUrl: string, reviewId: string): Promise<ApiResult<ReviewQueueEntry>> {
+  return requestJson<ReviewQueueEntry>(baseUrl, http.RequestMethod.POST,
+    `/api/v1/learning/review-queue/${encodeURIComponent(reviewId)}/present`,
+    {} as Record<string, Object>);
+}
+
 /** GET /api/v1/learning/review-queue/{id}/item — 复习单题(裸 AssessmentItem) */
 export async function getReviewItem(baseUrl: string, reviewId: string): Promise<ApiResult<AssessmentItem>> {
   return requestJson<AssessmentItem>(baseUrl, http.RequestMethod.GET,

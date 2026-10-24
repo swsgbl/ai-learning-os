@@ -25,7 +25,7 @@ import {
   PracticeAnswerResult, PracticeSession, ReviewAttemptResult,
   ReviewQueueEntry, SPRINT_PHASES, TransferItemsResponse,
   advanceSprint, confirmLearningContract, getContractSprints,
-  getLearningContracts, getPracticeSession, getReviewItem, getReviewQueue,
+  getLearningContracts, getPracticeSession, getReviewItem, getReviewQueue, presentReview,
   getSprintAssessment, getTransferItems, nextSprintPhase,
   sprintPhaseLabel, submitPracticeAnswer, submitReviewAttempt,
   submitSprintAssessment, submitTransfer
@@ -400,9 +400,17 @@ struct LearningSprintPage {
     this.reviewStatus = r.data.length === 0 ? LoadStatus.EMPTY : LoadStatus.SUCCESS;
   }
 
-  /** 开始某条复习:拉单题 */
+  /** 开始某条复习:present(scheduled→presented)→ 拉单题 */
   private async startReviewItem(entry: ReviewQueueEntry): Promise<void> {
     await this.runBusy(async () => {
+      // 作答前必先 present(与 Android 对齐;409 如实展示)
+      if (entry.status === 'scheduled') {
+        const pr = await presentReview(this.baseUrl, entry.id);
+        if (!pr.ok) {
+          this.actionError = pr.error;
+          return;
+        }
+      }
       const r = await getReviewItem(this.baseUrl, entry.id);
       if (!r.ok || r.data === null) {
         this.actionError = r.error;

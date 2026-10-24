@@ -1,0 +1,6 @@
+login: PASS
+POST {goal}: status=201 耗时=13.5s
+  id=cgd_5307ec08876344d1b64bee3c328559b2 status=pending_review chapter_count=8
+  note=LLM 动态生成 8 章（概念图未覆盖该主题；模型 aios-qwen3.5-9b-4096）
+  plan.outline 8 章: #1探索勾股定理：从拼图开始 / #2验证与证明：为什么 a²+b²=c²? / #3逆向思考：如何利用勾股定理求边长 / #4生活中的最短路径直觉 / #5经典模型：平面内的两点之间线段最短
+materialize: status=201 paper_id=pap_82bfbf4479064b1c9a2b830cb462bc6a q_count=8 title=定制课程 · 勾股定理与最短路径入门

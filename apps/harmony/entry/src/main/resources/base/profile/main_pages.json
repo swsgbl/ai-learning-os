@@ -4,6 +4,7 @@
     "pages/VoiceExamPage",
     "pages/LearningSprintPage",
     "pages/TextbookWorkbenchPage",
-    "pages/ExamPage"
+    "pages/ExamPage",
+    "pages/CreateCoursePage"
   ]
 }

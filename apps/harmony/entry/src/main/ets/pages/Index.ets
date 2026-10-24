@@ -28,6 +28,8 @@ import { StudyPane } from '../components/StudyPane';
 import { VoicePane } from '../components/VoicePane';
 import { AuthPane } from '../components/AuthPane';
 import { DownloadPane } from '../components/DownloadPane';
+import { AiKeysPane } from '../components/AiKeysPane';
+import { hasBearerToken } from '../AiosApi';
 
 @Entry
 @Component
@@ -64,6 +66,24 @@ struct Index {
               .onClick(() => {
                 this.getUIContext().getRouter().pushUrl({ url: 'pages/VoiceExamPage' });
               })
+            // hm-parity v3 缺口 C:登录态「选卷开语音考试」入口(VoiceExamPage 内置选卷列表)
+            if (hasBearerToken()) {
+              Button('📋 选择试卷开语音考试')
+                .fontSize(14)
+                .width('90%')
+                .margin({ bottom: 8 })
+                .backgroundColor('#2e7d32')
+                .onClick(() => {
+                  this.getUIContext().getRouter().pushUrl({ url: 'pages/VoiceExamPage' });
+                })
+            } else {
+              Text('登录后可选择试卷开语音考试')
+                .fontSize(12)
+                .fontColor('#8c6d1f')
+                .width('90%')
+                .textAlign(TextAlign.Center)
+                .margin({ bottom: 8 })
+            }
             VoicePane()
               .layoutWeight(1)
           }
@@ -79,6 +99,7 @@ struct Index {
                 SettingsPane()
                 AuthPane()
                 DownloadPane()
+                AiKeysPane()
               }
               .width('100%')
             }
