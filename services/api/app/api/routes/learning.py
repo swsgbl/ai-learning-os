@@ -2629,12 +2629,143 @@ class SourceRefOut(BaseModel):
     fetched_at: datetime
 
 
+class TextbookSourceRequest(BaseModel):
+    """M19-002：教材 chunks → 合同来源证据入参。"""
+
+    job_id: str = Field(min_length=1, max_length=64)
+
+
 class SourceSearchRequest(BaseModel):
     """按概念检索来源片段（经既有 search registry；结果入证据表）。"""
 
     concept_id: str = Field(min_length=1, max_length=64)
     query: str | None = Field(default=None, max_length=200)
     limit: int = Field(default=3, ge=1, le=5)
+
+
+@router.post(
+    "/contracts/{contract_id}/source-refs/from-textbook", response_model=list[SourceRefOut], status_code=201
+)
+async def import_source_refs_from_textbook(
+    contract_id: str, payload: TextbookSourceRequest, request: Request
+) -> list[SourceRefOut]:
+    """M19-002 垂直切片桥：教材解析 chunks → 合同来源证据（审计 02 §8）。
+
+    把私有导入并已解析的教材页锚点片段导入为 LearningSourceRefRow——
+    generate-items 出题即可引用教材原文（页码可溯）：
+    - 概念→chunk 匹配：已确认概念候选的 canonical_name 出现在 chunk
+      文本中（简单包含匹配——MVP 不做语义检索）；未匹配概念如实计数；
+    - 幂等：同 (contract, concept, content_hash) 已存在跳过；
+    - 许可如实：user_private 导入 → license_hint="user_private_import"。
+    """
+    await require_user(request)
+    contract = await _owned_contract(request, contract_id)
+    owner = current_owner_id(request)
+    from app.db.orm import (
+        ConceptCandidateRow,
+        IngestJobRow,
+        ResourceRow,
+    )
+
+    async with request.app.state.sessionmaker() as session:
+        job = await session.get(IngestJobRow, payload.job_id)
+        if job is None or job.owner_id != owner:
+            raise HTTPException(status_code=404, detail="导入任务不存在")
+        if job.status != "ready":
+            raise HTTPException(status_code=409, detail=f"导入未就绪（{job.status}）")
+        record = (
+            
+                await session.execute(
+                    select(ResourceRow).where(
+                        (ResourceRow.content_hash == job.sha256)
+                        & (ResourceRow.owner_id == owner)
+                    )
+                )
+            
+        ).scalar_one_or_none()
+        if record is None or record.parse_status not in {"parsed", "needs_ocr"}:
+            raise HTTPException(status_code=409, detail="教材未解析——先 /parse")
+        concepts = (
+            
+                await session.execute(
+                    select(ConceptCandidateRow).where(
+                        (ConceptCandidateRow.resource_id == record.id)
+                        & (ConceptCandidateRow.status == "confirmed")
+                    )
+                )
+            
+        ).scalars().all()
+        resource_title = record.title
+    if not concepts:
+        raise HTTPException(
+            status_code=409, detail="无已确认概念——先 /concepts 提取并 confirm"
+        )
+
+    chunks_repo = getattr(request.app.state, "chunks", None)
+    if chunks_repo is None:
+        raise HTTPException(status_code=503, detail="解析存储不可用")
+    chunks = await chunks_repo.list_chunks(record.id)
+    if not chunks:
+        raise HTTPException(status_code=409, detail="教材无解析文本")
+
+    book_label = resource_title[:60]
+    now = _now()
+    created: list[LearningSourceRefRow] = []
+    unmatched: list[str] = []
+    async with request.app.state.sessionmaker() as session:
+        existing = {
+            (row.concept_id, row.content_hash): row
+            for row in (
+                await session.execute(
+                    select(LearningSourceRefRow).where(
+                        LearningSourceRefRow.contract_id == contract.id
+                    )
+                )
+            ).scalars()
+        }
+        lowered = [str(c.get("text", "")).lower() for c in chunks]
+        for cand in concepts:
+            # 匹配序：canonical_name → concept_id 冒号后 slug（中文概念名
+            # 配英文教材的现实场景——slug 子串不区分大小写匹配）
+            name = cand.canonical_name
+            slug = cand.concept_id.split(":", 1)[-1].replace("-", " ")
+            matched_index = next(
+                (i for i, text in enumerate(lowered) if name in chunks[i].get("text", "")),
+                None,
+            )
+            if matched_index is None:
+                matched_index = next(
+                    (i for i, text in enumerate(lowered) if slug in text), None
+                )
+            if matched_index is None:
+                unmatched.append(cand.concept_id)
+                continue
+            matched_chunk = chunks[matched_index]
+            text = str(matched_chunk.get("text", ""))[:600]
+            page = matched_chunk.get("page_start")
+            digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            if (cand.concept_id, digest) in existing:
+                continue
+            row = LearningSourceRefRow(
+                id=f"lsr_{uuid4().hex[:20]}",
+                owner_id=owner,
+                contract_id=contract.id,
+                concept_id=cand.concept_id,
+                provider="textbook",
+                url=f"aios://textbook/{record.id}/page/{page}",
+                title=f"{book_label} 第{page}页",
+                snippet=text,
+                content_hash=digest,
+                license_hint="user_private_import",
+                fetched_at=now,
+            )
+            session.add(row)
+            created.append(row)
+        await session.commit()
+        for row in created:
+            await session.refresh(row)
+    _ = unmatched  # 未匹配概念如实（响应只含已建条目——数量差即信号）
+    return [_source_ref_out(row) for row in created]
 
 
 @router.post(
