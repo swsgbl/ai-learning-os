@@ -413,14 +413,12 @@ struct ExamPage {
     Column({ space: 12 }) {
       // 标题栏
       Row({ space: 12 }) {
-        if (this.phase !== ExamPhase.REPORT) {
-          Button('退出')
-            .fontSize(12)
-            .height(28)
-            .onClick(() => {
-              this.getUIContext().getRouter().back();
-            })
-        }
+        Button('退出')
+          .fontSize(12)
+          .height(28)
+          .onClick(() => {
+            this.getUIContext().getRouter().back();
+          })
         Text(this.phase === ExamPhase.REPORT ? '考试报告' :
           (this.phase === ExamPhase.PICK ? '选择试卷' : '考试作答'))
           .fontSize(20)

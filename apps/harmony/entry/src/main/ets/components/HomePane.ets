@@ -256,6 +256,28 @@ export struct HomePane {
           }
         })
 
+        // hm-parity v3 缺口 B:定制课程快速入口
+        Column({ space: 8 }) {
+          Text('🎯 定制课程')
+            .fontSize(16)
+            .fontWeight(FontWeight.Bold)
+          Text('输入学习目标,AI 生成课程大纲与试卷')
+            .fontSize(12)
+            .fontColor('#666666')
+          Button('开始定制')
+            .fontSize(13)
+            .height(34)
+            .backgroundColor('#1890ff')
+            .onClick(() => {
+              this.getUIContext().getRouter().pushUrl({ url: 'pages/CreateCoursePage' });
+            })
+        }
+        .alignItems(HorizontalAlign.Start)
+        .padding(12)
+        .borderRadius(8)
+        .backgroundColor('#f5f5f5')
+        .width('100%')
+
         Text('AIOS 只读面板')
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
