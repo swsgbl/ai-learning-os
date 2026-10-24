@@ -28,6 +28,28 @@ interface LearningGateway {
         phase: String,
         responses: List<com.ailearningos.app.data.remote.AssessmentSubmitItemDto>,
     ): AssessmentResultDto
+
+    // M20-002 App/Web 同步
+    suspend fun transferItems(sprintId: String): com.ailearningos.app.data.remote.TransferSessionDto
+    suspend fun submitTransfer(
+        sprintId: String,
+        responses: List<com.ailearningos.app.data.remote.TransferSubmitDto>,
+    ): com.ailearningos.app.data.remote.TransferResultDto
+    suspend fun practiceSession(sprintId: String): com.ailearningos.app.data.remote.PracticeStepDto
+    suspend fun practiceAnswer(
+        sprintId: String,
+        itemId: String,
+        response: String,
+        confidence: Int?,
+    ): com.ailearningos.app.data.remote.PracticeAnswerDto
+    suspend fun reviewQueue(): List<com.ailearningos.app.data.remote.ReviewQueueItemDto>
+    suspend fun reviewItem(reviewId: String): com.ailearningos.app.data.remote.AssessmentItemDto
+    suspend fun attemptReview(
+        reviewId: String,
+        itemId: String,
+        response: String,
+        confidence: Int?,
+    ): com.ailearningos.app.data.remote.ReviewQueueItemDto
 }
 
 class LearningRepository(
@@ -65,6 +87,52 @@ class LearningRepository(
             sprintId,
             phase,
             AssessmentSubmitRequestDto(responses = responses),
+        )
+    }
+
+    override suspend fun transferItems(sprintId: String): com.ailearningos.app.data.remote.TransferSessionDto =
+        withRemoteError { apiProvider.get().transferItems(sprintId) }
+
+    override suspend fun submitTransfer(
+        sprintId: String,
+        responses: List<com.ailearningos.app.data.remote.TransferSubmitDto>,
+    ): com.ailearningos.app.data.remote.TransferResultDto = withRemoteError {
+        apiProvider.get().submitTransfer(
+            sprintId,
+            com.ailearningos.app.data.remote.TransferSubmitRequestDto(responses = responses),
+        )
+    }
+
+    override suspend fun practiceSession(sprintId: String): com.ailearningos.app.data.remote.PracticeStepDto =
+        withRemoteError { apiProvider.get().practiceSession(sprintId) }
+
+    override suspend fun practiceAnswer(
+        sprintId: String,
+        itemId: String,
+        response: String,
+        confidence: Int?,
+    ): com.ailearningos.app.data.remote.PracticeAnswerDto = withRemoteError {
+        apiProvider.get().practiceAnswer(
+            sprintId,
+            com.ailearningos.app.data.remote.PracticeAnswerRequestDto(itemId, response, confidence),
+        )
+    }
+
+    override suspend fun reviewQueue(): List<com.ailearningos.app.data.remote.ReviewQueueItemDto> =
+        withRemoteError { apiProvider.get().reviewQueue() }
+
+    override suspend fun reviewItem(reviewId: String): com.ailearningos.app.data.remote.AssessmentItemDto =
+        withRemoteError { apiProvider.get().reviewItem(reviewId) }
+
+    override suspend fun attemptReview(
+        reviewId: String,
+        itemId: String,
+        response: String,
+        confidence: Int?,
+    ): com.ailearningos.app.data.remote.ReviewQueueItemDto = withRemoteError {
+        apiProvider.get().attemptReview(
+            reviewId,
+            com.ailearningos.app.data.remote.ReviewAttemptRequestDto(itemId, response, confidence),
         )
     }
 }

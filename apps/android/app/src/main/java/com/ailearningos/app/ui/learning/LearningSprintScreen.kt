@@ -81,6 +81,8 @@ fun LearningSprintScreen(viewModel: LearningSprintViewModel) {
             ) {
                 items(state.contracts, key = { it.contract.id }) { entry ->
                     ContractSprintCard(
+                        onOpenTransfer = { viewModel.startTransfer(it) },
+                        onOpenPractice = { viewModel.startPracticeStep(it) },
                         entry = entry,
                         busy = state.busy,
                         onConfirm = { viewModel.confirmContract(entry.contract.id) },
@@ -95,6 +97,28 @@ fun LearningSprintScreen(viewModel: LearningSprintViewModel) {
                             busy = state.busy,
                             viewModel = viewModel,
                         )
+                    }
+                }
+                state.transferSession?.let { session ->
+                    item(key = "transfer-${session.sprintId}") {
+                        TransferCard(session, state, viewModel)
+                    }
+                }
+                state.transferResult?.let { result ->
+                    item(key = "transfer-result") {
+                        SectionCard(title = "迁移检验得分") {
+                            Text("${result.score} 分 · ${result.correctCount}/${result.questionCount} 对")
+                        }
+                    }
+                }
+                state.practiceStep?.let { step ->
+                    item(key = "practice-${step.item.itemId}") {
+                        PracticeCard(step, state, viewModel)
+                    }
+                }
+                state.reviewSession?.let { (reviewId, item) ->
+                    item(key = "review-$reviewId") {
+                        ReviewCard(reviewId, item, state, viewModel)
                     }
                 }
                 state.lastResult?.let { result ->
@@ -128,6 +152,8 @@ private fun ContractSprintCard(
     onConfirm: () -> Unit,
     onAdvance: () -> Unit,
     onStartAssessment: () -> Unit,
+    onOpenTransfer: (String) -> Unit = {},
+    onOpenPractice: (String) -> Unit = {},
 ) {
     val contract = entry.contract
     val sprint = entry.sprint
@@ -166,6 +192,12 @@ private fun ContractSprintCard(
         }
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             val inAssessmentPhase = sprint.phase == "baseline_assessment" || sprint.phase == "posttest"
+            if (sprint.phase == "transfer_check") {
+                Button(onClick = { onOpenTransfer(sprint.id) }, enabled = !busy) { Text("开始迁移检验") }
+            }
+            if (sprint.phase == "targeted_practice") {
+                Button(onClick = { onOpenPractice(sprint.id) }, enabled = !busy) { Text("定向练习（逐题）") }
+            }
             if (inAssessmentPhase) {
                 Button(onClick = onStartAssessment, enabled = !busy) {
                     Text(if (sprint.phase == "baseline_assessment") "开始前测" else "开始后测")
@@ -238,5 +270,112 @@ private fun AssessmentItemView(
                 )
             }
         }
+    }
+}
+
+
+// ---------- M20-002 作答面板 ----------
+
+@Composable
+private fun TransferCard(
+    session: com.ailearningos.app.data.remote.TransferSessionDto,
+    state: LearningSprintState,
+    viewModel: LearningSprintViewModel,
+) {
+    SectionCard(title = "迁移检验（未见情境应用题）") {
+        val allAnswered = session.items.all { !state.transferAnswers[it.itemId].isNullOrBlank() }
+        session.items.forEach { item ->
+            Column(Modifier.padding(vertical = 6.dp)) {
+                Text(item.stem, style = MaterialTheme.typography.bodyMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    (item.options ?: emptyList()).forEach { option ->
+                        val selected = state.transferAnswers[item.itemId] == option.key
+                        OutlinedButton(
+                            onClick = { viewModel.selectTransferAnswer(item.itemId, option.key) },
+                            border = androidx.compose.foundation.BorderStroke(
+                                width = if (selected) 2.dp else 1.dp,
+                                color = if (selected) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outline,
+                            ),
+                        ) { Text("${option.key}", style = MaterialTheme.typography.labelMedium) }
+                    }
+                }
+            }
+        }
+        Button(
+            onClick = { viewModel.submitTransfer(session.sprintId) },
+            enabled = allAnswered && state.busy.not(),
+        ) { Text("提交（服务端判分）") }
+    }
+}
+
+@Composable
+private fun PracticeCard(
+    step: com.ailearningos.app.data.remote.PracticeStepDto,
+    state: LearningSprintState,
+    viewModel: LearningSprintViewModel,
+) {
+    SectionCard(title = "定向练习 · ${step.conceptId}（${step.passedSteps + 1}/${step.targetSteps} 步）") {
+        Text("策略：${step.strategy}", style = MaterialTheme.typography.labelSmall)
+        Text(step.item.stem, style = MaterialTheme.typography.bodyMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            (step.item.options ?: emptyList()).forEach { option ->
+                val selected = state.practiceAnswer == option.key
+                OutlinedButton(onClick = { viewModel.setPracticeAnswer(option.key) }) {
+                    Text(option.key, style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
+        val feedback = state.practiceFeedback
+        if (feedback != null) {
+            Text(
+                if (feedback.stepPassed) "答对（步骤推进）" else "答错（同步骤重试）",
+                color = if (feedback.stepPassed) MaterialTheme.colorScheme.primary
+                else MaterialTheme.colorScheme.error,
+                style = MaterialTheme.typography.bodySmall,
+            )
+            if (feedback.explanation.isNotBlank()) {
+                Text("解析：${feedback.explanation.take(160)}", style = MaterialTheme.typography.labelSmall)
+            }
+            if (!feedback.practiceComplete) {
+                OutlinedButton(onClick = { viewModel.startPracticeStep(currentSprintIdOf(state)) }) {
+                    Text("下一题")
+                }
+            }
+        } else {
+            Button(
+                onClick = { viewModel.submitPracticeAnswer(currentSprintIdOf(state)) },
+                enabled = state.practiceAnswer.isNotBlank() && !state.busy,
+            ) { Text("提交") }
+        }
+    }
+}
+
+private fun stepStepId(state: LearningSprintState): String =
+    state.contracts.firstNotNullOfOrNull { c -> c.sprint?.id } ?: ""
+
+private fun currentSprintIdOf(state: LearningSprintState): String =
+    state.contracts.firstNotNullOfOrNull { c -> c.sprint?.id } ?: ""
+
+@Composable
+private fun ReviewCard(
+    reviewId: String,
+    item: com.ailearningos.app.data.remote.AssessmentItemDto,
+    state: LearningSprintState,
+    viewModel: LearningSprintViewModel,
+) {
+    SectionCard(title = "间隔复习 · ${item.conceptId}") {
+        Text(item.stem, style = MaterialTheme.typography.bodyMedium)
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            (item.options ?: emptyList()).forEach { option ->
+                OutlinedButton(onClick = { viewModel.setReviewAnswer(option.key) }) {
+                    Text(option.key, style = MaterialTheme.typography.labelMedium)
+                }
+            }
+        }
+        Button(
+            onClick = viewModel::submitReviewAnswer,
+            enabled = state.reviewAnswer.isNotBlank() && !state.busy,
+        ) { Text("提交复习作答") }
     }
 }

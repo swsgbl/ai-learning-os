@@ -96,3 +96,84 @@ data class AssessmentResultDto(
 data class AdvanceSprintRequestDto(
     val to_phase: String,
 )
+
+
+// ---------- M20-002 App/Web 同步：迁移检验 / 定向练习 / 复习作答 ----------
+
+@Serializable
+data class TransferSessionDto(
+    @SerialName("sprint_id") val sprintId: String,
+    val phase: String,
+    val items: List<AssessmentItemDto>,
+)
+
+@Serializable
+data class TransferSubmitDto(
+    @SerialName("item_id") val itemId: String,
+    val response: String,
+    val confidence: Int? = null,
+)
+
+@Serializable
+data class TransferSubmitRequestDto(
+    val responses: List<TransferSubmitDto>,
+)
+
+@Serializable
+data class TransferResultDto(
+    @SerialName("sprint_id") val sprintId: String,
+    val phase: String,
+    val score: Double,
+    @SerialName("correct_count") val correctCount: Int,
+    @SerialName("question_count") val questionCount: Int,
+    @SerialName("ungraded_count") val ungradedCount: Int = 0,
+    @SerialName("sprint_phase") val sprintPhase: String = "",
+)
+
+@Serializable
+data class PracticeStepDto(
+    @SerialName("concept_id") val conceptId: String,
+    val step: String,
+    val strategy: String,
+    val rationale: String,
+    val item: AssessmentItemDto,
+    @SerialName("passed_steps") val passedSteps: Int,
+    @SerialName("target_steps") val targetSteps: Int,
+)
+
+@Serializable
+data class PracticeAnswerRequestDto(
+    @SerialName("item_id") val itemId: String,
+    val response: String,
+    val confidence: Int? = null,
+)
+
+@Serializable
+data class PracticeAnswerDto(
+    @SerialName("concept_id") val conceptId: String,
+    val correct: Boolean? = null,
+    val explanation: String = "",
+    @SerialName("step_passed") val stepPassed: Boolean = false,
+    @SerialName("passed_steps") val passedSteps: Int = 0,
+    @SerialName("target_steps") val targetSteps: Int = 0,
+    @SerialName("practice_complete") val practiceComplete: Boolean = false,
+    @SerialName("sprint_phase") val sprintPhase: String = "",
+)
+
+@Serializable
+data class ReviewQueueItemDto(
+    val id: String,
+    @SerialName("concept_id") val conceptId: String,
+    val status: String,
+    @SerialName("due_at") val dueAt: String,
+    @SerialName("interval_days") val intervalDays: Int? = null,
+    val overdue: Boolean = false,
+    @SerialName("last_correct") val lastCorrect: Boolean? = null,
+)
+
+@Serializable
+data class ReviewAttemptRequestDto(
+    @SerialName("item_id") val itemId: String,
+    val response: String,
+    val confidence: Int? = null,
+)

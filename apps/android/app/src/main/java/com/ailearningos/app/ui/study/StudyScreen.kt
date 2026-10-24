@@ -46,6 +46,7 @@ fun StudyScreen(
     onOpenReview: (String) -> Unit = {},
     onOpenStudyMode: (String) -> Unit = {},
     onOpenLearningSprint: () -> Unit = {},
+    onOpenTextbook: () -> Unit = {},
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     // 每次进入该标签都刷新（VM 随 backstack 复用不重跑 init；切 API 地址后
@@ -80,6 +81,16 @@ fun StudyScreen(
 
         state.resumeExamId?.let { resumeExamId ->
             ResumeBanner(onResume = { onResumeExam(resumeExamId) })
+        }
+
+        // M20-001 教材工作台入口（App/Web 同步）：目录→导入→一键冲刺
+        SectionCard(title = "教材工作台") {
+            Text(
+                "搜教材目录 → 导入我的教材 → 解析 → 一键开学习冲刺。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            OutlinedButton(onClick = onOpenTextbook) { Text("进入教材工作台") }
         }
 
         // M16-012 学习冲刺入口（App/Web 同步）：48 小时可验证闭环的移动面板

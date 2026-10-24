@@ -95,6 +95,39 @@ class LearningSprintViewModelTest {
         override suspend fun assessment(sprintId: String, phase: String): AssessmentResponseDto =
             assessmentEntity ?: throw AppError(AppErrorKind.NOT_FOUND)
 
+        override suspend fun transferItems(sprintId: String): com.ailearningos.app.data.remote.TransferSessionDto =
+            com.ailearningos.app.data.remote.TransferSessionDto(sprintId, "transfer", emptyList())
+
+        override suspend fun submitTransfer(
+            sprintId: String,
+            responses: List<com.ailearningos.app.data.remote.TransferSubmitDto>,
+        ): com.ailearningos.app.data.remote.TransferResultDto =
+            com.ailearningos.app.data.remote.TransferResultDto(sprintId, "transfer", 100.0, 1, 1)
+
+        override suspend fun practiceSession(sprintId: String): com.ailearningos.app.data.remote.PracticeStepDto =
+            throw com.ailearningos.app.core.AppError(com.ailearningos.app.core.AppErrorKind.NOT_FOUND)
+
+        override suspend fun practiceAnswer(
+            sprintId: String,
+            itemId: String,
+            response: String,
+            confidence: Int?,
+        ): com.ailearningos.app.data.remote.PracticeAnswerDto =
+            com.ailearningos.app.data.remote.PracticeAnswerDto(conceptId = "c")
+
+        override suspend fun reviewQueue(): List<com.ailearningos.app.data.remote.ReviewQueueItemDto> = emptyList()
+
+        override suspend fun reviewItem(reviewId: String): com.ailearningos.app.data.remote.AssessmentItemDto =
+            throw com.ailearningos.app.core.AppError(com.ailearningos.app.core.AppErrorKind.NOT_FOUND)
+
+        override suspend fun attemptReview(
+            reviewId: String,
+            itemId: String,
+            response: String,
+            confidence: Int?,
+        ): com.ailearningos.app.data.remote.ReviewQueueItemDto =
+            throw com.ailearningos.app.core.AppError(com.ailearningos.app.core.AppErrorKind.NOT_FOUND)
+
         override suspend fun submitAssessment(
             sprintId: String,
             phase: String,

@@ -37,6 +37,8 @@ import com.ailearningos.app.ui.governance.GovernanceViewModel
 import com.ailearningos.app.ui.home.HomeScreen
 import com.ailearningos.app.ui.icons.AiosIcons
 import com.ailearningos.app.ui.learning.LearningSprintScreen
+import com.ailearningos.app.ui.learning.TextbookWorkbenchScreen
+import com.ailearningos.app.ui.learning.TextbookViewModel
 import com.ailearningos.app.ui.learning.LearningSprintViewModel
 import com.ailearningos.app.ui.login.LoginScreen
 import com.ailearningos.app.ui.review.ReviewScreen
@@ -84,6 +86,7 @@ const val STUDY_MODE_ROUTE = "study-mode/{paperId}"
 const val GOVERNANCE_ROUTE = "governance"
 const val CREATE_COURSE_ROUTE = "create-course"
 const val LEARNING_SPRINT_ROUTE = "learning-sprint"
+const val TEXTBOOK_ROUTE = "textbook-workbench"
 const val VOICE_PAPER_ROUTE = "voice-paper/{paperId}"
 const val VOICE_SESSION_ROUTE = "voice-session/{sessionId}"
 
@@ -159,12 +162,18 @@ fun AiosApp(viewModelFactory: ViewModelProvider.Factory) {
                     viewModel = studyViewModel,
                     onStartPaper = { paperId -> navController.navigateExamPaper(paperId) },
                     onOpenLearningSprint = { navController.navigate(LEARNING_SPRINT_ROUTE) { launchSingleTop = true } },
+                    onOpenTextbook = { navController.navigate(TEXTBOOK_ROUTE) { launchSingleTop = true } },
                     onResumeExam = { examId -> navController.navigateExamResume(examId) },
                     onOpenReview = { examId -> navController.navigate("review/$examId") },
                     onStartVoicePaper = { paperId -> navController.navigateVoicePaper(paperId) },
                     onOpenStudyMode = { paperId -> navController.navigate("study-mode/$paperId") },
                 )
             }
+            composable(TEXTBOOK_ROUTE) {
+                val textbookVm: TextbookViewModel = viewModel(factory = viewModelFactory)
+                TextbookWorkbenchScreen(viewModel = textbookVm)
+            }
+
             composable(LEARNING_SPRINT_ROUTE) {
                 val learningVm: LearningSprintViewModel = viewModel(factory = viewModelFactory)
                 LearningSprintScreen(viewModel = learningVm)
