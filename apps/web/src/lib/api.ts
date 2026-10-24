@@ -252,6 +252,30 @@ export const api = {
     reviewQueue: () => request<ReviewQueueItem[]>("/api/v1/learning/review-queue"),
     scheduleFollowUp: (sprintId: string) =>
       request<ReviewQueueItem[]>(`/api/v1/learning/sprints/${encodeURIComponent(sprintId)}/follow-up/schedule`, { method: "POST" }),
+  listImports: () =>
+    request<Array<{ id: string; resource_id: string; status: string; title: string; parse_status: string; concept_counts: string; size_bytes: number; error: string }>>(
+      `/api/v1/library/imports`,
+    ),
+  createImport: (resourceId: string) =>
+    request<{ id: string; status: string }>(`/api/v1/library/imports`, {
+      method: "POST",
+      body: JSON.stringify({ resource_id: resourceId, permission_statement: true }),
+    }),
+  parseImport: (jobId: string, opts?: { ocrMaxPages?: number }) =>
+    request<{ status: string; chunk_count: number }>(
+      `/api/v1/library/imports/${encodeURIComponent(jobId)}/parse${opts?.ocrMaxPages ? `?ocr_max_pages=${opts.ocrMaxPages}` : ""}`,
+      { method: "POST" },
+    ),
+  extractConcepts: (jobId: string) =>
+    request<{ concept_count: number; edge_count: number }>(
+      `/api/v1/library/imports/${encodeURIComponent(jobId)}/concepts`,
+      { method: "POST" },
+    ),
+  createSprintFromTextbook: (jobId: string) =>
+    request<{ contract_id: string; sprint_id: string; generated: number; blueprint_complete: boolean }>(
+      `/api/v1/library/imports/${encodeURIComponent(jobId)}/create-sprint`,
+      { method: "POST" },
+    ),
   },
 
   catalogSearch: (params: { q?: string; stage?: string; subject?: string; grade?: string; limit?: number }) => {

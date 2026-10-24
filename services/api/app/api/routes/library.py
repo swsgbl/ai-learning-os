@@ -23,7 +23,7 @@ from datetime import UTC, datetime
 import httpx
 from fastapi import APIRouter, HTTPException, Query, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from app.api.routes.auth import current_owner_id, require_user
 from app.api.routes.learning import (
@@ -77,6 +77,10 @@ class ImportJobOut(BaseModel):
     sha256: str
     size_bytes: int
     error: str
+    #: 书架 UI（M19-004）：教材标题与解析/概念进度态
+    title: str = ""
+    parse_status: str = ""
+    concept_counts: str = ""
 
 
 def _job_out(row: IngestJobRow) -> ImportJobOut:
@@ -89,6 +93,9 @@ def _job_out(row: IngestJobRow) -> ImportJobOut:
         sha256=row.sha256,
         size_bytes=row.size_bytes,
         error=row.error,
+        title=getattr(row, "_title_cache", ""),
+        parse_status=getattr(row, "_parse_cache", ""),
+        concept_counts=getattr(row, "_concepts_cache", ""),
     )
 
 
@@ -247,6 +254,50 @@ async def _fail_job(request: Request, job_id: str, status: str, detail: str) -> 
         row.error = detail[:500]
         row.updated_at = _now()
         await session.commit()
+
+
+@router.get("/imports", response_model=list[ImportJobOut])
+async def list_my_imports(request: Request) -> list[ImportJobOut]:
+    """我的教材导入列表（M19-004 Web 书架数据源——最新在前）。"""
+    await require_user(request)
+    owner = current_owner_id(request)
+    async with request.app.state.sessionmaker() as session:
+        rows = (
+            
+                await session.execute(
+                    select(IngestJobRow)
+                    .where(IngestJobRow.owner_id == owner)
+                    .order_by(IngestJobRow.created_at.desc())
+                )
+            
+        ).scalars().all()
+        from app.db.orm import ConceptCandidateRow, ResourceRow
+
+        out: list[ImportJobOut] = []
+        for row in rows:
+            record = (
+                
+                    await session.execute(
+                        select(ResourceRow).where(
+                            (ResourceRow.content_hash == row.sha256)
+                            & (ResourceRow.owner_id == owner)
+                        )
+                    )
+                
+            ).scalar_one_or_none()
+            if record is not None:
+                row._title_cache = record.title
+                row._parse_cache = record.parse_status
+                counts = (
+                    await session.execute(
+                        select(ConceptCandidateRow.status, func.count())
+                        .where(ConceptCandidateRow.resource_id == record.id)
+                        .group_by(ConceptCandidateRow.status)
+                    )
+                ).all()
+                row._concepts_cache = " · ".join(f"{s} {c}" for s, c in counts)
+            out.append(_job_out(row))
+        return out
 
 
 @router.get("/imports/{job_id}", response_model=ImportJobOut)
