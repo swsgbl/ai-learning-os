@@ -26,6 +26,22 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 
 from app.api.routes.auth import current_owner_id, require_user
+from app.api.routes.learning import (
+    BlueprintBuildRequest,
+    ContractCreateRequest,
+    GenerateItemsRequest,
+    LearningContractRow,
+    LearningSprintRow,
+    TargetOutcome,
+    TextbookSourceRequest,
+    build_contract_blueprint,
+    confirm_contract,
+    create_contract,
+    create_sprint,
+    generate_items_for_contract,
+    import_source_refs_from_textbook,
+    publish_question,
+)
 from app.db.orm import ContentBlobRow, IngestJobRow, ResourceRecordRow
 from app.domain.ingest import (
     PartManifest,
@@ -960,3 +976,155 @@ async def confirmed_candidates_as_dag_payload(job_id: str, request: Request) -> 
         "edges": edges,
         "note": f"从教材候选确认生成（{len(nodes)} 概念 / {len(edges)} 先修边）",
     }
+
+# ---------------------------------------------------------------- 教材→冲刺向导（M19-003）
+
+
+class TextbookSprintOut(BaseModel):
+    """从教材一键开冲刺的结果（各步产物——前端直接跳转用）。"""
+
+    contract_id: str
+    sprint_id: str
+    concept_ids: list[str]
+    generated: int
+    published: int
+    blueprint_complete: bool
+    sprint_phase: str
+
+
+@router.post("/imports/{job_id}/create-sprint", response_model=TextbookSprintOut, status_code=201)
+async def create_sprint_from_textbook(job_id: str, request: Request) -> TextbookSprintOut:
+    """教材→学习冲刺一键向导（垂直切片 M19-002 的用户面封装）。
+
+    已确认概念 → 建合同+确认 → 来源桥（失败不阻断）→ 生成题（每概念
+    4——蓝图 complete 需 4/概念）→ 全部发布 → 蓝图 → 开冲刺。
+    幂等：同 (owner, 教材标题) 合同存在即复用；同合同最新冲刺复用。
+    """
+    await require_user(request)
+    owner = current_owner_id(request)
+    from app.db.orm import ConceptCandidateRow, IngestJobRow, ResourceRow
+
+    async with request.app.state.sessionmaker() as session:
+        job = await session.get(IngestJobRow, job_id)
+        if job is None or job.owner_id != owner:
+            raise HTTPException(status_code=404, detail="导入任务不存在")
+        if job.status != "ready":
+            raise HTTPException(status_code=409, detail=f"导入未就绪（{job.status}）")
+        record = (
+            
+                await session.execute(
+                    select(ResourceRow).where(
+                        (ResourceRow.content_hash == job.sha256)
+                        & (ResourceRow.owner_id == owner)
+                    )
+                )
+            
+        ).scalar_one_or_none()
+        if record is None or record.parse_status != "parsed":
+            raise HTTPException(status_code=409, detail="教材未解析（parsed）——先 /parse")
+        concepts = (
+            
+                await session.execute(
+                    select(ConceptCandidateRow).where(
+                        (ConceptCandidateRow.resource_id == record.id)
+                        & (ConceptCandidateRow.status == "confirmed")
+                    )
+                )
+            
+        ).scalars().all()
+        book_title = record.title[:40]
+    if not concepts:
+        raise HTTPException(status_code=409, detail="无已确认概念——先 /concepts 提取并 confirm")
+    concept_ids = sorted(c.concept_id for c in concepts)
+    contract_title = f"教材冲刺 · {book_title}"
+
+    # 合同（幂等：同名同主复用）
+    async with request.app.state.sessionmaker() as session:
+        existing_contract = (
+            
+                await session.execute(
+                    select(LearningContractRow).where(
+                        (LearningContractRow.title == contract_title)
+                        & (LearningContractRow.owner_id == owner)
+                    )
+                )
+            
+        ).scalar_one_or_none()
+    if existing_contract is not None:
+        contract_id = existing_contract.id
+        if existing_contract.confirmed_at is None:
+            await confirm_contract(contract_id, request)
+    else:
+        created = await create_contract(
+            ContractCreateRequest(
+                title=contract_title,
+                mode="exam_sprint",
+                target_outcomes=[
+                    TargetOutcome(
+                        statement=f"掌握并应用《{book_title}》中的{c.canonical_name}",
+                        criteria=f"教材《{book_title}》",
+                    )
+                    for c in concepts
+                ],
+                time_budget_hours=48.0,
+                pass_criteria="等值后测 ≥ 80 分",
+            ),
+            request,
+        )
+        contract_id = created.id
+        await confirm_contract(contract_id, request)
+
+    # 来源桥（失败不阻断——题目可以无来源生成，如实）
+    try:
+        await import_source_refs_from_textbook(contract_id, TextbookSourceRequest(job_id=job_id), request)
+    except HTTPException:
+        pass
+
+    # 生成 + 发布
+    try:
+        report = await generate_items_for_contract(
+            contract_id, GenerateItemsRequest(concepts=concept_ids, per_concept=4), request
+        )
+    except HTTPException as cause:
+        raise HTTPException(
+            status_code=cause.status_code,
+            detail=f"题目生成失败（向导中止）：{cause.detail}",
+        ) from cause
+    published = 0
+    for item in report.items:
+        try:
+            await publish_question(item.item_id, request)
+            published += 1
+        except HTTPException:
+            continue
+
+    blueprint = await build_contract_blueprint(
+        contract_id, BlueprintBuildRequest(concepts=concept_ids), request
+    )
+
+    # 冲刺（复用最新）
+    async with request.app.state.sessionmaker() as session:
+        latest_sprint = (
+            
+                await session.execute(
+                    select(LearningSprintRow)
+                    .where(LearningSprintRow.contract_id == contract_id)
+                    .order_by(LearningSprintRow.created_at.desc())
+                    .limit(1)
+                )
+            
+        ).scalar_one_or_none()
+    if latest_sprint is not None:
+        sprint_id, sprint_phase = latest_sprint.id, latest_sprint.phase
+    else:
+        sprint = await create_sprint(contract_id, request)
+        sprint_id, sprint_phase = sprint.id, sprint.phase
+    return TextbookSprintOut(
+        contract_id=contract_id,
+        sprint_id=sprint_id,
+        concept_ids=concept_ids,
+        generated=report.generated,
+        published=published,
+        blueprint_complete=blueprint.complete,
+        sprint_phase=sprint_phase,
+    )
