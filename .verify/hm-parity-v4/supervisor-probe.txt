@@ -1,0 +1,5 @@
+PASS plan slots={"subject":null,"school":"清华大学","year":"2024","course":"高等数学","question_type":"选择题","publicity":null} plan_n=2
+PASS queries qid=7 n=5 skip=0 7316ms
+PASS record id=7 n=5
+PASS 404 如实 detail="搜索记录不存在"
+PASS 匿名 401 status=401
