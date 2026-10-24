@@ -352,6 +352,47 @@ export struct StudyPane {
     // 整页单 Scroll:论文区在上、考试区在下,两区内容完整平铺、均可滚动访问
     Scroll() {
       Column({ space: 16 }) {
+
+        // hm-parity v1: 两张入口卡(同 Android StudyScreen;点击推入新页面,六 Tab 结构零改动)
+        Row({ space: 12 }) {
+          Column({ space: 4 }) {
+            Text('📚 教材工作台')
+              .fontSize(15)
+              .fontWeight(FontWeight.Bold)
+            Text('搜目录 → 导入 → 解析 → 一键开冲刺')
+              .fontSize(11)
+              .fontColor('#888888')
+              .maxLines(1)
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+          .padding(12)
+          .backgroundColor('#e6f7ff')
+          .borderRadius(8)
+          .onClick(() => {
+            this.getUIContext().getRouter().pushUrl({ url: 'pages/TextbookWorkbenchPage' });
+          })
+
+          Column({ space: 4 }) {
+            Text('🏃 学习冲刺')
+              .fontSize(15)
+              .fontWeight(FontWeight.Bold)
+            Text('合同确认 → 阶段推进 → 前后测作答')
+              .fontSize(11)
+              .fontColor('#888888')
+              .maxLines(1)
+          }
+          .layoutWeight(1)
+          .alignItems(HorizontalAlign.Start)
+          .padding(12)
+          .backgroundColor('#f6ffed')
+          .borderRadius(8)
+          .onClick(() => {
+            this.getUIContext().getRouter().pushUrl({ url: 'pages/LearningSprintPage' });
+          })
+        }
+        .width('100%')
+
         // ── 论文区(M13-05 原行为保持)──────────────────────────
         Column({ space: 12 }) {
           // 标题栏

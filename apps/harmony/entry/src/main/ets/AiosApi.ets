@@ -639,3 +639,89 @@ export async function getMe(baseUrl: string, token: string | null): Promise<ApiR
     setBearerToken(keep);
   }
 }
+
+/**
+ * hm-parity v1: 通用受保护 JSON 请求(GET/POST),供学习冲刺/教材工作台
+ * 面板复用。语义与 getJson/postLogin 完全一致:
+ *   - 先过 UrlPolicy.validateBaseUrl 白名单;
+ *   - 内存 token 可用(非空无空白)才附加 Authorization 头(fail-closed);
+ *   - 单次请求不重试,错误如实收敛(绝不 [object Object]);
+ *   - 4xx(409/404 等)尽力提取服务端 JSON detail 字符串如实展示
+ *     (学习冲刺的非法推进/重复提交语义依赖它);
+ *   - 5xx 优先提取 detail,提取不到用固定中文文案兜底(不透栈);
+ *   - 400(注入探针回显风险)保持固定文案,不回显响应体。
+ * path 必须是以 '/' 开头的完整路径(动态段由调用方校验+encodeURIComponent)。
+ */
+export async function requestJson<T>(
+  baseUrl: string,
+  method: http.RequestMethod,
+  path: string,
+  bodyObj: Record<string, Object> | null
+): Promise<ApiResult<T>> {
+  const check = validateBaseUrl(baseUrl);
+  if (check.code !== UrlPolicyCode.OK) {
+    return { ok: false, status: -1, data: null, error: urlPolicyMessage(check) };
+  }
+  const base: string = check.url.endsWith('/') ? check.url.substring(0, check.url.length - 1) : check.url;
+  const fullUrl: string = `${base}${path}`;
+  let bodyText: string = '';
+  if (bodyObj !== null) {
+    try {
+      bodyText = JSON.stringify(bodyObj);
+    } catch (e) {
+      return { ok: false, status: -1, data: null, error: '请求体构造失败' };
+    }
+  }
+  const httpClient = http.createHttp();
+  try {
+    const options: http.HttpRequestOptions = {
+      method: method,
+      header: buildProtectedHeader(),
+      expectDataType: http.HttpDataType.STRING,
+      usingCache: false,
+      connectTimeout: TIMEOUT_MS,
+      readTimeout: TIMEOUT_MS
+    };
+    if (bodyText.length > 0) {
+      options.extraData = bodyText;
+    }
+    const resp = await httpClient.request(fullUrl, options);
+    const status: number = resp.responseCode;
+    const body: string = typeof resp.result === 'string' ? resp.result : `${resp.result}`;
+    if (!is2xx(status)) {
+      let reason: string = '';
+      if (status === 400) {
+        reason = BAD_REQUEST_TEXT;
+      } else {
+        // 409/404/503 等:尽力提取服务端 detail 字符串如实展示
+        try {
+          const parsedErr = JSON.parse(body) as Record<string, Object>;
+          const d: Object | undefined = parsedErr['detail'];
+          if (typeof d === 'string') {
+            reason = `请求失败 (HTTP ${status}): ${d}`;
+          }
+        } catch (e) {
+          reason = '';
+        }
+        if (reason.length === 0 && status >= 500) {
+          reason = SERVER_ERROR_TEXT;
+        }
+      }
+      const text: string = reason.length > 0 ? reason : `请求失败 (HTTP ${status})`;
+      return { ok: false, status: status, data: null, error: text };
+    }
+    if (body.trim().length === 0) {
+      return { ok: false, status: status, data: null, error: '响应体为空' };
+    }
+    try {
+      const parsed = JSON.parse(body) as T;
+      return { ok: true, status: status, data: parsed, error: 'ok' };
+    } catch (e) {
+      return { ok: false, status: status, data: null, error: `JSON 解析失败: ${safeErrorText(e)}` };
+    }
+  } catch (e) {
+    return { ok: false, status: -1, data: null, error: `网络请求失败: ${safeErrorText(e)}` };
+  } finally {
+    httpClient.destroy();
+  }
+}
