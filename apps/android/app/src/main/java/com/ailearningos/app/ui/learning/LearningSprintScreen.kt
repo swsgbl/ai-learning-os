@@ -300,6 +300,16 @@ private fun TransferCard(
                         ) { Text("${option.key}", style = MaterialTheme.typography.labelMedium) }
                     }
                 }
+                Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("信心", style = MaterialTheme.typography.labelSmall)
+                    (1..5).forEach { level ->
+                        FilterChip(
+                            selected = state.transferConfidence[item.itemId] == level,
+                            onClick = { viewModel.setTransferConfidence(item.itemId, level) },
+                            label = { Text("$level") },
+                        )
+                    }
+                }
             }
         }
         Button(
@@ -324,6 +334,16 @@ private fun PracticeCard(
                 OutlinedButton(onClick = { viewModel.setPracticeAnswer(option.key) }) {
                     Text(option.key, style = MaterialTheme.typography.labelMedium)
                 }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("信心", style = MaterialTheme.typography.labelSmall)
+            (1..5).forEach { level ->
+                FilterChip(
+                    selected = state.practiceConfidence == level,
+                    onClick = { viewModel.setPracticeConfidence(level) },
+                    label = { Text("$level") },
+                )
             }
         }
         val feedback = state.practiceFeedback
@@ -371,6 +391,16 @@ private fun ReviewCard(
                 OutlinedButton(onClick = { viewModel.setReviewAnswer(option.key) }) {
                     Text(option.key, style = MaterialTheme.typography.labelMedium)
                 }
+            }
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text("信心", style = MaterialTheme.typography.labelSmall)
+            (1..5).forEach { level ->
+                FilterChip(
+                    selected = state.reviewConfidence == level,
+                    onClick = { viewModel.setReviewConfidence(level) },
+                    label = { Text("$level") },
+                )
             }
         }
         Button(
