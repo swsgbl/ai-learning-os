@@ -1,3 +1,17 @@
+## M19-002 —— 垂直切片全链闭环（审计 02 §8 八步试点）
+
+- **from-textbook 来源桥**：POST /contracts/{id}/source-refs/from-textbook
+  ——教材解析 chunks（页锚点）→ 学习合同来源证据；概念匹配序：
+  canonical_name → **concept_id slug**（中文概念名配英文教材的现实
+  场景）；许可如实 user_private_import；幂等 (concept, hash)。
+- generate-items 出题自此可引用**教材原文**（source_context 已有
+  机制自动消费桥入库的来源）——题目可追溯到教材页码。
+- **生产 live 全链**（审计 02 §8 推荐试点路径）：Rosen 离散数学 →
+  目录→导入→解析→章节→概念→来源桥（2 概念命中教材页）→生成 10 题
+  （题干引用教材语境）→发布→蓝图 complete（2 概念等值 2/2）→冲刺→
+  前测 4 题作答 50 分→掌握度 practicing（证据从教材前测流入）。
+- 内容供给侧与学习引擎正式连通：教材 → 可追溯题目 → 学习闭环。
+
 ## M19-001 —— OCR 后备：扫描教材文本化（审计 Prompt 4 收口）
 
 - **RapidOCR**（onnxruntime 版 PaddleOCR 模型，Apache-2.0）——轻量
