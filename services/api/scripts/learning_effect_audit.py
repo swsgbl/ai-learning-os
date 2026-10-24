@@ -142,6 +142,7 @@ def analyze_real_attempts(path: Path) -> dict:
                 {
                     "item": row["item_id"],
                     "concept": row["concept_id"],
+                    "owner": row.get("owner_id", "unknown"),
                     "correct": row["correct"],
                     "confidence": int(row["confidence"]) if row["confidence"] not in ("", "None") else None,
                     "context": row["context"],
@@ -150,7 +151,7 @@ def analyze_real_attempts(path: Path) -> dict:
     n = len(rows)
     if n == 0:
         return {"skipped": True, "reason": "空数据"}
-    learners = 1  # 单用户生产（导出无 owner 列——当前全部同一 qa 账号族）
+    learners = len({r["owner"] for r in rows})
     graded = [r for r in rows if r["correct"] in ("t", "f", "True", "False", "1", "0")]
     correct_flags = [1 if r["correct"] in ("t", "True", "1") else 0 for r in graded]
 
@@ -158,19 +159,23 @@ def analyze_real_attempts(path: Path) -> dict:
     by_item: dict[str, list[int]] = {}
     for r, c in zip(graded, correct_flags):
         by_item.setdefault(r["item"], []).append(c)
-    # 总分（每作答者的概念均分近似——单用户下用概念聚合；样本如实标注）
-    by_concept_attempt: list[tuple[str, float]] = []
-    concept_scores: dict[str, list[int]] = {}
+    # CTT 总分：每作答者（owner）的总体正确率——r_pbis 的标准分母
+    owner_scores: dict[str, list[int]] = {}
     for r, c in zip(graded, correct_flags):
-        concept_scores.setdefault(r["concept"], []).append(c)
-    for r in graded:
-        by_concept_attempt.append((r["concept"], _mean(concept_scores[r["concept"]])))
+        owner_scores.setdefault(r["owner"], []).append(c)
+    concept_count = len({r["concept"] for r in graded})
+    owner_mean = {o: _mean([float(c) for c in cs]) for o, cs in owner_scores.items()}
+    attempt_owner = [r["owner"] for r in graded]
 
     items_report = []
+    flagged_low = 0
     for item, flags in sorted(by_item.items()):
         p_value = _mean([float(f) for f in flags])
-        if len(flags) >= 4 and 0 < sum(flags) < len(flags):
-            r_pbis = _point_biserial(flags, [s for _, s in by_concept_attempt if True][: len(flags)])
+        item_owners = [o for o, r in zip(attempt_owner, graded) if r["item"] == item][: len(flags)]
+        if len(flags) >= 4 and 0 < sum(flags) < len(flags) and len(set(item_owners)) >= 3:
+            r_pbis = _point_biserial(flags, [owner_mean[o] for o in item_owners])
+            if not math.isnan(r_pbis) and abs(r_pbis) < MIN_ITEM_DISCRIMINATION:
+                flagged_low += 1
         else:
             r_pbis = float("nan")
         items_report.append({"item": item[:14], "n": len(flags), "p": round(p_value, 2), "r_pbis": r_pbis})
@@ -184,12 +189,17 @@ def analyze_real_attempts(path: Path) -> dict:
         "n_attempts": n,
         "n_learners": learners,
         "n_items": len(by_item),
-        "n_concepts": len(concept_scores),
+        "n_concepts": concept_count,
         "overall_correct_rate": round(_mean([float(c) for c in correct_flags]), 2) if correct_flags else None,
         "items": items_report,
         "metacog_gamma": round(gamma, 2) if not math.isnan(gamma) else None,
         "high_confidence_errors": high_conf_errors,
-        "inference_note": f"N={n} / {learners} learner——描述性统计；推断性指标（IRT/效应量）样本不足",
+        "flagged_low_discrimination": flagged_low,
+        "sim_owners": sum(1 for o in owner_scores if o.startswith("sim") or "sim" in o),
+        "inference_note": (
+            f"N={n} / {learners} learners——描述性统计"
+            + ("；CTT r_pbis 已可算（题作答 ≥4 且 ≥3 学习者）" if learners >= 3 else "；推断性指标样本不足")
+        ),
     }
 
 
@@ -294,6 +304,8 @@ def main() -> int:
         )
         print(f"  总体正确率 {real['overall_correct_rate']}")
         print(f"  元认知 gamma {real['metacog_gamma']} / 高信心错误 {real['high_confidence_errors']}")
+        print(f"  低区分标记题 {real.get('flagged_low_discrimination', 0)} 道（r_pbis < {MIN_ITEM_DISCRIMINATION}）"
+              f" / sim 族学习者 {real.get('sim_owners', 0)}")
         for item in real["items"][:8]:
             r = item["r_pbis"]
             flag = "n/a" if math.isnan(r) else ("LOW-DISC" if abs(r) < MIN_ITEM_DISCRIMINATION else "ok")

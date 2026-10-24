@@ -75,6 +75,9 @@ data class LearningSprintState(
     // M20-002：迁移检验会话（App/Web 同步）
     val transferSession: com.ailearningos.app.data.remote.TransferSessionDto? = null,
     val transferAnswers: Map<String, String> = emptyMap(),
+    val transferConfidence: Map<String, Int> = emptyMap(),
+    val practiceConfidence: Int? = null,
+    val reviewConfidence: Int? = null,
     val transferResult: com.ailearningos.app.data.remote.TransferResultDto? = null,
     // 定向练习（单题流）
     val practiceStep: com.ailearningos.app.data.remote.PracticeStepDto? = null,
@@ -221,12 +224,19 @@ class LearningSprintViewModel(
         )
     }
 
+    fun setTransferConfidence(itemId: String, level: Int) {
+        _state.value = _state.value.copy(
+            transferConfidence = _state.value.transferConfidence + (itemId to level),
+        )
+    }
+
     fun submitTransfer(sprintId: String) = launchBusy {
         val session = _state.value.transferSession ?: return@launchBusy
         val responses = session.items.map {
             com.ailearningos.app.data.remote.TransferSubmitDto(
                 itemId = it.itemId,
                 response = _state.value.transferAnswers[it.itemId] ?: "",
+                confidence = _state.value.transferConfidence[it.itemId],
             )
         }
         val result = learning.submitTransfer(sprintId, responses)
@@ -245,10 +255,14 @@ class LearningSprintViewModel(
         _state.value = _state.value.copy(practiceAnswer = key)
     }
 
+    fun setPracticeConfidence(level: Int) {
+        _state.value = _state.value.copy(practiceConfidence = level)
+    }
+
     fun submitPracticeAnswer(sprintId: String) = launchBusy {
         val step = _state.value.practiceStep ?: return@launchBusy
         if (_state.value.practiceAnswer.isBlank()) return@launchBusy
-        val result = learning.practiceAnswer(sprintId, step.item.itemId, _state.value.practiceAnswer, null)
+        val result = learning.practiceAnswer(sprintId, step.item.itemId, _state.value.practiceAnswer, _state.value.practiceConfidence)
         _state.value = _state.value.copy(practiceFeedback = result)
         if (!result.practiceComplete) {
             // 下一步在用户点「下一题」时拉取
@@ -266,10 +280,14 @@ class LearningSprintViewModel(
         _state.value = _state.value.copy(reviewAnswer = key)
     }
 
+    fun setReviewConfidence(level: Int) {
+        _state.value = _state.value.copy(reviewConfidence = level)
+    }
+
     fun submitReviewAnswer() = launchBusy {
         val (reviewId, item) = _state.value.reviewSession ?: return@launchBusy
         if (_state.value.reviewAnswer.isBlank()) return@launchBusy
-        learning.attemptReview(reviewId, item.itemId, _state.value.reviewAnswer, null)
+        learning.attemptReview(reviewId, item.itemId, _state.value.reviewAnswer, _state.value.reviewConfidence)
         // 判分结果从队列刷新推断（attempt 返回行不含对错展示——简版以队列状态呈现）
         _state.value = _state.value.copy(reviewSession = null)
         refreshSilently()
