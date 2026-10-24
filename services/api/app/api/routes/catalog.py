@@ -313,14 +313,53 @@ async def search_catalog(
     grade: str = Query(default="", max_length=32),
     limit: int = Query(default=50, ge=1, le=200),
 ) -> list[ResourceOut]:
-    """目录搜索（元数据过滤 + 标题模糊；未同步时返回空列表如实）。"""
+    """目录搜索（结构化抽词 + 剩余文本 LIKE + 相关度排序）。
+
+    中文查询没有空格（用户实测：真机搜「一年级数学」返回空）——按
+    空格分词拆不开。利用目录归一化词表（学科/学段/年级）从查询中
+    抽取结构词转元数据过滤，剩余文本做 title/path LIKE：
+    - 「一年级数学」→ grade=一年级 + subject=数学 + 无剩余 → 精确命中
+    - 「线性代数」→ 无结构词 → 整串 LIKE（既有行为）
+    - 「人教版数学」→ subject=数学 + 剩余「人教版」LIKE
+    排序：title 命中多的在前。
+    """
     await require_user(request)
+    import re as _re
+
+    from app.domain.catalog import SUBJECT_HINTS
+
+    remainder = q.strip()
+    subject_filter = ""
+    grade_filter = ""
+    # 最长优先抽取（「高等数学」先于「数学」）
+    for word in sorted(SUBJECT_HINTS, key=len, reverse=True):
+        if word in remainder:
+            subject_filter = word
+            remainder = remainder.replace(word, " ").strip()
+            break
+    grade_match = _re.search(
+        r"[一二三四五六七八九]年级|初三|高三|必修[一二三\d]+|选择性必修", remainder
+    )
+    if grade_match:
+        grade_filter = grade_match.group(0)
+        remainder = remainder.replace(grade_filter, " ").strip()
+    tokens = [tok.lower() for tok in _re.split(r"\s+", remainder) if tok]
+
     async with request.app.state.sessionmaker() as session:
         query = select(ResourceRecordRow)
-        if q:
+        for tok in tokens:
             query = query.where(
-                func.lower(ResourceRecordRow.title).contains(q.lower())
-                | func.lower(ResourceRecordRow.source_path).contains(q.lower())
+                func.lower(ResourceRecordRow.title).contains(tok)
+                | func.lower(ResourceRecordRow.source_path).contains(tok)
+            )
+        if subject_filter:
+            query = query.where(ResourceRecordRow.subject == subject_filter)
+        if grade_filter:
+            # grade 归一化来自目录段——「七年级」常只在文件名（grade 字段空），
+            # 抽词过滤须回退 path 命中（用户实测：搜「七年级」0 条）
+            query = query.where(
+                ResourceRecordRow.grade.contains(grade_filter)
+                | ResourceRecordRow.source_path.contains(grade_filter)
             )
         if stage:
             query = query.where(ResourceRecordRow.education_stage == stage)
@@ -329,11 +368,23 @@ async def search_catalog(
         if grade:
             query = query.where(ResourceRecordRow.grade.contains(grade))
         rows = (
-            (await session.execute(query.order_by(ResourceRecordRow.source_path).limit(limit)))
+            (
+                await session.execute(
+                    query.order_by(ResourceRecordRow.source_path).limit(min(limit * 3, 400))
+                )
+            )
             .scalars()
             .all()
         )
-        return [await _resource_out(session, row) for row in rows]
+
+        def relevance(row: ResourceRecordRow) -> tuple[int, int]:
+            title_lower = row.title.lower()
+            title_hits = sum(1 for tok in tokens if tok in title_lower)
+            path_hits = sum(1 for tok in tokens if tok in row.source_path.lower())
+            return (-title_hits, -path_hits)
+
+        ranked = sorted(rows, key=relevance)[:limit] if (tokens or not q.strip()) else rows[:limit]
+        return [await _resource_out(session, row) for row in ranked]
 
 
 @router.get("/resources/{resource_id}", response_model=ResourceOut)

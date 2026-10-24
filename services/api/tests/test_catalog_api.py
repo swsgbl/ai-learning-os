@@ -175,3 +175,49 @@ def test_sync_failure_records_failed_run(app_client) -> None:
     finally:
         catalog_route._fetch_tree = original
     _ = state
+
+
+def test_search_tokenized_and_semantics(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    """分词 AND 搜索（用户实测修复：真机搜「一年级数学」返回空）。
+
+    「一年级数学」拆两词分别命中路径的 数学/…/一年级 段——此前整串
+    LIKE 不连续匹配不到；且 title 命中排前（数学一年级册 > 体育一年级册）。
+    """
+    import app.api.routes.catalog as catalog_route
+    from app.core.config import get_settings
+
+    url = f"sqlite+aiosqlite:///{tmp_path / 'tok.db'}"
+    tree = [
+        ("初中/数学/人教版/七年级上册.pdf", "b1", 10),
+        ("小学/数学/人教版/义务教育教科书·数学一年级上册.pdf", "b2", 10),
+        ("小学/体育与健康/人教版/义务教育教科书·体育与健康一年级全一册.pdf", "b3", 10),
+    ]
+    monkeypatch.setattr(catalog_route, "_fetch_tree", lambda *a, **k: ("sha-tok", tree))
+    get_settings.cache_clear()
+    with TestClient(create_app(url)) as client:
+        run = client.post("/api/v1/catalog/sync-runs", json={})
+        assert run.status_code == 201, run.text
+
+        # 「一年级数学」两词 AND——只出数学一年级册（体育册不含「数学」词）
+        results = client.get("/api/v1/catalog/search", params={"q": "一年级数学"}).json()
+        assert len(results) == 1, [r["title"] for r in results]
+        assert "数学" in results[0]["title"] and "一年级" in results[0]["title"]
+
+        # 空格分词同义
+        spaced = client.get("/api/v1/catalog/search", params={"q": "一年级 数学"}).json()
+        assert len(spaced) == 1
+
+        # 单词「一年级」命中两册（title 相关度相同——都在书名中）
+        single = client.get("/api/v1/catalog/search", params={"q": "一年级"}).json()
+        titles = [r["title"] for r in single]
+        assert len(single) == 2, titles
+
+        # subject 抽词使「数学」只命中 subject=数学 的册（体育册被滤除）
+        math_only = client.get("/api/v1/catalog/search", params={"q": "数学"}).json()
+        subjects = {r["subject"] for r in math_only}
+        assert subjects == {"数学"}, subjects
+        assert all("体育" not in r["title"] for r in math_only)
+
+        # 整串不命中场景保持如实（「不存在词」→ 0）
+        none = client.get("/api/v1/catalog/search", params={"q": "化学物理"}).json()
+        assert none == []
