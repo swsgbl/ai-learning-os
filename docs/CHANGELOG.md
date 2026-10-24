@@ -1,3 +1,21 @@
+## 深开鸿端 HM-Parity v1-v3 —— 对齐 Android v0.5.1 三棒收官
+
+- **v1 学习冲刺 + 教材工作台**（#466）：LearningSprintPage（11 阶段链/
+  前后测作答）+ TextbookWorkbenchPage（目录搜索→导入→解析→开冲刺）；
+  深开鸿 VM 签名装机链固化（API 24→23 重打包 + VM 侧 hap-sign-tool）。
+- **v2 作答闭环 + 考试全流程**（#467）：迁移检验/定向练习/间隔复习三
+  作答阶段（含 presentReview 409 修复 #468 前置）；ExamPage 开考→逐题
+  →交卷→报告全流程。
+- **v3 AI 密钥 + 定制课程 + 语音选卷**（#468）：AiKeysPane（BYOK 单 llm
+  槽 last4 脱敏/Profile 管理）+ CreateCoursePage（goal 同步生成——契约
+  对齐 course_workflow 真实实现，无轮询）+ 语音 Tab 选卷入口。
+- 附带修复生产 LLM 断链：Ollama 死亡/自指 portproxy/出网隧道停跑三连
+  根因，端口拓扑迁移 11436，LLM 动态课程生成恢复（8 章 13.5s 实测）。
+- 开发模式：hmharness 执行棒 + Claude supervisor 指挥验收（契约以服务
+  端代码为唯一权威，生产探针逐端点实证）。
+
+已知缺口（后续轮次）：语音陪练完整交互、搜索全流程执行、治理 Tab。
+
 ## v0.5.1 —— 搜索修复 + App 作答信心补全
 
 - **目录搜索中文分词修复**（#462）：搜「一年级数学」不再返回空——
