@@ -834,6 +834,18 @@ struct PaperCard {
         .width('100%')
       }
 
+      // hm-parity v2: 直接考试入口(推入 ExamPage 全流程:开考→拉题→作答→交卷→报告)
+      Button('直接考试')
+        .fontSize(13)
+        .height(34)
+        .backgroundColor('#c62828')
+        .onClick(() => {
+          this.getUIContext().getRouter().pushUrl({
+            url: 'pages/ExamPage',
+            params: { paperId: this.paper.id, paperTitle: this.paper.title }
+          });
+        })
+
       // 原文链接
       if (this.paper.origin_url && this.paper.origin_url.length > 0) {
         Text(`原文: ${this.paper.origin_url}`)
