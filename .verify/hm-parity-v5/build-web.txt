@@ -1,0 +1,42 @@
+npm notice run ai-learning-os@0.1.0 build
+npm notice run npm run build --workspace apps/web
+npm notice run @ai-learning-os/web@0.1.0 build
+npm notice run next build
+▲ Next.js 16.3.4 (Turbopack)
+✓ Running next.config.ts took 687ms
+
+  Creating an optimized production build ...
+✓ Compiled successfully in 30.5s
+  Running TypeScript ...
+  Finished TypeScript in 1631ms ...
+  Collecting page data using 19 workers ...
+  Generating static pages using 19 workers (0/14) ...
+  Generating static pages using 19 workers (3/14) 
+  Generating static pages using 19 workers (6/14) 
+  Generating static pages using 19 workers (10/14) 
+✓ Generating static pages using 19 workers (14/14) in 660ms
+  Finalizing page optimization ...
+
+Route (app)
+┌ ○ /
+├ ○ /_not-found
+├ ○ /create
+├ ○ /download
+├ ○ /exam
+├ ƒ /exam/[paperId]
+├ ○ /governance
+├ ○ /learning
+├ ○ /library
+├ ○ /login
+├ ○ /manifest.webmanifest
+├ ○ /progress
+├ ƒ /review/[examId]
+├ ○ /settings
+├ ƒ /study/[paperId]
+├ ○ /voice
+└ ƒ /voice/[paperId]
+
+
+○  (Static)   prerendered as static content
+ƒ  (Dynamic)  server-rendered on demand
+

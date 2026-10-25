@@ -1,0 +1,461 @@
+============================= test session starts =============================
+platform win32 -- Python 3.11.15, pytest-9.1.1, pluggy-1.6.0
+rootdir: D:\AI Learning OS\ai-learning-os
+configfile: pytest.ini
+testpaths: services/api/tests
+plugins: anyio-4.14.2
+collected 6658 items
+
+services\api\tests\test_admin_audit.py ....................              [  0%]
+services\api\tests\test_ai_providers.py ...........                      [  0%]
+services\api\tests\test_answer_events.py .....                           [  0%]
+services\api\tests\test_answer_normalizer.py ..................          [  0%]
+services\api\tests\test_api_observability.py .....................       [  1%]
+services\api\tests\test_assessment_blueprint.py .......                  [  1%]
+services\api\tests\test_audit_anchor_archive.py ........................ [  1%]
+........................................................................ [  2%]
+............................................................             [  3%]
+services\api\tests\test_audit_archive_input.py ......................... [  3%]
+...................................................                      [  4%]
+services\api\tests\test_audit_archive_readiness.py ..................... [  5%]
+.......................                                                  [  5%]
+services\api\tests\test_audit_archive_scheduler.py ..................... [  5%]
+.............                                                            [  5%]
+services\api\tests\test_audit_archive_task.py .......................... [  6%]
+...........................                                              [  6%]
+services\api\tests\test_audit_chain.py ...........................       [  7%]
+services\api\tests\test_audit_chain_anchor.py .................s..s..... [  7%]
+.........s                                                               [  7%]
+services\api\tests\test_audit_worm_offline_copy.py ..................... [  7%]
+........................................................................ [  9%]
+..........................                                               [  9%]
+services\api\tests\test_auth.py ...............F...........              [  9%]
+services\api\tests\test_backup_drill.py ..ss                             [  9%]
+services\api\tests\test_backup_restore_evidence.py ..................... [ 10%]
+..........s                                                              [ 10%]
+services\api\tests\test_bash_executor.py .......                         [ 10%]
+services\api\tests\test_catalog_api.py .........                         [ 10%]
+services\api\tests\test_catalog_domain.py ..........                     [ 10%]
+services\api\tests\test_chunk_evidence.py ....                           [ 10%]
+services\api\tests\test_citation_eval.py ..........                      [ 10%]
+services\api\tests\test_compose_profiles.py ................s            [ 11%]
+services\api\tests\test_compose_restart_policy.py ...........            [ 11%]
+services\api\tests\test_concept_candidates.py ........                   [ 11%]
+services\api\tests\test_concept_dag.py ..........                        [ 11%]
+services\api\tests\test_concept_derivation.py ..........                 [ 11%]
+services\api\tests\test_config_privacy.py ....                           [ 11%]
+services\api\tests\test_coturn_template.py ............................. [ 12%]
+.....................................s                                   [ 12%]
+services\api\tests\test_course_importer.py .................             [ 13%]
+services\api\tests\test_course_structure.py .....                        [ 13%]
+services\api\tests\test_course_workflow.py ...............               [ 13%]
+services\api\tests\test_cutover_evidence_pack.py ....................... [ 13%]
+.................                                                        [ 14%]
+services\api\tests\test_cutover_rehearsal.py ........................... [ 14%]
+.................................................                        [ 15%]
+services\api\tests\test_daily_planner.py ........                        [ 15%]
+services\api\tests\test_data_hygiene.py ....                             [ 15%]
+services\api\tests\test_disconnect_recovery.py ...                       [ 15%]
+services\api\tests\test_draft_ownership.py ............................. [ 15%]
+......                                                                   [ 15%]
+services\api\tests\test_edge_deployment_templates.py ................... [ 16%]
+...                                                                      [ 16%]
+services\api\tests\test_eval_framework.py .........                      [ 16%]
+services\api\tests\test_evidence_cockpit.py ............................ [ 16%]
+..                                                                       [ 16%]
+services\api\tests\test_evidence_inventory.py .......................... [ 17%]
+....................                                                     [ 17%]
+services\api\tests\test_exam_flow.py ...                                 [ 17%]
+services\api\tests\test_exam_fsm.py ...........................          [ 17%]
+services\api\tests\test_exam_history.py ..                               [ 18%]
+services\api\tests\test_exam_report.py ......                            [ 18%]
+services\api\tests\test_frpc_windows_controller.py ..................... [ 18%]
+......................................                                   [ 18%]
+services\api\tests\test_golden_eval.py .                                 [ 18%]
+services\api\tests\test_governance_evidence.py ......................... [ 19%]
+.........................................................                [ 20%]
+services\api\tests\test_idempotent_submit.py ...s                        [ 20%]
+services\api\tests\test_ingest_domain.py ............                    [ 20%]
+services\api\tests\test_intent_parser.py ............................... [ 20%]
+.......                                                                  [ 21%]
+services\api\tests\test_item_generator.py ..............                 [ 21%]
+services\api\tests\test_layout_normalize.py .....                        [ 21%]
+services\api\tests\test_learning_attempts_api.py ......                  [ 21%]
+services\api\tests\test_learning_contract_api.py ........                [ 21%]
+services\api\tests\test_learning_effect_audit.py ....                    [ 21%]
+services\api\tests\test_learning_events.py .........                     [ 21%]
+services\api\tests\test_legacy_paper_governance.py ..................... [ 22%]
+.........................                                                [ 22%]
+services\api\tests\test_library_import_api.py .........                  [ 22%]
+services\api\tests\test_license_report.py .........                      [ 22%]
+services\api\tests\test_license_state_machine.py ............            [ 22%]
+services\api\tests\test_livekit_lan_cutover.py ......................... [ 23%]
+....                                                                     [ 23%]
+services\api\tests\test_llm_gateway.py ............................      [ 23%]
+services\api\tests\test_llm_gateway_timeout_budget.py .................. [ 24%]
+..........                                                               [ 24%]
+services\api\tests\test_llm_profiles.py ......                           [ 24%]
+services\api\tests\test_load_reliability.py .ss                          [ 24%]
+services\api\tests\test_logical_restore_preflight.py ................... [ 24%]
+......................                                                   [ 24%]
+services\api\tests\test_long_soak_release_window.py .................... [ 25%]
+.........................                                                [ 25%]
+services\api\tests\test_m1002_web_governance.py ...                      [ 25%]
+services\api\tests\test_m14_101_monitoring_history_performance.py ...... [ 25%]
+..........                                                               [ 25%]
+services\api\tests\test_m14_27_voice_health_cutover.py ................. [ 26%]
+....................                                                     [ 26%]
+services\api\tests\test_m14_95_auth_smoke_server.py .................... [ 26%]
+....                                                                     [ 26%]
+services\api\tests\test_m905_ownership_audit.py ..................       [ 27%]
+services\api\tests\test_mastery_rules.py ...........                     [ 27%]
+services\api\tests\test_meta_latest_app.py ........                      [ 27%]
+services\api\tests\test_migrations.py ....                               [ 27%]
+services\api\tests\test_minio_image_adoption.py ........................ [ 27%]
+........................................................................ [ 28%]
+...............................                                          [ 29%]
+services\api\tests\test_minio_selfbuild.py ........................      [ 29%]
+services\api\tests\test_minio_volume_adoption.py ....................... [ 30%]
+........................................................................ [ 31%]
+...........                                                              [ 31%]
+services\api\tests\test_misconceptions.py ..........                     [ 31%]
+services\api\tests\test_monitoring_alert_dispatch.py ................... [ 31%]
+.........................................................                [ 32%]
+services\api\tests\test_monitoring_alert_dispatch_runtime.py ...         [ 32%]
+services\api\tests\test_monitoring_history.py .......................... [ 32%]
+........................................................................ [ 34%]
+.....................                                                    [ 34%]
+services\api\tests\test_monitoring_history_query.py .................... [ 34%]
+.....................................                                    [ 35%]
+services\api\tests\test_monitoring_insights.py ......................... [ 35%]
+........................................................................ [ 36%]
+............................                                             [ 37%]
+services\api\tests\test_monitoring_pipeline.py ......................... [ 37%]
+........................................................................ [ 38%]
+...                                                                      [ 38%]
+services\api\tests\test_monitoring_pipeline_task.py .................... [ 38%]
+...........................................................              [ 39%]
+services\api\tests\test_monitoring_threshold_calibration.py ............ [ 39%]
+...............................................                          [ 40%]
+services\api\tests\test_numeric_math_grader.py ......................... [ 41%]
+....                                                                     [ 41%]
+services\api\tests\test_objective_grader.py ............................ [ 41%]
+.............                                                            [ 41%]
+services\api\tests\test_objectstore_bucket.py ...                        [ 41%]
+services\api\tests\test_ocr.py ....                                      [ 41%]
+services\api\tests\test_onboarding_guide.py ..                           [ 41%]
+services\api\tests\test_ops_snapshot.py ............                     [ 42%]
+services\api\tests\test_ownership_isolation.py .......                   [ 42%]
+services\api\tests\test_paper_extractor.py ...........                   [ 42%]
+services\api\tests\test_paper_import.py ..                               [ 42%]
+services\api\tests\test_paper_ownership.py .....s                        [ 42%]
+services\api\tests\test_paper_study.py ...                               [ 42%]
+services\api\tests\test_papers_mine.py .                                 [ 42%]
+services\api\tests\test_parse_job_queue.py .....                         [ 42%]
+services\api\tests\test_parser_adapters.py ........                      [ 42%]
+services\api\tests\test_pg_integration.py sssssssssssssssss              [ 42%]
+services\api\tests\test_pg_test_gate.py .........                        [ 43%]
+services\api\tests\test_pipeline_incident_review.py .................... [ 43%]
+....................                                                     [ 43%]
+services\api\tests\test_post_cutover_watch.py .......................... [ 44%]
+.................                                                        [ 44%]
+services\api\tests\test_postgres_api.py ..                               [ 44%]
+services\api\tests\test_practice_loop.py .................               [ 44%]
+services\api\tests\test_privacy_disclosure.py ....                       [ 44%]
+services\api\tests\test_production_drift_watch.py ...................... [ 45%]
+........................................................................ [ 46%]
+..                                                                       [ 46%]
+services\api\tests\test_production_drift_watch_alert_dispatch.py ....... [ 46%]
+........................................................................ [ 47%]
+.....................................................                    [ 48%]
+services\api\tests\test_production_drift_watch_alert_dispatch_runtime.py . [ 48%]
+...                                                                      [ 48%]
+services\api\tests\test_production_drift_watch_alert_scheduler.py ...... [ 48%]
+........................................................................ [ 49%]
+............................                                             [ 49%]
+services\api\tests\test_production_drift_watch_alert_task.py ........... [ 49%]
+..................                                                       [ 50%]
+services\api\tests\test_production_drift_watch_alert_task_runtime.py ... [ 50%]
+                                                                         [ 50%]
+services\api\tests\test_production_drift_watch_history.py .............. [ 50%]
+.................................                                        [ 50%]
+services\api\tests\test_production_drift_watch_task.py ................. [ 51%]
+.................................................................        [ 52%]
+services\api\tests\test_production_evidence_gap.py ..................... [ 52%]
+....................................                                     [ 53%]
+services\api\tests\test_production_monitor.py .......................... [ 53%]
+........................................................................ [ 54%]
+........................................................................ [ 55%]
+........................................................................ [ 56%]
+..............                                                           [ 56%]
+services\api\tests\test_production_preflight.py ........................ [ 57%]
+...........s                                                             [ 57%]
+services\api\tests\test_production_recovery.py ......................... [ 57%]
+......................................                                   [ 58%]
+services\api\tests\test_production_restore_preflight.py ................ [ 58%]
+...............................                                          [ 59%]
+services\api\tests\test_production_web_gateway.py ...................... [ 59%]
+.........................................................                [ 60%]
+services\api\tests\test_prompt_injection_suite.py ...............        [ 60%]
+services\api\tests\test_provider_smoke_container.py .................... [ 60%]
+.....                                                                    [ 60%]
+services\api\tests\test_provider_smoke_evidence.py ..................... [ 61%]
+........................................................................ [ 62%]
+...................................                                      [ 62%]
+services\api\tests\test_provider_smoke_preflight.py .................... [ 63%]
+...................................                                      [ 63%]
+services\api\tests\test_provision_ollama_model_script.py ......          [ 63%]
+services\api\tests\test_public_edge_nginx_base_path.py ................. [ 63%]
+.............                                                            [ 64%]
+services\api\tests\test_public_edge_package.py ....................      [ 64%]
+services\api\tests\test_public_edge_preflight.py ....................... [ 64%]
+........................................................................ [ 65%]
+..............                                                           [ 66%]
+services\api\tests\test_public_edge_prepare.py ......................... [ 66%]
+...................................................................ss..s [ 67%]
+                                                                         [ 67%]
+services\api\tests\test_public_edge_rehearsal.py ....................... [ 67%]
+...................................................                      [ 68%]
+services\api\tests\test_pymupdf_parser.py .....                          [ 68%]
+services\api\tests\test_quality_report.py ....                           [ 68%]
+services\api\tests\test_query_planner.py ..............                  [ 68%]
+services\api\tests\test_question_schema.py ............                  [ 69%]
+services\api\tests\test_rc_smoke_rehearsal.py .......................... [ 69%]
+.................................                                        [ 70%]
+services\api\tests\test_release_approval_draft.py ...................... [ 70%]
+.                                                                        [ 70%]
+services\api\tests\test_release_candidate.py ........................... [ 70%]
+........................................................................ [ 71%]
+.......................s                                                 [ 72%]
+services\api\tests\test_release_check_isolated.py ...................... [ 72%]
+..........                                                               [ 72%]
+services\api\tests\test_release_check_utf8_capture.py ........           [ 72%]
+services\api\tests\test_release_checklist.py ........................... [ 73%]
+......                                                                   [ 73%]
+services\api\tests\test_release_closure_manifest.py .................... [ 73%]
+....................                                                     [ 73%]
+services\api\tests\test_release_readiness.py ........................... [ 74%]
+..............................................................           [ 75%]
+services\api\tests\test_repository_contract.py ...                       [ 75%]
+services\api\tests\test_resource_upload.py .........                     [ 75%]
+services\api\tests\test_result_ranker.py .............                   [ 75%]
+services\api\tests\test_review_schedule.py ............                  [ 75%]
+services\api\tests\test_review_scheduler.py ..........                   [ 75%]
+services\api\tests\test_rubric_grader.py .....................           [ 76%]
+services\api\tests\test_search.py .........................              [ 76%]
+services\api\tests\test_searxng_egress_recovery.py ..................... [ 77%]
+.......                                                                  [ 77%]
+services\api\tests\test_searxng_local_provider.py .................      [ 77%]
+services\api\tests\test_security_suite.py ...............                [ 77%]
+services\api\tests\test_selection.py .......                             [ 77%]
+services\api\tests\test_server_timing.py ....                            [ 77%]
+services\api\tests\test_smoke_llm_script.py ........                     [ 77%]
+services\api\tests\test_smoke_search_script.py ........                  [ 77%]
+services\api\tests\test_smoke_voice_cloud_script.py .....                [ 78%]
+services\api\tests\test_smoke_voice_local_script.py ...                  [ 78%]
+services\api\tests\test_soak_rehearsal.py .............................. [ 78%]
+...............................                                          [ 79%]
+services\api\tests\test_soak_stability_audit.py ........................ [ 79%]
+...........................                                              [ 79%]
+services\api\tests\test_soak_window_gate.py ............................ [ 80%]
+...                                                                      [ 80%]
+services\api\tests\test_source_refs_api.py ....                          [ 80%]
+services\api\tests\test_source_registry.py ......                        [ 80%]
+services\api\tests\test_sprint_assessment_api.py ..............          [ 80%]
+services\api\tests\test_sprint_state.py ........                         [ 80%]
+services\api\tests\test_student_state.py ...............                 [ 80%]
+services\api\tests\test_textbook_wizard.py ..                            [ 81%]
+services\api\tests\test_user_ai_keys.py ............                     [ 81%]
+services\api\tests\test_user_aware_judge.py ....                         [ 81%]
+services\api\tests\test_variant_generator.py .............               [ 81%]
+services\api\tests\test_verify_voice_studio_livekit_input.py ........... [ 81%]
+.................................                                        [ 82%]
+services\api\tests\test_verify_web_livekit_client.py ................... [ 82%]
+.....................................................                    [ 83%]
+services\api\tests\test_versioning_rollback.py .............             [ 83%]
+services\api\tests\test_vertical_slice.py .                              [ 83%]
+services\api\tests\test_voice_app_factory.py ........................... [ 83%]
+............                                                             [ 83%]
+services\api\tests\test_voice_app_wiring.py ..............               [ 84%]
+services\api\tests\test_voice_asr_stream.py ....................         [ 84%]
+services\api\tests\test_voice_entrypoint.py ....................         [ 84%]
+services\api\tests\test_voice_eval.py .........                          [ 84%]
+services\api\tests\test_voice_frame_channel.py ......................... [ 85%]
+.......                                                                  [ 85%]
+services\api\tests\test_voice_frame_sink.py ..............               [ 85%]
+services\api\tests\test_voice_funasr_adapter.py ..............           [ 85%]
+services\api\tests\test_voice_health_bridge.py ..............            [ 86%]
+services\api\tests\test_voice_health_sidecar.py ........................ [ 86%]
+........................................................................ [ 87%]
+.................                                                        [ 87%]
+services\api\tests\test_voice_live_pump.py ...                           [ 87%]
+services\api\tests\test_voice_live_routes.py ...........                 [ 87%]
+services\api\tests\test_voice_local_providers.py ....................... [ 88%]
+.........                                                                [ 88%]
+services\api\tests\test_voice_local_scripts.py ......................... [ 88%]
+..........s........                                                      [ 89%]
+services\api\tests\test_voice_loopback_proxy_trust.py ......             [ 89%]
+services\api\tests\test_voice_pipeline.py ...............                [ 89%]
+services\api\tests\test_voice_pipeline_entry.py .................        [ 89%]
+services\api\tests\test_voice_providers.py ............................. [ 90%]
+......                                                                   [ 90%]
+services\api\tests\test_voice_recovery_diagnostic.py ................... [ 90%]
+............                                                             [ 90%]
+services\api\tests\test_voice_report.py ..........                       [ 90%]
+services\api\tests\test_voice_resume.py ......                           [ 90%]
+services\api\tests\test_voice_runtime.py ...........................     [ 91%]
+services\api\tests\test_voice_runtime_factory.py ....................... [ 91%]
+...............................                                          [ 92%]
+services\api\tests\test_voice_runtime_lifespan.py ......                 [ 92%]
+services\api\tests\test_voice_runtime_manager.py ....................... [ 92%]
+.....................                                                    [ 92%]
+services\api\tests\test_voice_service_control.py ....................... [ 93%]
+.........................................                                [ 93%]
+services\api\tests\test_voice_session_control.py ....................... [ 94%]
+............                                                             [ 94%]
+services\api\tests\test_voice_session_fsm.py ........................... [ 94%]
+                                                                         [ 94%]
+services\api\tests\test_voice_session_subscriptions.py ................. [ 94%]
+...............                                                          [ 95%]
+services\api\tests\test_voice_sidecar_watchdog_task.py ................. [ 95%]
+............................................................             [ 96%]
+services\api\tests\test_voice_subscriber_factory.py .................... [ 96%]
+...............................................                          [ 97%]
+services\api\tests\test_voice_subscriber_lifespan.py ............        [ 97%]
+services\api\tests\test_voice_subscription.py .....................      [ 97%]
+services\api\tests\test_voice_tokens.py ..........                       [ 98%]
+services\api\tests\test_voice_trace.py ............                      [ 98%]
+services\api\tests\test_web_gate.py ...............                      [ 98%]
+services\api\tests\test_web_healthcheck_base_path.py ................... [ 98%]
+..                                                                       [ 98%]
+services\api\tests\test_windows_startup_task.py ........................ [ 99%]
+..........................................                               [ 99%]
+services\api\tests\test_workflow_actions_runtime.py .................    [100%]
+
+================================== FAILURES ===================================
+_____________ test_register_rejects_invalid_credentials[payload0] _____________
+
+auth_on = None, payload = {'username': 'ab', 'password': 'password-123'}
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            {"username": "ab", "password": "password-123"},  # 用户名过短
+            {"username": "has space", "password": "password-123"},  # 非法字符
+            {"username": "learner", "password": "short"},  # 密码过短
+            {"username": "learner", "password": "x" * 129},  # 密码超 pydantic 上限
+        ],
+    )
+    def test_register_rejects_invalid_credentials(auth_on, payload) -> None:
+>       with TestClient(create_app(SQLITE_URL)) as client:
+
+services\api\tests\test_auth.py:242: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+.venv\Lib\site-packages\starlette\testclient.py:677: in __enter__
+    self.portal = portal = stack.enter_context(anyio.from_thread.start_blocking_portal(**self.async_backend))
+                           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\hongfu\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\contextlib.py:517: in enter_context
+    result = _enter(cm)
+             ^^^^^^^^^^
+C:\Users\hongfu\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\contextlib.py:137: in __enter__
+    return next(self.gen)
+           ^^^^^^^^^^^^^^
+.venv\Lib\site-packages\anyio\from_thread.py:548: in start_blocking_portal
+    portal = future.result()
+             ^^^^^^^^^^^^^^^
+C:\Users\hongfu\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\concurrent\futures\_base.py:456: in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+C:\Users\hongfu\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\concurrent\futures\_base.py:401: in __get_result
+    raise self._exception
+.venv\Lib\site-packages\anyio\from_thread.py:536: in run_blocking_portal
+    run_eventloop(
+.venv\Lib\site-packages\anyio\_core\_eventloop.py:83: in run
+    return async_backend.run(func, args, {}, backend_options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.venv\Lib\site-packages\anyio\_backends\_asyncio.py:2480: in run
+    with Runner(debug=debug, loop_factory=loop_factory) as runner:
+C:\Users\hongfu\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\asyncio\runners.py:59: in __enter__
+    self._lazy_init()
+C:\Users\hongfu\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\asyncio\runners.py:137: in _lazy_init
+    self._loop = events.new_event_loop()
+                 ^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\hongfu\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\asyncio\events.py:810: in new_event_loop
+    return get_event_loop_policy().new_event_loop()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+C:\Users\hongfu\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\asyncio\events.py:699: in new_event_loop
+    return self._loop_factory()
+           ^^^^^^^^^^^^^^^^^^^^
+C:\Users\hongfu\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\asyncio\windows_events.py:315: in __init__
+    super().__init__(proactor)
+C:\Users\hongfu\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\asyncio\proactor_events.py:639: in __init__
+    self._make_self_pipe()
+C:\Users\hongfu\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\asyncio\proactor_events.py:784: in _make_self_pipe
+    self._ssock, self._csock = socket.socketpair()
+                               ^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+family = <AddressFamily.AF_INET: 2>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0
+
+    def _fallback_socketpair(family=AF_INET, type=SOCK_STREAM, proto=0):
+        if family == AF_INET:
+            host = _LOCALHOST
+        elif family == AF_INET6:
+            host = _LOCALHOST_V6
+        else:
+            raise ValueError("Only AF_INET and AF_INET6 socket address families "
+                             "are supported")
+        if type != SOCK_STREAM:
+            raise ValueError("Only SOCK_STREAM socket type is supported")
+        if proto != 0:
+            raise ValueError("Only protocol zero is supported")
+    
+        # We create a connected TCP socket. Note the trick with
+        # setblocking(False) that prevents us from having to create a thread.
+        lsock = socket(family, type, proto)
+        try:
+            lsock.bind((host, 0))
+            lsock.listen()
+            # On IPv6, ignore flow_info and scope_id
+            addr, port = lsock.getsockname()[:2]
+            csock = socket(family, type, proto)
+            try:
+                csock.setblocking(False)
+                try:
+>                   csock.connect((addr, port))
+E                   OSError: [WinError 10055] 由于系统缓冲区空间不足或队列已满，不能执行套接字上的操作。
+
+C:\Users\hongfu\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\socket.py:621: OSError
+============================== warnings summary ===============================
+services/api/tests/test_auth.py::test_register_rejects_invalid_credentials[payload1]
+  D:\AI Learning OS\ai-learning-os\.venv\Lib\site-packages\_pytest\unraisableexception.py:67: PytestUnraisableExceptionWarning: Exception ignored in: <function BaseEventLoop.__del__ at 0x0000016E773E0040>
+  
+  Traceback (most recent call last):
+    File "D:\AI Learning OS\ai-learning-os\.venv\Lib\site-packages\pydantic\type_adapter.py", line 287, in _init_core_attrs
+      self.core_schema = _getattr_no_parents(self._type, '__pydantic_core_schema__')
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    File "D:\AI Learning OS\ai-learning-os\.venv\Lib\site-packages\pydantic\type_adapter.py", line 56, in _getattr_no_parents
+      raise AttributeError(attribute)
+  AttributeError: __pydantic_core_schema__
+  
+  During handling of the above exception, another exception occurred:
+  
+  Traceback (most recent call last):
+    File "C:\Users\hongfu\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\asyncio\base_events.py", line 695, in __del__
+      self.close()
+    File "C:\Users\hongfu\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\asyncio\proactor_events.py", line 696, in close
+      self._close_self_pipe()
+    File "C:\Users\hongfu\AppData\Roaming\uv\python\cpython-3.11.15-windows-x86_64-none\Lib\asyncio\proactor_events.py", line 776, in _close_self_pipe
+      self._ssock.close()
+      ^^^^^^^^^^^
+  AttributeError: 'ProactorEventLoop' object has no attribute '_ssock'
+  
+  Enable tracemalloc to get traceback where the object was allocated.
+  See https://docs.pytest.org/en/stable/how-to/capture-warnings.html#resource-warnings for more info.
+    warnings.warn(pytest.PytestUnraisableExceptionWarning(msg))
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ===========================
+FAILED services/api/tests/test_auth.py::test_register_rejects_invalid_credentials[payload0]
+====== 1 failed, 6622 passed, 35 skipped, 1 warning in 465.83s (0:07:45) ======

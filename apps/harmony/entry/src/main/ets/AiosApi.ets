@@ -504,7 +504,7 @@ export async function getExamSession(baseUrl: string, examId: string): Promise<A
  * 构造受保护请求头:默认 JSON 头;内存 token 可用时附加 Authorization。
  * token 值只进入请求头,绝不进入任何返回值/日志/持久化。
  */
-function buildProtectedHeader(): Record<string, string> {
+export function buildProtectedHeader(): Record<string, string> {
   const header: Record<string, string> = {
     'content-type': 'application/json',
     'accept': 'application/json'

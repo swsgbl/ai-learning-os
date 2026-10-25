@@ -1,0 +1,4 @@
+npm notice run ai-learning-os@0.1.0 typecheck
+npm notice run npm run typecheck --workspace apps/web
+npm notice run @ai-learning-os/web@0.1.0 typecheck
+npm notice run tsc --noEmit

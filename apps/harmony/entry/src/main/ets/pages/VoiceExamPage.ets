@@ -14,13 +14,22 @@
 
 import { common } from '@kit.AbilityKit';
 import { PaperOut, getPapers } from '../AiosApi';
+import { submitExam } from '../ExamApi';
 import {
   VoiceResumeOut, VoiceReportOut, createVoiceSession, resumeVoiceSession,
   postAnswerProposed, getVoiceReport, transcribeWav
 } from '../voiceexam/VoiceExamApi';
 import { WavRecorderSession, requestMicPermission } from '../voiceexam/WavRecorder';
 import { VoicePickPane, VoiceReportPane, UtterancePane, QuestionPane } from '../voiceexam/VoiceExamViews';
-import { Phase, TurnState } from '../voiceexam/VoiceExamModels';
+import { Phase, TurnState, statusLabel, hintFor } from '../voiceexam/VoiceExamModels';
+import { VoiceCommandPane, VoiceResumeCard } from '../voiceexam/VoiceExamViews';
+import {
+  VOICE_CMD_START_READING, VOICE_CMD_COMMIT_CONFIRMED, VOICE_CMD_REPORT_READY,
+  VOICE_CMD_SKIP, VOICE_CMD_END, sendVoiceCommand
+} from '../voiceexam/VoiceExamApi';
+import {
+  VoiceResumeSlot, loadVoiceResumeSlot, saveVoiceResumeSlot, clearVoiceResumeSlot
+} from '../voiceexam/VoiceResumeStore';
 import { DEFAULT_API_BASE_URL, loadBaseUrl } from '../components/SettingsStore';
 
 @Entry
@@ -50,6 +59,9 @@ struct VoiceExamPage {
   @State flowError: string = '';
   @State busyHint: string = '';
   @State report: VoiceReportOut | null = null;
+  // ── hm-parity v5:会话恢复槽(本地只存 sessionId+examId 两键,服务端唯一真相) ──
+  @State resumeSlot: VoiceResumeSlot | null = null;
+  @State resuming: boolean = false;
 
   private disposed: boolean = false;
   private requestGeneration: number = 0;
@@ -69,6 +81,8 @@ struct VoiceExamPage {
       return;
     }
     this.baseUrl = url;
+    // hm-parity v5:读取恢复槽(有未收口会话时选卷区显示「继续上次」入口)
+    this.resumeSlot = await loadVoiceResumeSlot(ctx);
     if (this.micUnavailable.length === 0) {
       this.loadPapers();
     }
@@ -127,6 +141,13 @@ struct VoiceExamPage {
     }
     this.sessionId = created.data.session_id;
     this.examId = created.data.exam_id;
+    // hm-parity v5:开新会话成功 → 覆盖保存恢复槽
+    const slotCtx: common.Context | undefined =
+      this.getUIContext().getHostContext() as common.Context | undefined;
+    if (slotCtx !== undefined && slotCtx !== null) {
+      await saveVoiceResumeSlot(slotCtx, { sessionId: this.sessionId, examId: this.examId });
+      this.resumeSlot = { sessionId: this.sessionId, examId: this.examId };
+    }
     await this.alignResume(gen);
   }
 
@@ -140,6 +161,13 @@ struct VoiceExamPage {
     this.busyHint = '';
     if (!r.ok || r.data === null) {
       this.flowError = r.error;
+      // hm-parity v5:404(会话不存在)/409(已终态)→ 清除恢复槽
+      if (r.status === 404 || r.status === 409) {
+        await this.clearSlot();
+        if (this.phase === Phase.PICK) {
+          return; // 选卷区恢复失败:槽已清,留在选卷
+        }
+      }
       return;
     }
     const d: VoiceResumeOut = r.data;
@@ -250,6 +278,12 @@ struct VoiceExamPage {
   }
 
   private async loadReport(gen: number): Promise<void> {
+    this.busyHint = '正在提交判分...';
+    // hm-parity v5:voice report 前置考试已判分——先 submit(已提交则 409,忽略)
+    await submitExam(this.baseUrl, this.examId);
+    if (this.disposed || gen !== this.requestGeneration) {
+      return;
+    }
     this.busyHint = '正在生成报告...';
     const r = await getVoiceReport(this.baseUrl, this.sessionId);
     if (this.disposed || gen !== this.requestGeneration) {
@@ -261,6 +295,72 @@ struct VoiceExamPage {
       return;
     }
     this.report = r.data;
+    // hm-parity v5:报告已获取 → 清除恢复槽(会话收口)
+    await this.clearSlot();
+  }
+
+  // ───────────────── hm-parity v5:恢复槽动作 ─────────────────
+  /** 清除恢复槽(404/409/报告已取;静默失败——槽只是提示,不阻塞主流程) */
+  private async clearSlot(): Promise<void> {
+    const ctx: common.Context | undefined =
+      this.getUIContext().getHostContext() as common.Context | undefined;
+    if (ctx === undefined || ctx === null) {
+      return;
+    }
+    await clearVoiceResumeSlot(ctx);
+    this.resumeSlot = null;
+  }
+
+  /** 「继续上次语音作答」:本地槽只是提示,GET resume 对齐服务端真相 */
+  private async resumeFromSlot(): Promise<void> {
+    if (this.resumeSlot === null || this.resuming) {
+      return;
+    }
+    this.resuming = true;
+    this.flowError = '';
+    const gen: number = ++this.requestGeneration;
+    this.sessionId = this.resumeSlot.sessionId;
+    this.examId = this.resumeSlot.examId;
+    await this.alignResume(gen);
+    if (!this.disposed && gen === this.requestGeneration) {
+      this.resuming = false;
+      // 恢复成功(进入 ACTIVE/REPORT)→ 槽位保持(仍是活跃会话),下次收口时清
+    }
+  }
+
+  /** 放弃恢复:清槽留在选卷(不动服务端会话——用户可稍后再处理) */
+  private async dismissSlot(): Promise<void> {
+    await this.clearSlot();
+  }
+
+  // ───────────── hm-parity v5:FSM 命令(服务端权威,8 命令透传) ─────────────
+  /** 通用命令发送:成功更新状态,409/404 detail 如实展示后 resume 对齐 */
+  private async sendCommand(type: string): Promise<void> {
+    if (this.busyHint.length > 0 || this.sessionId.length === 0) {
+      return;
+    }
+    const gen: number = ++this.requestGeneration;
+    this.flowError = '';
+    this.busyHint = '命令发送中...';
+    const r = await sendVoiceCommand(this.baseUrl, this.sessionId, { type: type });
+    if (this.disposed || gen !== this.requestGeneration) {
+      return;
+    }
+    this.busyHint = '';
+    if (!r.ok || r.data === null) {
+      this.flowError = r.error;
+      return;
+    }
+    this.sessionStatus = r.data.session.status;
+    this.questionIndex = r.data.session.question_index;
+    if (type === VOICE_CMD_END || type === VOICE_CMD_REPORT_READY) {
+      // 收口命令:直接取报告(REPORT_READY 终态;end 亦到终态)
+      this.phase = Phase.REPORT;
+      await this.loadReport(gen);
+      return;
+    }
+    // 其余命令:resume 对齐当前题(读题推进后题面/进度会变)
+    await this.alignResume(gen);
   }
 
   build() {
@@ -308,7 +408,21 @@ struct VoiceExamPage {
   }
   @Builder
   PickView() {
-    VoicePickPane({
+    Column({ space: 12 }) {
+      // hm-parity v5:恢复入口(有未收口会话槽时显示;服务端唯一真相)
+      if (this.resumeSlot !== null) {
+        VoiceResumeCard({
+          sessionId: this.resumeSlot.sessionId,
+          busy: this.resuming,
+          onResume: () => {
+            this.resumeFromSlot();
+          },
+          onDismiss: () => {
+            this.dismissSlot();
+          }
+        })
+      }
+      VoicePickPane({
       papers: this.papers,
       loading: this.pickLoading,
       errorText: this.pickError,
@@ -319,6 +433,9 @@ struct VoiceExamPage {
         this.loadPapers();
       }
     })
+    }
+    .width('100%')
+    .height('100%')
   }
   @Builder
   ActiveView() {
@@ -329,7 +446,7 @@ struct VoiceExamPage {
           optionsText: this.questionOptions,
           index: this.questionIndex,
           total: this.questionTotal,
-          status: this.sessionStatus,
+          status: statusLabel(this.sessionStatus) + (hintFor(this.sessionStatus).length > 0 ? '\n' + hintFor(this.sessionStatus) : ''),
           committed: this.lastCommitted
         })
 
@@ -349,6 +466,32 @@ struct VoiceExamPage {
           },
           onSubmit: () => {
             this.submitAnswer();
+          }
+        })
+
+        // hm-parity v5:FSM 命令按钮区(显隐矩阵对齐 Android AdvanceControls)
+        VoiceCommandPane({
+          status: this.sessionStatus,
+          busy: this.busyHint.length > 0,
+          onStartReading: () => {
+            this.sendCommand(VOICE_CMD_START_READING);
+          },
+          onCommitConfirmed: () => {
+            this.sendCommand(VOICE_CMD_COMMIT_CONFIRMED);
+          },
+          onReportReady: () => {
+            this.sendCommand(VOICE_CMD_REPORT_READY);
+          },
+          onSkip: () => {
+            this.sendCommand(VOICE_CMD_SKIP);
+          },
+          onEnd: () => {
+            this.sendCommand(VOICE_CMD_END);
+          },
+          onRequestReport: () => {
+            const gen: number = ++this.requestGeneration;
+            this.phase = Phase.REPORT;
+            this.loadReport(gen);
           }
         })
 
