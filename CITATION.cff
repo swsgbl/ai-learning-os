@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+title: AI Learning OS
+message: >-
+  如果本系统在你的学习科学研究或教学实践中起到作用，
+  请按如下格式引用。
+type: software
+authors:
+  - name: AI Learning OS contributors
+    website: https://github.com/swsgbl/ai-learning-os
+repository-code: https://github.com/swsgbl/ai-learning-os
+url: https://ndtool.cn/aios
+abstract: >-
+  服务端权威的自托管学习操作系统：等值前后测、错因驱动的 11 阶段
+  学习冲刺（掌握度六态规则链 + FSRS 间隔复习）、语音陪练考试、
+  任意主题 LLM 定制课程、教材私有导入（权利声明 + 分片加密）与
+  学习效果实证审计（CTT 项目分析、掌握度模拟效度 AUC 0.913、
+  元认知校准 gamma、前后测效应量）。
+keywords:
+  - learning-science
+  - spaced-repetition
+  - FSRS
+  - psychometrics
+  - self-hosted
+  - exam-system
+  - byok
+license: MIT
+license-url: NOTICE.md
+commit: dba90fbc
+version: 0.5.1
+date-released: 2026-10-24

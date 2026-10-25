@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用与部署问答（Discussions）
+    url: https://github.com/swsgbl/ai-learning-os/discussions
+    about: 部署与使用疑问请走 Discussions 的 Q&A，勿开 issue。
+  - name: 安全漏洞（私密通道）
+    url: https://github.com/swsgbl/ai-learning-os/security/advisories/new
+    about: 安全问题禁止公开 issue，请走私密安全通告。
+  - name: 支持渠道总览
+    url: https://github.com/swsgbl/ai-learning-os/blob/main/SUPPORT.md
+    about: 按问题类型选择正确渠道。
