@@ -1,3 +1,15 @@
+## 深开鸿端 HM-Parity v4-v5 —— 搜索全流程 + 语音陪练收官（一比一复刻完成）
+
+- **v4 搜索 Tab 全流程**（#470）：SearchPane 只读列表（295 行）→ 完整
+  工作流（962 行）——预览计划（6 槽位识别不虚报）→ 执行搜索（结果
+  authority/rank_reason/skipped 原因）→ 按编号回查；providers 保留。
+- **v5 语音陪练收官**（#471）：8 命令 FSM 命令集（按钮按状态显隐对齐
+  Android）+ 会话恢复槽（preferences 两键，服务端唯一真相源）+ 状态
+  文案；修复语音 API 鉴权缺失与 report 前置判次两隐藏缺口。
+- **一比一复刻终态**：六 Tab 全对齐——首页/学习（v1-v2）/搜索（v4）/
+  语音（v5）/设置（v3）/治理（勘察定论两端一致）。Android UpdateCheck
+  对鸿蒙不适用（无发版渠道）；麦克风路径 VM 硬件豁免（生产 ASR 已验证）。
+
 ## 深开鸿端 HM-Parity v1-v3 —— 对齐 Android v0.5.1 三棒收官
 
 - **v1 学习冲刺 + 教材工作台**（#466）：LearningSprintPage（11 阶段链/
