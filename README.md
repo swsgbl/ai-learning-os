@@ -1,20 +1,81 @@
-# AI Learning OS
+# AI Learning OS（砚席）
 
-AI Learning OS 的生产工程骨架。当前版本优先落地三条主线：
+[![CI](https://github.com/swsgbl/ai-learning-os/actions/workflows/ci.yml/badge.svg)](../../actions)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![services/api: AGPL-3.0 组合](https://img.shields.io/badge/services%2Fapi-AGPL--3.0%20组合-orange.svg)](NOTICE.md)
+[![Release](https://img.shields.io/github/v/release/swsgbl/ai-learning-os)](../../releases)
 
-1. 服务端权威限时考试与幂等提交。
-2. 语音陪练交互，底层后续切换 LiveKit ASR/TTS adapter。
-3. 公开课与题库来源治理，先保留来源目录，不把静态题库打进前端。
+**自托管、服务端权威的学习操作系统**：等值前后测、错因驱动的学习冲刺
+（掌握度规则链 + FSRS 间隔复习）、语音陪练考试、任意主题 LLM 定制课程、
+教材私有导入与学习效果实证审计。学习效果的评估不靠感觉——内置 CTT
+项目分析、掌握度模拟效度（AUC 0.913）、元认知校准（gamma）与前后测
+效应量的审计管线。
+
+> 产品名「砚席」：砚为练习之器，席为求学者之位。
+
+## 核心特性
+
+| 领域 | 能力 |
+|---|---|
+| 考试 | 服务端权威计时/判分/幂等提交；题目投影不含答案（答案隔离不变式） |
+| 学习冲刺 | 11 阶段状态机：合同确认→等值前后测→概念地图→计划→核心学习→定向练习→迁移检验→后测→报告→间隔复测 |
+| 掌握度 | 六态规则链（3 独立对 + 2 上下文 + 延迟/迁移对，宁缺勿滥）+ FSRS 间隔复习调度 |
+| 语音陪练 | 8 命令 FSM 交互、断线会话恢复；本地 ASR/TTS 语音原文不出本机 |
+| 定制课程 | 任意主题 LLM 动态生成（概念 DAG 匹配优先，LLM 兜底）→ 大纲 → 私有练习卷 |
+| 内容供给 | ChinaTextbook 目录（仅元数据外链）；私有导入（权利声明 + 分片加密 SHA256）；PyMuPDF 解析 + RapidOCR 扫描书 |
+| BYOK | 多厂商 LLM 密钥库（服务端加密、仅显后 4 位、SSRF 三层防线） |
+| 效果审计 | 掌握度模拟研究门禁进 CI；元认知校准；增益基准对照（检索练习 g≈0.5-0.7） |
+
+## 客户端矩阵
+
+三端一比一对齐（服务端契约为唯一权威）：
+
+| 端 | 目录 | 覆盖 |
+|---|---|---|
+| Web（PWA） | `apps/web` | 全功能 + 治理工作台 |
+| Android | `apps/android` | 全功能（应用内更新检查） |
+| HarmonyOS / 深开鸿 | `apps/harmony` | 六 Tab 全对齐 |
+
+## 文档导航
+
+| 文档 | 内容 |
+|---|---|
+| [README 本页](README.md) | 部署/回滚/发布门禁/运维 |
+| [CHANGELOG](docs/CHANGELOG.md) | 版本演进 |
+| [学习效果审计](docs/LEARNING_EFFECT_AUDIT.md) | 心理测量学证据 |
+| [贡献指南](CONTRIBUTING.md) | 分支/CI 门/架构红线/证据文化 |
+| [安全策略](SECURITY.md) | 安全设计基线 + 漏洞私密报告 |
+| [隐私声明](PRIVACY.md) | 数据面清单（自托管=你是数据控制者） |
+| [行为准则](CODE_OF_CONDUCT.md) | 社区公约 |
+| [支持渠道](SUPPORT.md) | 按问题类型分流 |
+| [第三方声明](NOTICE.md) | **许可证组合（含 AGPL 义务）** |
+
+## 许可证
+
+主体 **MIT**；`services/api` 因进程内链接 **PyMuPDF（AGPL-3.0）**
+承担 AGPL-3.0 网络服务组合义务（向你服务的用户提供对应源码；本项目
+仓库已完整开源满足该要求，声明意在告知下游部署者的义务）——细节与
+完整第三方清单见 [NOTICE.md](NOTICE.md)。
+
+学术引用请见 [CITATION.cff](CITATION.cff)（GitHub 会在此页右侧
+渲染 "Cite this repository"）。
 
 ## 目录
 
 ```text
 apps/web        Next.js Web App，保留 Grok 原型的界面风格
-services/api    FastAPI Exam API 与领域状态机
+apps/android    Android 客户端（Kotlin/Compose）
+apps/harmony    HarmonyOS/深开鸿客户端（ArkTS）
+services/api    FastAPI Exam API 与领域状态机（AGPL 组合义务，见 NOTICE）
+services/console 控制台服务
 infra           Docker Compose 与部署环境
 docs            工程决策、开发路线和迁移边界
 docs/delivery   2026 定版调研、PRD、架构、开发计划和来源登记
 ```
+
+---
+
+以下为运维部署文档。
 
 ## 生产本地版（一条命令）
 

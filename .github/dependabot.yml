@@ -1,0 +1,48 @@
+version: 2
+updates:
+  # 服务端 Python 依赖
+  - package-ecosystem: pip
+    directory: /services/api
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    labels: [dependencies, backend]
+    # PyMuPDF 是 AGPL 组合依赖：minor 升级自动，major 人工评估
+    # （许可证条款变更风险，见 NOTICE.md）
+    commit-message:
+      prefix: chore(deps)
+
+  # Web 前端（仓库根 package.json）
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 5
+    labels: [dependencies, web]
+    commit-message:
+      prefix: chore(deps)
+
+  # GitHub Actions 工作流
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
+    labels: [dependencies, ci]
+    commit-message:
+      prefix: chore(ci-deps)
+
+  # Android（Gradle 依赖）
+  - package-ecosystem: gradle
+    directory: /apps/android
+    schedule:
+      interval: weekly
+      day: monday
+      timezone: Asia/Shanghai
+    open-pull-requests-limit: 3
+    labels: [dependencies, android]
+    commit-message:
+      prefix: chore(deps)
