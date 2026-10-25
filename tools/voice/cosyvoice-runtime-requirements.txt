@@ -39,7 +39,7 @@ scipy
 tqdm
 HyperPyYAML==1.2.3
 omegaconf==2.3.0
-transformers==4.51.3
+transformers==5.10.1
 # tokenizer.py 顶层 `import tiktoken`——官方 requirements 未列（缺口），此处补上
 tiktoken
 # tokenizer.py 顶层 `from whisper.tokenizer import Tokenizer`；cli/frontend.py:98
