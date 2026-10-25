@@ -90,7 +90,7 @@ rich==13.7.1
 gdown==5.1.0
 wget
 librosa==0.10.2
-pyarrow==18.1.0
+pyarrow==23.0.1
 pyworld==0.3.4
 inflect==7.3.1
 regex
