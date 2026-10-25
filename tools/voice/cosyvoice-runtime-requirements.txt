@@ -82,7 +82,7 @@ x-transformers==2.11.24
 #   但 pydoc.locate 仍须完成整模块导入）
 # 官方 requirements.txt 已 pin 的沿用其 pin；wget 官方未 pin（不 pin）。
 conformer==0.3.2
-diffusers==0.29.0
+diffusers==0.38.0
 lightning==2.2.4
 hydra-core==1.3.2
 matplotlib==3.7.5
