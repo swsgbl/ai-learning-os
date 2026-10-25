@@ -95,7 +95,7 @@ pyworld==0.3.4
 inflect==7.3.1
 regex
 # cosyvoice.py 顶层 `from modelscope import snapshot_download`（亦用于模型下载）
-modelscope==1.20.0
+modelscope==1.27.0
 # file_utils.load_wav 的 torchaudio backend='soundfile'
 soundfile==0.12.1
 # frontend.py 文本正则化回退链 ttsfrd→wetext→无（ttsfrd 需手动装；wetext 推荐保留）
