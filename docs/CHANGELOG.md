@@ -1,3 +1,18 @@
+## 仓库合规建设 —— 许可证组合声明 + 全套社区健康文件（#473）
+
+- **许可证合规修复**：NOTICE.md 显式声明双许可结构——主体 MIT；
+  `services/api` 因进程内链接 PyMuPDF（AGPL-3.0）承担网络服务组合
+  义务（此前全仓 MIT 声明与 AGPL 依赖混布冲突）。
+- **社区文件全套**：SECURITY（安全基线+私密漏洞通道）/ PRIVACY（自托管
+  数据面清单）/ CODE_OF_CONDUCT（公约 2.1）/ CONTRIBUTING（CI 门+架构
+  红线+证据文化）/ SUPPORT + issue 模板×2 + PR 模板 + dependabot×4
+  生态 + CITATION.cff；README 补介绍层（徽章/特性/三端矩阵/文档导航）。
+- **仓库设置**（GitHub）：About/topics×12/主页/Discussions 开启；secret
+  scanning + push protection + dependabot security updates 三项安全
+  扫描开启；main 分支保护（5 CI 必过 + 禁 force push/删除 + 合并后
+  自动删分支）；社区健康档案 100%。（AtomGit：描述+主页已设；topics/
+  licence 平台 API 不支持）
+
 ## 深开鸿端 HM-Parity v4-v5 —— 搜索全流程 + 语音陪练收官（一比一复刻完成）
 
 - **v4 搜索 Tab 全流程**（#470）：SearchPane 只读列表（295 行）→ 完整
