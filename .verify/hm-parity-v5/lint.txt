@@ -1,0 +1,139 @@
+npm notice run ai-learning-os@0.1.0 lint
+npm notice run npm run lint --workspace apps/web
+npm notice run @ai-learning-os/web@0.1.0 lint
+npm notice run eslint .
+
+D:\AI Learning OS\ai-learning-os\apps\web\src\app\learning\page.tsx
+   72:10  warning  'blueprints' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         @typescript-eslint/no-unused-vars
+   72:22  warning  'setBlueprints' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      @typescript-eslint/no-unused-vars
+   77:10  warning  'busy' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               @typescript-eslint/no-unused-vars
+   77:16  warning  'setBusy' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            @typescript-eslint/no-unused-vars
+  104:10  warning  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+D:\AI Learning OS\ai-learning-os\apps\web\src\app\learning\page.tsx:104:10
+  102 |
+  103 |   useEffect(() => {
+> 104 |     void load();
+      |          ^^^^ Avoid calling setState() directly within an effect
+  105 |   }, [load]);
+  106 |
+  107 |   return (                                                                                                                    react-hooks/set-state-in-effect
+  286:10  warning  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+D:\AI Learning OS\ai-learning-os\apps\web\src\app\learning\page.tsx:286:10
+  284 |
+  285 |   useEffect(() => {
+> 286 |     void loadBlueprint();
+      |          ^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  287 |     if (sprint && (sprint.phase === "report" || sprint.phase === "follow_up")) {
+  288 |       void loadReport(sprint.id);
+  289 |     }  react-hooks/set-state-in-effect
+  295:9   warning  'currentLabel' is assigned a value but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       @typescript-eslint/no-unused-vars
+  514:5   warning  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+D:\AI Learning OS\ai-learning-os\apps\web\src\app\learning\page.tsx:514:5
+  512 |
+  513 |   useEffect(() => {
+> 514 |     loadNext();
+      |     ^^^^^^^^ Avoid calling setState() directly within an effect
+  515 |     // eslint-disable-next-line react-hooks/exhaustive-deps
+  516 |   }, [sprintId]);
+  517 |                                                                  react-hooks/set-state-in-effect
+
+D:\AI Learning OS\ai-learning-os\apps\web\src\app\settings\page.tsx
+  33:10  warning  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+D:\AI Learning OS\ai-learning-os\apps\web\src\app\settings\page.tsx:33:10
+  31 |
+  32 |   useEffect(() => {
+> 33 |     void load();
+     |          ^^^^ Avoid calling setState() directly within an effect
+  34 |   }, [load]);
+  35 |
+  36 |   const add = async () => {  react-hooks/set-state-in-effect
+
+D:\AI Learning OS\ai-learning-os\apps\web\src\components\governance\ai-providers.tsx
+  128:10  warning  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+D:\AI Learning OS\ai-learning-os\apps\web\src\components\governance\ai-providers.tsx:128:10
+  126 |
+  127 |   useEffect(() => {
+> 128 |     void load();
+      |          ^^^^ Avoid calling setState() directly within an effect
+  129 |     const onRefresh = () => void load();
+  130 |     window.addEventListener("ai-providers:refresh", onRefresh);
+  131 |     return () => window.removeEventListener("ai-providers:refresh", onRefresh);  react-hooks/set-state-in-effect
+
+D:\AI Learning OS\ai-learning-os\apps\web\src\components\home\home-dashboard.tsx
+    9:20  warning  'ClipboardList' is defined but never used                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     @typescript-eslint/no-unused-vars
+  181:49  warning  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+D:\AI Learning OS\ai-learning-os\apps\web\src\components\home\home-dashboard.tsx:181:49
+  179 |     if (window.localStorage.getItem(ONBOARDING_DISMISSED_KEY) === "1") return;
+  180 |     const papers = summary.papers;
+> 181 |     if (papers !== null && papers.length === 0) setShowOnboarding(true);
+      |                                                 ^^^^^^^^^^^^^^^^^ Avoid calling setState() directly within an effect
+  182 |   }, [ready, loggedIn, summary.papers]);
+  183 |
+  184 |   function dismissOnboarding() {  react-hooks/set-state-in-effect
+
+D:\AI Learning OS\ai-learning-os\apps\web\src\components\library\bookshelf.tsx
+   8:10  warning  'Badge' is defined but never used                    @typescript-eslint/no-unused-vars
+  61:9   warning  'importResource' is assigned a value but never used  @typescript-eslint/no-unused-vars
+
+D:\AI Learning OS\ai-learning-os\apps\web\src\components\library\catalog-section.tsx
+  47:5  warning  Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+D:\AI Learning OS\ai-learning-os\apps\web\src\components\library\catalog-section.tsx:47:5
+  45 |   useEffect(() => {
+  46 |     // 首次默认展示一部分大学数学（有内容感，不空白）
+> 47 |     search("数学");
+     |     ^^^^^^ Avoid calling setState() directly within an effect
+  48 |     // eslint-disable-next-line react-hooks/exhaustive-deps
+  49 |   }, []);
+  50 |  react-hooks/set-state-in-effect
+
+✖ 15 problems (0 errors, 15 warnings)
+

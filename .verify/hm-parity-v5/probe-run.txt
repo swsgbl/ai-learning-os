@@ -1,0 +1,17 @@
+PASS | login | token eyJhbGciOiJI...
+PASS | papers | 7 papers, using pap_0a5b3590b23e40ce9315d1d095d85f88 (定制课程 · SQL 表连接 JOIN 从零学会)
+PASS | createExam | examId=exam_5b6477ec469c444997063fc3d1e9c532
+PASS | createSession | sid=vs_c3c9039bfbfe40af8017 status=SESSION_READY
+PASS | start_reading | HTTP 200 READING_QUESTION
+PASS | question_read | HTTP 200 READING_OPTIONS
+PASS | options_read | HTTP 200 WAITING_ANSWER
+PASS | resume#1 | q=请用自己的话解释什么是SELECT 基础查询，并举例说明。 id=q_17625a31d3974ed1906787bae1fb6add total=4 committed=null
+PASS | answer_proposed | HTTP 200 ANSWER_COMMITTED
+PASS | answer_proposed#2(override) | HTTP 200 ANSWER_COMMITTED
+PASS | commit_confirmed | HTTP 200 NEXT_QUESTION
+PASS | report_ready | HTTP 200 REPORT_READY total=4
+FAIL | report | HTTP 409 mistakes=0 remediation=0
+PASS | post-terminal 409 | HTTP 409 {"detail":"语音会话状态 REPORT_READY 不接受事件 start_reading"}
+PASS | no-auth 401/404 | HTTP 401
+
+=== 14/15 PASS ===
