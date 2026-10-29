@@ -9,6 +9,8 @@ import { describe, expect, it } from "vitest";
 import {
   DOWNLOAD_CHANNELS,
   PWA_INSTALL_HINTS,
+  androidRequirementLabel,
+  detectPlatformFromUserAgent,
   type DownloadChannel,
 } from "./download";
 
@@ -74,5 +76,47 @@ describe("PWA 安装指引契约", () => {
     expect(PWA_INSTALL_HINTS.ios).not.toBe("");
     expect(PWA_INSTALL_HINTS.ios).toContain("主屏幕");
     expect(PWA_INSTALL_HINTS.generic).not.toBe("");
+  });
+});
+
+describe("M21 适用系统标注与设备识别", () => {
+  it("每个渠道都有非空 platforms 与 packageKind（用户能看清哪个包对应哪个系统）", () => {
+    for (const channel of DOWNLOAD_CHANNELS) {
+      expect(channel.platforms.length).toBeGreaterThan(6);
+      expect(channel.packageKind.length).toBeGreaterThan(2);
+    }
+    const android = DOWNLOAD_CHANNELS.find((c) => c.id === "android")!;
+    expect(android.packageKind).toContain("APK");
+    const harmony = DOWNLOAD_CHANNELS.find((c) => c.id === "harmony")!;
+    expect(harmony.platforms).toContain("HarmonyOS");
+  });
+
+  it("androidRequirementLabel：min_api_level → 面向用户版本名", () => {
+    expect(androidRequirementLabel(26)).toBe("Android 8.0 及以上");
+    expect(androidRequirementLabel(34)).toBe("Android 14 及以上");
+    expect(androidRequirementLabel(null)).toBeNull();
+    expect(androidRequirementLabel(-1)).toBeNull();
+    expect(androidRequirementLabel(99)).toContain("Android");
+  });
+
+  it("detectPlatformFromUserAgent：鸿蒙优先于 Android（UA 并存场景）", () => {
+    expect(
+      detectPlatformFromUserAgent(
+        "Mozilla/5.0 (Phone; OpenHarmony 5.0) AppleWebKit/537.36 ArkWeb/4.1.6.1 Mobile",
+      ),
+    ).toBe("harmony");
+    expect(
+      detectPlatformFromUserAgent(
+        "Mozilla/5.0 (Linux; Android 14; Pixel 8) Chrome/130 Mobile Safari/537.36",
+      ),
+    ).toBe("android");
+    expect(
+      detectPlatformFromUserAgent(
+        "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Safari/604.1",
+      ),
+    ).toBe("ios");
+    expect(detectPlatformFromUserAgent("Mozilla/5.0 (Windows NT 10.0; Win64; x64)")).toBe(
+      "unknown",
+    );
   });
 });

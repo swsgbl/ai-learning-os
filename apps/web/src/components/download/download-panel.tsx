@@ -11,8 +11,14 @@
 //   降级 pending，绝不显示错误链接。manifest 内容不写死在本组件。
 // - Harmony 卡：状态来自 src/lib/download.ts，AGC 签名未落地前恒 pending。
 import { useEffect, useState, useSyncExternalStore } from "react";
-import { CheckCircle2, Clock, Download, Share, Smartphone } from "lucide-react";
-import { DOWNLOAD_CHANNELS, PWA_INSTALL_HINTS } from "@/lib/download";
+import { CheckCircle2, Clock, Download, MonitorSmartphone, Share, Smartphone } from "lucide-react";
+import {
+  DOWNLOAD_CHANNELS,
+  PWA_INSTALL_HINTS,
+  androidRequirementLabel,
+  detectPlatformFromUserAgent,
+  type DetectedPlatform,
+} from "@/lib/download";
 import {
   fetchAndroidChannelState,
   type AndroidChannelState,
@@ -163,6 +169,60 @@ function ChannelStatusIcon({ status }: { status: "available" | "pending" }) {
   );
 }
 
+/**
+ * M21 设备识别推荐：UA 判定访问设备 → 顶部「为你推荐」一句话。
+ * SSR 首帧 unknown（不渲染），水合后探测——避免水合不匹配。
+ */
+function useDetectedPlatform(): DetectedPlatform {
+  const getSnapshot = () =>
+    typeof navigator === "undefined"
+      ? ("unknown" as const)
+      : detectPlatformFromUserAgent(navigator.userAgent);
+  return useSyncExternalStore(
+    () => () => {},
+    getSnapshot,
+    () => "unknown" as const,
+  );
+}
+
+const PLATFORM_RECOMMENDATIONS: Record<
+  Exclude<DetectedPlatform, "unknown">,
+  { icon: typeof Smartphone; text: string }
+> = {
+  android: {
+    icon: Smartphone,
+    text: "检测到你正在使用 Android 设备——推荐下方「Android 原生应用（APK 安装包）」；不方便装 APK 时也可用网页应用（PWA）。",
+  },
+  ios: {
+    icon: Smartphone,
+    text: "检测到你正在使用 iPhone / iPad——请安装「网页应用（PWA）」（见下方 iPhone 安装步骤）。此网站的 APK / hap 包不适用于苹果设备。",
+  },
+  harmony: {
+    icon: Smartphone,
+    text: "检测到你正在使用 HarmonyOS / 深开鸿设备——当前推荐安装「网页应用（PWA）」；HarmonyOS 原生应用（hap）待发布，Android 的 APK 包不适用于你的设备。",
+  },
+};
+
+function PlatformRecommendationBar({ platform }: { platform: DetectedPlatform }) {
+  if (platform === "unknown") return null;
+  const rec = PLATFORM_RECOMMENDATIONS[platform];
+  const Icon = rec.icon;
+  return (
+    <div
+      data-testid="platform-recommendation"
+      className="flex items-start gap-3 rounded-lg border border-accent-soft bg-accent-soft p-4"
+    >
+      <Icon className="mt-0.5 size-5 shrink-0 text-accent" aria-hidden="true" />
+      <p className="text-sm leading-relaxed text-ink">{rec.text}</p>
+    </div>
+  );
+}
+
+/** 字节数 → MB 文案（下载卡信息行用）。 */
+function formatSizeMB(bytes: number): string {
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 /** Android 渠道运行时状态：初始 pending（诚实默认），manifest 可信才 available。 */
 function useAndroidChannelState(): AndroidChannelState {
   const [state, setState] = useState<AndroidChannelState>({
@@ -186,6 +246,7 @@ function useAndroidChannelState(): AndroidChannelState {
 export function DownloadPanel() {
   const pwaState = usePwaInstallState();
   const androidState = useAndroidChannelState();
+  const platform = useDetectedPlatform();
   const channels = DOWNLOAD_CHANNELS;
   const pwa = channels.find((c) => c.id === "pwa")!;
   const native = channels.filter((c) => c.id !== "pwa");
@@ -196,10 +257,14 @@ export function DownloadPanel() {
         <p className="text-sm text-muted">下载与安装</p>
         <h1 className="mt-2 font-display text-3xl leading-snug">把砚席装进手机</h1>
         <p className="mt-3 max-w-xl text-sm leading-relaxed text-muted">
-          网页应用（PWA）现在就可安装：Android、iPhone 与桌面浏览器均可添加到主屏，
-          获得独立窗口与更快的进入速度。原生应用就绪后会在此同步提供。
+          每个安装包只适用于一种操作系统——请先看下面这一句，再按你的设备选择：
+          Android 手机下 <strong className="font-medium text-ink">APK</strong>，
+          HarmonyOS / 深开鸿设备装 <strong className="font-medium text-ink">网页应用</strong>（原生 hap 待发布），
+          iPhone / iPad 与电脑装 <strong className="font-medium text-ink">网页应用（PWA）</strong>。
         </p>
       </section>
+
+      <PlatformRecommendationBar platform={platform} />
 
       {/* PWA：可用渠道 + 安装交互 */}
       <Card className="p-5 sm:p-6" data-testid="channel-pwa">
@@ -214,6 +279,12 @@ export function DownloadPanel() {
           </span>
         </div>
         <p className="mt-3 text-sm leading-relaxed text-muted">{pwa.description}</p>
+        <div className="mt-3 flex items-start gap-2 text-xs leading-relaxed text-subtle">
+          <MonitorSmartphone className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+          <span>
+            适用系统：{pwa.platforms} · {pwa.packageKind}
+          </span>
+        </div>
         <div className="mt-4">
           <InstallButton state={pwaState} />
         </div>
@@ -259,6 +330,17 @@ export function DownloadPanel() {
                   <p className="mt-3 text-sm leading-relaxed text-muted">
                     Android 原生应用签名安装包已发布，可从下方下载安装。
                   </p>
+                  <div className="mt-3 flex items-start gap-2 text-xs leading-relaxed text-subtle">
+                    <MonitorSmartphone className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                    <span>
+                      适用系统：Android 手机 / 平板
+                      {androidRequirementLabel(androidOverride.minApiLevel)
+                        ? `（${androidRequirementLabel(androidOverride.minApiLevel)}）`
+                        : ""}
+                       · 包类型：APK（{formatSizeMB(androidOverride.sizeBytes)}）
+                       · 不适用于 iPhone / iPad / HarmonyOS
+                    </span>
+                  </div>
                   <div className="mt-4">
                     <a
                       href={androidOverride.href}
@@ -266,18 +348,27 @@ export function DownloadPanel() {
                       className="inline-flex min-h-11 items-center gap-2 rounded-lg bg-accent px-4 text-sm font-medium text-accent-fg transition-opacity duration-150 hover:opacity-90"
                     >
                       <Download className="size-4" aria-hidden="true" />
-                      下载安装包
+                      下载 APK 安装包
                       {androidOverride.versionName
                         ? `（v${androidOverride.versionName}）`
                         : ""}
                     </a>
                   </div>
+                  <p className="mt-3 text-xs leading-relaxed text-subtle">
+                    安装方法：下载后点开 APK 文件；若系统提示「未知来源应用」，允许本次安装即可（包已签名，SHA-256 校验值见下载属性）。
+                  </p>
                 </>
               ) : (
                 <>
                   <p className="mt-3 text-sm leading-relaxed text-muted">
                     {channel.description}
                   </p>
+                  <div className="mt-3 flex items-start gap-2 text-xs leading-relaxed text-subtle">
+                    <MonitorSmartphone className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                    <span>
+                      适用系统：{channel.platforms} · 包类型：{channel.packageKind}
+                    </span>
+                  </div>
                   {channel.reason && (
                     <p className="mt-3 border-t border-border pt-3 text-xs leading-relaxed text-subtle">
                       原因：{channel.reason}
