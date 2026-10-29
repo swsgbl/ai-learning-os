@@ -52,6 +52,7 @@ def test_latest_app_configured_transparent(client_factory):
         "downloadUrl": url,
         "download_url_fallback": None,
         "downloadUrlFallback": None,
+        "sha256": None,
     }
 
 
@@ -132,3 +133,30 @@ def test_latest_app_fallback_transparent(client_factory, monkeypatch):
     body = resp.json()
     assert body["download_url_fallback"] == fallback
     assert body["downloadUrlFallback"] == fallback
+
+
+def test_latest_app_sha256_transparent_when_configured(client_factory):
+    # M21 应用内自更新：sha256 配置则透出（客户端下载后校验，防篡改）
+    url = "https://ndtool.cn/android/app-0.5.1.apk"
+    client = client_factory(
+        LATEST_ANDROID_VERSION="0.5.1",
+        LATEST_ANDROID_VERSION_CODE="17",
+        LATEST_ANDROID_DOWNLOAD_URL=url,
+        LATEST_ANDROID_SHA256="a" * 64,
+    )
+    resp = client.get("/api/v1/meta/latest-app?platform=android")
+    assert resp.status_code == 200
+    assert resp.json()["sha256"] == "a" * 64
+
+
+def test_latest_app_sha256_absent_means_none(client_factory):
+    # 未配置 sha256 = None（fail-closed：新客户端无哈希拒绝自装）
+    client = client_factory(
+        LATEST_ANDROID_VERSION="0.5.1",
+        LATEST_ANDROID_VERSION_CODE="17",
+        LATEST_ANDROID_DOWNLOAD_URL="https://x/y.apk",
+        LATEST_ANDROID_SHA256=" ",  # 空白串归一 None（与其它 latest_* 键同语义）
+    )
+    resp = client.get("/api/v1/meta/latest-app?platform=android")
+    assert resp.status_code == 200
+    assert resp.json()["sha256"] is None

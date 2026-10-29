@@ -82,6 +82,8 @@ data class LatestAppResponse(
     @SerialName("download_url") val downloadUrl: String,
     /** M15-012 多通道回退（服务端可空）；旧字段名兼容由服务端双命名承担 */
     @SerialName("download_url_fallback") val downloadUrlFallback: String? = null,
+    /** M21 应用内自更新：安装包 SHA-256（可空 = 服务端未配置，客户端 fail-closed 拒绝自装） */
+    val sha256: String? = null,
 )
 
 

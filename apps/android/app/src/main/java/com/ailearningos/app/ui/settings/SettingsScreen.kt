@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.CircularProgressIndicator
@@ -29,6 +30,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.input.PasswordVisualTransformation
@@ -75,6 +77,7 @@ fun SettingsScreen(
     onOpenUpdateUrl: (String) -> Unit = {},
     onOpenGovernance: () -> Unit = {},
 ) {
+    val context = LocalContext.current
     val state by settingsViewModel.state.collectAsStateWithLifecycle()
     val sessionState by sessionViewModel.state.collectAsStateWithLifecycle()
     val sessionNotice by sessionViewModel.notice.collectAsStateWithLifecycle()
@@ -142,6 +145,10 @@ fun SettingsScreen(
                 UpdateSection(
                     state = state,
                     onCheckUpdate = settingsViewModel::checkUpdate,
+                    onStartApkDownload = { available ->
+                        settingsViewModel.startApkDownload(available, context.cacheDir)
+                    },
+                    onInstallApk = { settingsViewModel.installDownloadedApk(context) },
                     onOpenUpdateUrl = onOpenUpdateUrl,
                 )
             }
@@ -787,6 +794,8 @@ private fun UpdateSection(
     state: SettingsUiState,
     onCheckUpdate: () -> Unit,
     onOpenUpdateUrl: (String) -> Unit,
+    onStartApkDownload: (UpdateCheckResult.Available) -> Unit = {},
+    onInstallApk: () -> Boolean = { false },
 ) {
     SectionCard(title = "应用更新") {
         Row(
@@ -833,11 +842,72 @@ private fun UpdateSection(
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Text(
-                        "发现新版本 ${result.version}，下载安装包后覆盖安装即可更新。",
+                        "发现新版本 ${result.version}。",
                         style = MaterialTheme.typography.bodyMedium,
                     )
-                    Button(onClick = { onOpenUpdateUrl(result.downloadUrl) }) {
-                        Text("下载更新")
+                    when (val apk = state.apkUpdate) {
+                        ApkUpdateState.Idle -> {
+                            if (result.sha256 != null) {
+                                Button(onClick = { onStartApkDownload(result) }) {
+                                    Text("后台下载并安装")
+                                }
+                                Text(
+                                    "下载在后台进行，完成后可直接应用内安装（无需跳浏览器）。",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = Subtle,
+                                )
+                            } else {
+                                Button(onClick = { onOpenUpdateUrl(result.downloadUrl) }) {
+                                    Text("下载更新")
+                                }
+                            }
+                        }
+
+                        is ApkUpdateState.Downloading -> {
+                            val hasProgress = apk.progressPercent > 0
+                            LinearProgressIndicator(
+                                progress = { if (hasProgress) apk.progressPercent / 100f else 0f },
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                            Text(
+                                if (hasProgress) "正在后台下载 ${apk.progressPercent}%…" else "正在后台下载…",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Subtle,
+                            )
+                        }
+
+                        ApkUpdateState.Verifying -> Text(
+                            "下载完成，正在校验安装包…",
+                            style = MaterialTheme.typography.bodyMedium,
+                        )
+
+                        is ApkUpdateState.Ready -> {
+                            Button(onClick = { onInstallApk() }) {
+                                Text("重启更新（已就绪 → v${apk.versionName}）")
+                            }
+                            Text(
+                                "新版本已下载校验完成，点击后系统将确认安装；" +
+                                    "首次需允许本应用「安装未知应用」（仅需一次）。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = Subtle,
+                            )
+                        }
+
+                        is ApkUpdateState.Failed -> {
+                            Text(
+                                "自动更新失败：${apk.message}",
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = Warn,
+                            )
+                        }
+                    }
+                    // 跳转下载始终保留：自更新失败/无哈希时的兜底通道
+                    if (result.downloadUrlFallback != null ||
+                        state.apkUpdate is ApkUpdateState.Failed
+                    ) {
+                        TextButton(onClick = { onOpenUpdateUrl(result.downloadUrl) }) {
+                            Text("改为手动下载")
+                        }
                     }
                     if (result.downloadUrlFallback != null) {
                         TextButton(onClick = { onOpenUpdateUrl(result.downloadUrlFallback) }) {

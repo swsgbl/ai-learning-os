@@ -47,7 +47,12 @@ class UpdateCheckTest {
     fun `evaluate higher server code = Available`() {
         val latest = LatestAppInfo("android", "0.2.0", 2, "https://example.com/a.apk")
         val result = UpdateCheckEvaluator.evaluate(1, "0.1.0", latest)
-        assertEquals(UpdateCheckResult.Available("0.2.0", "https://example.com/a.apk"), result)
+        // M21：Available 新增 sha256/versionCode 字段（默认值）——语义等值断言
+        val available = result as UpdateCheckResult.Available
+        assertEquals("0.2.0", available.version)
+        assertEquals("https://example.com/a.apk", available.downloadUrl)
+        assertEquals(null, available.sha256)
+        assertEquals(2, available.versionCode)
     }
 
     @Test
