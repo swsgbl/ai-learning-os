@@ -41,6 +41,10 @@ import com.ailearningos.app.voice.AudioPlaybackEngine
  */
 class AppContainer(context: Context) {
 
+    /** M21 应用内自更新：私有缓存目录（updates/）等需要应用上下文 */
+    val appContext: Context = context.applicationContext
+
+
     /** debug 构建放行 loopback/局域网 http；release 强制 https */
     val allowInsecureHttp: Boolean = BuildConfig.ALLOW_INSECURE_HTTP
 

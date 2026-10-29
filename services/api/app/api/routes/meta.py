@@ -41,6 +41,9 @@ class LatestAppOut(BaseModel):
     # M15-012 多通道：主通道不可达时的回退地址（可空 = 单通道语义不变）
     download_url_fallback: str | None = None
     downloadUrlFallback: str | None = None
+    # M21 应用内自更新：安装包 SHA-256（主/回退同文件同哈希）。可空 =
+    # 服务端未配置（旧客户端跳转下载语义不变）。
+    sha256: str | None = None
 
 
 @router.get("/latest-app", response_model=LatestAppOut)
@@ -52,18 +55,20 @@ async def latest_app(platform: str = "android") -> LatestAppOut:
         )
     s = get_settings()
     if platform == "android":
-        version, code, url, fallback = (
+        version, code, url, fallback, sha256 = (
             s.latest_android_version,
             s.latest_android_version_code,
             s.latest_android_download_url,
             s.latest_android_download_url_fallback,
+            s.latest_android_sha256,
         )
     else:
-        version, code, url, fallback = (
+        version, code, url, fallback, sha256 = (
             s.latest_harmony_version,
             s.latest_harmony_version_code,
             s.latest_harmony_download_url,
             s.latest_harmony_download_url_fallback,
+            s.latest_harmony_sha256,
         )
     if not (version and code and url):
         raise HTTPException(
@@ -79,4 +84,5 @@ async def latest_app(platform: str = "android") -> LatestAppOut:
         downloadUrl=url,
         download_url_fallback=fallback,
         downloadUrlFallback=fallback,
+        sha256=sha256,
     )

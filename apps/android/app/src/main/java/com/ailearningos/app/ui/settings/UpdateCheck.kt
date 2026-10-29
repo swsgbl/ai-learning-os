@@ -21,6 +21,9 @@ sealed interface UpdateCheckResult {
         val downloadUrl: String,
         /** M15-012 多通道：主地址打不开时的备用下载入口（可空） */
         val downloadUrlFallback: String? = null,
+        /** M21 应用内自更新：SHA-256（可空 = 服务端未配置 → 只能跳转下载，禁止自装） */
+        val sha256: String? = null,
+        val versionCode: Int = 0,
     ) : UpdateCheckResult
 }
 
@@ -32,7 +35,7 @@ object UpdateCheckEvaluator {
     ): UpdateCheckResult {
         if (latest == null) return UpdateCheckResult.NotConfigured
         return if (latest.versionCode > currentVersionCode) {
-            UpdateCheckResult.Available(latest.version, latest.downloadUrl, latest.downloadUrlFallback)
+            UpdateCheckResult.Available(latest.version, latest.downloadUrl, latest.downloadUrlFallback, latest.sha256, latest.versionCode)
         } else {
             UpdateCheckResult.UpToDate(currentVersionName)
         }

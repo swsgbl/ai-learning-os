@@ -87,9 +87,13 @@ RUNNER_PATH = REPO_ROOT / "tools" / "ops" / "rc_smoke_rehearsal.py"
 #: M18-003 第五次显式更新 docker-compose.yml pin——api env 新增空默认
 #: LIBRARY_OUTBOUND_PROXY 透传（私有导入下载出网代理；rc-smoke compose
 #: api env 键集同步零增零删契约保持）。
+#: M21 应用内自更新第八次显式更新 docker-compose.yml pin——api env
+#: 新增 LATEST_ANDROID_SHA256 / LATEST_HARMONY_SHA256 空默认透传（安装包
+#: 哈希校验；空值 = 未配置语义不透出）；rc-smoke compose api env 键集
+#: 同步零增零删契约保持。
 PRODUCTION_FILE_PINS = {
     "infra/docker-compose.yml":
-        "f7a794e50b5868df3d8fa21fac66b461bd5314630258ecb740bcd2e40eeda674",
+        "1372833a6cf37071ce1d42c555323783a96bfed6ff0b30dd79d98c65b4a7dc96",
     "infra/build_release_candidate.sh":
         "3efa02586c8a93a1d4b26f1fc981fd1233a87ae94be797cd3f939e9b464778b2",
     "infra/smoke_docker.sh":

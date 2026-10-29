@@ -110,6 +110,11 @@ class Settings(BaseSettings):
     # （跨墙源，如 GitHub Releases）。fallback 可空 = 单通道语义不变。
     latest_android_download_url_fallback: str | None = None
     latest_harmony_download_url_fallback: str | None = None
+    # M21 应用内自更新：APK/HAP 的 SHA-256（download-manifest 同源口径）。
+    # 客户端后台下载后必须校验通过才允许安装（供应链防线）；None = 旧
+    # 客户端跳转下载语义不变，新客户端无哈希时拒绝自装（fail-closed）。
+    latest_android_sha256: str | None = None
+    latest_harmony_sha256: str | None = None
     # M9-01 认证：AUTH_SECRET 未配置 = 认证关闭（status 如实透出，不虚报受保护）；
     # 生产 compose 显式注入。key 只放部署 secret/.env，不入库不入码。
     auth_secret: str | None = None
@@ -151,6 +156,8 @@ class Settings(BaseSettings):
         "latest_harmony_download_url",
         "latest_android_download_url_fallback",
         "latest_harmony_download_url_fallback",
+        "latest_android_sha256",
+        "latest_harmony_sha256",
         mode="before",
     )
     @classmethod

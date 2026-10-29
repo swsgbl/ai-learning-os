@@ -80,6 +80,8 @@ data class LatestAppInfo(
     val downloadUrl: String,
     /** M15-012 多通道：主地址打不开时的备用下载入口（可空） */
     val downloadUrlFallback: String? = null,
+    /** M21 应用内自更新：安装包 SHA-256（可空 = 未配置；自更新 fail-closed 需它） */
+    val sha256: String? = null,
 )
 
 class AuthRepository(
@@ -103,7 +105,7 @@ class AuthRepository(
     override suspend fun latestApp(): LatestAppInfo? = try {
         withRemoteError {
             apiProvider.get().latestApp().let {
-                LatestAppInfo(it.platform, it.version, it.versionCode, it.downloadUrl, it.downloadUrlFallback)
+                LatestAppInfo(it.platform, it.version, it.versionCode, it.downloadUrl, it.downloadUrlFallback, it.sha256)
             }
         }
     } catch (cause: AppError) {

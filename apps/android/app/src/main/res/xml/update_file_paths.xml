@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- M21 应用内自更新：已校验 APK 的 FileProvider 共享范围（仅 updates/ 子目录） -->
+<paths>
+    <cache-path name="updates" path="updates/" />
+</paths>

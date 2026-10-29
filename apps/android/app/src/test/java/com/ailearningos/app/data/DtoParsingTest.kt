@@ -135,6 +135,35 @@ class DtoParsingTest {
      * （双字段并存）锁定解析。
      */
     @Test
+    fun `parses latest-app with sha256 from real production payload`() {
+        // M21 真实生产 payload（ndtool.cn 2026-10-29 实测形状；sha256 已配置）
+        val dto = AiosJson.decodeFromString<LatestAppResponse>(
+            """
+            {"platform":"android","version":"0.5.1","version_code":17,
+             "download_url":"https://ndtool.cn/android/ai-learning-os-0.5.1-release-signed.apk",
+             "versionCode":17,"downloadUrl":"https://ndtool.cn/android/ai-learning-os-0.5.1-release-signed.apk",
+             "download_url_fallback":"https://atomgit.com/hongfu/ai-learning-os/releases/download/v0.5.1/ai-learning-os-0.5.1-release-signed.apk",
+             "downloadUrlFallback":"https://atomgit.com/hongfu/ai-learning-os/releases/download/v0.5.1/ai-learning-os-0.5.1-release-signed.apk",
+             "sha256":"6f2cfe3ea83f019c9d1254cf375fda06d32bcb73639950be3a1ec35e189463ab"}
+            """.trimIndent(),
+        )
+        assertEquals("6f2cfe3ea83f019c9d1254cf375fda06d32bcb73639950be3a1ec35e189463ab", dto.sha256)
+        assertEquals(17, dto.versionCode)
+    }
+
+    @Test
+    fun `parses latest-app without sha256 as null (fail-closed self-update)`() {
+        val dto = AiosJson.decodeFromString<LatestAppResponse>(
+            """
+            {"platform":"android","version":"0.5.1","version_code":17,
+             "download_url":"https://example.com/app.apk",
+             "versionCode":17,"downloadUrl":"https://example.com/app.apk"}
+            """.trimIndent(),
+        )
+        assertNull(dto.sha256)
+    }
+
+    @Test
     fun `parses latest-app response in server snake_case shape`() {
         val dto = AiosJson.decodeFromString<LatestAppResponse>(
             """

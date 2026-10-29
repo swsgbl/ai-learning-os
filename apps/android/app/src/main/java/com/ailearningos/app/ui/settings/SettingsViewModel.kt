@@ -2,6 +2,7 @@ package com.ailearningos.app.ui.settings
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import android.content.Context
 import com.ailearningos.app.BuildConfig
 import com.ailearningos.app.core.AppError
 import com.ailearningos.app.core.AppErrorKind
@@ -16,6 +17,9 @@ import com.ailearningos.app.data.model.PrivacySnapshot
 import com.ailearningos.app.di.ConfigurationBus
 import com.ailearningos.app.ui.common.ContentState
 import kotlinx.coroutines.CancellationException
+import okhttp3.OkHttpClient
+import java.io.File
+import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -37,6 +41,8 @@ data class SettingsUiState(
     val allowInsecureHttp: Boolean = true,
     /** M15-006 更新检查：Empty（未查）/ Loading / Success(判定结果) / Error(脱敏文案) */
     val updateCheck: ContentState<UpdateCheckResult> = ContentState.Empty,
+    /** M21 应用内自更新：后台下载/校验/待安装状态机 */
+    val apkUpdate: ApkUpdateState = ApkUpdateState.Idle,
     /** M15-014 个人 AI 密钥（BYOK）：null=未加载（未登录）；Empty 也未加载 */
     val myAiKeys: ContentState<List<MyAiKeyInfo>> = ContentState.Empty,
     /** BYOK 保存/删除的脱敏反馈 */
@@ -57,6 +63,17 @@ class SettingsViewModel(
     private val currentVersionCode: Int = BuildConfig.VERSION_CODE,
     private val currentVersionName: String = BuildConfig.VERSION_NAME,
 ) : ViewModel() {
+
+    /** M21 自更新：独立下载 client（无 Auth 拦截器——公开 APK 不带凭据）；cacheDir 由 UI 层传入（VM 不持 Context） */
+    private val downloadClient: OkHttpClient by lazy {
+        OkHttpClient.Builder()
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(120, TimeUnit.SECONDS)
+            .build()
+    }
+
+    /** 已下载校验通过的 APK（Ready 态点击安装用） */
+    private var downloadedApk: DownloadedApk? = null
 
     private val _state = MutableStateFlow(SettingsUiState(allowInsecureHttp = allowInsecureHttp))
     val state: StateFlow<SettingsUiState> = _state.asStateFlow()
@@ -174,6 +191,57 @@ class SettingsViewModel(
             }
             _state.update { it.copy(updateCheck = result) }
         }
+    }
+
+    /** M21 应用内自更新：后台下载 → SHA-256 校验 → Ready（等待用户点安装） */
+    fun startApkDownload(available: UpdateCheckResult.Available, cacheDir: File) {
+        if (_state.value.apkUpdate is ApkUpdateState.Downloading ||
+            _state.value.apkUpdate is ApkUpdateState.Verifying
+        ) return
+        val sha256 = available.sha256
+        if (sha256.isNullOrBlank()) {
+            // fail-closed：服务端未透出哈希 → 拒绝自装（只保留跳转下载）
+            _state.update { it.copy(apkUpdate = ApkUpdateState.Failed("服务端未提供安装包校验值，请用下方下载地址手动更新")) }
+            return
+        }
+        viewModelScope.launch {
+            _state.update { it.copy(apkUpdate = ApkUpdateState.Downloading(0)) }
+            try {
+                val apk = ApkSelfUpdate.downloadAndVerify(
+                    client = downloadClient,
+                    url = available.downloadUrl,
+                    expectedSha256 = sha256,
+                    versionCode = available.versionCode,
+                    versionName = available.version,
+                    cacheDir = cacheDir,
+                ) { pct ->
+                    _state.update { it.copy(apkUpdate = ApkUpdateState.Downloading(pct)) }
+                }
+                _state.update { it.copy(apkUpdate = ApkUpdateState.Verifying) }
+                downloadedApk = apk
+                _state.update { it.copy(apkUpdate = ApkUpdateState.Ready(apk.versionName)) }
+            } catch (cause: CancellationException) {
+                throw cause
+            } catch (cause: Throwable) {
+                _state.update {
+                    it.copy(apkUpdate = ApkUpdateState.Failed(cause.message ?: "下载失败"))
+                }
+            }
+        }
+    }
+
+    /** Ready 态点击：引导安装授权（首次）→ 触发系统安装器（覆盖安装即"重启更新"） */
+    fun installDownloadedApk(context: Context): Boolean {
+        val apk = downloadedApk ?: return false
+        if (!ApkSelfUpdate.canRequestInstall(context)) {
+            return ApkSelfUpdate.ensureInstallPermission(context)
+        }
+        return ApkSelfUpdate.launchInstall(context, apk.file)
+    }
+
+    /** 放弃本次已下载更新（清缓存态，回到跳转下载语义） */
+    fun resetApkUpdate() {
+        _state.update { it.copy(apkUpdate = ApkUpdateState.Idle) }
     }
 
     /** M15-014 个人 AI 密钥：加载当前用户三槽位状态 */
