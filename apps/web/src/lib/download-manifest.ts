@@ -35,6 +35,8 @@ export interface TrustedAndroidEntry {
 
 export interface DownloadManifestModel {
   androidEntries: TrustedAndroidEntry[];
+  /** 渠道级 min_api_level（正整数才可信，否则 null——不渲染猜测值）。 */
+  androidMinApiLevel: number | null;
 }
 
 /** Android 渠道展示状态：available 才有 href，其余一律 pending。 */
@@ -46,6 +48,8 @@ export type AndroidChannelState =
       sizeBytes: number;
       versionName: string | null;
       versionCode: number | null;
+      /** 渠道级最低系统要求（channels.android.min_api_level）；不可信时 null。 */
+      minApiLevel: number | null;
     }
   | { status: "pending" };
 
@@ -112,7 +116,14 @@ export function parseDownloadManifest(
   const androidEntries = files
     .map((item) => trustedEntry(item, android))
     .filter((item): item is TrustedAndroidEntry => item !== null);
-  return { androidEntries };
+  const rawMinApi = android.min_api_level;
+  const androidMinApiLevel =
+    typeof rawMinApi === "number" &&
+    Number.isInteger(rawMinApi) &&
+    rawMinApi > 0
+      ? rawMinApi
+      : null;
+  return { androidEntries, androidMinApiLevel };
 }
 
 /** 唯一可信条目 → available；零个或多个 → pending（fail-closed）。 */
@@ -128,6 +139,7 @@ export function resolveAndroidDownload(
     sizeBytes: entry.sizeBytes,
     versionName: entry.versionName,
     versionCode: entry.versionCode,
+    minApiLevel: model.androidMinApiLevel,
   };
 }
 
