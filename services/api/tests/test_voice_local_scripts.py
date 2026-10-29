@@ -1093,9 +1093,9 @@ def test_runtime_requirements_contract() -> None:
         # M14-02 实测补入：模型 YAML !new:/!name: 动态实例化（pydoc.locate）
         # 链上的 Matcha-TTS 自身 PyPI 依赖与 dataset 模块导入——静态闭包不可见，
         # AutoModel 在 venv 内真实加载逐项实证缺失（官方 pin 沿用）
-        "conformer==0.3.2", "diffusers==0.29.0", "lightning==2.2.4",
-        "hydra-core==1.3.2", "matplotlib==3.7.5", "rich==13.7.1",
-        "gdown==5.1.0", "wget", "librosa==0.10.2", "pyarrow==18.1.0",
+        "conformer==0.3.2", "diffusers==0.38.0", "lightning==2.6.6",
+        "hydra-core==1.3.7", "matplotlib==3.7.5", "rich==13.7.1",
+        "gdown==5.2.2", "wget", "librosa==0.10.2", "pyarrow==23.0.1",
         "pyworld==0.3.4",
         # bridge 服务面（复审修正）：顶层 import fastapi + uvicorn.run
         "fastapi==", "uvicorn==",
