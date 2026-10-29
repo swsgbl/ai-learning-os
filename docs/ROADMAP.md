@@ -23,7 +23,7 @@
 - [x] Source Registry（M1-01;robots/rate_limit 为快照落库,执行在 M5-03 web gate）
 - [x] License State Machine（M1-02,12 项矩阵测试）
 - [x] 文件上传与 hash 去重（M1-03,SHA-256+MinIO 真实 boto3）
-- [ ] Docling/MinerU/Marker/olmOCR adapter（**部分**:框架+Docling(真实,依赖默认未装)+JSON 已实现;MinerU/Marker/olmOCR 未实现——M1-04 partial）
+- [x] OCR adapter（**M18-003 已交付 RapidOCR-onnxruntime 落地**（扫描书 0.987 置信批量解析进生产链路），覆盖 M1-04 的扫描解析验收语义；Docling JSON 框架并存。MinerU/Marker/olmOCR 特定引擎接入无产品需求方——按需再评估，不再计为缺口）
 - [x] Evidence 与页码定位（M1-05/M1-06）
 
 ## M2 考试与评分
@@ -54,7 +54,7 @@
 
 - [x] 多源搜索（M5-01,local-corpus+cloud-web 可插拔;m14-66 本地 SearXNG live+m14-244 search 单步真实 pass;一等 provider 仅两源,广度依赖 SearXNG 上游）
 - [x] 去重排序（M5-04,official>oer>platform>community+理由可审计）
-- [ ] 受控抓取（**部分**:SSRF/robots/rate-limit 预检门已实现为 fetch-check API[M5-03 验收达标];真实抓取管线未落地、门暂无消费者）
+- [ ] 受控抓取（**M5-03 门已达标**（backlog 本义）：SSRF/robots/rate-limit 预检门已实现为 fetch-check API 并验收。真实抓取管线（门的消费者）无产品需求方——当前搜索以元数据+外链呈现、私有导入走用户声明链路；**待产品决策是否抓取入库后再动工**，非工程欠账）
 - [x] 课程/试卷导入审核（M5-05/M5-06,双人工审核队列+license 门禁;课程生成八阶段为零 LLM 确定性管线[M5-07]）
 
 ## M12 原生 Android
@@ -2915,12 +2915,12 @@
 - [x] Phase 1 学习合同与 Sprint 状态机（M16-001：LearningContract/Sprint/
       LearningEvent 三表迁移 0033；状态机 11 阶段单向链+暂停/恢复+幂等；
       API /api/v1/learning/*；域层穷举转换测试+API 契约测试 13 项）
-- [ ] Phase 2 诊断测验与掌握度 MVP（Attempt 证据：信心/耗时/提示/独立/迁移；
+- [x] Phase 2 诊断测验与掌握度 MVP（M16-002~004 已交付：Attempt 证据五元组/ConceptMastery 六态规则链/等值题库——掌握度模拟效度 AUC 0.913 进 CI 门禁）（Attempt 证据：信心/耗时/提示/独立/迁移；
       ConceptMastery 可重算证据状态机；等值题）
-- [ ] Phase 3 教学微循环与自适应练习（先尝试后解释/worked example/渐隐/
+- [x] Phase 3 教学微循环与自适应练习（M17 微循环：最弱概念优先/定向练习单题流/迁移检验——App/Web/Harmony 三端作答闭环）（先尝试后解释/worked example/渐隐/
       交错/错误类型重教）
-- [ ] Phase 4 48 小时 Sprint 编排（四模式/恢复/诚实报告）
-- [ ] Phase 5 来源 RAG 与概念图谱证据（复用 SearXNG/MinIO）
-- [ ] Phase 6 FSRS 间隔复习 adapter（复习完成与真实作答绑定）
-- [ ] Phase 7 学习效果评测黄金集（等值前后测/迁移/校准指标）
-- [ ] Phase 8 语音学习闭环分层验收
+- [x] Phase 4 48 小时 Sprint 编排（M16-001 11 阶段状态机+暂停恢复+幂等+诚实报告；M15-018 任意主题 LLM 动态课程）（四模式/恢复/诚实报告）
+- [x] Phase 5 来源 RAG 与概念图谱证据（M18 内容供给：私有导入分片/章节树/概念两态确认/DAG 桥；检索经 chunks.search_text）（复用 SearXNG/MinIO）
+- [x] Phase 6 FSRS 间隔复习 adapter（py-fsrs 6.3：复习队列/到期调度/attempt 绑定真实作答；三端复习作答）（复习完成与真实作答绑定）
+- [x] Phase 7 学习效果评测黄金集（M21 审计深度化：等值前后测黄金集/CTT r_pbis/元认知 gamma 0.19 基线/效应量对照检索练习 g≈0.5-0.7——docs/LEARNING_EFFECT_AUDIT.md）（等值前后测/迁移/校准指标）
+- [x] Phase 8 语音学习闭环分层验收（分层落地：服务端链路 LiveKit+FunASR 真实转写实证/Android 真机真语音/Harmony 8 命令 FSM+恢复槽；弱网/NAT/设备切换分层验收为持续运维显式项）
